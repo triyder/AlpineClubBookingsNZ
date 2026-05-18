@@ -82,3 +82,16 @@ export function getModuleCapabilityFlags(
     xeroIntegration: flags.xeroIntegration,
   };
 }
+
+export function getEffectiveModuleFlags(
+  flags: FeatureFlags,
+  settings: ModuleSettingsValues,
+): FeatureFlags {
+  return {
+    kiosk: flags.kiosk && settings.kiosk,
+    chores: flags.chores && settings.chores,
+    financeDashboard: flags.financeDashboard && settings.financeDashboard,
+    waitlist: flags.waitlist && settings.waitlist,
+    xeroIntegration: flags.xeroIntegration && settings.xeroIntegration,
+  };
+}

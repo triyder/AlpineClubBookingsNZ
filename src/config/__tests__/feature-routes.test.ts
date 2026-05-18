@@ -4,6 +4,7 @@ import {
   getRequiredFeaturesForPath,
   isFeatureHrefVisible,
 } from "@/config/feature-routes";
+import { getEffectiveModuleFlags } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
 const allOn: FeatureFlags = {
@@ -47,6 +48,36 @@ describe("feature route map", () => {
         xeroIntegration: false,
       })
     ).toBe("xeroIntegration");
+  });
+
+  it("uses effective module state for env/admin activation combinations", () => {
+    expect(
+      getDisabledFeatureForPath(
+        "/admin/waitlist",
+        getEffectiveModuleFlags(
+          { ...allOn, waitlist: true },
+          { ...allOn, waitlist: false }
+        )
+      )
+    ).toBe("waitlist");
+    expect(
+      getDisabledFeatureForPath(
+        "/admin/waitlist",
+        getEffectiveModuleFlags(
+          { ...allOn, waitlist: false },
+          { ...allOn, waitlist: true }
+        )
+      )
+    ).toBe("waitlist");
+    expect(
+      getDisabledFeatureForPath(
+        "/admin/waitlist",
+        getEffectiveModuleFlags(
+          { ...allOn, waitlist: true },
+          { ...allOn, waitlist: true }
+        )
+      )
+    ).toBeNull();
   });
 
   it("does not match shared booking APIs or similar prefixes", () => {

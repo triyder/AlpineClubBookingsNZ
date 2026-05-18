@@ -99,8 +99,8 @@ describe("CSP proxy", () => {
     ).toBe(false);
   });
 
-  it("emits a single enforced CSP header with a per-request nonce and no report-only header", () => {
-    const response = proxy(new NextRequest("https://example.org/"));
+  it("emits a single enforced CSP header with a per-request nonce and no report-only header", async () => {
+    const response = await proxy(new NextRequest("https://example.org/"));
     const enforcedPolicy = response.headers.get(CSP_HEADER);
 
     expect(enforcedPolicy).toBeTruthy();
@@ -121,9 +121,9 @@ describe("CSP proxy", () => {
     }
   });
 
-  it("generates a different nonce per request", () => {
-    const a = proxy(new NextRequest("https://example.org/"));
-    const b = proxy(new NextRequest("https://example.org/"));
+  it("generates a different nonce per request", async () => {
+    const a = await proxy(new NextRequest("https://example.org/"));
+    const b = await proxy(new NextRequest("https://example.org/"));
     const nonceA = nonceFromScriptSrc(a.headers.get(CSP_HEADER) as string);
     const nonceB = nonceFromScriptSrc(b.headers.get(CSP_HEADER) as string);
 

@@ -129,15 +129,26 @@ ready for production.
 ## Feature Flags
 
 Only the literal string `true` enables these flags. Any other value disables
-the feature.
+the deploy-time capability. Admins can then activate or deactivate each
+capability at `/admin/modules`. A module is available only when both layers are
+enabled:
+
+```text
+effective module state = env capability enabled && admin module enabled
+```
+
+Missing module-setting rows default to enabled so upgraded installs keep the
+previous env-only behavior after migrations. If the settings table cannot be
+read, optional modules fail closed and their protected routes return the same
+404-style blocked responses as disabled env flags.
 
 | Variable | Description |
 | --- | --- |
-| `FEATURE_KIOSK` | Enables lodge kiosk routes/navigation. |
-| `FEATURE_CHORES` | Enables chores and roster surfaces. |
-| `FEATURE_FINANCE_DASHBOARD` | Enables finance dashboard routes/navigation and finance sync cron registration. |
-| `FEATURE_WAITLIST` | Enables waitlist routes and waitlist cron registration. |
-| `FEATURE_XERO_INTEGRATION` | Enables operational Xero routes/navigation and Xero cron registration. |
+| `FEATURE_KIOSK` | Allows admins to enable lodge kiosk routes/navigation. |
+| `FEATURE_CHORES` | Allows admins to enable chores and roster surfaces. |
+| `FEATURE_FINANCE_DASHBOARD` | Allows admins to enable finance dashboard routes/navigation and finance sync cron registration. |
+| `FEATURE_WAITLIST` | Allows admins to enable waitlist routes and waitlist cron registration. |
+| `FEATURE_XERO_INTEGRATION` | Allows admins to enable operational Xero routes/navigation and Xero cron registration. |
 
 ## Admin Module Activation
 

@@ -1,7 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { featureFlags } from "./config/features";
-import { getDisabledFeatureForPath } from "./config/feature-routes";
+import {
+  getDisabledFeatureForPath,
+  getRequiredFeaturesForPath,
+} from "./config/feature-routes";
 import type { FeatureFlags } from "./config/schema";
+import { loadEffectiveModuleFlags } from "./lib/module-settings";
 import {
   buildContentSecurityPolicy,
   createCspNonce,
@@ -28,10 +32,19 @@ export function getFeatureFlagBlockResponse(
     : new NextResponse(null, { status: 404 });
 }
 
-export function proxy(request: NextRequest) {
+async function getEffectiveModuleBlockResponse(pathname: string) {
+  if (getRequiredFeaturesForPath(pathname).length === 0) {
+    return null;
+  }
+
+  const effectiveFlags = await loadEffectiveModuleFlags();
+  return getFeatureFlagBlockResponse(pathname, effectiveFlags);
+}
+
+export async function proxy(request: NextRequest) {
   const nonce = createCspNonce();
   const csp = buildContentSecurityPolicy(nonce);
-  const featureFlagBlockResponse = getFeatureFlagBlockResponse(
+  const featureFlagBlockResponse = await getEffectiveModuleBlockResponse(
     request.nextUrl.pathname
   );
 

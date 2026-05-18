@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { CLUB_NAME } from "@/config/club-identity";
-import { featureFlags } from "@/config/features";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   hasFinanceManagerAccess,
   requireFinanceViewer,
@@ -16,11 +16,12 @@ export default async function FinanceLayout({
   const member = await requireFinanceViewer("/finance");
   const fullName = `${member.firstName} ${member.lastName}`.trim() || "Member";
   const isManager = hasFinanceManagerAccess(member.financeAccessLevel);
+  const effectiveModules = await loadEffectiveModuleFlags();
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       <NavBar
-        features={featureFlags}
+        features={effectiveModules}
         user={{
           name: fullName,
           email: member.email,

@@ -12,7 +12,7 @@ const allOn: FeatureFlags = {
 };
 
 describe("feature-aware navigation", () => {
-  it("hides finance and kiosk links from the member nav when flags are off", () => {
+  it("hides finance and kiosk links from the member nav when effective modules are off", () => {
     const labels = getNavBarLinks(
       {
         name: "Jane Member",
@@ -32,7 +32,7 @@ describe("feature-aware navigation", () => {
     expect(labels).not.toContain("Hut Leader");
   });
 
-  it("keeps visible links when the matching flags are on", () => {
+  it("keeps visible links when the matching effective modules are on", () => {
     const labels = getNavBarLinks(
       {
         name: "Jane Member",
@@ -48,7 +48,7 @@ describe("feature-aware navigation", () => {
     expect(labels).toContain("Hut Leader");
   });
 
-  it("hides flagged admin sidebar items", () => {
+  it("hides disabled effective admin sidebar items", () => {
     const items = getVisibleAdminNavSections({
       ...allOn,
       chores: false,

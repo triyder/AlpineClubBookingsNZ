@@ -4,11 +4,13 @@ import {
   DEFAULT_MODULE_SETTINGS,
   MODULE_DEFINITIONS,
   MODULE_KEYS,
+  getEffectiveModuleFlags,
   getModuleCapabilityFlags,
   type ModuleKey,
   type ModuleSettingsValues,
 } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 export const CLUB_MODULE_SETTINGS_ID = "default";
@@ -144,4 +146,30 @@ export async function loadClubModuleSettings(): Promise<ClubModuleSettingsPayloa
   });
 
   return buildClubModuleSettingsPayload(record);
+}
+
+const DISABLED_MODULE_FLAGS: FeatureFlags = {
+  kiosk: false,
+  chores: false,
+  financeDashboard: false,
+  waitlist: false,
+  xeroIntegration: false,
+};
+
+export async function loadEffectiveModuleFlags(
+  flags: FeatureFlags = featureFlags,
+): Promise<FeatureFlags> {
+  try {
+    const record = await prisma.clubModuleSettings.findUnique({
+      where: { id: CLUB_MODULE_SETTINGS_ID },
+    });
+
+    return getEffectiveModuleFlags(flags, normalizeClubModuleSettings(record));
+  } catch (err) {
+    logger.error(
+      { err },
+      "Failed to load club module settings; disabling optional modules",
+    );
+    return DISABLED_MODULE_FLAGS;
+  }
 }

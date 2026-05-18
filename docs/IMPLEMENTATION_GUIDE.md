@@ -81,6 +81,8 @@ FEATURE_XERO_INTEGRATION=false
 ```
 
 Only the literal value `true` enables a feature.
+The env value is a deploy-time capability gate. After migrations run, admins can
+activate or deactivate allowed optional modules at `/admin/modules`.
 
 ## 4. Bring Up A Local Database
 

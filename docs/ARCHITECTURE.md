@@ -41,7 +41,7 @@ prisma/
 src/
   app/                          Next.js App Router pages and API routes
   components/                   shared UI and feature components
-  config/                       club identity, feature flags, and runtime config
+  config/                       club identity, module flags, and runtime config
   data/                         static public-page content
   lib/                          business logic, integrations, cron helpers
   types/                        project type augmentation

@@ -2,7 +2,10 @@ import { readFileSync } from "fs";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import type { ModuleSettingsValues } from "@/config/modules";
+import {
+  getEffectiveModuleFlags,
+  type ModuleSettingsValues,
+} from "@/config/modules";
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -45,7 +48,14 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/logger", () => ({
+  default: {
+    error: vi.fn(),
+  },
+}));
+
 import { GET, PUT } from "@/app/api/admin/modules/route";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
 const memberSession = { user: { id: "member-1", role: "MEMBER" } };
@@ -251,5 +261,72 @@ describe("Admin modules API", () => {
         }),
       }),
     );
+  });
+});
+
+describe("effective module state", () => {
+  beforeEach(() => {
+    mocks.clubModuleSettingsFindUnique.mockReset();
+  });
+
+  it("requires both deploy capability and admin activation", () => {
+    expect(
+      getEffectiveModuleFlags(
+        {
+          kiosk: true,
+          chores: true,
+          financeDashboard: true,
+          waitlist: true,
+          xeroIntegration: true,
+        },
+        { ...allEnabled, waitlist: false },
+      ).waitlist,
+    ).toBe(false);
+    expect(
+      getEffectiveModuleFlags(
+        {
+          kiosk: true,
+          chores: true,
+          financeDashboard: true,
+          waitlist: false,
+          xeroIntegration: true,
+        },
+        { ...allEnabled, waitlist: true },
+      ).waitlist,
+    ).toBe(false);
+    expect(
+      getEffectiveModuleFlags(
+        {
+          kiosk: true,
+          chores: true,
+          financeDashboard: true,
+          waitlist: true,
+          xeroIntegration: true,
+        },
+        { ...allEnabled, waitlist: true },
+      ).waitlist,
+    ).toBe(true);
+  });
+
+  it("fails closed when module settings cannot be read", async () => {
+    mocks.clubModuleSettingsFindUnique.mockRejectedValue(
+      new Error("database unavailable"),
+    );
+
+    await expect(
+      loadEffectiveModuleFlags({
+        kiosk: true,
+        chores: true,
+        financeDashboard: true,
+        waitlist: true,
+        xeroIntegration: true,
+      }),
+    ).resolves.toEqual({
+      kiosk: false,
+      chores: false,
+      financeDashboard: false,
+      waitlist: false,
+      xeroIntegration: false,
+    });
   });
 });
