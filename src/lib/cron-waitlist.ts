@@ -32,6 +32,25 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface WaitlistProcessorCronDependencies {
+  isModuleEnabled?: () => boolean | Promise<boolean>;
+}
+
+export type WaitlistProcessorCronResult =
+  | {
+      cronStatus: "SUCCESS";
+      expiredOffers: number;
+      newOffers: number;
+      autoCancelled: number;
+    }
+  | {
+      cronStatus: "SKIPPED";
+      expiredOffers: 0;
+      newOffers: 0;
+      autoCancelled: 0;
+      reason: string;
+    };
+
 function isTransactionStartFailure(error: unknown) {
   const message =
     error instanceof Error
@@ -126,4 +145,27 @@ export async function processWaitlistCron(): Promise<{
   }
 
   return processWaitlistCronOnce();
+}
+
+export async function runWaitlistProcessorCron(
+  dependencies: WaitlistProcessorCronDependencies = {}
+): Promise<WaitlistProcessorCronResult> {
+  if (dependencies.isModuleEnabled && !(await dependencies.isModuleEnabled())) {
+    const reason = "Waitlist effective module state is disabled";
+
+    logger.info({ job: "waitlist-processor", reason }, "Waitlist cron skipped");
+    return {
+      cronStatus: "SKIPPED",
+      expiredOffers: 0,
+      newOffers: 0,
+      autoCancelled: 0,
+      reason,
+    };
+  }
+
+  const result = await processWaitlistCron();
+  return {
+    cronStatus: "SUCCESS",
+    ...result,
+  };
 }

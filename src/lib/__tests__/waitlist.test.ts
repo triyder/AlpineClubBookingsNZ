@@ -573,6 +573,22 @@ describe("waitlist email templates", () => {
 // ─── Cron Job Tests ───
 
 describe("processWaitlistCron", () => {
+  it("skips cleanly when Admin Modules disables waitlist", async () => {
+    const { runWaitlistProcessorCron } = await import("@/lib/cron-waitlist");
+
+    await expect(
+      runWaitlistProcessorCron({ isModuleEnabled: () => false })
+    ).resolves.toEqual({
+      cronStatus: "SKIPPED",
+      expiredOffers: 0,
+      newOffers: 0,
+      autoCancelled: 0,
+      reason: "Waitlist effective module state is disabled",
+    });
+    expect(mockBookingFindMany).not.toHaveBeenCalled();
+    expect(mockBookingUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("auto-cancels past-date waitlisted bookings", async () => {
     const { processWaitlistCron } = await import("@/lib/cron-waitlist");
 

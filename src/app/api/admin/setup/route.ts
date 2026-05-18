@@ -12,6 +12,7 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
   const now = new Date();
   const [
     adminCount,
+    adminModuleSettings,
     ageTierSettingCount,
     seasonCount,
     cancellationPolicyCount,
@@ -24,6 +25,16 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     xeroEntranceFeeMappingCount,
   ] = await Promise.all([
     prisma.member.count({ where: { role: "ADMIN", active: true } }),
+    prisma.clubModuleSettings.findUnique({
+      where: { id: "default" },
+      select: {
+        kiosk: true,
+        chores: true,
+        financeDashboard: true,
+        waitlist: true,
+        xeroIntegration: true,
+      },
+    }),
     prisma.ageTierSetting.count(),
     prisma.season.count({ where: { active: true } }),
     prisma.cancellationPolicy.count(),
@@ -58,6 +69,7 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
 
   return {
     adminCount,
+    adminModuleSettings,
     ageTierSettingCount,
     seasonCount,
     cancellationPolicyCount,

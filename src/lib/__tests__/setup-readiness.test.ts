@@ -47,6 +47,13 @@ const baseEnv = {
 
 const completeDatabase: SetupDatabaseSnapshot = {
   adminCount: 1,
+  adminModuleSettings: {
+    kiosk: true,
+    chores: true,
+    financeDashboard: true,
+    waitlist: true,
+    xeroIntegration: true,
+  },
   ageTierSettingCount: 4,
   seasonCount: 2,
   cancellationPolicyCount: 3,
@@ -162,6 +169,36 @@ describe("setup-readiness", () => {
     expect(report).toContain("Runtime Environment: blocked");
     expect(report).toContain("supportEmail");
     expect(report).toContain("Run the seed command");
+  });
+
+  it("distinguishes env capability from Admin Modules activation", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        adminModuleSettings: {
+          ...completeDatabase.adminModuleSettings!,
+          xeroIntegration: false,
+          financeDashboard: false,
+        },
+        operationalXeroConnected: false,
+        financeXeroConnected: false,
+      },
+    });
+
+    const report = renderSetupCheckReport(readiness);
+
+    expect(report).toContain(
+      "Operational Xero env capability (FEATURE_XERO_INTEGRATION): enabled"
+    );
+    expect(report).toContain("Operational Xero Admin Modules activation: disabled");
+    expect(report).toContain("Operational Xero is inactive by env capability or Admin Modules activation.");
+    expect(report).toContain(
+      "Finance dashboard env capability (FEATURE_FINANCE_DASHBOARD): enabled"
+    );
+    expect(report).toContain("Finance dashboard Admin Modules activation: disabled");
+    expect(report).toContain("Finance dashboard is inactive by env capability or Admin Modules activation.");
   });
 
   it("normalizes progress to known setup step ids", () => {

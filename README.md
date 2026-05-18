@@ -55,14 +55,15 @@ fork for another organisation. See `NOTICE.md`.
 3. Replace the images in `public/branding/` with your own logo, favicon, Open
    Graph image, and public website photos. Keep the `*.example.*` files as
    reusable placeholders for forks.
-4. Choose feature flags in `.env`: `FEATURE_KIOSK`, `FEATURE_CHORES`,
-   `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
-   `FEATURE_XERO_INTEGRATION`. Only the literal value `true` enables a feature.
-5. After sign-in, use **Admin > Modules** to set club-level activation for
-   optional modules. These database settings do not replace the `.env`
-   deploy/operator capability flags.
-6. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
+4. Set deploy capability flags in `.env`: `FEATURE_KIOSK`,
+   `FEATURE_CHORES`, `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
+   `FEATURE_XERO_INTEGRATION`. Only the literal value `true` makes a module
+   available to the deployment.
+5. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
    change the seeded admin password on first login.
+6. After sign-in, use **Admin > Modules** to set club-level activation for
+   optional modules. Optional modules are active only when both the `.env`
+   capability and the Admin Modules activation are enabled.
 7. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 
@@ -217,7 +218,7 @@ forks or public CI. Configure your own service accounts and secrets.
   validation and first deployment
 - `docs/ARCHITECTURE.md` - system structure, data model, business logic,
   integrations, cron, and deployment shape
-- `CONFIGURATION.md` - environment variables, feature flags, branding assets,
+- `CONFIGURATION.md` - environment variables, module controls, branding assets,
   and `config/club.json` schema
 - `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and
   recovery guide

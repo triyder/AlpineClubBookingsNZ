@@ -11,6 +11,7 @@ import {
 } from "@/lib/xero-hardening";
 import logger from "@/lib/logger";
 import { isXeroDailyMembershipRefreshEnabled } from "@/lib/xero-feature-flags";
+import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 
 /**
  * POST /api/cron/xero
@@ -35,6 +36,23 @@ export async function POST(request: NextRequest) {
       { error: "Invalid task. Expected memberships, outbox, retries, inbound, backfill, link-cleanup, report, or all." },
       { status: 400 }
     );
+  }
+
+  if (!(await isEffectiveModuleEnabled("xeroIntegration"))) {
+    return NextResponse.json({
+      message: "Xero cron tasks skipped",
+      task,
+      connected: false,
+      skipped: true,
+      reason: "Operational Xero effective module state is disabled",
+      membershipRefresh: null,
+      queuedOutboxOperations: null,
+      queuedRetries: null,
+      inboundReconciliation: null,
+      linkBackfill: null,
+      linkCleanup: null,
+      reconciliationReport: null,
+    });
   }
 
   const connected = await isXeroConnected();

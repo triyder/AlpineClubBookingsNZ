@@ -68,9 +68,12 @@ Minimum production categories:
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
   `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, `dashboard`, and
   `xero-mcp` subdomains from that value.
-- Feature flags: `FEATURE_KIOSK`, `FEATURE_CHORES`,
+- Module capability flags: `FEATURE_KIOSK`, `FEATURE_CHORES`,
   `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
   `FEATURE_XERO_INTEGRATION` must be explicit `true` or `false` values.
+  These are deploy/operator capability gates. Admin Modules activation is the
+  database-backed club-level layer, so an optional module is active only when
+  its `.env` capability and Admin Modules activation are both enabled.
 - Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
   `STRIPE_WEBHOOK_SECRET`
 - Operational Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`,
@@ -229,6 +232,10 @@ curl -fsS https://your-domain.example/api/health/ready
 ```
 
 `/api/health/ready` is the readiness endpoint used by blue/green cutover.
+Setup readiness and `/admin/setup` report optional modules as layered state:
+`.env` capability, Admin Modules activation, and the resulting effective state.
+The blue/green deploy script still validates explicit `.env` capability values
+before deployment; Admin Modules do not replace that safety check.
 
 ## Rollback
 

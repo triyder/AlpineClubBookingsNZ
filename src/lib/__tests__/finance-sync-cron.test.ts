@@ -164,6 +164,46 @@ describe("finance-sync-cron", () => {
     });
   });
 
+  it("skips cleanly when the Admin Modules effective state disables finance", async () => {
+    const runFinanceSyncMock = vi.fn();
+    const recordCronRun = vi.fn();
+    const captureCheckIn = vi.fn().mockReturnValue("check-in-1");
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const result = await runDailyFinanceSyncCron({
+      isModuleEnabled: () => false,
+      runFinanceSync: runFinanceSyncMock,
+      recordCronRun,
+      captureCheckIn,
+      captureException: vi.fn(),
+      logger,
+    });
+
+    expect(runFinanceSyncMock).not.toHaveBeenCalled();
+    expect(recordCronRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobName: FINANCE_SYNC_CRON_JOB_NAME,
+        status: "SKIPPED",
+        resultSummary: {
+          reason: "Finance dashboard effective module state is disabled",
+        },
+      })
+    );
+    expect(captureCheckIn).toHaveBeenLastCalledWith({
+      checkInId: "check-in-1",
+      monitorSlug: FINANCE_SYNC_CRON_MONITOR_SLUG,
+      status: "ok",
+    });
+    expect(result).toEqual({
+      cronStatus: "SKIPPED",
+      reason: "Finance dashboard effective module state is disabled",
+    });
+  });
+
   it("skips overlapping runs within the same process and records the skip", async () => {
     const dataset = { key: "bootstrap", sync: vi.fn().mockResolvedValue([]) };
     const deferred = createDeferred<ReturnType<typeof createExecutionResult>>();

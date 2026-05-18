@@ -47,6 +47,7 @@ export interface FinanceSyncCronRunnerDependencies {
   getDatasets?: () =>
     | FinanceSyncDatasetDefinition[]
     | Promise<FinanceSyncDatasetDefinition[]>;
+  isModuleEnabled?: () => boolean | Promise<boolean>;
   runFinanceSync?: typeof runFinanceSync;
   recordCronRun?: (input: RecordCronRunInput) => Promise<void> | void;
   captureCheckIn?: typeof Sentry.captureCheckIn;
@@ -158,6 +159,28 @@ export async function runDailyFinanceSyncCron(
     { monitorSlug: FINANCE_SYNC_CRON_MONITOR_SLUG, status: "in_progress" },
     FINANCE_SYNC_CRON_CHECKIN_CONFIG
   );
+
+  if (dependencies.isModuleEnabled && !(await dependencies.isModuleEnabled())) {
+    const reason = "Finance dashboard effective module state is disabled";
+
+    log.info({ job: FINANCE_SYNC_CRON_JOB_NAME, reason }, "Finance sync cron skipped");
+    await recordCronRunSafe(recordCronRun, log, {
+      jobName: FINANCE_SYNC_CRON_JOB_NAME,
+      startedAt,
+      status: "SKIPPED",
+      resultSummary: { reason },
+    });
+    captureCheckIn({
+      checkInId,
+      monitorSlug: FINANCE_SYNC_CRON_MONITOR_SLUG,
+      status: "ok",
+    });
+
+    return {
+      cronStatus: "SKIPPED",
+      reason,
+    };
+  }
 
   if (isFinanceSyncCronRunning) {
     const reason = "Another finance sync cron run is already active in this process";

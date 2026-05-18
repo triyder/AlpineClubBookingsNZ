@@ -54,6 +54,7 @@ export async function register() {
     const Sentry = await import("@sentry/nextjs");
     const { prisma } = await import("./lib/prisma");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
+    const { isEffectiveModuleEnabled } = await import("./lib/admin-modules");
     const optionalCron = getOptionalCronRegistrationState();
 
     // Verify Prisma client is ready before starting cron jobs
@@ -99,6 +100,26 @@ export async function register() {
       } catch (err) {
         logger.error({ err, job: jobName }, "Failed to record cron job run");
       }
+    }
+
+    async function skipIfModuleDisabled(
+      moduleKey: "xeroIntegration" | "financeDashboard" | "waitlist",
+      jobName: string,
+      startedAt: Date,
+      checkInId?: string,
+      monitorSlug?: string
+    ) {
+      if (await isEffectiveModuleEnabled(moduleKey)) {
+        return false;
+      }
+
+      const reason = `${moduleKey} effective module state is disabled`;
+      logger.info({ job: jobName, moduleKey, reason }, "Cron job skipped");
+      await recordCronRun(jobName, startedAt, "SKIPPED", { reason, moduleKey });
+      if (checkInId && monitorSlug) {
+        Sentry.captureCheckIn({ checkInId, monitorSlug, status: "ok" });
+      }
+      return true;
     }
 
     // OBS-03: Cron job 1 - Pending booking confirmation (every 3 hours)
@@ -163,6 +184,18 @@ export async function register() {
         );
 
         try {
+          if (
+            await skipIfModuleDisabled(
+              "xeroIntegration",
+              "xero-membership-refresh",
+              startedAt,
+              checkInId,
+              "xero-membership-refresh"
+            )
+          ) {
+            return;
+          }
+
           const { isXeroConnected, refreshAllMembershipStatuses } = await import(
             "./lib/xero"
           );
@@ -220,6 +253,18 @@ export async function register() {
       );
 
       try {
+        if (
+          await skipIfModuleDisabled(
+            "xeroIntegration",
+            "xero-link-backfill",
+            startedAt,
+            checkInId,
+            "xero-link-backfill"
+          )
+        ) {
+          return;
+        }
+
         const { backfillHistoricalXeroObjectLinks } = await import(
           "./lib/xero-hardening"
         );
@@ -263,6 +308,18 @@ export async function register() {
       );
 
       try {
+        if (
+          await skipIfModuleDisabled(
+            "xeroIntegration",
+            "xero-reconciliation-report",
+            startedAt,
+            checkInId,
+            "xero-reconciliation-report"
+          )
+        ) {
+          return;
+        }
+
         const { sendXeroReconciliationReport } = await import(
           "./lib/xero-hardening"
         );
@@ -321,6 +378,18 @@ export async function register() {
       );
 
       try {
+        if (
+          await skipIfModuleDisabled(
+            "xeroIntegration",
+            "xero-operation-replay",
+            startedAt,
+            checkInId,
+            "xero-operation-replay"
+          )
+        ) {
+          return;
+        }
+
         const { isXeroConnected } = await import("./lib/xero");
         const { processQueuedXeroOutboxOperations } = await import(
           "./lib/xero-operation-outbox"
@@ -386,6 +455,18 @@ export async function register() {
       );
 
       try {
+        if (
+          await skipIfModuleDisabled(
+            "xeroIntegration",
+            "xero-inbound-reconcile",
+            startedAt,
+            checkInId,
+            "xero-inbound-reconcile"
+          )
+        ) {
+          return;
+        }
+
         const { isXeroConnected } = await import("./lib/xero");
         const { runXeroInboundReconciliationCycle } = await import(
           "./lib/xero-inbound-reconciliation"
@@ -439,7 +520,10 @@ export async function register() {
         "./lib/finance-sync-cron"
       );
 
-      registerDailyFinanceSyncCron(cron.default, { logger });
+      registerDailyFinanceSyncCron(cron.default, {
+        logger,
+        isModuleEnabled: () => isEffectiveModuleEnabled("financeDashboard"),
+      });
     } else {
       logger.info(
         { featureFlag: "FEATURE_FINANCE_DASHBOARD", job: "finance-sync" },
@@ -900,11 +984,21 @@ export async function register() {
       );
 
       try {
-        const { processWaitlistCron } = await import("@/lib/cron-waitlist");
-        const result = await processWaitlistCron();
-        logger.info({ job: "waitlist-processor", ...result }, "Waitlist processing complete");
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "waitlist-processor", status: "ok" });
-        await recordCronRun("waitlist-processor", startedAt, "SUCCESS", result);
+        const { runWaitlistProcessorCron } = await import("@/lib/cron-waitlist");
+        const result = await runWaitlistProcessorCron({
+          isModuleEnabled: () => isEffectiveModuleEnabled("waitlist"),
+        });
+        if (result.cronStatus === "SKIPPED") {
+          logger.info({ job: "waitlist-processor", reason: result.reason }, "Waitlist processing skipped");
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "waitlist-processor", status: "ok" });
+          await recordCronRun("waitlist-processor", startedAt, "SKIPPED", {
+            reason: result.reason,
+          });
+        } else {
+          logger.info({ job: "waitlist-processor", ...result }, "Waitlist processing complete");
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "waitlist-processor", status: "ok" });
+          await recordCronRun("waitlist-processor", startedAt, "SUCCESS", result);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "waitlist-processor" }, "Error processing waitlist");

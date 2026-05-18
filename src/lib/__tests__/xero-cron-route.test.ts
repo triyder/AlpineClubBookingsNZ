@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   backfillHistoricalXeroObjectLinks: vi.fn(),
   cleanupStaleCanonicalXeroObjectLinks: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
+  isEffectiveModuleEnabled: vi.fn(),
 }));
 
 vi.mock("@/lib/xero", () => ({
@@ -44,6 +45,10 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+vi.mock("@/lib/admin-modules", () => ({
+  isEffectiveModuleEnabled: mocks.isEffectiveModuleEnabled,
+}));
+
 import { POST } from "@/app/api/cron/xero/route";
 
 function makeRequest(task: string) {
@@ -60,6 +65,32 @@ describe("POST /api/cron/xero", () => {
     vi.clearAllMocks();
     process.env.CRON_SECRET = "cron-secret";
     delete process.env.XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH;
+    mocks.isEffectiveModuleEnabled.mockResolvedValue(true);
+  });
+
+  it("skips cleanly when Admin Modules disables operational Xero", async () => {
+    mocks.isEffectiveModuleEnabled.mockResolvedValue(false);
+
+    const response = await POST(makeRequest("all"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      message: "Xero cron tasks skipped",
+      task: "all",
+      connected: false,
+      skipped: true,
+      reason: "Operational Xero effective module state is disabled",
+      membershipRefresh: null,
+      queuedOutboxOperations: null,
+      queuedRetries: null,
+      inboundReconciliation: null,
+      linkBackfill: null,
+      linkCleanup: null,
+      reconciliationReport: null,
+    });
+    expect(mocks.isXeroConnected).not.toHaveBeenCalled();
+    expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
   });
 
   it("runs the reconciliation report even when Xero is disconnected", async () => {

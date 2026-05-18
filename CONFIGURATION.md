@@ -98,12 +98,13 @@ npm run setup:check
 ```
 
 The check validates `config/club.json`, environment variable presence/format,
-feature flag values, and first-install readiness. Database-backed checks are
-reported inside the admin setup wizard after migrations and seed data run.
+module capability flags, and first-install readiness. Database-backed checks,
+including Admin Modules activation, are reported inside the admin setup wizard
+after migrations and seed data run.
 
 After signing in as an administrator, open `/admin/setup` to review:
 
-- club config and feature flags
+- club config and module controls
 - first admin and seeded database settings
 - booking policies, age tiers, seasons, and rates
 - Stripe, SES/email, Sentry, operational Xero, and finance Xero readiness
@@ -126,29 +127,36 @@ ready for production.
 | `NEXT_RUNTIME` | Runtime marker set by Next.js instrumentation. |
 | `npm_package_version` | Package version exposed by npm scripts. |
 
-## Feature Flags
+## Module Capability Flags And Admin Modules
 
-Only the literal string `true` enables these flags. Any other value disables
-the deploy-time capability. Admins can then activate or deactivate each
-capability at `/admin/modules`. A module is available only when both layers are
-enabled:
+Optional modules use a layered control model:
 
-```text
-effective module state = env capability enabled && admin module enabled
-```
+- `.env` feature flags are deploy/operator capability gates. Only the literal
+  string `true` makes a module available to this deployment; any other value
+  disables that capability.
+- Admin Modules activation is stored in the database and is the club-level
+  activation layer.
+- The effective module state is `.env capability enabled && Admin Modules
+  activation enabled`.
 
-Missing module-setting rows default to enabled so upgraded installs keep the
-previous env-only behavior after migrations. If the settings table cannot be
-read, optional modules fail closed and their protected routes return the same
-404-style blocked responses as disabled env flags.
+Startup/deploy validation still requires the `.env` capability flags to be
+explicit. Admin Modules do not store secrets and do not replace deployment-time
+checks for Stripe, Xero, cron, or other operator-owned credentials.
 
 | Variable | Description |
 | --- | --- |
-| `FEATURE_KIOSK` | Allows admins to enable lodge kiosk routes/navigation. |
-| `FEATURE_CHORES` | Allows admins to enable chores and roster surfaces. |
-| `FEATURE_FINANCE_DASHBOARD` | Allows admins to enable finance dashboard routes/navigation and finance sync cron registration. |
-| `FEATURE_WAITLIST` | Allows admins to enable waitlist routes and waitlist cron registration. |
-| `FEATURE_XERO_INTEGRATION` | Allows admins to enable operational Xero routes/navigation and Xero cron registration. |
+| `FEATURE_KIOSK` | Makes lodge kiosk routes/navigation available when Admin Modules activation also allows it. |
+| `FEATURE_CHORES` | Makes chores and roster surfaces available when Admin Modules activation also allows them. |
+| `FEATURE_FINANCE_DASHBOARD` | Makes finance dashboard routes/navigation and finance sync cron available when Admin Modules activation also allows them. |
+| `FEATURE_WAITLIST` | Makes waitlist routes and waitlist cron available when Admin Modules activation also allows them. |
+| `FEATURE_XERO_INTEGRATION` | Makes operational Xero routes/navigation and Xero cron available when Admin Modules activation also allows them. |
+
+Cron-backed optional modules check effective module state before doing module
+work. If an Admin Modules setting is disabled while the `.env` capability is
+still enabled, the cron runner records a clean skipped result rather than
+running the module task. Missing module-setting rows default to enabled so
+upgraded installs keep the previous env-only behavior after migrations. If the
+settings table cannot be read, optional modules fail closed.
 
 ## Admin Module Activation
 
