@@ -8,6 +8,7 @@ import {
   CSP_HEADER,
   CSP_NONCE_HEADER,
   CSP_REPORT_ONLY_HEADER,
+  SECURITY_HEADERS,
 } from "@/lib/csp";
 import proxy, { config, getFeatureFlagBlockResponse } from "../../proxy";
 import type { FeatureFlags } from "@/config/schema";
@@ -53,6 +54,8 @@ describe("CSP policy", () => {
     );
     expect(directive(policy, "script-src")).not.toContain("'unsafe-inline'");
     expect(directive(policy, "style-src")).toContain("'unsafe-inline'");
+    expect(directive(policy, "object-src")).toBe("object-src 'none'");
+    expect(directive(policy, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });
 });
 
@@ -112,6 +115,10 @@ describe("CSP proxy", () => {
     expect(
       response.headers.get(`x-middleware-request-${CSP_HEADER.toLowerCase()}`)
     ).toBe(enforcedPolicy);
+
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      expect(response.headers.get(name)).toBe(value);
+    }
   });
 
   it("generates a different nonce per request", () => {

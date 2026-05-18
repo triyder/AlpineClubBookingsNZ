@@ -7,6 +7,7 @@ import {
   createCspNonce,
   CSP_HEADER,
   CSP_NONCE_HEADER,
+  setSecurityHeaders,
 } from "./lib/csp";
 
 export function getFeatureFlagBlockResponse(
@@ -28,16 +29,18 @@ export function getFeatureFlagBlockResponse(
 }
 
 export function proxy(request: NextRequest) {
+  const nonce = createCspNonce();
+  const csp = buildContentSecurityPolicy(nonce);
   const featureFlagBlockResponse = getFeatureFlagBlockResponse(
     request.nextUrl.pathname
   );
 
   if (featureFlagBlockResponse) {
+    featureFlagBlockResponse.headers.set(CSP_HEADER, csp);
+    setSecurityHeaders(featureFlagBlockResponse.headers);
     return featureFlagBlockResponse;
   }
 
-  const nonce = createCspNonce();
-  const csp = buildContentSecurityPolicy(nonce);
   const requestHeaders = new Headers(request.headers);
 
   requestHeaders.set(CSP_NONCE_HEADER, nonce);
@@ -50,6 +53,7 @@ export function proxy(request: NextRequest) {
   });
 
   response.headers.set(CSP_HEADER, csp);
+  setSecurityHeaders(response.headers);
 
   return response;
 }

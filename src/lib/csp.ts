@@ -2,8 +2,21 @@ export const CSP_HEADER = "Content-Security-Policy";
 export const CSP_REPORT_ONLY_HEADER = "Content-Security-Policy-Report-Only";
 export const CSP_NONCE_HEADER = "x-nonce";
 
+export const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+} as const;
+
 export function createCspNonce() {
   return Buffer.from(crypto.randomUUID()).toString("base64");
+}
+
+export function setSecurityHeaders(headers: Headers) {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    headers.set(name, value);
+  }
 }
 
 export function buildContentSecurityPolicy(nonce: string) {
@@ -25,6 +38,8 @@ export function buildContentSecurityPolicy(nonce: string) {
     "font-src 'self' data:",
     "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io",
     "frame-src https://js.stripe.com https://hooks.stripe.com",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
   ];

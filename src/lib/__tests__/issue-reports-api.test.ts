@@ -150,7 +150,8 @@ describe("issue reports API", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Origin: "https://example.org",
+        "x-forwarded-host": "example.org",
+        "x-forwarded-proto": "https",
       },
       body: JSON.stringify({
         pageUrl: "https://example.org/admin/audit-log?page=2",
@@ -175,6 +176,26 @@ describe("issue reports API", () => {
         issueReportUrl: "https://example.org/admin/issue-reports?report=issue-1",
       })
     );
+  });
+
+  it("does not trust spoofable origin headers as app origins", async () => {
+    const req = new NextRequest("http://127.0.0.1:3000/api/issue-reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil.example",
+        Referer: "https://evil.example/dashboard",
+      },
+      body: JSON.stringify({
+        pageUrl: "https://evil.example/admin/audit-log?page=2",
+        description: "Client supplied origins must not be accepted as app origins.",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(mockedIssueReportCreate).not.toHaveBeenCalled();
+    expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
   });
 
   it("stores screenshots for in-app review without emailing attachments", async () => {

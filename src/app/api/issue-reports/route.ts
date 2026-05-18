@@ -98,14 +98,10 @@ function uniqueOrigins(origins: Array<string | null>) {
 function normalizeIssueReportPageUrl(input: string, request: NextRequest) {
   const configuredOrigin = httpOrigin(process.env.NEXTAUTH_URL);
   const requestOrigin = httpOrigin(request.nextUrl.origin);
-  const originHeader = httpOrigin(request.headers.get("origin"));
-  const refererOrigin = httpOrigin(request.headers.get("referer"));
   const trustedOrigins = uniqueOrigins([
-    originHeader,
-    refererOrigin,
+    configuredOrigin,
     forwardedOrigin(request),
     requestOrigin,
-    configuredOrigin,
   ]);
 
   for (const baseUrl of trustedOrigins) {
