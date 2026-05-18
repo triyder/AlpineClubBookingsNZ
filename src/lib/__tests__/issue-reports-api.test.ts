@@ -54,6 +54,29 @@ const mockedMemberCount = vi.mocked(prisma.member.count);
 const mockedMemberFindUnique = vi.mocked(prisma.member.findUnique);
 const mockedIssueReportCreate = vi.mocked(prisma.issueReport.create);
 
+async function withNextAuthUrl<T>(
+  nextAuthUrl: string | undefined,
+  action: () => Promise<T>
+) {
+  const originalNextAuthUrl = process.env.NEXTAUTH_URL;
+
+  if (nextAuthUrl === undefined) {
+    delete process.env.NEXTAUTH_URL;
+  } else {
+    process.env.NEXTAUTH_URL = nextAuthUrl;
+  }
+
+  try {
+    return await action();
+  } finally {
+    if (originalNextAuthUrl === undefined) {
+      delete process.env.NEXTAUTH_URL;
+    } else {
+      process.env.NEXTAUTH_URL = originalNextAuthUrl;
+    }
+  }
+}
+
 describe("issue reports API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -118,31 +141,65 @@ describe("issue reports API", () => {
     );
   });
 
+  it("uses the configured app origin for relative page URLs", async () => {
+    await withNextAuthUrl("https://club.example", async () => {
+      const req = new NextRequest("https://proxy.internal/api/issue-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pageUrl: "/book?step=review",
+          description:
+            "The relative page URL should be stored against the configured app origin.",
+        }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(201);
+
+      expect(mockedIssueReportCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          pageUrl: "https://club.example/book?step=review",
+        }),
+        select: { id: true },
+      });
+
+      expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pageUrl: "https://club.example/book?step=review",
+          issueReportUrl: "https://club.example/admin/issue-reports?report=issue-1",
+        })
+      );
+    });
+  });
+
   it("normalizes relative page URLs to same-origin absolute URLs", async () => {
-    const req = new NextRequest("https://example.org/api/issue-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pageUrl: "/book?step=review",
-        description: "The relative page URL should be stored as an internal absolute link.",
-      }),
+    await withNextAuthUrl(undefined, async () => {
+      const req = new NextRequest("https://example.org/api/issue-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pageUrl: "/book?step=review",
+          description:
+            "The relative page URL should be stored as an internal absolute link.",
+        }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(201);
+
+      expect(mockedIssueReportCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          pageUrl: "https://example.org/book?step=review",
+        }),
+        select: { id: true },
+      });
+
+      expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pageUrl: "https://example.org/book?step=review",
+        })
+      );
     });
-
-    const res = await POST(req);
-    expect(res.status).toBe(201);
-
-    expect(mockedIssueReportCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        pageUrl: "https://example.org/book?step=review",
-      }),
-      select: { id: true },
-    });
-
-    expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        pageUrl: "https://example.org/book?step=review",
-      })
-    );
   });
 
   it("accepts public page URLs when the app is behind a local proxy origin", async () => {
