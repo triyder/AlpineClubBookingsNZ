@@ -32,6 +32,25 @@ CI also runs independent static and container checks:
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
+## Operational Repair Tools
+
+`scripts/xero-booking-repair.ts` is a targeted booking/Xero reconciliation
+helper. Keep it out of normal setup and deployment flows. Use it only when an
+operator needs to inspect or repair known booking-payment/Xero mismatches after
+reviewing the affected bookings.
+
+Always start with a dry run:
+
+```bash
+npx tsx scripts/xero-booking-repair.ts --dry-run
+npx tsx scripts/xero-booking-repair.ts --booking <bookingId> --dry-run
+npx tsx scripts/xero-booking-repair.ts --from <YYYY-MM-DD> --to <YYYY-MM-DD> --dry-run
+```
+
+Only use `--apply` after the dry-run report has been reviewed. Do not run it
+with live Xero, Stripe, SES, Sentry, or production database credentials during
+exploratory work; use a staging database and Xero demo tenant where possible.
+
 ## Public Release Checklist
 
 Before changing repository visibility to public:
