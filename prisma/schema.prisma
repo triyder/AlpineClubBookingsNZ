@@ -1187,7 +1187,7 @@ model ClubModuleSettings {
   xeroIntegration   Boolean  @default(true)
   updatedByMemberId String?
   createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }
