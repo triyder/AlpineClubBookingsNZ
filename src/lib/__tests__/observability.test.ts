@@ -723,6 +723,86 @@ describe("OBS-07: GET /api/admin/health", () => {
     expect(data.cronJobs["confirm-pending"]).toHaveLength(5);
   });
 
+  it("loads expected daily job history outside the global recent cron window", async () => {
+    mockAdminSession();
+    mockAdminHealthDependencies();
+
+    const baseTime = Date.now();
+    const latestWindow = Array.from({ length: 200 }, (_, i) => ({
+      id: `recent-xero-${i}`,
+      jobName: i % 2 === 0 ? "xero-operation-replay" : "xero-inbound-reconcile",
+      startedAt: new Date(baseTime - i * 60_000),
+      completedAt: new Date(baseTime - i * 60_000 + 5_000),
+      durationMs: 5000,
+      status: "SUCCESS",
+      resultSummary: null,
+      error: null,
+      createdAt: new Date(baseTime - i * 60_000),
+    }));
+    const financeRun = {
+      id: "finance-daily-sync-1",
+      jobName: "finance-daily-sync",
+      startedAt: new Date(baseTime - 60 * 60_000),
+      completedAt: new Date(baseTime - 60 * 60_000 + 7_000),
+      durationMs: 7000,
+      status: "SUCCESS",
+      resultSummary: null,
+      error: null,
+      createdAt: new Date(baseTime - 60 * 60_000),
+    };
+
+    vi.mocked(prisma.cronJobRun.findMany).mockImplementation(
+      async (query?: any) => {
+        const where = query?.where;
+        if (!where) {
+          return latestWindow;
+        }
+
+        if (where.jobName !== "finance-daily-sync") {
+          return [];
+        }
+
+        if (where.status === "FAILURE") {
+          return [];
+        }
+
+        return [financeRun];
+      }
+    );
+
+    const { GET } = await import("@/app/api/admin/health/route");
+    const response = await GET();
+    const data = await response.json();
+    const financeJob = data.cronHealth.jobs.find(
+      (job: { jobName: string }) => job.jobName === "finance-daily-sync"
+    );
+
+    expect(response.status).toBe(200);
+    expect(financeJob).toMatchObject({
+      jobName: "finance-daily-sync",
+      status: "current",
+      latestRunStatus: "SUCCESS",
+      latestSuccessAt: financeRun.completedAt.toISOString(),
+    });
+    expect(data.cronJobs["finance-daily-sync"]).toEqual([
+      expect.objectContaining({ id: "finance-daily-sync-1" }),
+    ]);
+    expect(prisma.cronJobRun.findMany).toHaveBeenCalledWith({
+      orderBy: { startedAt: "desc" },
+      take: 200,
+    });
+    expect(prisma.cronJobRun.findMany).toHaveBeenCalledWith({
+      where: { jobName: "finance-daily-sync" },
+      orderBy: { startedAt: "desc" },
+      take: 5,
+    });
+    expect(prisma.cronJobRun.findMany).toHaveBeenCalledWith({
+      where: { jobName: "finance-daily-sync", status: "SUCCESS" },
+      orderBy: { startedAt: "desc" },
+      take: 1,
+    });
+  });
+
   it("uses cron leader runtime status when admin health is served by a web slot", async () => {
     process.env.APP_RUNTIME_ROLE = "web-blue";
     process.env.CRON_ENABLED = "false";

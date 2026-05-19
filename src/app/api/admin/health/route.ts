@@ -10,8 +10,13 @@ import {
   buildCronHealthReport,
   getAdminCronJobDefinitions,
   groupCronRunsByJob,
+  type AdminCronJobDefinition,
+  type AdminCronRun,
 } from "@/lib/admin-cron-health";
 import logger from "@/lib/logger";
+
+const RECENT_CRON_RUN_LIMIT = 200;
+const EXPECTED_CRON_RUN_HISTORY_LIMIT = 5;
 
 interface RuntimeStatusPayload {
   cronEnabled: boolean;
@@ -119,6 +124,63 @@ async function getCronJobDefinitionsForHealthReport() {
   });
 }
 
+function getCronRunTime(run: AdminCronRun): number {
+  return new Date(run.startedAt ?? run.createdAt ?? 0).getTime();
+}
+
+function dedupeCronRuns(runs: AdminCronRun[]): AdminCronRun[] {
+  const byId = new Map<string, AdminCronRun>();
+  for (const run of runs) {
+    byId.set(run.id, run);
+  }
+
+  return [...byId.values()].sort((a, b) => getCronRunTime(b) - getCronRunTime(a));
+}
+
+async function getExpectedJobCronRuns(jobName: string): Promise<AdminCronRun[]> {
+  const [recentRuns, latestSuccess, latestFailure] = await Promise.all([
+    prisma.cronJobRun.findMany({
+      where: { jobName },
+      orderBy: { startedAt: "desc" },
+      take: EXPECTED_CRON_RUN_HISTORY_LIMIT,
+    }),
+    prisma.cronJobRun.findMany({
+      where: { jobName, status: "SUCCESS" },
+      orderBy: { startedAt: "desc" },
+      take: 1,
+    }),
+    prisma.cronJobRun.findMany({
+      where: { jobName, status: "FAILURE" },
+      orderBy: { startedAt: "desc" },
+      take: 1,
+    }),
+  ]);
+
+  return [...recentRuns, ...latestSuccess, ...latestFailure];
+}
+
+async function getCronRunsForAdminHealth(
+  definitions: AdminCronJobDefinition[]
+): Promise<AdminCronRun[]> {
+  const expectedJobNames = [
+    ...new Set(
+      definitions
+        .filter((definition) => definition.recordsRuns)
+        .map((definition) => definition.jobName)
+    ),
+  ];
+
+  const [recentRuns, expectedJobRuns] = await Promise.all([
+    prisma.cronJobRun.findMany({
+      orderBy: { startedAt: "desc" },
+      take: RECENT_CRON_RUN_LIMIT,
+    }),
+    Promise.all(expectedJobNames.map(getExpectedJobCronRuns)),
+  ]);
+
+  return dedupeCronRuns([...recentRuns, ...expectedJobRuns.flat()]);
+}
+
 /**
  * GET /api/admin/health
  * Returns system health data for the admin dashboard including:
@@ -139,18 +201,16 @@ export async function GET() {
 
   try {
     const { report: healthResponse } = await getDetailedHealthReport();
+    const cronDefinitions = await getCronJobDefinitionsForHealthReport();
 
-    // Recent cron job runs. Fetch enough history to classify stale jobs even
-    // when several high-frequency jobs have recent entries.
-    const cronRuns = await prisma.cronJobRun.findMany({
-      orderBy: { startedAt: "desc" },
-      take: 200,
-    });
+    // Keep the global recent window for the UI, then add bounded per-job
+    // history so high-frequency jobs cannot hide daily expected jobs.
+    const cronRuns = await getCronRunsForAdminHealth(cronDefinitions);
 
     // Group cron runs by job name, take last 5 each
     const cronByJob = groupCronRunsByJob(cronRuns);
     const cronHealth = buildCronHealthReport({
-      definitions: await getCronJobDefinitionsForHealthReport(),
+      definitions: cronDefinitions,
       runs: cronRuns,
     });
 
