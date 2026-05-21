@@ -9,6 +9,7 @@ const mockCreatePaymentIntent = vi.fn();
 const mockFindOrCreateCustomer = vi.fn();
 const mockCheckCapacity = vi.fn();
 const mockCalculateBookingPrice = vi.fn();
+const mockCalculatePromoDiscountForGuestRates = vi.fn();
 const mockAuth = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
@@ -16,6 +17,7 @@ const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(unde
 const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
   error: error.message,
 }));
+const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
@@ -69,7 +71,7 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 
 vi.mock("@/lib/promo", () => ({
-  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
+  calculatePromoDiscountForGuestRates: mockCalculatePromoDiscountForGuestRates,
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   redeemPromoCode: vi.fn(),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
@@ -106,6 +108,7 @@ vi.mock("@/lib/xero", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: mockEnqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
@@ -148,7 +151,7 @@ vi.mock("@/lib/booking-modify-permissions", () => ({
   usesActiveBookingLifecycle: vi.fn().mockReturnValue(true),
 }));
 
-function makeBooking() {
+function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
     id: "bk1",
     memberId: "m1",
@@ -190,6 +193,7 @@ function makeBooking() {
       lastName: "Member",
     },
     promoRedemption: null,
+    ...overrides,
   };
 }
 
@@ -227,12 +231,36 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     promoCode: {
       update: vi.fn().mockResolvedValue(undefined),
+      findUnique: vi.fn().mockResolvedValue({
+        id: "promo_1",
+        code: "FREE100",
+        type: "PERCENTAGE",
+        valueCents: null,
+        percentOff: 100,
+        freeNights: null,
+        active: true,
+        validFrom: null,
+        validUntil: null,
+        maxRedemptions: null,
+        currentRedemptions: 0,
+        membersOnly: false,
+        singleUse: false,
+        assignments: [],
+      }),
     },
     choreAssignment: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     payment: {
       update: vi.fn().mockResolvedValue(undefined),
+      upsert: vi.fn().mockResolvedValue({
+        id: booking.payment?.id ?? "pay_zero",
+        amountCents: 0,
+        status: "SUCCEEDED",
+      }),
+    },
+    paymentTransaction: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     season: {
       findMany: vi.fn().mockResolvedValue([
@@ -284,6 +312,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       totalRefundedAmountCents: 0,
     });
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    mockCalculatePromoDiscountForGuestRates.mockReturnValue({ discountCents: 0, freeNightsUsed: 0 });
     mockAssertLinkedBookingMembersCanBeBooked.mockResolvedValue(undefined);
     mockGetBookingGuestValidationErrorResponse.mockImplementation((error: { message: string }) => ({
       error: error.message,
@@ -452,6 +481,117 @@ describe("PUT /api/bookings/[id]/modify", () => {
         createdByMemberId: "m1",
       }
     );
+    expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
+  });
+
+  it("marks a payment-pending booking paid when a batch edit promo reduces the total to zero", async () => {
+    const booking = makeBooking({
+      status: "PAYMENT_PENDING",
+      totalPriceCents: 10000,
+      finalPriceCents: 10000,
+      payment: {
+        id: "pay_1",
+        bookingId: "bk1",
+        amountCents: 6000,
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_pending",
+        xeroInvoiceId: null,
+        stripeCustomerId: "cus_existing",
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+    mockCalculatePromoDiscountForGuestRates.mockReturnValueOnce({
+      discountCents: 15000,
+      freeNightsUsed: 0,
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [
+          {
+            firstName: "Bob",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+          },
+        ],
+        promoCode: "FREE100",
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.booking.status).toBe("PAID");
+    expect(data.booking.finalPriceCents).toBe(0);
+
+    expect(tx.payment.upsert).toHaveBeenCalledWith({
+      where: { bookingId: "bk1" },
+      create: {
+        bookingId: "bk1",
+        amountCents: 0,
+        status: "SUCCEEDED",
+      },
+      update: {
+        amountCents: 0,
+        status: "SUCCEEDED",
+      },
+    });
+    expect(tx.paymentTransaction.updateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "pay_1",
+        kind: "PRIMARY",
+        status: { in: ["PENDING", "PROCESSING"] },
+      },
+      data: {
+        amountCents: 0,
+        status: "SUCCEEDED",
+        reason: "zero_dollar_batch_modification",
+      },
+    });
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "PAID",
+          finalPriceCents: 0,
+        }),
+      })
+    );
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("bk1", {
+      createdByMemberId: "m1",
+    });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 

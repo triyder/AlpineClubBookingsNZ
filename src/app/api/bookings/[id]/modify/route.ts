@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
+import { BookingStatus, PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -25,6 +25,7 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
 import {
+  enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
@@ -550,6 +551,7 @@ export async function PUT(
       const hasNonMembers = !allGuestsNowMembers;
       let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
       let newStatus = booking.status;
+      let zeroDollarAutoPaid = false;
 
       if (!skipBookingLifecycleRules && hasNonMembers) {
         const holdDays = await getNonMemberHoldDays(newCheckIn);
@@ -569,6 +571,39 @@ export async function PUT(
         }
       } else if (!skipBookingLifecycleRules) {
         newNonMemberHoldUntil = null;
+      }
+
+      if (
+        !skipBookingLifecycleRules &&
+        newFinalPriceCents === 0 &&
+        newStatus === BookingStatus.PAYMENT_PENDING
+      ) {
+        newStatus = BookingStatus.PAID;
+        zeroDollarAutoPaid = true;
+        const zeroDollarPayment = await tx.payment.upsert({
+          where: { bookingId },
+          create: {
+            bookingId,
+            amountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+          },
+          update: {
+            amountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+          },
+        });
+        await tx.paymentTransaction.updateMany({
+          where: {
+            paymentId: zeroDollarPayment.id,
+            kind: PaymentTransactionKind.PRIMARY,
+            status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+          },
+          data: {
+            amountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+            reason: "zero_dollar_batch_modification",
+          },
+        });
       }
 
       // --- Update booking ---
@@ -642,6 +677,7 @@ export async function PUT(
         oldGuestCount: booking.guests.length,
         hasSucceededPayment,
         hasIssuedXeroInvoice,
+        zeroDollarAutoPaid,
         xeroRefundAmountCents,
         xeroAdditionalAmountCents,
         paymentId: booking.payment?.id ?? null,
@@ -736,6 +772,7 @@ export async function PUT(
         refundAmountCents: result.refundAmountCents,
         promoRemoved: result.promoRemoved,
         promoChanged: result.promoChanged,
+        zeroDollarAutoPaid: result.zeroDollarAutoPaid,
       }),
       metadata: {
         bookingId,
@@ -747,6 +784,7 @@ export async function PUT(
         refundAmountCents: result.refundAmountCents,
         promoRemoved: result.promoRemoved,
         promoChanged: result.promoChanged,
+        zeroDollarAutoPaid: result.zeroDollarAutoPaid,
       },
       ipAddress,
     });
@@ -758,7 +796,15 @@ export async function PUT(
       }
     };
 
-    if (result.xeroAdditionalAmountCents > 0) {
+    if (result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice) {
+      void enqueueXeroBookingInvoiceOperation(bookingId, {
+        createdByMemberId: session.user.id,
+      })
+        .then(kickQueuedXeroOperation)
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero invoice for zero-dollar batch modification")
+        );
+    } else if (result.xeroAdditionalAmountCents > 0) {
       void enqueueXeroSupplementaryInvoiceOperation(
         {
           bookingId,
