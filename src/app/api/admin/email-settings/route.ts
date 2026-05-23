@@ -8,6 +8,7 @@ import {
 import {
   EMAIL_MESSAGE_SETTINGS_ID,
   loadPersistedEmailMessageSettings,
+  normalizeEmailMessagePublicUrl,
   normalizeEmailMessageSettings,
 } from "@/lib/email-message-settings";
 import { prisma } from "@/lib/prisma";
@@ -26,7 +27,10 @@ const settingsSchema = z
       .trim()
       .url()
       .max(500)
-      .transform((value) => value.replace(/\/+$/, ""))
+      .refine((value) => normalizeEmailMessagePublicUrl(value) !== null, {
+        message: "Public URL must use http or https",
+      })
+      .transform((value) => normalizeEmailMessagePublicUrl(value)!)
       .nullable()
       .optional(),
     lodgeTravelNote: z.string().trim().min(1).max(2000).nullable().optional(),

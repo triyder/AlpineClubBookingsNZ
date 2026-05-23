@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 const bedTypeSchema = z.enum(["dormitory", "private", "shared"]);
 const ageTierIdSchema = z.enum(["INFANT", "CHILD", "YOUTH", "ADULT"]);
 
@@ -63,6 +72,9 @@ export const clubConfigSchema = z
     publicUrl: z
       .string()
       .url("publicUrl must be a valid URL")
+      .refine(isHttpUrl, {
+        message: "publicUrl must be a valid http(s) URL",
+      })
       .refine((url) => !url.endsWith("/"), {
         message: "publicUrl must not end with a trailing slash",
       }),

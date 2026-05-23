@@ -67,6 +67,14 @@ describe("clubConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it.each(["javascript:alert(1)", "data:text/html,hello", "ftp://example.org"])(
+    "rejects publicUrl schemes that are not http(s): %s",
+    (publicUrl) => {
+      const result = clubConfigSchema.safeParse({ ...validClub, publicUrl });
+      expect(result.success).toBe(false);
+    },
+  );
+
   it("rejects unknown keys (strict mode)", () => {
     const result = clubConfigSchema.safeParse({ ...validClub, unexpectedKey: "boom" });
     expect(result.success).toBe(false);

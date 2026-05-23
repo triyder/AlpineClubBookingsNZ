@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   emailTemplateOverrideFindUnique: vi.fn(),
   emailTemplateOverrideUpsert: vi.fn(),
   emailTemplateOverrideFindMany: vi.fn(),
+  emailMessageSettingFindUnique: vi.fn(),
+  emailMessageSettingUpsert: vi.fn(),
   notificationDeliveryPolicyFindUnique: vi.fn(),
   notificationDeliveryPolicyUpsert: vi.fn(),
   notificationDeliveryPolicyFindMany: vi.fn(),
@@ -28,6 +30,10 @@ vi.mock("@/lib/prisma", () => ({
       upsert: mocks.emailTemplateOverrideUpsert,
       findMany: mocks.emailTemplateOverrideFindMany,
     },
+    emailMessageSetting: {
+      findUnique: mocks.emailMessageSettingFindUnique,
+      upsert: mocks.emailMessageSettingUpsert,
+    },
     notificationDeliveryPolicy: {
       findUnique: mocks.notificationDeliveryPolicyFindUnique,
       upsert: mocks.notificationDeliveryPolicyUpsert,
@@ -39,8 +45,15 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { PUT as putEmailTemplate } from "@/app/api/admin/email-templates/route";
-import { PUT as putDeliveryPolicy } from "@/app/api/admin/notification-delivery-policies/route";
+import {
+  GET as getEmailTemplates,
+  PUT as putEmailTemplate,
+} from "@/app/api/admin/email-templates/route";
+import { PUT as putEmailSettings } from "@/app/api/admin/email-settings/route";
+import {
+  GET as getDeliveryPolicies,
+  PUT as putDeliveryPolicy,
+} from "@/app/api/admin/notification-delivery-policies/route";
 
 function request(path: string, body: unknown) {
   return new NextRequest(`http://localhost${path}`, {
@@ -63,6 +76,15 @@ describe("admin email message APIs", () => {
       bodyText: "Reset here {{BASE_URL}}/reset-password?token={{token}}",
       updatedByMemberId: "admin-1",
     });
+    mocks.emailTemplateOverrideFindMany.mockResolvedValue([]);
+    mocks.emailMessageSettingFindUnique.mockResolvedValue(null);
+    mocks.emailMessageSettingUpsert.mockImplementation(({ update }) =>
+      Promise.resolve({
+        id: "default",
+        ...update,
+        updatedAt: new Date("2026-05-23T00:00:00.000Z"),
+      }),
+    );
     mocks.notificationDeliveryPolicyFindUnique.mockResolvedValue(null);
     mocks.notificationDeliveryPolicyUpsert.mockResolvedValue({
       id: "policy-1",
@@ -70,6 +92,7 @@ describe("admin email message APIs", () => {
       mode: "DISABLED",
       updatedByMemberId: "admin-1",
     });
+    mocks.notificationDeliveryPolicyFindMany.mockResolvedValue([]);
     mocks.auditLogCreate.mockResolvedValue({});
   });
 
@@ -145,6 +168,74 @@ describe("admin email message APIs", () => {
     expect(mocks.auditLogCreate).toHaveBeenCalled();
   });
 
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,hello",
+    "mailto:support@example.org",
+    "ftp://bookings.example.org",
+  ])("rejects non-http public URLs: %s", async (publicUrl) => {
+    const response = await putEmailSettings(
+      request("/api/admin/email-settings", { publicUrl }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.emailMessageSettingUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["https://bookings.example.org///", "https://bookings.example.org"],
+    ["http://localhost:3000/", "http://localhost:3000"],
+  ])("accepts and normalizes http public URLs", async (publicUrl, normalized) => {
+    const response = await putEmailSettings(
+      request("/api/admin/email-settings", { publicUrl }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.emailMessageSettingUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          publicUrl: normalized,
+        }),
+        update: expect.objectContaining({
+          publicUrl: normalized,
+        }),
+      }),
+    );
+  });
+
+  it("reports stale template overrides without listing them as current templates", async () => {
+    mocks.emailTemplateOverrideFindMany.mockResolvedValue([
+      {
+        templateName: "password-reset",
+        subject: "Reset your password",
+        bodyText: "Reset here {{BASE_URL}}/reset-password?token={{token}}",
+        updatedAt: new Date("2026-05-23T00:00:00.000Z"),
+        updatedByMemberId: "admin-1",
+      },
+      {
+        templateName: "retired-template",
+        subject: "Retired",
+        bodyText: "Old content",
+        updatedAt: new Date("2026-05-23T00:00:00.000Z"),
+        updatedByMemberId: "admin-1",
+      },
+    ]);
+
+    const response = await getEmailTemplates();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.templates.some((template: { key: string }) => template.key === "retired-template")).toBe(false);
+    expect(
+      body.templates.find((template: { key: string }) => template.key === "password-reset")
+        .override.subject,
+    ).toBe("Reset your password");
+    expect(body.staleOverrideCount).toBe(1);
+    expect(body.staleOverrides).toEqual([
+      expect.objectContaining({ templateName: "retired-template" }),
+    ]);
+  });
+
   it("updates editable delivery policies and blocks locked system policies", async () => {
     const lockedResponse = await putDeliveryPolicy(
       request("/api/admin/notification-delivery-policies", {
@@ -176,5 +267,43 @@ describe("admin email message APIs", () => {
       }),
     });
     expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("reports stale delivery policies without listing them as current policies", async () => {
+    mocks.notificationDeliveryPolicyFindMany.mockResolvedValue([
+      {
+        templateName: "admin-daily-digest",
+        mode: "DISABLED",
+        updatedAt: new Date("2026-05-23T00:00:00.000Z"),
+        updatedByMemberId: "admin-1",
+      },
+      {
+        templateName: "retired-admin-template",
+        mode: "ALWAYS",
+        updatedAt: new Date("2026-05-23T00:00:00.000Z"),
+        updatedByMemberId: "admin-1",
+      },
+    ]);
+
+    const response = await getDeliveryPolicies();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(
+      body.policies.some(
+        (policy: { templateName: string }) =>
+          policy.templateName === "retired-admin-template",
+      ),
+    ).toBe(false);
+    expect(
+      body.policies.find(
+        (policy: { templateName: string }) =>
+          policy.templateName === "admin-daily-digest",
+      ).mode,
+    ).toBe("disabled");
+    expect(body.stalePolicyCount).toBe(1);
+    expect(body.stalePolicies).toEqual([
+      expect.objectContaining({ templateName: "retired-admin-template" }),
+    ]);
   });
 });

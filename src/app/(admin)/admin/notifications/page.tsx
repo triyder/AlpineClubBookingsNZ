@@ -4,7 +4,7 @@ import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
   resolveAdminNotificationPreferences,
 } from "@/lib/admin-notification-preferences";
-import { listNotificationDeliveryPolicies } from "@/lib/notification-delivery-policies";
+import { listNotificationDeliveryPolicySettings } from "@/lib/notification-delivery-policies";
 import { EmailMessageSettingsPanel } from "@/components/admin/email-settings/email-message-settings-panel";
 import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
 import { AdminNotificationSettings } from "./notifications-settings";
@@ -33,9 +33,9 @@ async function getAdminUsers() {
 }
 
 export default async function AdminNotificationsPage() {
-  const [admins, policies] = await Promise.all([
+  const [admins, deliveryPolicySettings] = await Promise.all([
     getAdminUsers(),
-    listNotificationDeliveryPolicies(),
+    listNotificationDeliveryPolicySettings(),
   ]);
 
   return (
@@ -55,7 +55,10 @@ export default async function AdminNotificationsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <NotificationDeliveryPolicySettings initialPolicies={policies} />
+          <NotificationDeliveryPolicySettings
+            initialPolicies={deliveryPolicySettings.policies}
+            initialStalePolicyCount={deliveryPolicySettings.stalePolicyCount}
+          />
         </CardContent>
       </Card>
 

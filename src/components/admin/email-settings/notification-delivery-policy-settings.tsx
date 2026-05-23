@@ -29,10 +29,13 @@ const modeLabels: Record<NotificationDeliveryModeValue, string> = {
 
 export function NotificationDeliveryPolicySettings({
   initialPolicies,
+  initialStalePolicyCount = 0,
 }: {
   initialPolicies: Policy[];
+  initialStalePolicyCount?: number;
 }) {
   const [policies, setPolicies] = useState(initialPolicies);
+  const [stalePolicyCount] = useState(initialStalePolicyCount);
   const [savingTemplate, setSavingTemplate] = useState<string | null>(null);
 
   async function updatePolicy(
@@ -71,51 +74,59 @@ export function NotificationDeliveryPolicySettings({
   }
 
   return (
-    <div className="divide-y divide-slate-200">
-      {policies.map((policy) => (
-        <div
-          key={policy.templateName}
-          className="py-4 first:pt-0 last:pb-0"
-        >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <Label className="text-sm font-medium text-slate-900">
-                {policy.label}
-              </Label>
-              <p className="mt-1 text-xs text-slate-500">
-                Default: {modeLabels[policy.defaultMode]}
-              </p>
-            </div>
-            {policy.deliveryEditable ? (
-              <Select
-                value={policy.mode}
-                disabled={savingTemplate === policy.templateName}
-                onValueChange={(value) =>
-                  updatePolicy(
-                    policy.templateName,
-                    value as NotificationDeliveryModeValue,
-                  )
-                }
-              >
-                <SelectTrigger className="w-full sm:w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="always">Always send</SelectItem>
-                  <SelectItem value="content_only">
-                    Only when content exists
-                  </SelectItem>
-                  <SelectItem value="disabled">Do not email</SelectItem>
-                </SelectContent>
-              </Select>
-            ) : (
-              <Button variant="outline" size="sm" disabled>
-                Locked
-              </Button>
-            )}
-          </div>
+    <div className="space-y-4">
+      {stalePolicyCount > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {stalePolicyCount} stale delivery rule
+          {stalePolicyCount === 1 ? "" : "s"} need database cleanup.
         </div>
-      ))}
+      ) : null}
+      <div className="divide-y divide-slate-200">
+        {policies.map((policy) => (
+          <div
+            key={policy.templateName}
+            className="py-4 first:pt-0 last:pb-0"
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <Label className="text-sm font-medium text-slate-900">
+                  {policy.label}
+                </Label>
+                <p className="mt-1 text-xs text-slate-500">
+                  Default: {modeLabels[policy.defaultMode]}
+                </p>
+              </div>
+              {policy.deliveryEditable ? (
+                <Select
+                  value={policy.mode}
+                  disabled={savingTemplate === policy.templateName}
+                  onValueChange={(value) =>
+                    updatePolicy(
+                      policy.templateName,
+                      value as NotificationDeliveryModeValue,
+                    )
+                  }
+                >
+                  <SelectTrigger className="w-full sm:w-56">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="always">Always send</SelectItem>
+                    <SelectItem value="content_only">
+                      Only when content exists
+                    </SelectItem>
+                    <SelectItem value="disabled">Do not email</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Button variant="outline" size="sm" disabled>
+                  Locked
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

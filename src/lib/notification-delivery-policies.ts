@@ -1,5 +1,6 @@
 import {
   EMAIL_TEMPLATE_DEFINITIONS,
+  EMAIL_TEMPLATE_KEY_SET,
   getDefaultDeliveryMode,
   isAdminSystemTemplate,
   type NotificationDeliveryModeValue,
@@ -23,6 +24,19 @@ export interface NotificationDeliveryPolicyPayload {
   updatedByMemberId: string | null;
 }
 
+export interface StaleNotificationDeliveryPolicyPayload {
+  templateName: string;
+  mode: NotificationDeliveryModeValue;
+  updatedAt: string | null;
+  updatedByMemberId: string | null;
+}
+
+export interface NotificationDeliveryPolicyListPayload {
+  policies: NotificationDeliveryPolicyPayload[];
+  stalePolicyCount: number;
+  stalePolicies: StaleNotificationDeliveryPolicyPayload[];
+}
+
 function modeFromDb(
   value: NotificationDeliveryPolicyRecord["mode"] | null | undefined,
   fallback: NotificationDeliveryModeValue,
@@ -39,6 +53,12 @@ export function modeToDb(
   if (value === "content_only") return "CONTENT_ONLY";
   if (value === "disabled") return "DISABLED";
   return "ALWAYS";
+}
+
+function serializedUpdatedAt(record: { updatedAt?: Date | string | null }) {
+  return record.updatedAt instanceof Date
+    ? record.updatedAt.toISOString()
+    : record.updatedAt ?? null;
 }
 
 async function loadPolicyRecords(): Promise<NotificationDeliveryPolicyRecord[]> {
@@ -60,10 +80,36 @@ async function loadPolicyRecords(): Promise<NotificationDeliveryPolicyRecord[]> 
 export async function listNotificationDeliveryPolicies(): Promise<
   NotificationDeliveryPolicyPayload[]
 > {
-  const records = await loadPolicyRecords();
-  const byTemplate = new Map(records.map((record) => [record.templateName, record]));
+  return (await listNotificationDeliveryPolicySettings()).policies;
+}
 
-  return EMAIL_TEMPLATE_DEFINITIONS
+export async function listNotificationDeliveryPolicySettings(): Promise<
+  NotificationDeliveryPolicyListPayload
+> {
+  const records = await loadPolicyRecords();
+  const stalePolicies = records
+    .filter(
+      (record) =>
+        !EMAIL_TEMPLATE_KEY_SET.has(record.templateName) ||
+        !isAdminSystemTemplate(record.templateName),
+    )
+    .map((record) => ({
+      templateName: record.templateName,
+      mode: modeFromDb(record.mode, getDefaultDeliveryMode(record.templateName)),
+      updatedAt: serializedUpdatedAt(record),
+      updatedByMemberId: record.updatedByMemberId ?? null,
+    }));
+  const byTemplate = new Map(
+    records
+      .filter(
+        (record) =>
+          EMAIL_TEMPLATE_KEY_SET.has(record.templateName) &&
+          isAdminSystemTemplate(record.templateName),
+      )
+      .map((record) => [record.templateName, record]),
+  );
+
+  const policies = EMAIL_TEMPLATE_DEFINITIONS
     .filter((definition) => isAdminSystemTemplate(definition.key))
     .map((definition) => {
       const record = byTemplate.get(definition.key);
@@ -74,13 +120,16 @@ export async function listNotificationDeliveryPolicies(): Promise<
         mode: modeFromDb(record?.mode, defaultMode),
         defaultMode,
         deliveryEditable: definition.deliveryEditable,
-        updatedAt:
-          record?.updatedAt instanceof Date
-            ? record.updatedAt.toISOString()
-            : record?.updatedAt ?? null,
+        updatedAt: record ? serializedUpdatedAt(record) : null,
         updatedByMemberId: record?.updatedByMemberId ?? null,
       };
     });
+
+  return {
+    policies,
+    stalePolicyCount: stalePolicies.length,
+    stalePolicies,
+  };
 }
 
 export async function getNotificationDeliveryMode(

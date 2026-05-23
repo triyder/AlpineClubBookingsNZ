@@ -13,6 +13,14 @@ import { validateEmailTemplateContent } from "@/lib/email-message-renderer";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
+interface EmailTemplateOverrideRecord {
+  templateName: string;
+  subject: string | null;
+  bodyText: string | null;
+  updatedAt: Date;
+  updatedByMemberId: string | null;
+}
+
 const templateUpdateSchema = z
   .object({
     templateName: z.string().trim().min(1),
@@ -47,15 +55,7 @@ async function requireAdmin() {
 async function loadOverrides() {
   const delegate = (prisma as unknown as {
     emailTemplateOverride?: {
-      findMany: () => Promise<
-        Array<{
-          templateName: string;
-          subject: string | null;
-          bodyText: string | null;
-          updatedAt: Date;
-          updatedByMemberId: string | null;
-        }>
-      >;
+      findMany: () => Promise<EmailTemplateOverrideRecord[]>;
     };
   }).emailTemplateOverride;
 
@@ -63,13 +63,30 @@ async function loadOverrides() {
   return delegate.findMany();
 }
 
+function serializeOverride(override: EmailTemplateOverrideRecord) {
+  return {
+    subject: override.subject,
+    bodyText: override.bodyText,
+    updatedAt: override.updatedAt.toISOString(),
+    updatedByMemberId: override.updatedByMemberId,
+  };
+}
+
 export async function GET() {
   const { response } = await requireAdmin();
   if (response) return response;
 
   const overrides = await loadOverrides();
+  const staleOverrides = overrides
+    .filter((override) => !EMAIL_TEMPLATE_KEY_SET.has(override.templateName))
+    .map((override) => ({
+      templateName: override.templateName,
+      ...serializeOverride(override),
+    }));
   const overrideByTemplate = new Map(
-    overrides.map((override) => [override.templateName, override]),
+    overrides
+      .filter((override) => EMAIL_TEMPLATE_KEY_SET.has(override.templateName))
+      .map((override) => [override.templateName, override]),
   );
 
   return NextResponse.json({
@@ -77,16 +94,11 @@ export async function GET() {
       const override = overrideByTemplate.get(definition.key);
       return {
         ...definition,
-        override: override
-          ? {
-              subject: override.subject,
-              bodyText: override.bodyText,
-              updatedAt: override.updatedAt.toISOString(),
-              updatedByMemberId: override.updatedByMemberId,
-            }
-          : null,
+        override: override ? serializeOverride(override) : null,
       };
     }),
+    staleOverrideCount: staleOverrides.length,
+    staleOverrides,
   });
 }
 

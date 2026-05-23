@@ -3,6 +3,7 @@ import { escapeHtml } from "@/lib/email-templates";
 import { prisma } from "@/lib/prisma";
 
 export const EMAIL_MESSAGE_SETTINGS_ID = "default";
+const FALLBACK_PUBLIC_URL = "http://localhost:3000";
 
 export interface EmailMessageSettings {
   clubName: string;
@@ -33,9 +34,30 @@ function trimOptional(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+export function normalizeEmailMessagePublicUrl(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = trimOptional(value);
+  if (!trimmed) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return trimmed.replace(/\/+$/, "");
+}
+
 export function getDefaultEmailMessageSettings(): EmailMessageSettings {
   const clubName = clubConfig.name;
-  const publicUrl = (process.env.NEXTAUTH_URL || clubConfig.publicUrl).replace(/\/+$/, "");
+  const publicUrl =
+    normalizeEmailMessagePublicUrl(process.env.NEXTAUTH_URL) ??
+    normalizeEmailMessagePublicUrl(clubConfig.publicUrl) ??
+    FALLBACK_PUBLIC_URL;
   return {
     clubName,
     bookingsName: `${clubName} - Bookings`,
@@ -61,10 +83,8 @@ export function normalizeEmailMessageSettings(
       trimOptional(persisted?.emailFromName) ?? defaults.emailFromName,
     supportEmail: trimOptional(persisted?.supportEmail) ?? defaults.supportEmail,
     contactEmail: trimOptional(persisted?.contactEmail) ?? defaults.contactEmail,
-    publicUrl: (trimOptional(persisted?.publicUrl) ?? defaults.publicUrl).replace(
-      /\/+$/,
-      "",
-    ),
+    publicUrl:
+      normalizeEmailMessagePublicUrl(persisted?.publicUrl) ?? defaults.publicUrl,
     lodgeTravelNote:
       trimOptional(persisted?.lodgeTravelNote) ?? defaults.lodgeTravelNote,
   };
@@ -172,5 +192,5 @@ export function formatEmailFromAddressWithSettings(
 ): string {
   const address = fromAddress || process.env.EMAIL_FROM || settings.supportEmail;
   const fromName = settings.emailFromName.replace(/[\r\n]+/g, " ").trim();
-  return `"${fromName.replace(/"/g, '\\"')}" <${address}>`;
+  return `"${fromName.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" <${address}>`;
 }

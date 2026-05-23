@@ -70,6 +70,7 @@ export function EmailMessageSettingsPanel() {
   const [bodyText, setBodyText] = useState("");
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewSubject, setPreviewSubject] = useState("");
+  const [staleOverrideCount, setStaleOverrideCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -97,6 +98,7 @@ export function EmailMessageSettingsPanel() {
       const nextTemplates = templatesBody.templates as TemplateDefinition[];
       setSettings(settingsBody.settings);
       setTemplates(nextTemplates);
+      setStaleOverrideCount(templatesBody.staleOverrideCount ?? 0);
       const firstTemplate = selectedTemplate || nextTemplates[0]?.key || "";
       setSelectedTemplate(firstTemplate);
       const selected = nextTemplates.find((template) => template.key === firstTemplate);
@@ -230,6 +232,12 @@ export function EmailMessageSettingsPanel() {
 
   return (
     <div className="space-y-8">
+      {staleOverrideCount > 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {staleOverrideCount} stale template override
+          {staleOverrideCount === 1 ? "" : "s"} need database cleanup.
+        </div>
+      ) : null}
       <section className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2">
           {settingFields.map((field) => (
@@ -370,6 +378,7 @@ export function EmailMessageSettingsPanel() {
             <iframe
               title="Email preview"
               className="h-[520px] w-full rounded-md border border-slate-200 bg-white"
+              sandbox=""
               srcDoc={previewHtml}
             />
           </div>

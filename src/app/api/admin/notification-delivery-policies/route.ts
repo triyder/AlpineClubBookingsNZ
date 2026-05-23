@@ -11,7 +11,7 @@ import {
   type NotificationDeliveryModeValue,
 } from "@/lib/email-message-registry";
 import {
-  listNotificationDeliveryPolicies,
+  listNotificationDeliveryPolicySettings,
   modeToDb,
 } from "@/lib/notification-delivery-policies";
 import { prisma } from "@/lib/prisma";
@@ -47,9 +47,7 @@ export async function GET() {
   const { response } = await requireAdmin();
   if (response) return response;
 
-  return NextResponse.json({
-    policies: await listNotificationDeliveryPolicies(),
-  });
+  return NextResponse.json(await listNotificationDeliveryPolicySettings());
 }
 
 export async function PUT(request: NextRequest) {
