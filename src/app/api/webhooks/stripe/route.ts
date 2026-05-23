@@ -22,6 +22,11 @@ import {
   syncRefundsFromStripeCharge,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import {
+  completeCanceledSupersededPaymentIntentRecovery,
+  getStripePaymentMethodId,
+  queueSupersededPaymentIntentRefundRecovery,
+} from "@/lib/payment-recovery";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
@@ -198,6 +203,20 @@ async function handlePaymentIntentSucceeded(
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) {
     logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
+    return;
+  }
+
+  if (
+    await queueSupersededPaymentIntentRefundRecovery({
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      paymentMethodId: getStripePaymentMethodId(paymentIntent),
+    })
+  ) {
+    logger.warn(
+      { bookingId, paymentIntentId: paymentIntent.id },
+      "Superseded PaymentIntent succeeded; queued refund recovery instead of confirming booking"
+    );
     return;
   }
 
@@ -393,6 +412,18 @@ async function handlePaymentIntentCanceled(
   paymentIntent: Stripe.PaymentIntent
 ) {
   const bookingId = paymentIntent.metadata?.bookingId;
+  if (
+    await completeCanceledSupersededPaymentIntentRecovery({
+      paymentIntentId: paymentIntent.id,
+    })
+  ) {
+    logger.info(
+      { bookingId, paymentIntentId: paymentIntent.id },
+      "Completed superseded PaymentIntent cancellation recovery from Stripe webhook"
+    );
+    return;
+  }
+
   const paymentTransaction = await findPaymentTransactionByIntentId({
     paymentIntentId: paymentIntent.id,
   });

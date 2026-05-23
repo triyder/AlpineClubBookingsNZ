@@ -21,7 +21,6 @@ import {
   redeemPromoCode,
 } from "@/lib/promo";
 import {
-  cancelPaymentIntentIfCancellableWithResult,
   createPaymentIntent,
   findOrCreateCustomer,
 } from "@/lib/stripe";
@@ -59,6 +58,10 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import {
+  enqueuePaymentIntentCancellationRecovery,
+  processPaymentRecoveryOperations,
+} from "@/lib/payment-recovery";
 import { nameField } from "@/lib/zod-helpers";
 
 const batchModifySchema = z.object({
@@ -92,53 +95,8 @@ class ApiError extends Error {
 type SupersededPrimaryPaymentIntent = {
   paymentTransactionId: string;
   paymentIntentId: string;
+  amountCents: number;
 };
-
-async function cancelSupersededPrimaryPaymentIntents({
-  bookingId,
-  paymentIntents,
-}: {
-  bookingId: string;
-  paymentIntents: SupersededPrimaryPaymentIntent[];
-}) {
-  for (const paymentIntent of paymentIntents) {
-    try {
-      const result = await cancelPaymentIntentIfCancellableWithResult(
-        paymentIntent.paymentIntentId
-      );
-      const shouldMarkFailed =
-        result.canceled || result.paymentIntent.status === "canceled";
-
-      if (!shouldMarkFailed) {
-        logger.warn(
-          {
-            bookingId,
-            paymentIntentId: paymentIntent.paymentIntentId,
-            status: result.paymentIntent.status,
-          },
-          "Superseded zero-dollar PaymentIntent was already terminal"
-        );
-        continue;
-      }
-
-      await prisma.paymentTransaction.updateMany({
-        where: {
-          id: paymentIntent.paymentTransactionId,
-          status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
-        },
-        data: {
-          status: PaymentStatus.FAILED,
-          reason: "zero_dollar_batch_modification_superseded",
-        },
-      });
-    } catch (err) {
-      logger.error(
-        { err, bookingId, paymentIntentId: paymentIntent.paymentIntentId },
-        "Failed to cancel superseded Stripe PaymentIntent after zero-dollar batch modification"
-      );
-    }
-  }
-}
 
 export async function PUT(
   request: NextRequest,
@@ -663,14 +621,26 @@ export async function PUT(
           select: {
             id: true,
             stripePaymentIntentId: true,
+            amountCents: true,
           },
         });
         supersededPrimaryPaymentIntents = pendingPrimaryTransactions.map(
           (transaction) => ({
             paymentTransactionId: transaction.id,
             paymentIntentId: transaction.stripePaymentIntentId,
+            amountCents: transaction.amountCents,
           })
         );
+        for (const transaction of pendingPrimaryTransactions) {
+          await enqueuePaymentIntentCancellationRecovery({
+            bookingId,
+            paymentId: zeroDollarPayment.id,
+            paymentTransactionId: transaction.id,
+            paymentIntentId: transaction.stripePaymentIntentId,
+            amountCents: transaction.amountCents,
+            store: tx,
+          });
+        }
       }
 
       // --- Update booking ---
@@ -758,10 +728,16 @@ export async function PUT(
     });
 
     if (result.supersededPrimaryPaymentIntents.length > 0) {
-      await cancelSupersededPrimaryPaymentIntents({
-        bookingId,
-        paymentIntents: result.supersededPrimaryPaymentIntents,
-      });
+      try {
+        await processPaymentRecoveryOperations({
+          limit: result.supersededPrimaryPaymentIntents.length,
+        });
+      } catch (err) {
+        logger.error(
+          { err, bookingId },
+          "Failed to immediately process queued Stripe payment recovery operations"
+        );
+      }
     }
 
     let stripeRefundId: string | undefined;

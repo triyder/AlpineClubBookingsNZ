@@ -37,6 +37,8 @@ const mockRefundPaymentTransactions = vi.fn();
 const mockFindPaymentTransactionByIntentId = vi.fn();
 const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
 const mockMarkPaymentIntentTransactionFailed = vi.fn();
+const mockCompleteCanceledSupersededPaymentIntentRecovery = vi.fn();
+const mockQueueSupersededPaymentIntentRefundRecovery = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund", message: "queued" });
@@ -145,6 +147,18 @@ vi.mock("@/lib/payment-transactions", () => ({
   markPaymentIntentTransactionFailed: (...args: unknown[]) =>
     mockMarkPaymentIntentTransactionFailed(...args),
   syncRefundsFromStripeCharge: vi.fn(),
+}));
+vi.mock("@/lib/payment-recovery", () => ({
+  completeCanceledSupersededPaymentIntentRecovery: (...args: unknown[]) =>
+    mockCompleteCanceledSupersededPaymentIntentRecovery(...args),
+  queueSupersededPaymentIntentRefundRecovery: (...args: unknown[]) =>
+    mockQueueSupersededPaymentIntentRefundRecovery(...args),
+  getStripePaymentMethodId: (paymentIntent: {
+    payment_method?: string | { id?: string | null } | null;
+  }) =>
+    typeof paymentIntent.payment_method === "string"
+      ? paymentIntent.payment_method
+      : paymentIntent.payment_method?.id ?? null,
 }));
 
 // Chore cleanup mock
@@ -747,6 +761,8 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockMemberCount.mockResolvedValue(1);
+    mockCompleteCanceledSupersededPaymentIntentRecovery.mockResolvedValue(false);
+    mockQueueSupersededPaymentIntentRefundRecovery.mockResolvedValue(false);
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
     const mod = await import("@/app/api/webhooks/stripe/route");
     POST = mod.POST;

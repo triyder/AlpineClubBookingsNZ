@@ -104,6 +104,18 @@ enum PaymentTransactionKind {
   ADDITIONAL
 }
 
+enum PaymentRecoveryOperationType {
+  CANCEL_PAYMENT_INTENT
+  REFUND_SUPERSEDED_PAYMENT
+}
+
+enum PaymentRecoveryOperationStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
 enum PromoCodeType {
   PERCENTAGE
   FIXED_AMOUNT
@@ -456,6 +468,7 @@ model Booking {
   creditsFromCancellation MemberCredit[]        @relation("CreditSource")
   creditsApplied          MemberCredit[]        @relation("CreditApplied")
   refundRequests          RefundRequest[]
+  paymentRecoveryOperations PaymentRecoveryOperation[]
 
   @@index([memberId])
   @@index([createdById])
@@ -519,6 +532,7 @@ model Payment {
   booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   transactions PaymentTransaction[]
   refunds      PaymentRefund[]
+  recoveryOperations PaymentRecoveryOperation[]
 
   @@index([bookingId])
   @@index([stripePaymentIntentId])
@@ -541,6 +555,7 @@ model PaymentTransaction {
 
   payment Payment         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   refunds PaymentRefund[]
+  recoveryOperations PaymentRecoveryOperation[]
 
   @@index([paymentId, createdAt])
   @@index([paymentId, kind, createdAt])
@@ -571,6 +586,36 @@ model PaymentRefund {
   @@index([stripeChargeId])
   @@index([stripePaymentIntentId])
   @@index([status, createdAt])
+}
+
+model PaymentRecoveryOperation {
+  id                   String                         @id @default(cuid())
+  type                 PaymentRecoveryOperationType
+  status               PaymentRecoveryOperationStatus @default(PENDING)
+  bookingId            String
+  paymentId            String
+  paymentTransactionId String?
+  paymentIntentId      String
+  amountCents          Int
+  idempotencyKey       String                         @unique
+  attempts             Int                            @default(0)
+  nextRetryAt          DateTime?                      @default(now())
+  lastError            String?                        @db.Text
+  processingStartedAt  DateTime?
+  succeededAt          DateTime?
+  createdAt            DateTime                       @default(now())
+  updatedAt            DateTime                       @updatedAt
+
+  booking            Booking             @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([paymentId])
+  @@index([paymentTransactionId])
+  @@index([paymentIntentId])
+  @@index([status, nextRetryAt, createdAt])
+  @@index([type, status])
 }
 
 // ---------------------------------------------------------------------------

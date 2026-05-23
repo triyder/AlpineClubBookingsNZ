@@ -26,6 +26,8 @@ const {
   mockRefundPaymentTransactions,
   mockSyncRefundsFromStripeCharge,
   mockUpsertPaymentIntentTransaction,
+  mockCompleteCanceledSupersededPaymentIntentRecovery,
+  mockQueueSupersededPaymentIntentRefundRecovery,
   mockMarkBookingPaymentSucceeded,
   mockMarkBookingSetupIntentSucceeded,
   mockListRefundsForCharge,
@@ -69,6 +71,8 @@ const {
   }),
   mockSyncRefundsFromStripeCharge: vi.fn().mockResolvedValue(null),
   mockUpsertPaymentIntentTransaction: vi.fn().mockResolvedValue(undefined),
+  mockCompleteCanceledSupersededPaymentIntentRecovery: vi.fn().mockResolvedValue(false),
+  mockQueueSupersededPaymentIntentRefundRecovery: vi.fn().mockResolvedValue(false),
   mockMarkBookingPaymentSucceeded: vi.fn().mockResolvedValue({
     outcome: "paid",
     bookingId: "booking-1",
@@ -101,6 +105,18 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockSyncRefundsFromStripeCharge(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+}));
+vi.mock("@/lib/payment-recovery", () => ({
+  completeCanceledSupersededPaymentIntentRecovery: (...args: unknown[]) =>
+    mockCompleteCanceledSupersededPaymentIntentRecovery(...args),
+  queueSupersededPaymentIntentRefundRecovery: (...args: unknown[]) =>
+    mockQueueSupersededPaymentIntentRefundRecovery(...args),
+  getStripePaymentMethodId: (paymentIntent: {
+    payment_method?: string | { id?: string | null } | null;
+  }) =>
+    typeof paymentIntent.payment_method === "string"
+      ? paymentIntent.payment_method
+      : paymentIntent.payment_method?.id ?? null,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -180,6 +196,8 @@ describe("Stripe webhook Xero alerting", () => {
     });
     mockSyncRefundsFromStripeCharge.mockResolvedValue(null);
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    mockCompleteCanceledSupersededPaymentIntentRecovery.mockResolvedValue(false);
+    mockQueueSupersededPaymentIntentRefundRecovery.mockResolvedValue(false);
     mockMarkBookingPaymentSucceeded.mockResolvedValue({
       outcome: "paid",
       bookingId: "booking-1",
@@ -419,6 +437,63 @@ describe("Stripe webhook Xero alerting", () => {
         cancellationReason: "requested_by_customer",
       }),
     });
+  });
+
+  it("completes superseded cancellation recovery when Stripe sends payment_intent.canceled", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_canceled_superseded",
+      type: "payment_intent.canceled",
+      data: {
+        object: {
+          id: "pi_superseded_canceled",
+          amount: 6000,
+          cancellation_reason: "requested_by_customer",
+          metadata: {
+            bookingId: "booking-5",
+          },
+        },
+      },
+    } as any);
+    mockCompleteCanceledSupersededPaymentIntentRecovery.mockResolvedValue(true);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockCompleteCanceledSupersededPaymentIntentRecovery).toHaveBeenCalledWith({
+      paymentIntentId: "pi_superseded_canceled",
+    });
+    expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
+  });
+
+  it("queues refund recovery instead of confirming a superseded succeeded PaymentIntent", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_succeeded_superseded",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_superseded_succeeded",
+          amount: 6000,
+          payment_method: "pm_superseded",
+          metadata: {
+            bookingId: "booking-5",
+          },
+        },
+      },
+    } as any);
+    mockQueueSupersededPaymentIntentRefundRecovery.mockResolvedValue(true);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockQueueSupersededPaymentIntentRefundRecovery).toHaveBeenCalledWith({
+      paymentIntentId: "pi_superseded_succeeded",
+      amountCents: 6000,
+      paymentMethodId: "pm_superseded",
+    });
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
   });
 
   it("ignores stale failed intents when no current payment transaction matches the webhook intent", async () => {

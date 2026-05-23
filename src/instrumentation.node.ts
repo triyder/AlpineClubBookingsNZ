@@ -73,6 +73,7 @@ export async function register() {
     let isXeroReportCronRunning = false;
     let isXeroReplayCronRunning = false;
     let isXeroInboundCronRunning = false;
+    let isPaymentRecoveryCronRunning = false;
     let isWaitlistCronRunning = false;
 
     // Helper: record a cron job run
@@ -162,6 +163,40 @@ export async function register() {
     }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
+
+    cron.default.schedule("*/15 * * * *", async () => {
+      if (isPaymentRecoveryCronRunning) {
+        logger.info({ job: "payment-recovery" }, "Already running, skipping");
+        return;
+      }
+      isPaymentRecoveryCronRunning = true;
+      const startedAt = new Date();
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "payment-recovery", status: "in_progress" },
+        sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 5, maxRuntime: 10 })
+      );
+
+      try {
+        const { processPaymentRecoveryOperations } = await import(
+          "./lib/payment-recovery"
+        );
+        const result = await processPaymentRecoveryOperations();
+        logger.info({ job: "payment-recovery", ...result }, "Payment recovery cron complete");
+        await recordCronRun("payment-recovery", startedAt, "SUCCESS", { ...result });
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "ok" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "payment-recovery" }, "Error in payment recovery cron");
+        Sentry.captureException(err);
+        await recordCronRun("payment-recovery", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "error" });
+      } finally {
+        isPaymentRecoveryCronRunning = false;
+      }
+    }, { timezone: CRON_TIMEZONE });
+
+    logger.info({ job: "payment-recovery" }, "Scheduled payment recovery (every 15 minutes)");
 
     if (optionalCron.xeroIntegration) {
     // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)

@@ -6,7 +6,6 @@ const mockTransaction = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockCreatePaymentIntent = vi.fn();
-const mockCancelPaymentIntentIfCancellableWithResult = vi.fn();
 const mockFindOrCreateCustomer = vi.fn();
 const mockCheckCapacity = vi.fn();
 const mockCalculateBookingPrice = vi.fn();
@@ -15,6 +14,8 @@ const mockAuth = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
+const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
+const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(undefined);
 const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
   error: error.message,
@@ -83,8 +84,6 @@ vi.mock("@/lib/promo", () => ({
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  cancelPaymentIntentIfCancellableWithResult:
-    mockCancelPaymentIntentIfCancellableWithResult,
   processRefund: vi.fn(),
   createPaymentIntent: mockCreatePaymentIntent,
   findOrCreateCustomer: mockFindOrCreateCustomer,
@@ -94,6 +93,12 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockRefundPaymentTransactions(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+}));
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
+    mockEnqueuePaymentIntentCancellationRecovery(...args),
+  processPaymentRecoveryOperations: (...args: unknown[]) =>
+    mockProcessPaymentRecoveryOperations(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -315,11 +320,18 @@ describe("PUT /api/bookings/[id]/modify", () => {
       id: "pi_batch",
       client_secret: "pi_batch_secret",
     });
-    mockCancelPaymentIntentIfCancellableWithResult.mockResolvedValue({
-      paymentIntent: { id: "pi_pending", status: "canceled" },
-      canceled: true,
-    });
     mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
+    mockEnqueuePaymentIntentCancellationRecovery.mockResolvedValue({
+      id: "recovery_1",
+    });
+    mockProcessPaymentRecoveryOperations.mockResolvedValue({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      retried: 0,
+      skipped: 0,
+    });
     mockRefundPaymentTransactions.mockResolvedValue({
       refunds: [],
       totalRefundedAmountCents: 0,
@@ -519,6 +531,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       {
         id: "ptx_pending",
         stripePaymentIntentId: "pi_pending",
+        amountCents: 6000,
       },
     ]);
 
@@ -600,21 +613,18 @@ describe("PUT /api/bookings/[id]/modify", () => {
       select: {
         id: true,
         stripePaymentIntentId: true,
+        amountCents: true,
       },
     });
-    expect(mockCancelPaymentIntentIfCancellableWithResult).toHaveBeenCalledWith(
-      "pi_pending",
-    );
-    expect(mockPaymentTransactionUpdateMany).toHaveBeenCalledWith({
-      where: {
-        id: "ptx_pending",
-        status: { in: ["PENDING", "PROCESSING"] },
-      },
-      data: {
-        status: "FAILED",
-        reason: "zero_dollar_batch_modification_superseded",
-      },
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "pay_1",
+      paymentTransactionId: "ptx_pending",
+      paymentIntentId: "pi_pending",
+      amountCents: 6000,
+      store: tx,
     });
+    expect(mockProcessPaymentRecoveryOperations).toHaveBeenCalledWith({ limit: 1 });
     expect(tx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -630,6 +640,84 @@ describe("PUT /api/bookings/[id]/modify", () => {
       createdByMemberId: "m1",
     });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
+  });
+
+  it("still succeeds when immediate queued Stripe recovery processing fails", async () => {
+    const booking = makeBooking({
+      status: "PAYMENT_PENDING",
+      totalPriceCents: 10000,
+      finalPriceCents: 10000,
+      payment: {
+        id: "pay_1",
+        bookingId: "bk1",
+        amountCents: 6000,
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_pending",
+        xeroInvoiceId: null,
+        stripeCustomerId: "cus_existing",
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+    });
+    const tx = makeTx(booking);
+    tx.paymentTransaction.findMany.mockResolvedValue([
+      {
+        id: "ptx_pending",
+        stripePaymentIntentId: "pi_pending",
+        amountCents: 6000,
+      },
+    ]);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+    mockCalculatePromoDiscountForGuestRates.mockReturnValueOnce({
+      discountCents: 15000,
+      freeNightsUsed: 0,
+    });
+    mockProcessPaymentRecoveryOperations.mockRejectedValueOnce(
+      new Error("Stripe unavailable")
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [
+          {
+            firstName: "Bob",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+          },
+        ],
+        promoCode: "FREE100",
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalled();
+    expect(mockProcessPaymentRecoveryOperations).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("queues a primary Xero invoice update for zero-net batch date changes", async () => {

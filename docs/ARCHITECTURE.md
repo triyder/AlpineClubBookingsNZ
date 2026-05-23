@@ -159,6 +159,11 @@ Stripe is used for PaymentIntents, SetupIntents, saved payment methods, refunds,
 and webhook reconciliation. Webhook routes should be idempotent and must not
 trust client-supplied payment state.
 
+Superseded Stripe PaymentIntents that can no longer settle a booking are tracked
+through `PaymentRecoveryOperation`. The recovery worker cancels still-open
+intents, treats already-cancelled intents as complete, and queues/refunds late
+captures without running the normal booking-confirmation path.
+
 ### Operational Xero
 
 Operational Xero handles member/contact sync, booking invoices, payments,
@@ -186,6 +191,7 @@ disable cron with `CRON_ENABLED=false`.
 | Job | Schedule | Purpose |
 | --- | --- | --- |
 | `confirm-pending` | Every 3 hours | Confirm pending bookings after hold deadlines |
+| `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents |
 | `waitlist` | Every 30 minutes | Expire offers and advance waitlist |
 | `email-retry` | Every 30 minutes | Retry failed email sends |
 | `xero-retry` | Every 15 minutes | Process queued Xero operations |

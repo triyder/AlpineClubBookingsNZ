@@ -167,6 +167,17 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        jobName: "payment-recovery",
+        label: "Stripe payment recovery",
+        schedule: "*/15 * * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "xero-membership-refresh",
         label: "Xero membership refresh",
         schedule: "0 2 * * *",
