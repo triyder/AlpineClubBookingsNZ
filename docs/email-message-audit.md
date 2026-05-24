@@ -1086,6 +1086,71 @@ Triggers and frequency:
 - Member includes another login-capable adult in a membership cancellation request.
 - Sent once per pending participant confirmation.
 
+### membership-cancellation-approved
+
+Subject:
+
+```text
+Membership cancellation approved — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Membership Cancellation Approved
+
+Hi {{firstName}},
+
+The membership cancellation for {{participantName}} has been approved and processed.
+
+Request reason: {{reason}} [only when reason exists]
+
+This membership is now inactive and the booking login has been disabled. Booking, payment, and audit history has been retained.
+
+Admin note: {{adminNote}} [only when adminNote exists]
+
+{{rejoinProcessText}} [only when rejoinProcessText exists]
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Admin approves and locally processes a membership cancellation participant.
+- Sent once per approved participant. Email failure is logged but does not block local cancellation processing.
+- No Xero credit note, contact group, or archive action is performed by this email path.
+
+### membership-cancellation-rejected
+
+Subject:
+
+```text
+Membership cancellation update — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Membership Cancellation Request Update
+
+Hi {{firstName}},
+
+The membership cancellation request for {{participantName}} was not approved at this time.
+
+Request reason: {{reason}} [only when reason exists]
+
+Admin note: {{adminNote}} [only when adminNote exists]
+
+This membership remains active.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Admin rejects a membership cancellation participant.
+- Sent once per rejected participant.
+
 ### age-up-invitation
 
 Subject:

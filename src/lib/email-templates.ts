@@ -1380,6 +1380,74 @@ export function membershipCancellationConfirmationTemplate(params: {
   `);
 }
 
+export function membershipCancellationApprovedTemplate(params: {
+  firstName: string;
+  participantName: string;
+  reason?: string | null;
+  adminNote?: string | null;
+  rejoinProcessText?: string | null;
+}): string {
+  const reasonHtml = params.reason
+    ? `${paragraph(
+        "Request reason: <strong>" + escapeHtml(params.reason) + "</strong>"
+      )}`
+    : "";
+  const adminNoteHtml = params.adminNote
+    ? `${alertBox("Admin note: " + escapeHtml(params.adminNote), "info")}`
+    : "";
+  const rejoinHtml = params.rejoinProcessText
+    ? `${alertBox(escapeHtml(params.rejoinProcessText), "warning")}`
+    : "";
+
+  return layout(`
+    ${heading("Membership Cancellation Approved")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ",")}
+    ${paragraph(
+      "The membership cancellation for <strong>" +
+        escapeHtml(params.participantName) +
+        "</strong> has been approved and processed."
+    )}
+    ${reasonHtml}
+    ${alertBox(
+      "This membership is now inactive and the booking login has been disabled. Booking, payment, and audit history has been retained.",
+      "info"
+    )}
+    ${adminNoteHtml}
+    ${rejoinHtml}
+    ${supportContactMuted()}
+  `);
+}
+
+export function membershipCancellationRejectedTemplate(params: {
+  firstName: string;
+  participantName: string;
+  reason?: string | null;
+  adminNote?: string | null;
+}): string {
+  const reasonHtml = params.reason
+    ? `${paragraph(
+        "Request reason: <strong>" + escapeHtml(params.reason) + "</strong>"
+      )}`
+    : "";
+  const adminNoteHtml = params.adminNote
+    ? `${alertBox("Admin note: " + escapeHtml(params.adminNote), "warning")}`
+    : "";
+
+  return layout(`
+    ${heading("Membership Cancellation Request Update")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ",")}
+    ${paragraph(
+      "The membership cancellation request for <strong>" +
+        escapeHtml(params.participantName) +
+        "</strong> was not approved at this time."
+    )}
+    ${reasonHtml}
+    ${adminNoteHtml}
+    ${paragraph("This membership remains active.")}
+    ${supportContactMuted()}
+  `);
+}
+
 export function adminMembershipApplicationPendingTemplate(data: {
   applicantName: string;
   applicantEmail: string;
