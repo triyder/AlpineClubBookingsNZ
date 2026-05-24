@@ -69,6 +69,8 @@ vi.mock("@/lib/booking-policies", () => ({
   formatViolationsDetail: vi.fn().mockReturnValue(""),
 }));
 vi.mock("@/lib/capacity", () => ({
+  checkCapacity: vi.fn().mockResolvedValue({ available: true, minAvailable: 29, nightDetails: [] }),
+  checkCapacityForGuestRanges: vi.fn().mockResolvedValue({ available: true, minAvailable: 29, nightDetails: [] }),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
   LODGE_CAPACITY: 29,
 }));

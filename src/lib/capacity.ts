@@ -153,6 +153,57 @@ export async function checkCapacity(
   };
 }
 
+export async function checkCapacityForGuestRanges(
+  checkIn: Date,
+  checkOut: Date,
+  guests: GuestStayRange[],
+  excludeBookingId?: string,
+  tx?: TransactionClient
+): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
+  const db = tx ?? prisma;
+  const start = normalizeDateOnlyForTimeZone(checkIn);
+  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const nights = eachDateOnlyInRange(start, exclusiveEnd);
+
+  if (nights.length === 0) {
+    return { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
+  }
+
+  const overlappingBookings = await db.booking.findMany({
+    where: {
+      checkIn: { lt: exclusiveEnd },
+      checkOut: { gt: start },
+      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
+      ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+    },
+    include: {
+      guests: true,
+    },
+  });
+
+  const nightDetails: NightAvailability[] = nights.map((night) => {
+    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
+    const proposedBeds = countActiveGuestsForNight(guests, night, {
+      checkIn: start,
+      checkOut: exclusiveEnd,
+    });
+
+    return {
+      date: night,
+      occupiedBeds: occupiedBeds + proposedBeds,
+      availableBeds: LODGE_CAPACITY - occupiedBeds - proposedBeds,
+    };
+  });
+
+  const minAvailable = Math.min(...nightDetails.map((n) => n.availableBeds));
+
+  return {
+    available: minAvailable >= 0,
+    minAvailable,
+    nightDetails,
+  };
+}
+
 /**
  * Get a monthly availability summary for calendar display.
  */

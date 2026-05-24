@@ -3,7 +3,7 @@ import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
@@ -36,6 +36,12 @@ import {
   usesActiveBookingLifecycle,
 } from "@/lib/booking-modify-permissions";
 import { nameField } from "@/lib/zod-helpers";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import {
+  buildInProgressGuestRangePlan,
+  type BookingEditGuestRangePlan,
+} from "@/lib/booking-edit-guest-ranges";
+import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -101,6 +107,19 @@ export async function POST(
     );
   }
 
+  const editPolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: session.user.role,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+  });
+  if (!editPolicy.canModify) {
+    return NextResponse.json(
+      { error: editPolicy.reason ?? "This booking cannot be modified" },
+      { status: 400 }
+    );
+  }
+
   const body = await request.json();
   const parsed = modifyQuoteSchema.safeParse(body);
   if (!parsed.success) {
@@ -151,8 +170,49 @@ export async function POST(
   }
 
   // Determine new dates
-  const newCheckIn = newCheckInStr ? new Date(newCheckInStr) : booking.checkIn;
-  const newCheckOut = newCheckOutStr ? new Date(newCheckOutStr) : booking.checkOut;
+  const requestedCheckIn = newCheckInStr ? parseDateOnly(newCheckInStr) : booking.checkIn;
+  const requestedCheckOut = newCheckOutStr ? parseDateOnly(newCheckOutStr) : booking.checkOut;
+  if (
+    Number.isNaN(requestedCheckIn.getTime()) ||
+    Number.isNaN(requestedCheckOut.getTime())
+  ) {
+    return NextResponse.json(
+      { error: "Invalid booking dates" },
+      { status: 400 }
+    );
+  }
+
+  const isInProgressEdit = editPolicy.mode === "in-progress";
+  const bookingCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+  const editableFrom = editPolicy.editableFrom;
+
+  if (isInProgressEdit) {
+    if (
+      newCheckInStr &&
+      formatDateOnly(normalizeDateOnlyForTimeZone(requestedCheckIn)) !==
+        formatDateOnly(bookingCheckIn)
+    ) {
+      return NextResponse.json(
+        { error: "Check-in cannot be changed for an in-progress booking" },
+        { status: 400 }
+      );
+    }
+    if (editableFrom && normalizeDateOnlyForTimeZone(requestedCheckOut) < editableFrom) {
+      return NextResponse.json(
+        { error: "NZ today and earlier are locked for self-service changes" },
+        { status: 400 }
+      );
+    }
+    if (newPromoCode || removePromoCode) {
+      return NextResponse.json(
+        { error: "Promo code changes are not available for in-progress bookings" },
+        { status: 400 }
+      );
+    }
+  }
+
+  const newCheckIn = isInProgressEdit ? booking.checkIn : requestedCheckIn;
+  const newCheckOut = requestedCheckOut;
   const skipBookingLifecycleRules =
     session.user.role === "ADMIN" &&
     !usesActiveBookingLifecycle(booking.status);
@@ -169,7 +229,11 @@ export async function POST(
   const remainingGuests = booking.guests.filter((g) => !removeSet.has(g.id));
   const removedGuests = booking.guests.filter((g) => removeSet.has(g.id));
 
-  if (remainingGuests.length === 0 && (!normalizedAddGuests || normalizedAddGuests.length === 0)) {
+  if (
+    !isInProgressEdit &&
+    remainingGuests.length === 0 &&
+    (!normalizedAddGuests || normalizedAddGuests.length === 0)
+  ) {
     return NextResponse.json(
       { error: "Booking must have at least one guest" },
       { status: 400 }
@@ -201,7 +265,7 @@ export async function POST(
   if (session.user.role !== "ADMIN") {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
       bookingMemberId: booking.memberId,
-      checkIn: newCheckIn,
+      checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
       guests: normalizedAddGuests ?? [],
     });
 
@@ -219,16 +283,11 @@ export async function POST(
 
   // Minimum stay policy validation (skip for admins)
   let minimumStayViolations: { policyName: string; triggerDay: string; minimumNights: number; actualNights: number }[] = [];
-  if (session.user.role !== "ADMIN") {
+  if (session.user.role !== "ADMIN" && !isInProgressEdit) {
     const { validateMinimumStay } = await import("@/lib/booking-policies");
     const stayResult = await validateMinimumStay(newCheckIn, newCheckOut);
     minimumStayViolations = stayResult.violations;
   }
-
-  // Capacity check (exclude current booking)
-  const capacity = skipBookingLifecycleRules
-    ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
-    : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId);
 
   // Load seasons for pricing
   const seasons = await prisma.season.findMany({
@@ -247,16 +306,67 @@ export async function POST(
     })),
   }));
 
+  let inProgressPlan: BookingEditGuestRangePlan | null = null;
+  try {
+    inProgressPlan =
+      isInProgressEdit && editableFrom
+        ? buildInProgressGuestRangePlan({
+          booking: {
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+            totalPriceCents: booking.totalPriceCents,
+            discountCents: booking.discountCents,
+            finalPriceCents: booking.finalPriceCents,
+            guests: booking.guests.map((guest) => ({
+              ...guest,
+              ageTier: guest.ageTier as AgeTier,
+            })),
+          },
+          editableFrom,
+          newCheckOut,
+          addGuests: normalizedAddGuests,
+          removeGuestIds,
+          seasons: seasonRateData,
+        })
+        : null;
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to price the requested future-night changes",
+      },
+      { status: 400 }
+    );
+  }
+
+  // Capacity check (exclude current booking)
+  const capacity = skipBookingLifecycleRules
+    ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
+    : inProgressPlan && editableFrom
+      ? await checkCapacityForGuestRanges(
+          editableFrom,
+          newCheckOut,
+          inProgressPlan.capacityGuestRanges,
+          bookingId
+        )
+      : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId);
+
   // Calculate new total price
   let newTotalPriceCents: number;
   try {
-    const priceBreakdown = calculateBookingPrice(
-      newCheckIn,
-      newCheckOut,
-      guestsForPricing,
-      seasonRateData
-    );
-    newTotalPriceCents = priceBreakdown.totalPriceCents;
+    if (inProgressPlan) {
+      newTotalPriceCents = inProgressPlan.newTotalPriceCents;
+    } else {
+      const priceBreakdown = calculateBookingPrice(
+        newCheckIn,
+        newCheckOut,
+        guestsForPricing,
+        seasonRateData
+      );
+      newTotalPriceCents = priceBreakdown.totalPriceCents;
+    }
   } catch {
     return NextResponse.json(
       { error: "No season rate found for the requested dates" },
@@ -274,7 +384,17 @@ export async function POST(
     newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
 
   // 1. Date change cost: price remaining guests at new dates vs old dates
-  if (datesChanged && remainingGuests.length > 0) {
+  if (inProgressPlan) {
+    if (inProgressPlan.futureExistingDeltaCents !== 0) {
+      itemizedChanges.push({
+        label:
+          newCheckOut.getTime() !== new Date(booking.checkOut).getTime()
+            ? "Future-night date change"
+            : "Future-night guest range change",
+        amountCents: inProgressPlan.futureExistingDeltaCents,
+      });
+    }
+  } else if (datesChanged && remainingGuests.length > 0) {
     const remainingForPricing = remainingGuests.map((g) => ({
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
@@ -314,7 +434,7 @@ export async function POST(
   const checkInChanged =
     newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-  if (!skipBookingLifecycleRules && checkInChanged) {
+  if (!skipBookingLifecycleRules && checkInChanged && !isInProgressEdit) {
     const now = new Date();
     const policy = await loadCancellationPolicy(booking.checkIn);
     const feeResult = calculateChangeFee({
@@ -334,7 +454,17 @@ export async function POST(
   }
 
   // 3. Per-added-guest costs
-  if (normalizedAddGuests && normalizedAddGuests.length > 0) {
+  if (inProgressPlan) {
+    for (const entry of inProgressPlan.proposedAddedGuests) {
+      const guest = entry.guest;
+      const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
+      const memberLabel = guest.isMember ? "Member" : "Non-member";
+      itemizedChanges.push({
+        label: `Added: ${guest.firstName} ${guest.lastName} (${tierLabel}, ${memberLabel})`,
+        amountCents: entry.priceCents,
+      });
+    }
+  } else if (normalizedAddGuests && normalizedAddGuests.length > 0) {
     for (const guest of normalizedAddGuests) {
       try {
         const guestPrice = calculateBookingPrice(
@@ -356,13 +486,26 @@ export async function POST(
   }
 
   // 4. Per-removed-guest credits (use their stored priceCents)
-  for (const guest of removedGuests) {
-    const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
-    const memberLabel = guest.isMember ? "Member" : "Non-member";
-    itemizedChanges.push({
-      label: `Removed: ${guest.firstName} ${guest.lastName} (${tierLabel}, ${memberLabel})`,
-      amountCents: -guest.priceCents,
-    });
+  if (inProgressPlan) {
+    for (const entry of inProgressPlan.proposedExistingGuests.filter(
+      (guest) => guest.removedFromFuture
+    )) {
+      const tierLabel = entry.guest.ageTier.charAt(0) + entry.guest.ageTier.slice(1).toLowerCase();
+      const memberLabel = entry.guest.isMember ? "Member" : "Non-member";
+      itemizedChanges.push({
+        label: `Removed from future nights: ${entry.guest.firstName} ${entry.guest.lastName} (${tierLabel}, ${memberLabel})`,
+        amountCents: -entry.oldFuturePriceCents,
+      });
+    }
+  } else {
+    for (const guest of removedGuests) {
+      const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
+      const memberLabel = guest.isMember ? "Member" : "Non-member";
+      itemizedChanges.push({
+        label: `Removed: ${guest.firstName} ${guest.lastName} (${tierLabel}, ${memberLabel})`,
+        amountCents: -guest.priceCents,
+      });
+    }
   }
 
   // 5. Promo code handling
@@ -398,7 +541,9 @@ export async function POST(
     });
   }
 
-  if (removePromoCode) {
+  if (inProgressPlan) {
+    newDiscountCents = inProgressPlan.newDiscountCents;
+  } else if (removePromoCode) {
     // User wants to remove existing promo (for reuse later)
     newDiscountCents = 0;
     promoValidation = null;
@@ -501,8 +646,12 @@ export async function POST(
     });
   }
 
-  const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
-  const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+  const newFinalPriceCents = inProgressPlan
+    ? inProgressPlan.newFinalPriceCents
+    : newTotalPriceCents - newDiscountCents;
+  const priceDiffCents = inProgressPlan
+    ? inProgressPlan.priceDiffCents
+    : newFinalPriceCents - booking.finalPriceCents;
   const netChargeCents = priceDiffCents + changeFeeCents;
 
   return NextResponse.json({

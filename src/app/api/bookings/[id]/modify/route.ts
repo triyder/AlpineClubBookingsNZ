@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus, PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
@@ -60,6 +60,12 @@ import {
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 import { nameField } from "@/lib/zod-helpers";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import {
+  buildInProgressGuestRangePlan,
+  type BookingEditGuestRangePlan,
+} from "@/lib/booking-edit-guest-ranges";
+import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -165,22 +171,63 @@ export async function PUT(
         );
       }
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (new Date(booking.checkIn) < today) {
-        throw new ApiError("Cannot modify a booking with past check-in", 400);
+      const editPolicy = getBookingEditPolicy({
+        status: booking.status,
+        role: session.user.role,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      });
+      if (!editPolicy.canModify) {
+        throw new ApiError(
+          editPolicy.reason ?? "This booking cannot be modified",
+          400
+        );
       }
 
       // Determine new dates
-      const newCheckIn = newCheckInStr ? new Date(newCheckInStr) : booking.checkIn;
-      const newCheckOut = newCheckOutStr ? new Date(newCheckOutStr) : booking.checkOut;
+      const requestedCheckIn = newCheckInStr ? parseDateOnly(newCheckInStr) : booking.checkIn;
+      const requestedCheckOut = newCheckOutStr ? parseDateOnly(newCheckOutStr) : booking.checkOut;
+      if (
+        Number.isNaN(requestedCheckIn.getTime()) ||
+        Number.isNaN(requestedCheckOut.getTime())
+      ) {
+        throw new ApiError("Invalid booking dates", 400);
+      }
+
+      const isInProgressEdit = editPolicy.mode === "in-progress";
+      const editableFrom = editPolicy.editableFrom;
+      const bookingCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+
+      if (isInProgressEdit) {
+        if (
+          newCheckInStr &&
+          formatDateOnly(normalizeDateOnlyForTimeZone(requestedCheckIn)) !==
+            formatDateOnly(bookingCheckIn)
+        ) {
+          throw new ApiError(
+            "Check-in cannot be changed for an in-progress booking",
+            400
+          );
+        }
+        if (editableFrom && normalizeDateOnlyForTimeZone(requestedCheckOut) < editableFrom) {
+          throw new ApiError(
+            "NZ today and earlier are locked for self-service changes",
+            400
+          );
+        }
+        if (newPromoCode || removePromoCode) {
+          throw new ApiError(
+            "Promo code changes are not available for in-progress bookings",
+            400
+          );
+        }
+      }
+
+      const newCheckIn = isInProgressEdit ? booking.checkIn : requestedCheckIn;
+      const newCheckOut = requestedCheckOut;
 
       if (newCheckOut <= newCheckIn) {
         throw new ApiError("Check-out must be after check-in", 400);
-      }
-
-      if (newCheckIn < today) {
-        throw new ApiError("Check-in cannot be in the past", 400);
       }
 
       const skipBookingLifecycleRules =
@@ -220,7 +267,11 @@ export async function PUT(
       const remainingGuests = booking.guests.filter((g) => !removeSet.has(g.id));
       const removedGuests = booking.guests.filter((g) => removeSet.has(g.id));
 
-      if (remainingGuests.length === 0 && (!normalizedAddGuests || normalizedAddGuests.length === 0)) {
+      if (
+        !isInProgressEdit &&
+        remainingGuests.length === 0 &&
+        (!normalizedAddGuests || normalizedAddGuests.length === 0)
+      ) {
         throw new ApiError("Booking must have at least one guest", 400);
       }
 
@@ -250,7 +301,7 @@ export async function PUT(
       if (session.user.role !== "ADMIN") {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
           bookingMemberId: booking.memberId,
-          checkIn: newCheckIn,
+          checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
           guests: normalizedAddGuests ?? [],
         });
 
@@ -260,14 +311,6 @@ export async function PUT(
             403
           );
         }
-      }
-
-      // Capacity check excluding this booking
-      const capacity = skipBookingLifecycleRules
-        ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
-        : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId);
-      if (!capacity.available) {
-        throw new ApiError("Not enough beds available for these changes", 400);
       }
 
       // Load seasons
@@ -287,34 +330,90 @@ export async function PUT(
         })),
       }));
 
+      let inProgressPlan: BookingEditGuestRangePlan | null = null;
+      if (isInProgressEdit && editableFrom) {
+        inProgressPlan = buildInProgressGuestRangePlan({
+          booking: {
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+            totalPriceCents: booking.totalPriceCents,
+            discountCents: booking.discountCents,
+            finalPriceCents: booking.finalPriceCents,
+            guests: booking.guests.map((guest) => ({
+              ...guest,
+              ageTier: guest.ageTier as AgeTier,
+            })),
+          },
+          editableFrom,
+          newCheckOut,
+          addGuests: normalizedAddGuests,
+          removeGuestIds,
+          seasons: seasonRateData,
+        });
+      }
+
+      // Capacity check excluding this booking
+      const capacity = skipBookingLifecycleRules
+        ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
+        : inProgressPlan && editableFrom
+          ? await checkCapacityForGuestRanges(
+              editableFrom,
+              newCheckOut,
+              inProgressPlan.capacityGuestRanges,
+              bookingId,
+              tx
+            )
+          : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId, tx);
+      if (!capacity.available) {
+        throw new ApiError("Not enough beds available for these changes", 400);
+      }
+
       // Calculate new total price
       let priceBreakdown;
       try {
-        priceBreakdown = calculateBookingPrice(newCheckIn, newCheckOut, guestsForPricing, seasonRateData);
+        priceBreakdown = inProgressPlan
+          ? {
+              totalPriceCents: inProgressPlan.newTotalPriceCents,
+              guests: [
+                ...inProgressPlan.proposedExistingGuests.map((entry) => ({
+                  priceCents: entry.priceCents,
+                  perNightCents: [],
+                })),
+                ...inProgressPlan.proposedAddedGuests.map((entry) => ({
+                  priceCents: entry.priceCents,
+                  perNightCents: [],
+                })),
+              ],
+            }
+          : calculateBookingPrice(newCheckIn, newCheckOut, guestsForPricing, seasonRateData);
       } catch {
         throw new ApiError("No season rate found for the requested dates", 400);
       }
 
       const newTotalPriceCents = priceBreakdown.totalPriceCents;
-      const guestNightRates = guestsForPricing.map((guest) => {
-        const breakdown = calculateBookingPrice(
-          newCheckIn,
-          newCheckOut,
-          [guest],
-          seasonRateData
-        );
-        return {
-          memberId: guest.memberId ?? null,
-          perNightRates: breakdown.guests[0].perNightCents,
-        };
-      });
+      const guestNightRates = inProgressPlan
+        ? []
+        : guestsForPricing.map((guest) => {
+            const breakdown = calculateBookingPrice(
+              newCheckIn,
+              newCheckOut,
+              [guest],
+              seasonRateData
+            );
+            return {
+              memberId: guest.memberId ?? null,
+              perNightRates: breakdown.guests[0].perNightCents,
+            };
+          });
 
       // --- Handle promo code ---
       let newDiscountCents = 0;
       let promoRemoved = false;
       let promoChanged = false;
 
-      if (removePromoCode && booking.promoRedemption) {
+      if (inProgressPlan) {
+        newDiscountCents = inProgressPlan.newDiscountCents;
+      } else if (removePromoCode && booking.promoRedemption) {
         // Remove existing promo for reuse
         await tx.promoRedemption.delete({ where: { id: booking.promoRedemption.id } });
         await tx.promoCode.update({
@@ -324,7 +423,7 @@ export async function PUT(
         promoRemoved = true;
       }
 
-      if (newPromoCode && !removePromoCode) {
+      if (!inProgressPlan && newPromoCode && !removePromoCode) {
         // Remove old promo first if exists
         if (booking.promoRedemption && !promoRemoved) {
           await tx.promoRedemption.delete({ where: { id: booking.promoRedemption.id } });
@@ -396,7 +495,7 @@ export async function PUT(
 
         await redeemPromoCode(tx, promoCode.id, bookingId, booking.memberId, newDiscountCents, promoResult.freeNightsUsed);
         promoChanged = true;
-      } else if (!removePromoCode && !promoRemoved && booking.promoRedemption?.promoCode) {
+      } else if (!inProgressPlan && !removePromoCode && !promoRemoved && booking.promoRedemption?.promoCode) {
         // Keep existing promo, recalculate discount
         const promo = booking.promoRedemption.promoCode;
         const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNights
@@ -473,44 +572,77 @@ export async function PUT(
         changeFeeCents = feeResult.feeCents;
       }
 
-      // --- Delete removed guests and their chore assignments ---
-      for (const guest of removedGuests) {
-        await tx.choreAssignment.deleteMany({ where: { bookingGuestId: guest.id } });
-        await tx.bookingGuest.delete({ where: { id: guest.id } });
-      }
-
-      // --- Create new guests ---
       const createdGuests = [];
-      const addedGuestStartIndex = remainingGuests.length;
-      for (let i = 0; i < (normalizedAddGuests ?? []).length; i++) {
-        const g = normalizedAddGuests![i];
-        const guestPriceIndex = addedGuestStartIndex + i;
-        const guest = await tx.bookingGuest.create({
-          data: {
-            bookingId,
-            firstName: g.firstName,
-            lastName: g.lastName,
-            ageTier: g.ageTier,
-            isMember: g.isMember,
-            memberId: g.memberId || null,
-            stayStart: newCheckIn,
-            stayEnd: newCheckOut,
-            priceCents: priceBreakdown.guests[guestPriceIndex].priceCents,
-          },
-        });
-        createdGuests.push(guest);
-      }
+      if (inProgressPlan) {
+        // Preserve locked past/today occupancy; only future ranges are shortened,
+        // extended, or added.
+        for (const entry of inProgressPlan.proposedExistingGuests) {
+          await tx.bookingGuest.update({
+            where: { id: entry.guest.id },
+            data: {
+              stayStart: entry.stayStart,
+              stayEnd: entry.stayEnd,
+              priceCents: entry.priceCents,
+            },
+          });
+        }
 
-      // --- Update remaining guest prices ---
-      for (let i = 0; i < remainingGuests.length; i++) {
-        await tx.bookingGuest.update({
-          where: { id: remainingGuests[i].id },
-          data: {
-            stayStart: newCheckIn,
-            stayEnd: newCheckOut,
-            priceCents: priceBreakdown.guests[i].priceCents,
-          },
-        });
+        for (const entry of inProgressPlan.proposedAddedGuests) {
+          const g = entry.guest;
+          const guest = await tx.bookingGuest.create({
+            data: {
+              bookingId,
+              firstName: g.firstName,
+              lastName: g.lastName,
+              ageTier: g.ageTier,
+              isMember: g.isMember,
+              memberId: g.memberId || null,
+              stayStart: entry.stayStart,
+              stayEnd: entry.stayEnd,
+              priceCents: entry.priceCents,
+            },
+          });
+          createdGuests.push(guest);
+        }
+      } else {
+        // --- Delete removed guests and their chore assignments ---
+        for (const guest of removedGuests) {
+          await tx.choreAssignment.deleteMany({ where: { bookingGuestId: guest.id } });
+          await tx.bookingGuest.delete({ where: { id: guest.id } });
+        }
+
+        // --- Create new guests ---
+        const addedGuestStartIndex = remainingGuests.length;
+        for (let i = 0; i < (normalizedAddGuests ?? []).length; i++) {
+          const g = normalizedAddGuests![i];
+          const guestPriceIndex = addedGuestStartIndex + i;
+          const guest = await tx.bookingGuest.create({
+            data: {
+              bookingId,
+              firstName: g.firstName,
+              lastName: g.lastName,
+              ageTier: g.ageTier,
+              isMember: g.isMember,
+              memberId: g.memberId || null,
+              stayStart: newCheckIn,
+              stayEnd: newCheckOut,
+              priceCents: priceBreakdown.guests[guestPriceIndex].priceCents,
+            },
+          });
+          createdGuests.push(guest);
+        }
+
+        // --- Update remaining guest prices ---
+        for (let i = 0; i < remainingGuests.length; i++) {
+          await tx.bookingGuest.update({
+            where: { id: remainingGuests[i].id },
+            data: {
+              stayStart: newCheckIn,
+              stayEnd: newCheckOut,
+              priceCents: priceBreakdown.guests[i].priceCents,
+            },
+          });
+        }
       }
 
       // --- Clean up chore assignments if dates changed ---
@@ -536,10 +668,10 @@ export async function PUT(
       let pendingRefundAmountCents = 0;
 
       const hasSucceededPayment =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
       const hasIssuedXeroInvoice =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"].includes(booking.status) &&
         !!booking.payment?.xeroInvoiceId;
       const xeroNetAmountCents = hasIssuedXeroInvoice
         ? priceDiffCents + changeFeeCents

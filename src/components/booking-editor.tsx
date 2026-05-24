@@ -24,6 +24,12 @@ interface PromoInfo {
   description: string | null;
 }
 
+interface EditPolicyInfo {
+  mode: "future" | "in-progress" | null;
+  editableFrom: string | null;
+  checkInEditable: boolean;
+}
+
 export interface BookingEditorData {
   id: string;
   checkIn: string;
@@ -39,6 +45,7 @@ export interface BookingEditorData {
   promo: PromoInfo | null;
   hasNonMembers: boolean;
   nonMemberHoldUntil: string | null;
+  editPolicy: EditPolicyInfo;
 }
 
 
@@ -65,6 +72,7 @@ export function BookingEditor({
           totalPriceCents: booking.totalPriceCents,
           discountCents: booking.discountCents,
           promo: booking.promo,
+          editPolicy: booking.editPolicy,
         }}
         onDone={() => setEditing(false)}
       />
