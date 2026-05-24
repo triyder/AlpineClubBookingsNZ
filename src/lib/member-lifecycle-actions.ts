@@ -816,6 +816,7 @@ export async function reviewMemberDeleteRequest({
     request.memberSnapshot,
     request.memberId,
   );
+  const deleteRequester = request.requestedBy;
 
   if (action === "reject") {
     const rejected = await prisma.$transaction(async (tx) => {
@@ -856,14 +857,14 @@ export async function reviewMemberDeleteRequest({
       return reviewed;
     });
 
-    if (request.requestedBy) {
+    if (deleteRequester) {
       await sendLifecycleEmailSafely(
         "Failed to send member delete rejection email",
         { requestId: request.id, memberId: request.memberId },
         () =>
           sendAdminMemberDeleteRejectedEmail({
-            email: request.requestedBy.email,
-            requesterName: memberDisplayName(request.requestedBy),
+            email: deleteRequester.email,
+            requesterName: memberDisplayName(deleteRequester),
             memberId: request.memberId,
             memberName: targetMemberName,
             reason: request.reason,
@@ -943,14 +944,14 @@ export async function reviewMemberDeleteRequest({
     return reviewed;
   });
 
-  if (request.requestedBy) {
+  if (deleteRequester) {
     await sendLifecycleEmailSafely(
       "Failed to send member delete approval email",
       { requestId: request.id, memberId: request.memberId },
       () =>
         sendAdminMemberDeleteApprovedEmail({
-          email: request.requestedBy.email,
-          requesterName: memberDisplayName(request.requestedBy),
+          email: deleteRequester.email,
+          requesterName: memberDisplayName(deleteRequester),
           memberName: targetMemberName,
           reason: request.reason,
           reviewNote: note,
