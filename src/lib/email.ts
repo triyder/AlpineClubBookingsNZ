@@ -44,6 +44,7 @@ import {
   adminWaitlistOfferTemplate,
   adminFamilyGroupRequestTemplate,
   joinRequestConfirmationTemplate,
+  membershipCancellationConfirmationTemplate,
   adminRefundRequestTemplate,
   adminIssueReportTemplate,
   type XeroReconciliationReportEmail,
@@ -111,6 +112,7 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "age-up-invitation",
   "nomination-request",
   "membership-application-approved",
+  "membership-cancellation-confirmation",
   "hut-leader-assignment",
 ]);
 
@@ -1289,6 +1291,39 @@ export async function sendJoinRequestConfirmationEmail(
     html: joinRequestConfirmationTemplate(requesterName, groupName),
     templateName: "join-request-confirmation",
     templateData: { requesterName, groupName },
+  });
+}
+
+export async function sendMembershipCancellationConfirmationEmail(params: {
+  email: string;
+  firstName: string;
+  requesterName: string;
+  participantName: string;
+  token: string;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const confirmationUrl = `${baseUrl}/membership-cancellation/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Confirm membership cancellation request — ${CLUB_BOOKINGS_NAME}`,
+    html: membershipCancellationConfirmationTemplate({
+      firstName: params.firstName,
+      requesterName: params.requesterName,
+      participantName: params.participantName,
+      confirmationUrl,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "membership-cancellation-confirmation",
+    templateData: {
+      firstName: params.firstName,
+      requesterName: params.requesterName,
+      participantName: params.participantName,
+      token: params.token,
+      confirmationUrl,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
   });
 }
 

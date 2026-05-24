@@ -15,6 +15,7 @@ import { FamilyGroupSection } from "./family-group-section";
 import { AccountCreditSection } from "./account-credit-section";
 import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
+import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { AuditTimeline } from "@/components/audit-timeline";
 import {
   Card,
@@ -377,6 +378,16 @@ export default async function ProfilePage({
           }))}
           canManage={member.ageTier === "ADULT" && member.canLogin === true}
         />
+      </ProfileSectionCard>
+
+      <ProfileSectionCard
+        collapsible
+        defaultOpen={false}
+        description="Request committee review for membership cancellation."
+        id="membership-cancellation"
+        title="Membership Cancellation"
+      >
+        <MembershipCancellationPanel />
       </ProfileSectionCard>
 
       {/* Notification Preferences */}

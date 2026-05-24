@@ -126,6 +126,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Join request submitted — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Join Request Submitted\n\nHi {{requesterName}},\n\nYour request to join the family group {{groupName}} has been submitted.\n\nAn administrator will review your request. You'll be notified once it's been processed.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "membership-cancellation-confirmation": {
+    "defaultSubject": "Confirm membership cancellation request — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Confirm Membership Cancellation\n\nHi {{firstName}},\n\n{{requesterName}} has included {{participantName}} in a membership cancellation request.\n\nYour membership will remain active unless you sign in and confirm that you want to be included. This confirmation does not approve or process the cancellation; an administrator still needs to review the request.\n\nReview Cancellation Request: {{BASE_URL}}/membership-cancellation/{{token}}\n\nThis link expires on {{expiresAt}}.\n\nIf you do not want to be included, use the link and choose Decline. If you were not expecting this request, you can ignore this email or contact the club."
+  },
   "age-up-invitation": {
     "defaultSubject": "You're now {{targetAgeTierLabel}} — set up your {{CLUB_NAME}} account",
     "defaultBody": "Welcome to Your Own Account, {{firstName}}!\n\nCongratulations — you've reached the {{targetAgeTierLabel}} age tier. You can now log in and book stays at the lodge yourself.\n\nClick the button below to set up your password and activate your account. This link expires in 7 days.\n\nSet Up My Password: {{BASE_URL}}/reset-password?token={{token}}\n\nOnce you set your password, you can log in at any time to book stays, view your bookings, and manage your profile.\n\nIf you have any questions, contact the club at {{SUPPORT_EMAIL}}."
