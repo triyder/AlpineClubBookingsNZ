@@ -1349,6 +1349,33 @@ export function joinRequestConfirmationTemplate(
   `);
 }
 
+export function membershipCancellationSubmittedTemplate(params: {
+  firstName: string;
+  participantSummary: string;
+  reason?: string | null;
+  reviewUrl: string;
+}): string {
+  const reasonHtml = params.reason
+    ? paragraph("Reason: <strong>" + escapeHtml(params.reason) + "</strong>")
+    : "";
+
+  return layout(`
+    ${heading("Membership Cancellation Request Submitted")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ",")}
+    ${paragraph("Your membership cancellation request has been submitted for admin review.")}
+    ${infoTable([
+      { label: "Included memberships", value: escapeHtml(params.participantSummary) },
+    ])}
+    ${reasonHtml}
+    ${alertBox(
+      "Memberships remain active until an administrator approves the request. Any included login-capable adult must confirm before an administrator can process their cancellation.",
+      "info"
+    )}
+    ${button("View Request", params.reviewUrl, { sameOrigin: true })}
+    ${supportContactMuted()}
+  `);
+}
+
 export function membershipCancellationConfirmationTemplate(params: {
   firstName: string;
   requesterName: string;
@@ -1377,6 +1404,183 @@ export function membershipCancellationConfirmationTemplate(params: {
     )}
     ${button("Review Cancellation Request", params.confirmationUrl, { sameOrigin: true })}
     ${muted("If you do not want to be included, use the link and choose Decline. If you were not expecting this request, you can ignore this email or contact the club.")}
+  `);
+}
+
+export function adminMembershipCancellationRequestTemplate(data: {
+  requesterName: string;
+  participantSummary: string;
+  reason?: string | null;
+  reviewUrl: string;
+}): string {
+  const reasonHtml = data.reason
+    ? paragraph("Reason: <strong>" + escapeHtml(data.reason) + "</strong>")
+    : "";
+
+  return layout(`
+    ${heading("Membership Cancellation Ready for Review")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(data.requesterName) +
+        "</strong> submitted a membership cancellation request with at least one participant ready for admin review."
+    )}
+    ${infoTable([
+      { label: "Requester", value: escapeHtml(data.requesterName) },
+      { label: "Included memberships", value: escapeHtml(data.participantSummary) },
+    ])}
+    ${reasonHtml}
+    ${button("Review Cancellation Requests", data.reviewUrl, { sameOrigin: true })}
+    ${supportContactMuted()}
+  `);
+}
+
+export function adminMemberArchiveRequestedTemplate(data: {
+  requesterName: string;
+  memberName: string;
+  reason: string;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Member Archive Requested")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(data.requesterName) +
+        "</strong> requested archive review for <strong>" +
+        escapeHtml(data.memberName) +
+        "</strong>."
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Requested by", value: escapeHtml(data.requesterName) },
+    ])}
+    ${multilineBlock(escapeHtml(data.reason))}
+    ${button("Review Member", data.reviewUrl, { sameOrigin: true })}
+    ${supportContactMuted()}
+  `);
+}
+
+export function memberArchiveApprovedTemplate(data: {
+  firstName: string;
+  reason: string;
+  reviewNote?: string | null;
+}): string {
+  const reviewNoteHtml = data.reviewNote
+    ? alertBox("Review note: " + escapeHtml(data.reviewNote), "info")
+    : "";
+
+  return layout(`
+    ${heading("Membership Archive Completed")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${paragraph("Your cancelled membership record has been archived.")}
+    ${multilineBlock(escapeHtml(data.reason))}
+    ${reviewNoteHtml}
+    ${alertBox(
+      "Archive preserves booking, payment, Xero, and audit history while removing the record from default operational lists.",
+      "info"
+    )}
+    ${supportContactMuted()}
+  `);
+}
+
+export function memberArchiveRejectedTemplate(data: {
+  firstName: string;
+  reason: string;
+  reviewNote?: string | null;
+}): string {
+  const reviewNoteHtml = data.reviewNote
+    ? alertBox("Review note: " + escapeHtml(data.reviewNote), "warning")
+    : "";
+
+  return layout(`
+    ${heading("Membership Archive Request Update")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${paragraph("The archive request for your cancelled membership was not approved at this time.")}
+    ${multilineBlock(escapeHtml(data.reason))}
+    ${reviewNoteHtml}
+    ${supportContactMuted()}
+  `);
+}
+
+export function adminMemberDeleteRequestedTemplate(data: {
+  requesterName: string;
+  memberName: string;
+  reason: string;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Member Delete Requested")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(data.requesterName) +
+        "</strong> requested hard-delete review for <strong>" +
+        escapeHtml(data.memberName) +
+        "</strong>."
+    )}
+    ${alertBox(
+      "Hard delete is only for records added in error with no meaningful booking, financial, lodge, Xero, or audit history.",
+      "warning"
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Requested by", value: escapeHtml(data.requesterName) },
+    ])}
+    ${multilineBlock(escapeHtml(data.reason))}
+    ${button("Review Member", data.reviewUrl, { sameOrigin: true })}
+    ${supportContactMuted()}
+  `);
+}
+
+export function adminMemberDeleteApprovedTemplate(data: {
+  requesterName: string;
+  memberName: string;
+  reason: string;
+  reviewNote?: string | null;
+}): string {
+  const reviewNoteHtml = data.reviewNote
+    ? alertBox("Review note: " + escapeHtml(data.reviewNote), "info")
+    : "";
+
+  return layout(`
+    ${heading("Member Delete Approved")}
+    ${paragraph("Hi " + escapeHtml(data.requesterName) + ",")}
+    ${paragraph(
+      "The hard-delete request for <strong>" +
+        escapeHtml(data.memberName) +
+        "</strong> was approved and processed."
+    )}
+    ${multilineBlock(escapeHtml(data.reason))}
+    ${reviewNoteHtml}
+    ${alertBox(
+      "A request snapshot was retained before the member record was deleted.",
+      "info"
+    )}
+    ${supportContactMuted()}
+  `);
+}
+
+export function adminMemberDeleteRejectedTemplate(data: {
+  requesterName: string;
+  memberName: string;
+  reason: string;
+  reviewNote?: string | null;
+  reviewUrl: string;
+}): string {
+  const reviewNoteHtml = data.reviewNote
+    ? alertBox("Review note: " + escapeHtml(data.reviewNote), "warning")
+    : "";
+
+  return layout(`
+    ${heading("Member Delete Request Rejected")}
+    ${paragraph("Hi " + escapeHtml(data.requesterName) + ",")}
+    ${paragraph(
+      "The hard-delete request for <strong>" +
+        escapeHtml(data.memberName) +
+        "</strong> was not approved."
+    )}
+    ${multilineBlock(escapeHtml(data.reason))}
+    ${reviewNoteHtml}
+    ${button("Open Member", data.reviewUrl, { sameOrigin: true })}
+    ${supportContactMuted()}
   `);
 }
 

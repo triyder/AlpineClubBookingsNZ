@@ -161,6 +161,18 @@ refund requests, promo codes, communications, health, audit logs, reports,
 Xero, committee data, issue reports, waitlist, lodge operations, hut leaders,
 and roster/chores.
 
+Membership cancellation is a member-initiated account lifecycle workflow.
+Requests can include the requester, dependants, non-login adults, and related
+family adults. Login-capable adults receive their own confirmation link before
+admin review. Admin approval disables the local membership, clears operational
+family/email-inheritance links, preserves financial and lodge history, and
+queues Xero cancellation operations.
+
+Cancelled members can be archived through `MemberLifecycleActionRequest` with
+the `ARCHIVE` action. Archive requires a reason and approval by a different
+admin. Approval keeps the member record and related history but marks it
+archived, inactive, and non-login so default operational lists exclude it.
+
 Member records created in error use `MemberLifecycleActionRequest` with the
 `DELETE` action. A delete request requires a reason, approval by a different
 admin, a clean eligibility check with no booking, financial, family, Xero, or
@@ -202,7 +214,12 @@ data rather than calling Xero during page render.
 
 AWS SES SMTP sends transactional email. SES SNS feedback is ingested for bounce
 and complaint suppression. Email templates should avoid embedding secrets and
-should use effective recipient logic for dependents where required.
+should use effective recipient logic for dependents where required. Editable
+templates and admin/system delivery policies are registered in the email
+message registry and surfaced in Admin Setup and Admin Notifications.
+Membership cancellation, archive, and hard-delete lifecycle messages use that
+registry so operators can preview and override copy without bypassing the
+shared `sendEmail` path.
 
 ## Cron Jobs
 

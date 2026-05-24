@@ -78,7 +78,9 @@ The CLI only writes `config/club.json`. API keys, OAuth secrets, SMTP secrets,
 and deployment secrets stay in environment variables. After migrations and seed
 data are in place, log in as an admin and finish the in-app checklist at
 `/admin/setup`, including booking policy, membership cancellation, email, and
-provider readiness settings.
+provider readiness settings. Admin Setup and Admin Notifications also expose
+the editable lifecycle email templates and delivery policies used for
+membership cancellation, archive, and safe-delete review alerts.
 
 See `CONFIGURATION.md` for the full environment and `config/club.json` schema
 reference.

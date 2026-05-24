@@ -126,6 +126,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Join request submitted — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Join Request Submitted\n\nHi {{requesterName}},\n\nYour request to join the family group {{groupName}} has been submitted.\n\nAn administrator will review your request. You'll be notified once it's been processed.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "membership-cancellation-submitted": {
+    "defaultSubject": "Membership cancellation request submitted — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Membership Cancellation Request Submitted\n\nHi {{firstName}},\n\nYour membership cancellation request has been submitted for admin review.\n\nIncluded memberships: {{participantSummary}}\n\nReason: {{reason}} [only when reason exists]\n\nMemberships remain active until an administrator approves the request. Any included login-capable adult must confirm before an administrator can process their cancellation.\n\nView Request: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
   "membership-cancellation-confirmation": {
     "defaultSubject": "Confirm membership cancellation request — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Confirm Membership Cancellation\n\nHi {{firstName}},\n\n{{requesterName}} has included {{participantName}} in a membership cancellation request.\n\nYour membership will remain active unless you sign in and confirm that you want to be included. This confirmation does not approve or process the cancellation; an administrator still needs to review the request.\n\nReview Cancellation Request: {{BASE_URL}}/membership-cancellation/{{token}}\n\nThis link expires on {{expiresAt}}.\n\nIf you do not want to be included, use the link and choose Decline. If you were not expecting this request, you can ignore this email or contact the club."
@@ -137,6 +141,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "membership-cancellation-rejected": {
     "defaultSubject": "Membership cancellation update — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Membership Cancellation Request Update\n\nHi {{firstName}},\n\nThe membership cancellation request for {{participantName}} was not approved at this time.\n\nRequest reason: {{reason}} [only when reason exists]\n\nAdmin note: {{adminNote}} [only when adminNote exists]\n\nThis membership remains active.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "admin-membership-cancellation-request": {
+    "defaultSubject": "Membership cancellation ready: {{requesterName}}",
+    "defaultBody": "Membership Cancellation Ready for Review\n\n{{requesterName}} submitted a membership cancellation request with at least one participant ready for admin review.\n\nRequester: {{requesterName}}\nIncluded memberships: {{participantSummary}}\n\nReason: {{reason}} [only when reason exists]\n\nReview Cancellation Requests: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "age-up-invitation": {
     "defaultSubject": "You're now {{targetAgeTierLabel}} — set up your {{CLUB_NAME}} account",
@@ -153,6 +161,30 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "account-deletion-rejected": {
     "defaultSubject": "Update on Your Account Deletion Request",
     "defaultBody": "Account Deletion Request Update\n\nHi {{firstName}},\n\nYour account deletion request has been reviewed and was not approved at this time.\n\nAdmin note: {{adminNote}} [only when adminNote exists]\n\nIf you have questions about this decision, please contact the club directly.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "admin-member-archive-requested": {
+    "defaultSubject": "Member archive requested: {{memberName}}",
+    "defaultBody": "Member Archive Requested\n\n{{requesterName}} requested archive review for {{memberName}}.\n\nMember: {{memberName}}\nRequested by: {{requesterName}}\n\nReason:\n{{reason}}\n\nReview Member: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "member-archive-approved": {
+    "defaultSubject": "Membership archive completed — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Membership Archive Completed\n\nHi {{firstName}},\n\nYour cancelled membership record has been archived.\n\nReason:\n{{reason}}\n\nReview note: {{reviewNote}} [only when reviewNote exists]\n\nArchive preserves booking, payment, Xero, and audit history while removing the record from default operational lists.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "member-archive-rejected": {
+    "defaultSubject": "Membership archive request update — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Membership Archive Request Update\n\nHi {{firstName}},\n\nThe archive request for your cancelled membership was not approved at this time.\n\nReason:\n{{reason}}\n\nReview note: {{reviewNote}} [only when reviewNote exists]\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "admin-member-delete-requested": {
+    "defaultSubject": "Member delete requested: {{memberName}}",
+    "defaultBody": "Member Delete Requested\n\n{{requesterName}} requested hard-delete review for {{memberName}}.\n\nHard delete is only for records added in error with no meaningful booking, financial, lodge, Xero, or audit history.\n\nMember: {{memberName}}\nRequested by: {{requesterName}}\n\nReason:\n{{reason}}\n\nReview Member: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "admin-member-delete-approved": {
+    "defaultSubject": "Member delete approved: {{memberName}}",
+    "defaultBody": "Member Delete Approved\n\nHi {{requesterName}},\n\nThe hard-delete request for {{memberName}} was approved and processed.\n\nReason:\n{{reason}}\n\nReview note: {{reviewNote}} [only when reviewNote exists]\n\nA request snapshot was retained before the member record was deleted.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "admin-member-delete-rejected": {
+    "defaultSubject": "Member delete rejected: {{memberName}}",
+    "defaultBody": "Member Delete Request Rejected\n\nHi {{requesterName}},\n\nThe hard-delete request for {{memberName}} was not approved.\n\nReason:\n{{reason}}\n\nReview note: {{reviewNote}} [only when reviewNote exists]\n\nOpen Member: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "admin-new-booking": {
     "defaultSubject": "New Booking: {{memberName}} ({{status}})",

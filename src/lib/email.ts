@@ -44,9 +44,17 @@ import {
   adminWaitlistOfferTemplate,
   adminFamilyGroupRequestTemplate,
   joinRequestConfirmationTemplate,
+  membershipCancellationSubmittedTemplate,
   membershipCancellationConfirmationTemplate,
   membershipCancellationApprovedTemplate,
   membershipCancellationRejectedTemplate,
+  adminMembershipCancellationRequestTemplate,
+  adminMemberArchiveRequestedTemplate,
+  memberArchiveApprovedTemplate,
+  memberArchiveRejectedTemplate,
+  adminMemberDeleteRequestedTemplate,
+  adminMemberDeleteApprovedTemplate,
+  adminMemberDeleteRejectedTemplate,
   adminRefundRequestTemplate,
   adminBookingChangeRequestTemplate,
   adminIssueReportTemplate,
@@ -378,6 +386,18 @@ async function sendToAdmins({
       ),
     ),
   );
+}
+
+async function shouldSendDirectAdminSystemEmail(templateName: string) {
+  const delivery = await shouldSendAdminSystemEmail({ templateName });
+  if (!delivery.send) {
+    logger.info(
+      { templateName, deliveryMode: delivery.mode, reason: delivery.reason },
+      "Skipped direct admin email by delivery policy"
+    );
+    return false;
+  }
+  return true;
 }
 
 export async function sendPasswordResetEmail(
@@ -1297,6 +1317,34 @@ export async function sendJoinRequestConfirmationEmail(
   });
 }
 
+export async function sendMembershipCancellationSubmittedEmail(params: {
+  email: string;
+  firstName: string;
+  participantSummary: string;
+  reason?: string | null;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/profile`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Membership cancellation request submitted — ${CLUB_BOOKINGS_NAME}`,
+    html: membershipCancellationSubmittedTemplate({
+      firstName: params.firstName,
+      participantSummary: params.participantSummary,
+      reason: params.reason,
+      reviewUrl,
+    }),
+    templateName: "membership-cancellation-submitted",
+    templateData: {
+      firstName: params.firstName,
+      participantSummary: params.participantSummary,
+      reason: params.reason ?? "",
+      reviewUrl,
+    },
+  });
+}
+
 export async function sendMembershipCancellationConfirmationEmail(params: {
   email: string;
   firstName: string;
@@ -1330,6 +1378,33 @@ export async function sendMembershipCancellationConfirmationEmail(params: {
   });
 }
 
+export async function sendAdminMembershipCancellationRequestAlert(params: {
+  requesterName: string;
+  participantSummary: string;
+  reason?: string | null;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/membership-cancellations`;
+
+  await sendToAdmins({
+    subject: `Membership cancellation ready: ${params.requesterName}`,
+    html: adminMembershipCancellationRequestTemplate({
+      requesterName: params.requesterName,
+      participantSummary: params.participantSummary,
+      reason: params.reason,
+      reviewUrl,
+    }),
+    templateName: "admin-membership-cancellation-request",
+    templateData: {
+      requesterName: params.requesterName,
+      participantSummary: params.participantSummary,
+      reason: params.reason ?? "",
+      reviewUrl,
+    },
+    preferenceKey: "adminFamilyGroupRequest",
+  });
+}
+
 export async function sendMembershipCancellationApprovedEmail(params: {
   email: string;
   firstName: string;
@@ -1349,6 +1424,161 @@ export async function sendMembershipCancellationApprovedEmail(params: {
       reason: params.reason ?? "",
       adminNote: params.adminNote ?? "",
       rejoinProcessText: params.rejoinProcessText ?? "",
+    },
+  });
+}
+
+export async function sendAdminMemberArchiveRequestedAlert(params: {
+  requesterName: string;
+  memberId: string;
+  memberName: string;
+  reason: string;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
+
+  await sendToAdmins({
+    subject: `Member archive requested: ${params.memberName}`,
+    html: adminMemberArchiveRequestedTemplate({
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewUrl,
+    }),
+    templateName: "admin-member-archive-requested",
+    templateData: {
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewUrl,
+    },
+    preferenceKey: "adminFamilyGroupRequest",
+  });
+}
+
+export async function sendMemberArchiveApprovedEmail(params: {
+  email: string;
+  firstName: string;
+  reason: string;
+  reviewNote?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Membership archive completed — ${CLUB_BOOKINGS_NAME}`,
+    html: memberArchiveApprovedTemplate(params),
+    templateName: "member-archive-approved",
+    templateData: {
+      firstName: params.firstName,
+      reason: params.reason,
+      reviewNote: params.reviewNote ?? "",
+    },
+  });
+}
+
+export async function sendMemberArchiveRejectedEmail(params: {
+  email: string;
+  firstName: string;
+  reason: string;
+  reviewNote?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Membership archive request update — ${CLUB_BOOKINGS_NAME}`,
+    html: memberArchiveRejectedTemplate(params),
+    templateName: "member-archive-rejected",
+    templateData: {
+      firstName: params.firstName,
+      reason: params.reason,
+      reviewNote: params.reviewNote ?? "",
+    },
+  });
+}
+
+export async function sendAdminMemberDeleteRequestedAlert(params: {
+  requesterName: string;
+  memberId: string;
+  memberName: string;
+  reason: string;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
+
+  await sendToAdmins({
+    subject: `Member delete requested: ${params.memberName}`,
+    html: adminMemberDeleteRequestedTemplate({
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewUrl,
+    }),
+    templateName: "admin-member-delete-requested",
+    templateData: {
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewUrl,
+    },
+    preferenceKey: "adminFamilyGroupRequest",
+  });
+}
+
+export async function sendAdminMemberDeleteApprovedEmail(params: {
+  email: string;
+  requesterName: string;
+  memberName: string;
+  reason: string;
+  reviewNote?: string | null;
+}) {
+  if (!(await shouldSendDirectAdminSystemEmail("admin-member-delete-approved"))) {
+    return;
+  }
+
+  await sendEmail({
+    to: params.email,
+    subject: `Member delete approved: ${params.memberName}`,
+    html: adminMemberDeleteApprovedTemplate(params),
+    templateName: "admin-member-delete-approved",
+    templateData: {
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewNote: params.reviewNote ?? "",
+    },
+  });
+}
+
+export async function sendAdminMemberDeleteRejectedEmail(params: {
+  email: string;
+  requesterName: string;
+  memberId: string;
+  memberName: string;
+  reason: string;
+  reviewNote?: string | null;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
+
+  if (!(await shouldSendDirectAdminSystemEmail("admin-member-delete-rejected"))) {
+    return;
+  }
+
+  await sendEmail({
+    to: params.email,
+    subject: `Member delete rejected: ${params.memberName}`,
+    html: adminMemberDeleteRejectedTemplate({
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewNote: params.reviewNote,
+      reviewUrl,
+    }),
+    templateName: "admin-member-delete-rejected",
+    templateData: {
+      requesterName: params.requesterName,
+      memberName: params.memberName,
+      reason: params.reason,
+      reviewNote: params.reviewNote ?? "",
+      reviewUrl,
     },
   });
 }

@@ -149,6 +149,7 @@ const LEGACY_AUDIT_CATEGORY_ACTION_FILTERS: Record<
 > = {
   account: [
     actionStartsWith("member."),
+    actionStartsWith("membership_cancellation."),
     actionStartsWith("MEMBERSHIP_APPLICATION"),
     actionStartsWith("EMAIL_"),
   ],
@@ -196,6 +197,7 @@ const LEGACY_AUDIT_CATEGORY_ACTION_FILTERS: Record<
     actionContains("email"),
   ],
   privacy: [
+    actionStartsWith("member_lifecycle.delete"),
     actionContains("deletion"),
     actionContains("DELETION"),
     actionContains("data-export"),
@@ -548,9 +550,16 @@ export function inferAuditCategoryFromAction(action: string): string {
   }
   if (
     normalized.startsWith("member.") ||
+    normalized.startsWith("membership_cancellation.") ||
     normalized.startsWith("membership_application")
   ) {
     return "account";
+  }
+  if (normalized.startsWith("member_lifecycle.delete")) {
+    return "privacy";
+  }
+  if (normalized.startsWith("member_lifecycle.")) {
+    return "admin";
   }
   if (normalized.includes("communication") || normalized.includes("email")) {
     return "communication";
@@ -666,6 +675,20 @@ function entityDrilldownLink(
         kind: "admin",
         primary: true,
       };
+    case "MembershipCancellationRequest":
+      return {
+        label: "Open cancellations",
+        href: "/admin/membership-cancellations",
+        kind: "admin",
+        primary: true,
+      };
+    case "MemberLifecycleActionRequest":
+      return {
+        label: "Open lifecycle audit",
+        href: `/admin/audit-log?entityType=MemberLifecycleActionRequest&q=${encodeURIComponent(entityId)}`,
+        kind: "admin",
+        primary: true,
+      };
     case "FamilyGroup":
       return {
         label: "Open family groups",
@@ -729,6 +752,14 @@ function actionFallbackDrilldownLink(
     return {
       label: "Open deletion requests",
       href: "/admin/deletion-requests",
+      kind: "admin",
+      primary: true,
+    };
+  }
+  if (normalized.startsWith("membership_cancellation.")) {
+    return {
+      label: "Open cancellations",
+      href: "/admin/membership-cancellations",
       kind: "admin",
       primary: true,
     };

@@ -74,6 +74,14 @@ vi.mock("@prisma/client", async () => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendAdminMemberArchiveRequestedAlert: vi.fn().mockResolvedValue(undefined),
+  sendAdminMemberDeleteApprovedEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminMemberDeleteRejectedEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminMemberDeleteRequestedAlert: vi.fn().mockResolvedValue(undefined),
+  sendMemberArchiveApprovedEmail: vi.fn().mockResolvedValue(undefined),
+  sendMemberArchiveRejectedEmail: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } }),
 }));

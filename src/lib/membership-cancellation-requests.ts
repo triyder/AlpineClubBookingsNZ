@@ -1,6 +1,10 @@
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
-import { sendMembershipCancellationConfirmationEmail } from "@/lib/email";
+import {
+  sendAdminMembershipCancellationRequestAlert,
+  sendMembershipCancellationConfirmationEmail,
+  sendMembershipCancellationSubmittedEmail,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 import {
   loadMembershipCancellationSettings,
@@ -169,6 +173,35 @@ function memberName(member: {
   lastName?: string | null;
 }) {
   return [member.firstName, member.lastName].filter(Boolean).join(" ").trim();
+}
+
+function memberDisplayName(member: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+}) {
+  return memberName(member) || member.email || "Unknown member";
+}
+
+function participantSummary(
+  participants: Array<{
+    member: {
+      firstName?: string | null;
+      lastName?: string | null;
+      email?: string | null;
+    };
+  }>,
+) {
+  return participants.map((participant) => memberDisplayName(participant.member)).join(", ");
+}
+
+function hasReviewableCancellationParticipant(
+  participants: Array<{ status: string; confirmedAt?: Date | string | null }>,
+) {
+  return participants.some(
+    (participant) =>
+      participant.status === "REQUESTED" && Boolean(participant.confirmedAt),
+  );
 }
 
 function serializeDate(value: Date | string | null | undefined) {
@@ -570,8 +603,25 @@ export async function createMembershipCancellationRequest({
     ipAddress,
   });
 
-  const requesterName = memberName(currentMember);
+  const requesterName = memberDisplayName(currentMember);
+  const summary = participantSummary(request.participants);
   const emailWarnings: string[] = [];
+
+  try {
+    await sendMembershipCancellationSubmittedEmail({
+      email: currentMember.email,
+      firstName: currentMember.firstName,
+      participantSummary: summary,
+      reason: request.reason,
+    });
+  } catch (err) {
+    logger.error(
+      { err, requestId: request.id, requesterMemberId: currentMember.id },
+      "Failed to send membership cancellation submitted email",
+    );
+    emailWarnings.push("Submission confirmation email could not be sent");
+  }
+
   await Promise.all(
     request.participants.map(async (participant) => {
       const token = tokenByMemberId.get(participant.memberId);
@@ -597,6 +647,22 @@ export async function createMembershipCancellationRequest({
       }
     }),
   );
+
+  if (hasReviewableCancellationParticipant(request.participants)) {
+    try {
+      await sendAdminMembershipCancellationRequestAlert({
+        requesterName,
+        participantSummary: summary,
+        reason: request.reason,
+      });
+    } catch (err) {
+      logger.error(
+        { err, requestId: request.id },
+        "Failed to send admin membership cancellation request alert",
+      );
+      emailWarnings.push("Admin review alert could not be sent");
+    }
+  }
 
   return {
     request: serializeRequest(request),
@@ -884,6 +950,24 @@ export async function respondToMembershipCancellationConfirmation({
         : "Membership cancellation participant declined",
     ipAddress,
   });
+
+  if (decision === "confirm") {
+    const requesterName = updated.request.requestedBy
+      ? memberDisplayName(updated.request.requestedBy)
+      : "Unknown member";
+    try {
+      await sendAdminMembershipCancellationRequestAlert({
+        requesterName,
+        participantSummary: participantSummary(updated.request.participants),
+        reason: updated.request.reason,
+      });
+    } catch (err) {
+      logger.error(
+        { err, requestId: updated.requestId, participantId: updated.id },
+        "Failed to send admin membership cancellation confirmation alert",
+      );
+    }
+  }
 
   return {
     request: serializeRequest(updated.request),

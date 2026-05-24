@@ -1055,6 +1055,40 @@ Triggers and frequency:
 - Member submits a family-group join request.
 - Sent to the requester once per request.
 
+### membership-cancellation-submitted
+
+Subject:
+
+```text
+Membership cancellation request submitted — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Membership Cancellation Request Submitted
+
+Hi {{firstName}},
+
+Your membership cancellation request has been submitted for admin review.
+
+Included memberships: {{participantSummary}}
+
+Reason: {{reason}} [only when reason exists]
+
+Memberships remain active until an administrator approves the request. Any included login-capable adult must confirm before an administrator can process their cancellation.
+
+View Request: {{reviewUrl}}
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Member submits a membership cancellation request.
+- Sent once to the requester after the request is recorded.
+- Email failure is returned as a non-blocking warning; the submitted request remains valid.
+
 ### membership-cancellation-confirmation
 
 Subject:
@@ -1150,6 +1184,37 @@ Triggers and frequency:
 
 - Admin rejects a membership cancellation participant.
 - Sent once per rejected participant.
+
+### admin-membership-cancellation-request
+
+Subject:
+
+```text
+Membership cancellation ready: {{requesterName}}
+```
+
+Body:
+
+```text
+Membership Cancellation Ready for Review
+
+{{requesterName}} submitted a membership cancellation request with at least one participant ready for admin review.
+
+Requester: {{requesterName}}
+Included memberships: {{participantSummary}}
+
+Reason: {{reason}} [only when reason exists]
+
+Review Cancellation Requests: {{reviewUrl}}
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- A membership cancellation request is submitted with at least one immediately reviewable participant, or an adult participant confirms inclusion.
+- Sent to admins opted in to member request alerts.
+- Respects the admin/system delivery policy for this template.
 
 ### age-up-invitation
 
@@ -1270,6 +1335,198 @@ Triggers and frequency:
 
 - Admin rejects an account deletion request.
 - Sent once per rejection.
+
+### admin-member-archive-requested
+
+Subject:
+
+```text
+Member archive requested: {{memberName}}
+```
+
+Body:
+
+```text
+Member Archive Requested
+
+{{requesterName}} requested archive review for {{memberName}}.
+
+Member: {{memberName}}
+Requested by: {{requesterName}}
+
+Reason:
+{{reason}}
+
+Review Member: {{reviewUrl}}
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Admin submits an archive request for a cancelled member.
+- Sent to admins opted in to member request alerts.
+- Respects the admin/system delivery policy for this template.
+
+### member-archive-approved
+
+Subject:
+
+```text
+Membership archive completed — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Membership Archive Completed
+
+Hi {{firstName}},
+
+Your cancelled membership record has been archived.
+
+Reason:
+{{reason}}
+
+Review note: {{reviewNote}} [only when reviewNote exists]
+
+Archive preserves booking, payment, Xero, and audit history while removing the record from default operational lists.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Second admin approves an archive lifecycle request.
+- Sent once to the archived member. Email failure is logged but does not block archival.
+
+### member-archive-rejected
+
+Subject:
+
+```text
+Membership archive request update — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Membership Archive Request Update
+
+Hi {{firstName}},
+
+The archive request for your cancelled membership was not approved at this time.
+
+Reason:
+{{reason}}
+
+Review note: {{reviewNote}} [only when reviewNote exists]
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Second admin rejects an archive lifecycle request.
+- Sent once to the member whose archive was rejected. Email failure is logged but does not block rejection.
+
+### admin-member-delete-requested
+
+Subject:
+
+```text
+Member delete requested: {{memberName}}
+```
+
+Body:
+
+```text
+Member Delete Requested
+
+{{requesterName}} requested hard-delete review for {{memberName}}.
+
+Hard delete is only for records added in error with no meaningful booking, financial, lodge, Xero, or audit history.
+
+Member: {{memberName}}
+Requested by: {{requesterName}}
+
+Reason:
+{{reason}}
+
+Review Member: {{reviewUrl}}
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Admin submits a hard-delete lifecycle request.
+- Sent to admins opted in to member request alerts.
+- Respects the admin/system delivery policy for this template.
+
+### admin-member-delete-approved
+
+Subject:
+
+```text
+Member delete approved: {{memberName}}
+```
+
+Body:
+
+```text
+Member Delete Approved
+
+Hi {{requesterName}},
+
+The hard-delete request for {{memberName}} was approved and processed.
+
+Reason:
+{{reason}}
+
+Review note: {{reviewNote}} [only when reviewNote exists]
+
+A request snapshot was retained before the member record was deleted.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Second admin approves a hard-delete lifecycle request.
+- Sent to the requesting admin after the member record is deleted. The target member is not emailed because hard delete is reserved for erroneous records.
+
+### admin-member-delete-rejected
+
+Subject:
+
+```text
+Member delete rejected: {{memberName}}
+```
+
+Body:
+
+```text
+Member Delete Request Rejected
+
+Hi {{requesterName}},
+
+The hard-delete request for {{memberName}} was not approved.
+
+Reason:
+{{reason}}
+
+Review note: {{reviewNote}} [only when reviewNote exists]
+
+Open Member: {{reviewUrl}}
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Second admin rejects a hard-delete lifecycle request.
+- Sent once to the requesting admin. The target member is not emailed because hard delete is reserved for erroneous records.
 
 ### admin-new-booking
 

@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   participantUpdate: vi.fn(),
   requestCreate: vi.fn(),
   requestFindMany: vi.fn(),
+  sendAdminRequestAlert: vi.fn(),
   sendConfirmationEmail: vi.fn(),
+  sendSubmittedEmail: vi.fn(),
   issueActionToken: vi.fn(),
   hashActionToken: vi.fn(),
   logAudit: vi.fn(),
@@ -33,7 +35,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/email", () => ({
+  sendAdminMembershipCancellationRequestAlert: mocks.sendAdminRequestAlert,
   sendMembershipCancellationConfirmationEmail: mocks.sendConfirmationEmail,
+  sendMembershipCancellationSubmittedEmail: mocks.sendSubmittedEmail,
 }));
 
 vi.mock("@/lib/action-tokens", () => ({
@@ -141,7 +145,9 @@ describe("membership cancellation request workflow", () => {
       tokenHash: "hashed-confirmation-token",
     });
     mocks.hashActionToken.mockImplementation((token: string) => `hash:${token}`);
+    mocks.sendAdminRequestAlert.mockResolvedValue(undefined);
     mocks.sendConfirmationEmail.mockResolvedValue(undefined);
+    mocks.sendSubmittedEmail.mockResolvedValue(undefined);
     mocks.requestCreate.mockImplementation(async (args) => ({
       id: "request-1",
       status: "REQUESTED",

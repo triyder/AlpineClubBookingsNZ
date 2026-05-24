@@ -113,6 +113,33 @@ After signing in with the seeded administrator, open `/admin/setup` to finish
 the readiness checklist, run explicit provider tests, connect Xero, and review
 booking, membership cancellation, rate, and mapping settings.
 
+Admin Setup also exposes email and notification controls. Review the shared
+email variables, editable templates, and admin/system delivery policies before
+inviting members; cancellation, archive, and safe-delete lifecycle messages are
+registered there and can be previewed before go-live. Keep transactional member
+emails enabled unless your club has a replacement operational process.
+
+For Xero-backed deployments, complete the operational Xero mappings before
+using membership cancellation in production. In `/admin/xero`, set the
+`membershipCancellationCredit` account/item mapping and configure the cancelled
+member contact groups under `/admin/setup`. Cancellation approval only disables
+the local member and queues Xero operations; archive and hard delete do not
+remove Xero contacts.
+
+Member cancellation is a member-initiated workflow from the profile page.
+Login-capable adults included by another member must confirm their own
+inclusion before admin review. Admins review confirmed participants under
+`/admin/membership-cancellations`; approval cancels the local membership while
+preserving booking, payment, Xero, and audit history.
+
+Archive and hard delete are separate admin lifecycle policies on the member
+detail page. Archive is for already-cancelled members and keeps the member row
+for historical reporting while hiding it from default operational views. Hard
+delete is only for records added in error: it requires a clean dependency check,
+a reason, second-admin approval, and a retained request snapshot before the row
+is removed. If any meaningful history exists, use cancellation and archive
+instead of hard delete.
+
 ## 5. Configure Providers In Test Mode
 
 Use non-production accounts until your own deployment is ready:

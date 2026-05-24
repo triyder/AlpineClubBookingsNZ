@@ -5,6 +5,15 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
+import {
+  sendAdminMemberArchiveRequestedAlert,
+  sendAdminMemberDeleteApprovedEmail,
+  sendAdminMemberDeleteRejectedEmail,
+  sendAdminMemberDeleteRequestedAlert,
+  sendMemberArchiveApprovedEmail,
+  sendMemberArchiveRejectedEmail,
+} from "@/lib/email";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 type LifecycleActionClient = Prisma.TransactionClient | typeof prisma;
@@ -105,8 +114,19 @@ function requireCleanText(value: string | null | undefined, message: string) {
   return cleaned;
 }
 
-function memberName(member: Pick<MemberSummary, "firstName" | "lastName">) {
+function memberName(member: {
+  firstName?: string | null;
+  lastName?: string | null;
+}) {
   return [member.firstName, member.lastName].filter(Boolean).join(" ").trim();
+}
+
+function memberDisplayName(member: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+}) {
+  return memberName(member) || member.email || "Unknown member";
 }
 
 function serializeDate(value: Date | string | null | undefined) {
@@ -126,6 +146,43 @@ function serializeMember(member: MemberSummary | null) {
 
 function jsonSnapshot(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function snapshotMember(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
+  }
+  const member = (snapshot as { member?: unknown }).member;
+  if (!member || typeof member !== "object" || Array.isArray(member)) {
+    return null;
+  }
+  return member as {
+    firstName?: unknown;
+    lastName?: unknown;
+    email?: unknown;
+  };
+}
+
+function memberNameFromSnapshot(snapshot: unknown, fallback: string) {
+  const member = snapshotMember(snapshot);
+  if (!member) return fallback;
+
+  const firstName = typeof member.firstName === "string" ? member.firstName : "";
+  const lastName = typeof member.lastName === "string" ? member.lastName : "";
+  const email = typeof member.email === "string" ? member.email : "";
+  return memberDisplayName({ firstName, lastName, email }) || fallback;
+}
+
+async function sendLifecycleEmailSafely(
+  description: string,
+  context: Record<string, unknown>,
+  send: () => Promise<void>,
+) {
+  try {
+    await send();
+  } catch (err) {
+    logger.error({ err, ...context }, description);
+  }
 }
 
 export function serializeMemberLifecycleActionRequest(
@@ -583,6 +640,7 @@ export async function createMemberDeleteRequest({
   assertEligibleForDelete(eligibility);
 
   const snapshot = await buildMemberSnapshot(memberId, prisma, eligibility);
+  const targetMemberName = memberNameFromSnapshot(snapshot, memberId);
 
   const request = await prisma.$transaction(async (tx) => {
     const created = await tx.memberLifecycleActionRequest.create({
@@ -618,6 +676,21 @@ export async function createMemberDeleteRequest({
 
     return created;
   });
+
+  const requesterName = request.requestedBy
+    ? memberDisplayName(request.requestedBy)
+    : "Unknown admin";
+  await sendLifecycleEmailSafely(
+    "Failed to send member delete request admin alert",
+    { memberId, requestId: request.id },
+    () =>
+      sendAdminMemberDeleteRequestedAlert({
+        requesterName,
+        memberId,
+        memberName: targetMemberName,
+        reason: cleanedReason,
+      }),
+  );
 
   return { request: serializeMemberLifecycleActionRequest(request) };
 }
@@ -697,6 +770,21 @@ export async function createMemberArchiveRequest({
     return created;
   });
 
+  const requesterName = request.requestedBy
+    ? memberDisplayName(request.requestedBy)
+    : "Unknown admin";
+  await sendLifecycleEmailSafely(
+    "Failed to send member archive request admin alert",
+    { memberId, requestId: request.id },
+    () =>
+      sendAdminMemberArchiveRequestedAlert({
+        requesterName,
+        memberId,
+        memberName: memberDisplayName(member),
+        reason: cleanedReason,
+      }),
+  );
+
   return { request: serializeMemberLifecycleActionRequest(request) };
 }
 
@@ -723,6 +811,12 @@ export async function reviewMemberDeleteRequest({
       403,
     );
   }
+
+  const targetMemberName = memberNameFromSnapshot(
+    request.memberSnapshot,
+    request.memberId,
+  );
+  const deleteRequester = request.requestedBy;
 
   if (action === "reject") {
     const rejected = await prisma.$transaction(async (tx) => {
@@ -762,6 +856,22 @@ export async function reviewMemberDeleteRequest({
 
       return reviewed;
     });
+
+    if (deleteRequester) {
+      await sendLifecycleEmailSafely(
+        "Failed to send member delete rejection email",
+        { requestId: request.id, memberId: request.memberId },
+        () =>
+          sendAdminMemberDeleteRejectedEmail({
+            email: deleteRequester.email,
+            requesterName: memberDisplayName(deleteRequester),
+            memberId: request.memberId,
+            memberName: targetMemberName,
+            reason: request.reason,
+            reviewNote: note,
+          }),
+      );
+    }
 
     return { request: serializeMemberLifecycleActionRequest(rejected) };
   }
@@ -834,6 +944,21 @@ export async function reviewMemberDeleteRequest({
     return reviewed;
   });
 
+  if (deleteRequester) {
+    await sendLifecycleEmailSafely(
+      "Failed to send member delete approval email",
+      { requestId: request.id, memberId: request.memberId },
+      () =>
+        sendAdminMemberDeleteApprovedEmail({
+          email: deleteRequester.email,
+          requesterName: memberDisplayName(deleteRequester),
+          memberName: targetMemberName,
+          reason: request.reason,
+          reviewNote: note,
+        }),
+    );
+  }
+
   return { request: serializeMemberLifecycleActionRequest(approved) };
 }
 
@@ -860,6 +985,16 @@ export async function reviewMemberArchiveRequest({
       403,
     );
   }
+
+  const targetMember = await prisma.member.findUnique({
+    where: { id: request.memberId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+    },
+  });
 
   if (action === "reject") {
     const rejected = await prisma.$transaction(async (tx) => {
@@ -899,6 +1034,20 @@ export async function reviewMemberArchiveRequest({
 
       return reviewed;
     });
+
+    if (targetMember) {
+      await sendLifecycleEmailSafely(
+        "Failed to send member archive rejection email",
+        { requestId: request.id, memberId: request.memberId },
+        () =>
+          sendMemberArchiveRejectedEmail({
+            email: targetMember.email,
+            firstName: targetMember.firstName,
+            reason: request.reason,
+            reviewNote: note,
+          }),
+      );
+    }
 
     return { request: serializeMemberLifecycleActionRequest(rejected) };
   }
@@ -967,6 +1116,20 @@ export async function reviewMemberArchiveRequest({
 
     return reviewed;
   });
+
+  if (targetMember) {
+    await sendLifecycleEmailSafely(
+      "Failed to send member archive approval email",
+      { requestId: request.id, memberId: request.memberId },
+      () =>
+        sendMemberArchiveApprovedEmail({
+          email: targetMember.email,
+          firstName: targetMember.firstName,
+          reason: request.reason,
+          reviewNote: note,
+        }),
+    );
+  }
 
   return { request: serializeMemberLifecycleActionRequest(approved) };
 }
