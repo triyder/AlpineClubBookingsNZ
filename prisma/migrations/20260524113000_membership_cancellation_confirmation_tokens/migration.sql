@@ -10,10 +10,7 @@ ADD COLUMN "confirmedAt" TIMESTAMP(3),
 ADD COLUMN "declinedAt" TIMESTAMP(3);
 
 -- CreateIndex
-CREATE UNIQUE INDEX "MembershipCancellationRequestParticipant_confirmationTokenHash_key" ON "MembershipCancellationRequestParticipant"("confirmationTokenHash");
+CREATE UNIQUE INDEX "MCRParticipant_confirmationTokenHash_key" ON "MembershipCancellationRequestParticipant"("confirmationTokenHash");
 
 -- CreateIndex
-CREATE INDEX "MembershipCancellationRequestParticipant_confirmationTokenHash_idx" ON "MembershipCancellationRequestParticipant"("confirmationTokenHash");
-
--- CreateIndex
-CREATE INDEX "MembershipCancellationRequestParticipant_confirmationTokenExpiresAt_idx" ON "MembershipCancellationRequestParticipant"("confirmationTokenExpiresAt");
+CREATE INDEX "MCRParticipant_confirmationTokenExpiresAt_idx" ON "MembershipCancellationRequestParticipant"("confirmationTokenExpiresAt");

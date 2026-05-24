@@ -127,7 +127,7 @@ ALTER TABLE "MembershipCancellationRequestParticipant" ADD CONSTRAINT "Membershi
 ALTER TABLE "MembershipCancellationRequestParticipant" ADD CONSTRAINT "MembershipCancellationRequestParticipant_memberId_fkey" FOREIGN KEY ("memberId") REFERENCES "Member"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "MembershipCancellationRequestParticipant" ADD CONSTRAINT "MembershipCancellationRequestParticipant_reviewedByMemberId_fkey" FOREIGN KEY ("reviewedByMemberId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "MembershipCancellationRequestParticipant" ADD CONSTRAINT "MCRParticipant_reviewedByMemberId_fkey" FOREIGN KEY ("reviewedByMemberId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Member" ADD CONSTRAINT "Member_cancelledViaRequestId_fkey" FOREIGN KEY ("cancelledViaRequestId") REFERENCES "MembershipCancellationRequest"("id") ON DELETE SET NULL ON UPDATE CASCADE;

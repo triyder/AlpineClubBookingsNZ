@@ -486,7 +486,7 @@ model MembershipCancellationRequestParticipant {
   status                     MembershipCancellationParticipantStatus @default(REQUESTED)
   reason                     String?
   adminNote                  String?
-  confirmationTokenHash      String?                                 @unique
+  confirmationTokenHash      String?                                 @unique(map: "MCRParticipant_confirmationTokenHash_key")
   confirmationTokenExpiresAt DateTime?
   confirmedAt                DateTime?
   declinedAt                 DateTime?
@@ -498,14 +498,13 @@ model MembershipCancellationRequestParticipant {
 
   request    MembershipCancellationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   member     Member                        @relation("MembershipCancellationParticipantMember", fields: [memberId], references: [id], onDelete: Restrict)
-  reviewedBy Member?                       @relation("MembershipCancellationParticipantReviewer", fields: [reviewedByMemberId], references: [id], onDelete: SetNull)
+  reviewedBy Member?                       @relation("MembershipCancellationParticipantReviewer", fields: [reviewedByMemberId], references: [id], onDelete: SetNull, map: "MCRParticipant_reviewedByMemberId_fkey")
 
   @@unique([requestId, memberId])
   @@index([requestId, status])
   @@index([memberId, status])
   @@index([reviewedByMemberId])
-  @@index([confirmationTokenHash])
-  @@index([confirmationTokenExpiresAt])
+  @@index([confirmationTokenExpiresAt], map: "MCRParticipant_confirmationTokenExpiresAt_idx")
   @@index([cancelledAt])
 }
 
