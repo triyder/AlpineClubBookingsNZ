@@ -45,6 +45,8 @@ import {
   adminFamilyGroupRequestTemplate,
   joinRequestConfirmationTemplate,
   membershipCancellationConfirmationTemplate,
+  membershipCancellationApprovedTemplate,
+  membershipCancellationRejectedTemplate,
   adminRefundRequestTemplate,
   adminIssueReportTemplate,
   type XeroReconciliationReportEmail,
@@ -1323,6 +1325,50 @@ export async function sendMembershipCancellationConfirmationEmail(params: {
       token: params.token,
       confirmationUrl,
       expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendMembershipCancellationApprovedEmail(params: {
+  email: string;
+  firstName: string;
+  participantName: string;
+  reason?: string | null;
+  adminNote?: string | null;
+  rejoinProcessText?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Membership cancellation approved — ${CLUB_BOOKINGS_NAME}`,
+    html: membershipCancellationApprovedTemplate(params),
+    templateName: "membership-cancellation-approved",
+    templateData: {
+      firstName: params.firstName,
+      participantName: params.participantName,
+      reason: params.reason ?? "",
+      adminNote: params.adminNote ?? "",
+      rejoinProcessText: params.rejoinProcessText ?? "",
+    },
+  });
+}
+
+export async function sendMembershipCancellationRejectedEmail(params: {
+  email: string;
+  firstName: string;
+  participantName: string;
+  reason?: string | null;
+  adminNote?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Membership cancellation update — ${CLUB_BOOKINGS_NAME}`,
+    html: membershipCancellationRejectedTemplate(params),
+    templateName: "membership-cancellation-rejected",
+    templateData: {
+      firstName: params.firstName,
+      participantName: params.participantName,
+      reason: params.reason ?? "",
+      adminNote: params.adminNote ?? "",
     },
   });
 }

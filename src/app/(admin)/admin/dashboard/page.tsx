@@ -19,6 +19,7 @@ import {
   DollarSign,
   CalendarCheck,
   AlertTriangle,
+  UserX,
 } from "lucide-react";
 import { eachDayOfInterval, addDays } from "date-fns";
 import { formatCents } from "@/lib/utils";
@@ -48,6 +49,7 @@ async function getStats() {
     recentBookings,
     pendingRefundAppeals,
     pendingCreditApprovals,
+    pendingMembershipCancellations,
   ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
@@ -88,6 +90,17 @@ async function getStats() {
     }),
     prisma.adminCreditAdjustmentRequest.count({
       where: { status: "PENDING" },
+    }),
+    prisma.membershipCancellationRequest.count({
+      where: {
+        status: "REQUESTED",
+        participants: {
+          some: {
+            status: "REQUESTED",
+            confirmedAt: { not: null },
+          },
+        },
+      },
     }),
   ]);
 
@@ -137,6 +150,7 @@ async function getStats() {
     unassignedDatesWithBookings,
     pendingRefundAppeals,
     pendingCreditApprovals,
+    pendingMembershipCancellations,
   };
 }
 
@@ -172,6 +186,24 @@ export default async function AdminDashboardPage() {
                 <p className="font-medium text-blue-900">Pending Review Queue</p>
                 <p className="text-sm text-blue-700 mt-1">
                   {pendingReviewSummary.join(" and ")} waiting for admin review.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {stats.pendingMembershipCancellations > 0 && (
+        <Link href="/admin/membership-cancellations">
+          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <UserX className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-amber-950">
+                  Membership Cancellation Review
+                </p>
+                <p className="text-sm text-amber-800 mt-1">
+                  {stats.pendingMembershipCancellations} cancellation request{stats.pendingMembershipCancellations === 1 ? "" : "s"} waiting for admin review.
                 </p>
               </div>
             </CardContent>

@@ -33,6 +33,7 @@ import {
   RotateCcw,
   ListChecks,
   Puzzle,
+  UserX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -83,6 +84,7 @@ const navSections: NavSection[] = [
       { href: "/admin/members", label: "Members", icon: Users },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
       { href: "/admin/family-suggestions", label: "Family Suggestions", icon: Users },
+      { href: "/admin/membership-cancellations", label: "Cancellations", icon: UserX },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
       { href: "/admin/communications", label: "Communications", icon: Mail },
     ],
@@ -216,6 +218,29 @@ function usePendingCreditApprovals(): number {
   return count;
 }
 
+function usePendingMembershipCancellations(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/membership-cancellation-requests?status=REQUESTED&pageSize=1")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) {
+          setCount(data?.pendingCount ?? 0);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function SidebarLinks({
   features,
   onNavigate,
@@ -228,6 +253,7 @@ function SidebarLinks({
   const pendingApplications = usePendingApplications();
   const pendingRefundAppeals = usePendingRefundAppeals();
   const pendingCreditApprovals = usePendingCreditApprovals();
+  const pendingMembershipCancellations = usePendingMembershipCancellations();
   const visibleNavSections = getVisibleAdminNavSections(features);
 
   // Map href -> badge count
@@ -241,6 +267,9 @@ function SidebarLinks({
   if (pendingRefundAppeals + pendingCreditApprovals > 0) {
     badges["/admin/refund-requests"] =
       pendingRefundAppeals + pendingCreditApprovals;
+  }
+  if (pendingMembershipCancellations > 0) {
+    badges["/admin/membership-cancellations"] = pendingMembershipCancellations;
   }
 
   return (
