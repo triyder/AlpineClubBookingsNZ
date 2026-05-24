@@ -66,4 +66,18 @@ describe("deployment image contracts", () => {
       'docker compose build --pull "$CRON_SERVICE" "$TARGET_SERVICE" "$MIGRATE_SERVICE"',
     );
   });
+
+  it("copies standalone static assets without nesting static/static", () => {
+    const dockerfile = readRepoFile("Dockerfile");
+
+    expect(dockerfile).toContain(
+      "COPY --from=builder /app/.next/standalone ./",
+    );
+    expect(dockerfile).toContain(
+      "COPY --from=builder /app/.next/static/ ./.next/static/",
+    );
+    expect(dockerfile).not.toMatch(
+      /^COPY --from=builder \/app\/\.next\/static \.\/\.next\/static$/m,
+    );
+  });
 });
