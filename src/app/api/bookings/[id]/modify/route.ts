@@ -1,72 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BookingStatus, PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { z } from "zod";
+
+import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
-import {
-  calculateBookingPrice,
-  type SeasonRateData,
-} from "@/lib/pricing";
-import { calculateChangeFee } from "@/lib/change-fee";
-import {
-  daysUntilDate,
-  loadCancellationPolicy,
-  getNonMemberHoldDays,
-} from "@/lib/cancellation";
-import {
-  calculatePromoDiscountForGuestRates,
-  getMemberFreeNightsUsed,
-  validatePromoCodeRules,
-  redeemPromoCode,
-} from "@/lib/promo";
-import {
-  createPaymentIntent,
-  findOrCreateCustomer,
-} from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
+import { ageTierEnum } from "@/lib/age-tier-schema";
+import {
+  BookingGuestValidationError,
+  getBookingGuestValidationErrorResponse,
+} from "@/lib/booking-guests";
+import {
+  queueSupersededAdditionalIntentCancellations,
+} from "@/lib/booking-payment-cleanup";
+import {
+  applyChoreCleanup,
+  applyGuestChanges,
+  applyLifecycleTransitions,
+  applyPaymentAdjustments,
+  applyPromoCodeChanges,
+  assertBookingModifiable,
+  calculateModificationChangeFee,
+  calculateModifiedPricing,
+  loadActiveSeasonRates,
+  prepareGuestPlan,
+  resolveTargetDates,
+  type LoadedBookingForModify,
+} from "@/lib/booking-modify";
 import {
   sendAdminPaymentFailureAlert,
   sendBookingModifiedEmail,
 } from "@/lib/email";
-import {
-  cleanupChoreAssignmentsForDateChange,
-  cleanupChoreAssignmentsForGuestStayRanges,
-} from "@/lib/chore-cleanup";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import logger from "@/lib/logger";
-import { requireActiveSessionUser } from "@/lib/session-guards";
-import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
-import {
-  assertLinkedBookingMembersCanBeBooked,
-  BookingGuestValidationError,
-  getBookingGuestValidationErrorResponse,
-  normalizeBookingGuestInputs,
-  resolveLinkedBookingMembers,
-} from "@/lib/booking-guests";
-import {
-  ADULT_SUPERVISION_REVIEW_REASON,
-  requiresAdultSupervisionReview,
-} from "@/lib/booking-review";
-import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
-import {
-  canModifyBookingStatusForRole,
-  usesActiveBookingEditLifecycle,
-} from "@/lib/booking-edit-policy";
-import { ApiError } from "@/lib/api-error";
 import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
-import { nameField } from "@/lib/zod-helpers";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { prisma } from "@/lib/prisma";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
-  buildInProgressGuestRangePlan,
-  type BookingEditGuestRangePlan,
-} from "@/lib/booking-edit-guest-ranges";
-import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+  createPaymentIntent,
+  findOrCreateCustomer,
+} from "@/lib/stripe";
+import { nameField } from "@/lib/zod-helpers";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -79,7 +57,7 @@ const batchModifySchema = z.object({
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
-      })
+      }),
     )
     .optional(),
   removeGuestIds: z.array(z.string()).optional(),
@@ -87,15 +65,9 @@ const batchModifySchema = z.object({
   removePromoCode: z.boolean().optional(),
 });
 
-import {
-  queueSupersededAdditionalIntentCancellations,
-  queueSupersededPrimaryIntentCancellations,
-  type SupersededPrimaryPaymentIntent,
-} from "@/lib/booking-payment-cleanup";
-
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
   if (!session) {
@@ -118,7 +90,7 @@ export async function PUT(
         error: "Invalid JSON",
         details: { body: ["Request body must be valid JSON"] },
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -126,19 +98,11 @@ export async function PUT(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  const {
-    checkIn: newCheckInStr,
-    checkOut: newCheckOutStr,
-    addGuests,
-    removeGuestIds,
-    promoCode: newPromoCode,
-    removePromoCode,
-  } = parsed.data;
-
+  const input = parsed.data;
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
@@ -146,7 +110,7 @@ export async function PUT(
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
 
-      const booking = await tx.booking.findUnique({
+      const booking = (await tx.booking.findUnique({
         where: { id: bookingId },
         include: {
           guests: true,
@@ -160,628 +124,115 @@ export async function PUT(
             },
           },
         },
-      });
+      })) as LoadedBookingForModify | null;
 
-      if (!booking) throw new ApiError("Booking not found", 404);
-
-      if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
-        throw new ApiError("Forbidden", 403);
-      }
-
-      if (!canModifyBookingStatusForRole(booking.status, session.user.role)) {
-        throw new ApiError(
-          "This booking cannot be modified in its current status",
-          400
-        );
-      }
-
-      const editPolicy = getBookingEditPolicy({
-        status: booking.status,
+      assertBookingModifiable(booking, {
         role: session.user.role,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-      });
-      if (!editPolicy.canModify) {
-        throw new ApiError(
-          editPolicy.reason ?? "This booking cannot be modified",
-          400
-        );
-      }
-
-      // Determine new dates
-      const requestedCheckIn = newCheckInStr ? parseDateOnly(newCheckInStr) : booking.checkIn;
-      const requestedCheckOut = newCheckOutStr ? parseDateOnly(newCheckOutStr) : booking.checkOut;
-      if (
-        Number.isNaN(requestedCheckIn.getTime()) ||
-        Number.isNaN(requestedCheckOut.getTime())
-      ) {
-        throw new ApiError("Invalid booking dates", 400);
-      }
-
-      const isInProgressEdit = editPolicy.mode === "in-progress";
-      const editableFrom = editPolicy.editableFrom;
-      const bookingCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-
-      if (isInProgressEdit) {
-        if (
-          newCheckInStr &&
-          formatDateOnly(normalizeDateOnlyForTimeZone(requestedCheckIn)) !==
-            formatDateOnly(bookingCheckIn)
-        ) {
-          throw new ApiError(
-            "Check-in cannot be changed for an in-progress booking",
-            400
-          );
-        }
-        if (editableFrom && normalizeDateOnlyForTimeZone(requestedCheckOut) < editableFrom) {
-          throw new ApiError(
-            "NZ today and earlier are locked for self-service changes",
-            400
-          );
-        }
-        if (newPromoCode || removePromoCode) {
-          throw new ApiError(
-            "Promo code changes are not available for in-progress bookings",
-            400
-          );
-        }
-      } else if (
-        session.user.role !== "ADMIN" &&
-        normalizeDateOnlyForTimeZone(requestedCheckIn) <= editPolicy.today
-      ) {
-        throw new ApiError(
-          "NZ today and earlier are locked for self-service changes",
-          400
-        );
-      }
-
-      const newCheckIn = isInProgressEdit ? booking.checkIn : requestedCheckIn;
-      const newCheckOut = requestedCheckOut;
-
-      if (newCheckOut <= newCheckIn) {
-        throw new ApiError("Check-out must be after check-in", 400);
-      }
-
-      const skipBookingLifecycleRules =
-        session.user.role === "ADMIN" &&
-        !usesActiveBookingEditLifecycle(booking.status);
-
-      const linkedMembers = await resolveLinkedBookingMembers(
-        tx,
-        booking.memberId,
-        (addGuests ?? []).map((guest) => guest.memberId),
-        { skipAuthorization: session.user.role === "ADMIN" }
-      );
-      await assertLinkedBookingMembersCanBeBooked(
-        tx,
-        linkedMembers,
-        session.user.id,
-        {
-          actorRole: session.user.role,
-          onBehalfOfMemberId:
-            session.user.role === "ADMIN" ? booking.memberId : null,
-        }
-      );
-      const normalizedAddGuests = addGuests
-        ? normalizeBookingGuestInputs(addGuests, linkedMembers)
-        : undefined;
-
-      // Determine guest changes
-      const removeSet = new Set(removeGuestIds ?? []);
-      const remainingGuests = booking.guests.filter((g) => !removeSet.has(g.id));
-      const removedGuests = booking.guests.filter((g) => removeSet.has(g.id));
-
-      if (
-        !isInProgressEdit &&
-        remainingGuests.length === 0 &&
-        (!normalizedAddGuests || normalizedAddGuests.length === 0)
-      ) {
-        throw new ApiError("Booking must have at least one guest", 400);
-      }
-
-      const guestsForPricing = [
-        ...remainingGuests.map((g) => ({
-          ageTier: g.ageTier as AgeTier,
-          isMember: g.isMember,
-          memberId: g.memberId ?? null,
-        })),
-        ...(normalizedAddGuests ?? []).map((g) => ({
-          ageTier: g.ageTier as AgeTier,
-          isMember: g.isMember,
-          memberId: g.memberId ?? null,
-        })),
-      ];
-
-      const totalGuestCount = guestsForPricing.length;
-      const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
-      const adminReviewReason = requiresAdminReview
-        ? ADULT_SUPERVISION_REVIEW_REASON
-        : null;
-
-      if (totalGuestCount > LODGE_CAPACITY) {
-        throw new ApiError(`A booking cannot exceed ${LODGE_CAPACITY} guests`, 400);
-      }
-
-      if (session.user.role !== "ADMIN") {
-        const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
-          bookingMemberId: booking.memberId,
-          checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
-          guests: normalizedAddGuests ?? [],
-        });
-
-        if (unpaidMemberGuests.length > 0) {
-          throw new ApiError(
-            `The following member guests have unpaid subscriptions: ${unpaidMemberGuests.join(", ")}. All member guests must have a paid subscription before booking.`,
-            403
-          );
-        }
-      }
-
-      // Load seasons
-      const seasons = await tx.season.findMany({
-        where: { active: true },
-        include: { rates: true },
+        actorId: session.user.id,
       });
 
-      const seasonRateData: SeasonRateData[] = seasons.map((s) => ({
-        seasonId: s.id,
-        startDate: s.startDate,
-        endDate: s.endDate,
-        rates: s.rates.map((r) => ({
-          ageTier: r.ageTier,
-          isMember: r.isMember,
-          pricePerNightCents: r.pricePerNightCents,
-        })),
-      }));
+      const dates = resolveTargetDates({
+        booking,
+        role: session.user.role,
+        input,
+      });
 
-      let inProgressPlan: BookingEditGuestRangePlan | null = null;
-      if (isInProgressEdit && editableFrom) {
-        inProgressPlan = buildInProgressGuestRangePlan({
-          booking: {
-            checkIn: booking.checkIn,
-            checkOut: booking.checkOut,
-            totalPriceCents: booking.totalPriceCents,
-            discountCents: booking.discountCents,
-            finalPriceCents: booking.finalPriceCents,
-            guests: booking.guests.map((guest) => ({
-              ...guest,
-              ageTier: guest.ageTier as AgeTier,
-            })),
-          },
-          editableFrom,
-          newCheckOut,
-          addGuests: normalizedAddGuests,
-          removeGuestIds,
-          seasons: seasonRateData,
-        });
-      }
+      const guestPlan = await prepareGuestPlan(tx, {
+        booking,
+        role: session.user.role,
+        actorId: session.user.id,
+        input,
+        isInProgressEdit: dates.isInProgressEdit,
+        editableFrom: dates.editableFrom,
+        newCheckIn: dates.newCheckIn,
+      });
 
-      // Capacity check excluding this booking
-      const capacity = skipBookingLifecycleRules
-        ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
-        : inProgressPlan && editableFrom
-          ? await checkCapacityForGuestRanges(
-              editableFrom,
-              newCheckOut,
-              inProgressPlan.capacityGuestRanges,
-              bookingId,
-              tx
-            )
-          : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId, tx);
-      if (!capacity.available) {
-        throw new ApiError("Not enough beds available for these changes", 400);
-      }
+      const seasonRateData = await loadActiveSeasonRates(tx);
 
-      // Calculate new total price
-      let priceBreakdown;
-      try {
-        priceBreakdown = inProgressPlan
-          ? {
-              totalPriceCents: inProgressPlan.newTotalPriceCents,
-              guests: [
-                ...inProgressPlan.proposedExistingGuests.map((entry) => ({
-                  priceCents: entry.priceCents,
-                  perNightCents: [],
-                })),
-                ...inProgressPlan.proposedAddedGuests.map((entry) => ({
-                  priceCents: entry.priceCents,
-                  perNightCents: [],
-                })),
-              ],
-            }
-          : calculateBookingPrice(newCheckIn, newCheckOut, guestsForPricing, seasonRateData);
-      } catch {
-        throw new ApiError("No season rate found for the requested dates", 400);
-      }
+      const pricing = await calculateModifiedPricing(tx, {
+        booking,
+        bookingId,
+        isInProgressEdit: dates.isInProgressEdit,
+        editableFrom: dates.editableFrom,
+        newCheckIn: dates.newCheckIn,
+        newCheckOut: dates.newCheckOut,
+        normalizedAddGuests: guestPlan.normalizedAddGuests,
+        removeGuestIds: input.removeGuestIds,
+        guestsForPricing: guestPlan.guestsForPricing,
+        totalGuestCount: guestPlan.totalGuestCount,
+        skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+        seasonRateData,
+      });
 
-      const newTotalPriceCents = priceBreakdown.totalPriceCents;
-      const guestNightRates = inProgressPlan
-        ? []
-        : guestsForPricing.map((guest) => {
-            const breakdown = calculateBookingPrice(
-              newCheckIn,
-              newCheckOut,
-              [guest],
-              seasonRateData
-            );
-            return {
-              memberId: guest.memberId ?? null,
-              perNightRates: breakdown.guests[0].perNightCents,
-            };
-          });
+      const promo = await applyPromoCodeChanges(tx, {
+        booking,
+        bookingId,
+        input,
+        inProgressPlan: pricing.inProgressPlan,
+        newTotalPriceCents: pricing.newTotalPriceCents,
+        guestNightRates: pricing.guestNightRates,
+      });
 
-      // --- Handle promo code ---
-      let newDiscountCents = 0;
-      let promoRemoved = false;
-      let promoChanged = false;
-
-      if (inProgressPlan) {
-        newDiscountCents = inProgressPlan.newDiscountCents;
-      } else if (removePromoCode && booking.promoRedemption) {
-        // Remove existing promo for reuse
-        await tx.promoRedemption.delete({ where: { id: booking.promoRedemption.id } });
-        await tx.promoCode.update({
-          where: { id: booking.promoRedemption.promoCodeId },
-          data: { currentRedemptions: { decrement: 1 } },
-        });
-        promoRemoved = true;
-      }
-
-      if (!inProgressPlan && newPromoCode && !removePromoCode) {
-        // Remove old promo first if exists
-        if (booking.promoRedemption && !promoRemoved) {
-          await tx.promoRedemption.delete({ where: { id: booking.promoRedemption.id } });
-          await tx.promoCode.update({
-            where: { id: booking.promoRedemption.promoCodeId },
-            data: { currentRedemptions: { decrement: 1 } },
-          });
-          promoRemoved = true;
-        }
-
-        // Validate and apply new promo
-        const promoCode = await tx.promoCode.findUnique({
-          where: { code: newPromoCode.toUpperCase().trim() },
-          include: { assignments: { select: { memberId: true } } },
-        });
-
-        if (!promoCode) throw new ApiError("Promo code not found", 400);
-
-        // Check single-use (exclude current booking since we just removed old redemption)
-        let memberRedemptionCount = 0;
-        if (promoCode.singleUse) {
-          memberRedemptionCount = await tx.promoRedemption.count({
-            where: { promoCodeId: promoCode.id, memberId: booking.memberId, bookingId: { not: bookingId } },
-          });
-        }
-
-        // For FREE_NIGHTS, get cumulative free nights used (exclude current booking)
-        let memberFreeNightsUsed = 0;
-        if (promoCode.type === "FREE_NIGHTS" && promoCode.freeNights) {
-          memberFreeNightsUsed = await getMemberFreeNightsUsed(
-            promoCode.id,
-            booking.memberId,
-            bookingId
-          );
-        }
-
-        const assignedMemberIds = promoCode.assignments.length
-          ? promoCode.assignments.map((assignment) => assignment.memberId)
-          : null;
-        const validationError = validatePromoCodeRules(
-          promoCode,
-          { memberId: booking.memberId },
-          new Date(),
-          memberRedemptionCount,
-          assignedMemberIds,
-          memberFreeNightsUsed
-        );
-
-        if (validationError) throw new ApiError(validationError, 400);
-
-        const remainingFreeNights = promoCode.type === "FREE_NIGHTS" && promoCode.freeNights
-          ? promoCode.freeNights - memberFreeNightsUsed
-          : undefined;
-        const promoResult = calculatePromoDiscountForGuestRates(
-          {
-            type: promoCode.type,
-            valueCents: promoCode.valueCents,
-            percentOff: promoCode.percentOff,
-            freeNights: promoCode.freeNights,
-          },
-          newTotalPriceCents,
-          booking.memberId,
-          guestNightRates,
-          assignedMemberIds,
-          undefined,
-          remainingFreeNights
-        );
-        newDiscountCents = promoResult.discountCents;
-
-        await redeemPromoCode(tx, promoCode.id, bookingId, booking.memberId, newDiscountCents, promoResult.freeNightsUsed);
-        promoChanged = true;
-      } else if (!inProgressPlan && !removePromoCode && !promoRemoved && booking.promoRedemption?.promoCode) {
-        // Keep existing promo, recalculate discount
-        const promo = booking.promoRedemption.promoCode;
-        const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNights
-          ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
-          : 0;
-        const validationError = validatePromoCodeRules(
-          promo,
-          { memberId: booking.memberId },
-          new Date(),
-          0,
-          promo.assignments.length > 0
-            ? promo.assignments.map((assignment) => assignment.memberId)
-            : null,
-          memberFreeNightsUsed
-        );
-
-        if (validationError) {
-          // Promo no longer valid - remove it
-          await tx.promoRedemption.delete({ where: { id: booking.promoRedemption.id } });
-          await tx.promoCode.update({
-            where: { id: promo.id },
-            data: { currentRedemptions: { decrement: 1 } },
-          });
-          promoRemoved = true;
-        } else {
-          const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNights
-            ? promo.freeNights - memberFreeNightsUsed
-            : undefined;
-          const promoResult = calculatePromoDiscountForGuestRates(
-            {
-              type: promo.type,
-              valueCents: promo.valueCents,
-              percentOff: promo.percentOff,
-              freeNights: promo.freeNights,
-            },
-            newTotalPriceCents,
-            booking.memberId,
-            guestNightRates,
-            promo.assignments.length > 0
-              ? promo.assignments.map((assignment) => assignment.memberId)
-              : null,
-            undefined,
-            remainingFreeNights
-          );
-          newDiscountCents = promoResult.discountCents;
-
-          await tx.promoRedemption.update({
-            where: { id: booking.promoRedemption.id },
-            data: {
-              discountCents: newDiscountCents,
-              freeNightsUsed: promoResult.freeNightsUsed || null,
-            },
-          });
-        }
-      }
-
-      const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
+      const newFinalPriceCents = pricing.newTotalPriceCents - promo.newDiscountCents;
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
-      // Calculate change fee (only if check-in changed)
-      let changeFeeCents = 0;
-      const checkInChanged = newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
-      const datesChanged = checkInChanged || newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
+      const changeFeeCents = await calculateModificationChangeFee({
+        booking,
+        newCheckIn: dates.newCheckIn,
+        checkInChanged: dates.checkInChanged,
+        skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+      });
 
-      if (!skipBookingLifecycleRules && checkInChanged) {
-        const now = new Date();
-        const policy = await loadCancellationPolicy(booking.checkIn);
-        const feeResult = calculateChangeFee({
-          daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
-          daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
-          originalFinalPriceCents: booking.finalPriceCents,
-          policyRules: policy,
-        });
-        changeFeeCents = feeResult.feeCents;
-      }
+      await applyGuestChanges(tx, {
+        bookingId,
+        newCheckIn: dates.newCheckIn,
+        newCheckOut: dates.newCheckOut,
+        removedGuests: guestPlan.removedGuests,
+        remainingGuests: guestPlan.remainingGuests,
+        normalizedAddGuests: guestPlan.normalizedAddGuests,
+        priceBreakdown: pricing.priceBreakdown,
+        inProgressPlan: pricing.inProgressPlan,
+      });
 
-      const createdGuests = [];
-      if (inProgressPlan) {
-        // Preserve locked past/today occupancy; only future ranges are shortened,
-        // extended, or added.
-        for (const entry of inProgressPlan.proposedExistingGuests) {
-          await tx.bookingGuest.update({
-            where: { id: entry.guest.id },
-            data: {
-              stayStart: entry.stayStart,
-              stayEnd: entry.stayEnd,
-              priceCents: entry.priceCents,
-            },
-          });
-        }
+      const choreWarnings = await applyChoreCleanup(tx, {
+        bookingId,
+        newCheckIn: dates.newCheckIn,
+        newCheckOut: dates.newCheckOut,
+        datesChanged: dates.datesChanged,
+      });
 
-        for (const entry of inProgressPlan.proposedAddedGuests) {
-          const g = entry.guest;
-          const guest = await tx.bookingGuest.create({
-            data: {
-              bookingId,
-              firstName: g.firstName,
-              lastName: g.lastName,
-              ageTier: g.ageTier,
-              isMember: g.isMember,
-              memberId: g.memberId || null,
-              stayStart: entry.stayStart,
-              stayEnd: entry.stayEnd,
-              priceCents: entry.priceCents,
-            },
-          });
-          createdGuests.push(guest);
-        }
-      } else {
-        // --- Delete removed guests and their chore assignments ---
-        for (const guest of removedGuests) {
-          await tx.choreAssignment.deleteMany({ where: { bookingGuestId: guest.id } });
-          await tx.bookingGuest.delete({ where: { id: guest.id } });
-        }
+      const payments = await applyPaymentAdjustments(tx, {
+        booking,
+        priceDiffCents,
+        changeFeeCents,
+      });
 
-        // --- Create new guests ---
-        const addedGuestStartIndex = remainingGuests.length;
-        for (let i = 0; i < (normalizedAddGuests ?? []).length; i++) {
-          const g = normalizedAddGuests![i];
-          const guestPriceIndex = addedGuestStartIndex + i;
-          const guest = await tx.bookingGuest.create({
-            data: {
-              bookingId,
-              firstName: g.firstName,
-              lastName: g.lastName,
-              ageTier: g.ageTier,
-              isMember: g.isMember,
-              memberId: g.memberId || null,
-              stayStart: newCheckIn,
-              stayEnd: newCheckOut,
-              priceCents: priceBreakdown.guests[guestPriceIndex].priceCents,
-            },
-          });
-          createdGuests.push(guest);
-        }
+      const lifecycle = await applyLifecycleTransitions(tx, {
+        booking,
+        bookingId,
+        newCheckIn: dates.newCheckIn,
+        newFinalPriceCents,
+        guestsForPricing: guestPlan.guestsForPricing,
+        skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+      });
 
-        // --- Update remaining guest prices ---
-        for (let i = 0; i < remainingGuests.length; i++) {
-          await tx.bookingGuest.update({
-            where: { id: remainingGuests[i].id },
-            data: {
-              stayStart: newCheckIn,
-              stayEnd: newCheckOut,
-              priceCents: priceBreakdown.guests[i].priceCents,
-            },
-          });
-        }
-      }
-
-      // --- Clean up chore assignments if dates changed ---
-      let choreWarnings: string[] = [];
-      if (datesChanged) {
-        const result = await cleanupChoreAssignmentsForDateChange(
-          tx,
-          bookingId,
-          newCheckIn,
-          newCheckOut
-        );
-        choreWarnings = result.choreWarnings;
-      }
-      const rangeCleanup = await cleanupChoreAssignmentsForGuestStayRanges(
-        tx,
-        bookingId
-      );
-      choreWarnings = [...choreWarnings, ...rangeCleanup.choreWarnings];
-
-      // --- Handle Stripe payment adjustments ---
-      let refundAmountCents = 0;
-      let additionalAmountCents = 0;
-      let pendingRefundAmountCents = 0;
-
-      const hasSucceededPayment =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"].includes(booking.status) &&
-        booking.payment?.status === "SUCCEEDED";
-      const hasIssuedXeroInvoice =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"].includes(booking.status) &&
-        !!booking.payment?.xeroInvoiceId;
-      const xeroNetAmountCents = hasIssuedXeroInvoice
-        ? priceDiffCents + changeFeeCents
-        : 0;
-      const xeroRefundAmountCents =
-        xeroNetAmountCents < 0 ? Math.abs(xeroNetAmountCents) : 0;
-      const xeroAdditionalAmountCents =
-        xeroNetAmountCents > 0 ? xeroNetAmountCents : 0;
-
-      if (hasSucceededPayment && booking.payment) {
-        if (priceDiffCents < 0) {
-          refundAmountCents = Math.abs(priceDiffCents);
-          pendingRefundAmountCents = refundAmountCents;
-        } else if (priceDiffCents > 0 || changeFeeCents > 0) {
-          additionalAmountCents = Math.max(priceDiffCents, 0) + changeFeeCents;
-        }
-
-        if (changeFeeCents > 0) {
-          await tx.payment.update({
-            where: { id: booking.payment.id },
-            data: { changeFeeCents: { increment: changeFeeCents } },
-          });
-        }
-      } else if (xeroAdditionalAmountCents > 0) {
-        additionalAmountCents = xeroAdditionalAmountCents;
-      }
-
-      // --- Update hasNonMembers and nonMemberHoldUntil ---
-      const allGuestsNowMembers = guestsForPricing.every((g) => g.isMember);
-      const hasNonMembers = !allGuestsNowMembers;
-      let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
-      let newStatus = booking.status;
-      let zeroDollarAutoPaid = false;
-      let supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[] = [];
-
-      if (!skipBookingLifecycleRules && hasNonMembers) {
-        const holdDays = await getNonMemberHoldDays(newCheckIn);
-        const daysUntilNewCheckIn = Math.ceil(
-          (newCheckIn.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
-        );
-
-        if (daysUntilNewCheckIn <= holdDays) {
-          newNonMemberHoldUntil = null;
-          if (booking.status === "PENDING") {
-            newStatus = "PAYMENT_PENDING";
-          }
-        } else {
-          newNonMemberHoldUntil = new Date(
-            newCheckIn.getTime() - holdDays * 24 * 60 * 60 * 1000
-          );
-        }
-      } else if (!skipBookingLifecycleRules) {
-        newNonMemberHoldUntil = null;
-      }
-
-      if (
-        !skipBookingLifecycleRules &&
-        newFinalPriceCents === 0 &&
-        newStatus === BookingStatus.PAYMENT_PENDING
-      ) {
-        newStatus = BookingStatus.PAID;
-        zeroDollarAutoPaid = true;
-        const zeroDollarPayment = await tx.payment.upsert({
-          where: { bookingId },
-          create: {
-            bookingId,
-            amountCents: 0,
-            status: PaymentStatus.SUCCEEDED,
-          },
-          update: {
-            amountCents: 0,
-            status: PaymentStatus.SUCCEEDED,
-            stripePaymentIntentId: null,
-            stripePaymentMethodId: null,
-            additionalPaymentIntentId: null,
-            additionalAmountCents: 0,
-            additionalPaymentStatus: null,
-          },
-        });
-        supersededPrimaryPaymentIntents =
-          await queueSupersededPrimaryIntentCancellations(tx, {
-            bookingId,
-            paymentId: zeroDollarPayment.id,
-            newFinalPriceCents,
-          });
-      }
-
-      // --- Update booking ---
       const updatedBooking = await tx.booking.update({
         where: { id: bookingId },
         data: {
-          checkIn: newCheckIn,
-          checkOut: newCheckOut,
-          totalPriceCents: newTotalPriceCents,
-          discountCents: newDiscountCents,
+          checkIn: dates.newCheckIn,
+          checkOut: dates.newCheckOut,
+          totalPriceCents: pricing.newTotalPriceCents,
+          discountCents: promo.newDiscountCents,
           finalPriceCents: newFinalPriceCents,
-          hasNonMembers,
-          nonMemberHoldUntil: newNonMemberHoldUntil,
-          status: newStatus,
-          requiresAdminReview,
-          adminReviewReason,
+          hasNonMembers: lifecycle.hasNonMembers,
+          nonMemberHoldUntil: lifecycle.newNonMemberHoldUntil,
+          status: lifecycle.newStatus,
+          requiresAdminReview: guestPlan.requiresAdminReview,
+          adminReviewReason: guestPlan.adminReviewReason,
         },
         include: { guests: true, payment: true },
       });
 
-      // --- Create modification record ---
       const bookingModification = await tx.bookingModification.create({
         data: {
           bookingId,
@@ -794,24 +245,24 @@ export async function PUT(
             totalPriceCents: booking.totalPriceCents,
             discountCents: booking.discountCents,
             finalPriceCents: booking.finalPriceCents,
-            removedGuests: removedGuests.map((g) => ({
+            removedGuests: guestPlan.removedGuests.map((g) => ({
               firstName: g.firstName,
               lastName: g.lastName,
             })),
           },
           newData: {
-            checkIn: newCheckIn.toISOString().split("T")[0],
-            checkOut: newCheckOut.toISOString().split("T")[0],
+            checkIn: dates.newCheckIn.toISOString().split("T")[0],
+            checkOut: dates.newCheckOut.toISOString().split("T")[0],
             guestCount: updatedBooking.guests.length,
-            addedGuests: (normalizedAddGuests ?? []).map((g) => ({
+            addedGuests: (guestPlan.normalizedAddGuests ?? []).map((g) => ({
               firstName: g.firstName,
               lastName: g.lastName,
             })),
-            totalPriceCents: newTotalPriceCents,
-            discountCents: newDiscountCents,
+            totalPriceCents: pricing.newTotalPriceCents,
+            discountCents: promo.newDiscountCents,
             finalPriceCents: newFinalPriceCents,
-            promoRemoved,
-            promoChanged,
+            promoRemoved: promo.promoRemoved,
+            promoChanged: promo.promoChanged,
           },
           priceDiffCents,
           changeFeeCents,
@@ -822,23 +273,23 @@ export async function PUT(
         booking: updatedBooking,
         priceDiffCents,
         changeFeeCents,
-        refundAmountCents,
-        additionalAmountCents,
-        pendingRefundAmountCents,
-        promoRemoved,
-        promoChanged,
+        refundAmountCents: payments.refundAmountCents,
+        additionalAmountCents: payments.additionalAmountCents,
+        pendingRefundAmountCents: payments.pendingRefundAmountCents,
+        promoRemoved: promo.promoRemoved,
+        promoChanged: promo.promoChanged,
         choreWarnings,
-        datesChanged,
+        datesChanged: dates.datesChanged,
         oldCheckIn: booking.checkIn,
         oldCheckOut: booking.checkOut,
         oldGuestCount: booking.guests.length,
-        hasSucceededPayment,
-        hasIssuedXeroInvoice,
+        hasSucceededPayment: payments.hasSucceededPayment,
+        hasIssuedXeroInvoice: payments.hasIssuedXeroInvoice,
         paymentStatus: booking.payment?.status ?? null,
-        zeroDollarAutoPaid,
-        supersededPrimaryPaymentIntents,
-        xeroRefundAmountCents,
-        xeroAdditionalAmountCents,
+        zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
+        supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
+        xeroRefundAmountCents: payments.xeroRefundAmountCents,
+        xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
         memberEmail: booking.member.email,
@@ -848,190 +299,26 @@ export async function PUT(
       };
     });
 
-    if (result.supersededPrimaryPaymentIntents.length > 0) {
-      try {
-        await processPaymentRecoveryOperations({
-          limit: result.supersededPrimaryPaymentIntents.length,
-        });
-      } catch (err) {
-        logger.error(
-          { err, bookingId },
-          "Failed to immediately process queued Stripe payment recovery operations"
-        );
-      }
-    }
+    await drainSupersededPrimaryIntents({ bookingId, result });
 
-    let stripeRefundId: string | undefined;
-    if (result.pendingRefundAmountCents > 0 && result.paymentId) {
-      try {
-        const refundResult = await refundPaymentTransactions({
-          paymentId: result.paymentId,
-          amountCents: result.pendingRefundAmountCents,
-          metadata: { bookingId, reason: "batch_modification" },
-          idempotencyKeyPrefix: `mod_batch_refund_${bookingId}`,
-        });
-        stripeRefundId = refundResult.refunds[0]?.refundId;
-      } catch (refundErr) {
-        logger.error(
-          { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
-          "Stripe refund failed after batch modification - requires manual reconciliation"
-        );
-        await sendAdminPaymentFailureAlert({
-          memberName: result.memberName,
-          checkIn: result.booking.checkIn,
-          checkOut: result.booking.checkOut,
-          amountCents: result.pendingRefundAmountCents,
-          errorMessage:
-            refundErr instanceof Error
-              ? `Stripe refund failed after booking modification (manual reconciliation required): ${refundErr.message}`
-              : "Stripe refund failed after booking modification (manual reconciliation required)",
-          paymentIntentId: `refund_failure_${bookingId}`,
-        }).catch((alertErr) =>
-          logger.error(
-            { err: alertErr, bookingId },
-            "Failed to send admin alert for Stripe refund failure after batch modification"
-          )
-        );
-      }
-    }
-
-    // --- Post-transaction side effects (fire-and-forget) ---
-
-    let additionalPaymentClientSecret: string | undefined;
-    let additionalPaymentIntentId: string | undefined;
-    if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
-      try {
-        let customerId = result.paymentCustomerId ?? undefined;
-        if (!customerId) {
-          const customer = await findOrCreateCustomer({
-            email: result.memberEmail,
-            name: result.memberName,
-            memberId: result.memberId,
-          });
-          customerId = customer.id;
-        }
-
-        const pi = await createPaymentIntent({
-          amountCents: result.additionalAmountCents,
-          customerId,
-          metadata: {
-            bookingId,
-            type: "modification_additional",
-            reason: "batch_modify_price_increase",
-          },
-          idempotencyKey: `mod_batch_${bookingId}_${result.bookingModificationId}`,
-        });
-
-        await queueSupersededAdditionalIntentCancellations({
-          bookingId,
-          paymentId: result.paymentId,
-          newPaymentIntentId: pi.id,
-        }).catch((err) =>
-          logger.error(
-            { err, bookingId, paymentIntentId: pi.id },
-            "Failed to queue superseded additional intent cancellations"
-          )
-        );
-
-        await upsertPaymentIntentTransaction({
-          paymentId: result.paymentId,
-          kind: PaymentTransactionKind.ADDITIONAL,
-          paymentIntentId: pi.id,
-          amountCents: result.additionalAmountCents,
-          status: PaymentStatus.PENDING,
-          reason: "batch_modify_price_increase",
-          stripeCustomerId: customerId,
-        });
-
-        additionalPaymentClientSecret = pi.client_secret ?? undefined;
-        additionalPaymentIntentId = pi.id;
-      } catch (piErr) {
-        logger.error(
-          { err: piErr, bookingId },
-          "Failed to create additional PaymentIntent for batch modification"
-        );
-      }
-    }
-
-    // Audit log
-    logAudit({
-      action: "booking.modify.batch",
-      memberId: session.user.id,
-      targetId: bookingId,
-      subjectMemberId: result.booking.memberId,
-      entityType: "BookingModification",
-      entityId: result.bookingModificationId,
-      category: "booking",
-      outcome: "success",
-      summary: "Booking modified",
-      details: JSON.stringify({
-        datesChanged: result.datesChanged,
-        oldGuestCount: result.oldGuestCount,
-        newGuestCount: result.booking.guests.length,
-        priceDiffCents: result.priceDiffCents,
-        changeFeeCents: result.changeFeeCents,
-        refundAmountCents: result.refundAmountCents,
-        promoRemoved: result.promoRemoved,
-        promoChanged: result.promoChanged,
-        zeroDollarAutoPaid: result.zeroDollarAutoPaid,
-      }),
-      metadata: {
-        bookingId,
-        datesChanged: result.datesChanged,
-        oldGuestCount: result.oldGuestCount,
-        newGuestCount: result.booking.guests.length,
-        priceDiffCents: result.priceDiffCents,
-        changeFeeCents: result.changeFeeCents,
-        refundAmountCents: result.refundAmountCents,
-        promoRemoved: result.promoRemoved,
-        promoChanged: result.promoChanged,
-        zeroDollarAutoPaid: result.zeroDollarAutoPaid,
-      },
-      ipAddress,
-    });
-
-    void queueXeroBookingEditSettlement({
+    const stripeRefundId = await executeStripeRefund({
       bookingId,
-      bookingModificationId: result.bookingModificationId,
-      createdByMemberId: session.user.id,
-      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-      originalPaymentStatus: result.paymentStatus,
-      priceDiffCents: result.priceDiffCents,
-      changeFeeCents: result.changeFeeCents,
-      datesChanged: result.datesChanged,
-      createPrimaryInvoiceWhenMissing: result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
-      requiresAdditionalStripePayment:
-        result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
-      additionalPaymentIntentId,
-    }).catch((err) =>
-      logger.error({ err, bookingId }, "Failed to queue Xero settlement for batch modification")
-    );
-
-    // Email notification
-    const member = await prisma.member.findUnique({
-      where: { id: result.booking.memberId },
+      result,
     });
-    if (member) {
-      sendBookingModifiedEmail({
-        email: member.email,
-        firstName: member.firstName,
-        modificationType: "BATCH_MODIFY",
-        oldCheckIn: result.oldCheckIn,
-        oldCheckOut: result.oldCheckOut,
-        newCheckIn: result.booking.checkIn,
-        newCheckOut: result.booking.checkOut,
-        oldGuestCount: result.oldGuestCount,
-        newGuestCount: result.booking.guests.length,
-        oldFinalPriceCents:
-          result.booking.finalPriceCents - result.priceDiffCents,
-        newFinalPriceCents: result.booking.finalPriceCents,
-        changeFeeCents: result.changeFeeCents,
-        refundAmountCents: result.refundAmountCents,
-        additionalAmountCents: result.additionalAmountCents,
-      }).catch((err) =>
-        logger.error({ err, bookingId }, "Failed to send batch modification email")
-      );
-    }
+
+    const { additionalPaymentClientSecret, additionalPaymentIntentId } =
+      await createAdditionalPaymentIntentIfNeeded({
+        bookingId,
+        result,
+      });
+
+    await dispatchPostTransactionSideEffects({
+      bookingId,
+      actorMemberId: session.user.id,
+      ipAddress,
+      result,
+      additionalPaymentIntentId,
+    });
 
     return NextResponse.json({
       booking: result.booking,
@@ -1047,10 +334,9 @@ export async function PUT(
     });
   } catch (err) {
     if (err instanceof BookingGuestValidationError) {
-      return NextResponse.json(
-        getBookingGuestValidationErrorResponse(err),
-        { status: err.status }
-      );
+      return NextResponse.json(getBookingGuestValidationErrorResponse(err), {
+        status: err.status,
+      });
     }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
@@ -1061,3 +347,267 @@ export async function PUT(
   }
 }
 
+async function drainSupersededPrimaryIntents({
+  bookingId,
+  result,
+}: {
+  bookingId: string;
+  result: { supersededPrimaryPaymentIntents: { length: number } };
+}): Promise<void> {
+  if (result.supersededPrimaryPaymentIntents.length === 0) return;
+  try {
+    await processPaymentRecoveryOperations({
+      limit: result.supersededPrimaryPaymentIntents.length,
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId },
+      "Failed to immediately process queued Stripe payment recovery operations",
+    );
+  }
+}
+
+type TransactionResult = {
+  pendingRefundAmountCents: number;
+  paymentId: string | null;
+  booking: {
+    checkIn: Date;
+    checkOut: Date;
+    memberId: string;
+    finalPriceCents: number;
+    guests: { length: number };
+  };
+  memberName: string;
+  additionalAmountCents: number;
+  hasSucceededPayment: boolean;
+  hasIssuedXeroInvoice: boolean;
+  paymentCustomerId: string | null;
+  paymentStatus: string | null;
+  memberEmail: string;
+  memberId: string;
+  bookingModificationId: string;
+  datesChanged: boolean;
+  oldGuestCount: number;
+  oldCheckIn: Date;
+  oldCheckOut: Date;
+  priceDiffCents: number;
+  changeFeeCents: number;
+  refundAmountCents: number;
+  promoRemoved: boolean;
+  promoChanged: boolean;
+  zeroDollarAutoPaid: boolean;
+  xeroAdditionalAmountCents: number;
+};
+
+async function dispatchPostTransactionSideEffects({
+  bookingId,
+  actorMemberId,
+  ipAddress,
+  result,
+  additionalPaymentIntentId,
+}: {
+  bookingId: string;
+  actorMemberId: string;
+  ipAddress: string;
+  result: TransactionResult;
+  additionalPaymentIntentId: string | undefined;
+}): Promise<void> {
+  const auditDetails = {
+    datesChanged: result.datesChanged,
+    oldGuestCount: result.oldGuestCount,
+    newGuestCount: result.booking.guests.length,
+    priceDiffCents: result.priceDiffCents,
+    changeFeeCents: result.changeFeeCents,
+    refundAmountCents: result.refundAmountCents,
+    promoRemoved: result.promoRemoved,
+    promoChanged: result.promoChanged,
+    zeroDollarAutoPaid: result.zeroDollarAutoPaid,
+  };
+
+  logAudit({
+    action: "booking.modify.batch",
+    memberId: actorMemberId,
+    targetId: bookingId,
+    subjectMemberId: result.booking.memberId,
+    entityType: "BookingModification",
+    entityId: result.bookingModificationId,
+    category: "booking",
+    outcome: "success",
+    summary: "Booking modified",
+    details: JSON.stringify(auditDetails),
+    metadata: { bookingId, ...auditDetails },
+    ipAddress,
+  });
+
+  void queueXeroBookingEditSettlement({
+    bookingId,
+    bookingModificationId: result.bookingModificationId,
+    createdByMemberId: actorMemberId,
+    hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+    originalPaymentStatus: result.paymentStatus,
+    priceDiffCents: result.priceDiffCents,
+    changeFeeCents: result.changeFeeCents,
+    datesChanged: result.datesChanged,
+    createPrimaryInvoiceWhenMissing:
+      result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+    requiresAdditionalStripePayment:
+      result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
+    additionalPaymentIntentId,
+  }).catch((err) =>
+    logger.error(
+      { err, bookingId },
+      "Failed to queue Xero settlement for batch modification",
+    ),
+  );
+
+  const member = await prisma.member.findUnique({
+    where: { id: result.booking.memberId },
+  });
+  if (!member) return;
+
+  sendBookingModifiedEmail({
+    email: member.email,
+    firstName: member.firstName,
+    modificationType: "BATCH_MODIFY",
+    oldCheckIn: result.oldCheckIn,
+    oldCheckOut: result.oldCheckOut,
+    newCheckIn: result.booking.checkIn,
+    newCheckOut: result.booking.checkOut,
+    oldGuestCount: result.oldGuestCount,
+    newGuestCount: result.booking.guests.length,
+    oldFinalPriceCents: result.booking.finalPriceCents - result.priceDiffCents,
+    newFinalPriceCents: result.booking.finalPriceCents,
+    changeFeeCents: result.changeFeeCents,
+    refundAmountCents: result.refundAmountCents,
+    additionalAmountCents: result.additionalAmountCents,
+  }).catch((err) =>
+    logger.error(
+      { err, bookingId },
+      "Failed to send batch modification email",
+    ),
+  );
+}
+
+async function executeStripeRefund({
+  bookingId,
+  result,
+}: {
+  bookingId: string;
+  result: TransactionResult;
+}): Promise<string | undefined> {
+  if (result.pendingRefundAmountCents <= 0 || !result.paymentId) {
+    return undefined;
+  }
+
+  try {
+    const refundResult = await refundPaymentTransactions({
+      paymentId: result.paymentId,
+      amountCents: result.pendingRefundAmountCents,
+      metadata: { bookingId, reason: "batch_modification" },
+      idempotencyKeyPrefix: `mod_batch_refund_${bookingId}`,
+    });
+    return refundResult.refunds[0]?.refundId;
+  } catch (refundErr) {
+    logger.error(
+      { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
+      "Stripe refund failed after batch modification - requires manual reconciliation",
+    );
+    await sendAdminPaymentFailureAlert({
+      memberName: result.memberName,
+      checkIn: result.booking.checkIn,
+      checkOut: result.booking.checkOut,
+      amountCents: result.pendingRefundAmountCents,
+      errorMessage:
+        refundErr instanceof Error
+          ? `Stripe refund failed after booking modification (manual reconciliation required): ${refundErr.message}`
+          : "Stripe refund failed after booking modification (manual reconciliation required)",
+      paymentIntentId: `refund_failure_${bookingId}`,
+    }).catch((alertErr) =>
+      logger.error(
+        { err: alertErr, bookingId },
+        "Failed to send admin alert for Stripe refund failure after batch modification",
+      ),
+    );
+    return undefined;
+  }
+}
+
+async function createAdditionalPaymentIntentIfNeeded({
+  bookingId,
+  result,
+}: {
+  bookingId: string;
+  result: TransactionResult;
+}): Promise<{
+  additionalPaymentClientSecret: string | undefined;
+  additionalPaymentIntentId: string | undefined;
+}> {
+  if (
+    result.additionalAmountCents <= 0 ||
+    !result.hasSucceededPayment ||
+    !result.paymentId
+  ) {
+    return {
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    };
+  }
+
+  try {
+    let customerId = result.paymentCustomerId ?? undefined;
+    if (!customerId) {
+      const customer = await findOrCreateCustomer({
+        email: result.memberEmail,
+        name: result.memberName,
+        memberId: result.memberId,
+      });
+      customerId = customer.id;
+    }
+
+    const pi = await createPaymentIntent({
+      amountCents: result.additionalAmountCents,
+      customerId,
+      metadata: {
+        bookingId,
+        type: "modification_additional",
+        reason: "batch_modify_price_increase",
+      },
+      idempotencyKey: `mod_batch_${bookingId}_${result.bookingModificationId}`,
+    });
+
+    await queueSupersededAdditionalIntentCancellations({
+      bookingId,
+      paymentId: result.paymentId,
+      newPaymentIntentId: pi.id,
+    }).catch((err) =>
+      logger.error(
+        { err, bookingId, paymentIntentId: pi.id },
+        "Failed to queue superseded additional intent cancellations",
+      ),
+    );
+
+    await upsertPaymentIntentTransaction({
+      paymentId: result.paymentId,
+      kind: PaymentTransactionKind.ADDITIONAL,
+      paymentIntentId: pi.id,
+      amountCents: result.additionalAmountCents,
+      status: PaymentStatus.PENDING,
+      reason: "batch_modify_price_increase",
+      stripeCustomerId: customerId,
+    });
+
+    return {
+      additionalPaymentClientSecret: pi.client_secret ?? undefined,
+      additionalPaymentIntentId: pi.id,
+    };
+  } catch (piErr) {
+    logger.error(
+      { err: piErr, bookingId },
+      "Failed to create additional PaymentIntent for batch modification",
+    );
+    return {
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    };
+  }
+}

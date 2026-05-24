@@ -276,19 +276,22 @@ describe("booking profile gate route integration", () => {
   });
 
   it("batch modify route validates linked member profiles before pricing and writing guests", () => {
-    const source = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
-    const gateIndex = source.indexOf("await assertLinkedBookingMembersCanBeBooked");
-    const normalizeIndex = source.indexOf(
-      "normalizeBookingGuestInputs(addGuests, linkedMembers)",
+    const helperSource = readRepoFile("src/lib/booking-modify.ts");
+    const routeSource = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
+    const gateIndex = helperSource.indexOf(
+      "await assertLinkedBookingMembersCanBeBooked"
+    );
+    const normalizeIndex = helperSource.indexOf(
+      "normalizeBookingGuestInputs(input.addGuests, linkedMembers)",
       gateIndex
     );
 
     expect(gateIndex).toBeGreaterThan(-1);
     expect(normalizeIndex).toBeGreaterThan(gateIndex);
-    expect(gateIndex).toBeLessThan(source.indexOf("calculateBookingPrice(newCheckIn"));
-    expect(gateIndex).toBeLessThan(source.indexOf("tx.bookingGuest.create"));
-    expect(source).toContain("getBookingGuestValidationErrorResponse(err)");
-    expect(source).toContain("onBehalfOfMemberId:");
+    expect(gateIndex).toBeLessThan(helperSource.indexOf("calculateBookingPrice("));
+    expect(gateIndex).toBeLessThan(helperSource.indexOf("tx.bookingGuest.create"));
+    expect(routeSource).toContain("getBookingGuestValidationErrorResponse(err)");
+    expect(helperSource).toContain("onBehalfOfMemberId:");
   });
 
   it("modify quote route validates linked member profiles before pricing added guests", () => {
