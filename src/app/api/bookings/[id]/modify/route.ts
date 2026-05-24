@@ -30,13 +30,7 @@ import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
-import {
-  enqueueXeroBookingInvoiceOperation,
-  enqueueXeroBookingInvoiceUpdateOperation,
-  enqueueXeroModificationCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
@@ -728,6 +722,7 @@ export async function PUT(
         oldGuestCount: booking.guests.length,
         hasSucceededPayment,
         hasIssuedXeroInvoice,
+        paymentStatus: booking.payment?.status ?? null,
         zeroDollarAutoPaid,
         supersededPrimaryPaymentIntents,
         xeroRefundAmountCents,
@@ -775,6 +770,7 @@ export async function PUT(
     // --- Post-transaction side effects (fire-and-forget) ---
 
     let additionalPaymentClientSecret: string | undefined;
+    let additionalPaymentIntentId: string | undefined;
     if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
       try {
         let customerId = result.paymentCustomerId ?? undefined;
@@ -809,6 +805,7 @@ export async function PUT(
         });
 
         additionalPaymentClientSecret = pi.client_secret ?? undefined;
+        additionalPaymentIntentId = pi.id;
       } catch (piErr) {
         logger.error(
           { err: piErr, bookingId },
@@ -854,63 +851,22 @@ export async function PUT(
       ipAddress,
     });
 
-    // Xero integration
-    const kickQueuedXeroOperation = async (queued: { queueOperationId: string | null }) => {
-      if (queued.queueOperationId) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      }
-    };
-
-    if (result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice) {
-      void enqueueXeroBookingInvoiceOperation(bookingId, {
-        createdByMemberId: session.user.id,
-      })
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero invoice for zero-dollar batch modification")
-        );
-    } else if (result.xeroAdditionalAmountCents > 0) {
-      void enqueueXeroSupplementaryInvoiceOperation(
-        {
-          bookingId,
-          priceDiffCents: Math.max(result.priceDiffCents, 0),
-          changeFeeCents: result.changeFeeCents,
-          bookingModificationId: result.bookingModificationId,
-        },
-        {
-          createdByMemberId: session.user.id,
-        }
-      )
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for batch modification")
-        );
-    } else if (result.xeroRefundAmountCents > 0) {
-      void enqueueXeroModificationCreditNoteOperation(
-        {
-          bookingId,
-          refundAmountCents: result.xeroRefundAmountCents,
-          bookingModificationId: result.bookingModificationId,
-        },
-        {
-          createdByMemberId: session.user.id,
-        }
-      )
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero credit note for batch modification")
-        );
-    }
-
-    if (result.hasIssuedXeroInvoice && result.datesChanged) {
-      void enqueueXeroBookingInvoiceUpdateOperation(bookingId, {
-        createdByMemberId: session.user.id,
-      })
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero primary invoice update for batch date modification")
-        );
-    }
+    void queueXeroBookingEditSettlement({
+      bookingId,
+      bookingModificationId: result.bookingModificationId,
+      createdByMemberId: session.user.id,
+      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+      originalPaymentStatus: result.paymentStatus,
+      priceDiffCents: result.priceDiffCents,
+      changeFeeCents: result.changeFeeCents,
+      datesChanged: result.datesChanged,
+      createPrimaryInvoiceWhenMissing: result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
+      requiresAdditionalStripePayment:
+        result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
+      additionalPaymentIntentId,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to queue Xero settlement for batch modification")
+    );
 
     // Email notification
     const member = await prisma.member.findUnique({

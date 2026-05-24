@@ -15,10 +15,7 @@ import {
 } from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import {
-  enqueueXeroSupplementaryInvoiceOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { z } from "zod";
@@ -414,6 +411,7 @@ export async function POST(
         oldGuestCount: booking.guests.length,
         hasSucceededPayment,
         hasIssuedXeroInvoice,
+        paymentStatus: booking.payment?.status ?? null,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
         memberEmail: booking.member.email,
@@ -426,6 +424,7 @@ export async function POST(
 
     // Create additional PaymentIntent for price increases (outside transaction to avoid holding advisory lock)
     let additionalPaymentClientSecret: string | undefined;
+    let additionalPaymentIntentId: string | undefined;
     if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
       try {
         let customerId = result.paymentCustomerId ?? undefined;
@@ -460,6 +459,7 @@ export async function POST(
         });
 
         additionalPaymentClientSecret = pi.client_secret ?? undefined;
+        additionalPaymentIntentId = pi.id;
       } catch (piErr) {
         logger.error({ err: piErr, bookingId }, "Failed to create additional PaymentIntent for guest addition");
       }
@@ -489,28 +489,21 @@ export async function POST(
       ipAddress,
     });
 
-    // XER-01: Xero supplementary invoice for price increase (fire-and-forget)
-    if (result.hasIssuedXeroInvoice && result.priceDiffCents > 0) {
-      void enqueueXeroSupplementaryInvoiceOperation(
-        {
-          bookingId,
-          priceDiffCents: result.priceDiffCents,
-          changeFeeCents: 0,
-          bookingModificationId: result.bookingModificationId,
-        },
-        {
-          createdByMemberId: session.user.id,
-        }
-      )
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for guest addition")
-        );
-    }
+    void queueXeroBookingEditSettlement({
+      bookingId,
+      bookingModificationId: result.bookingModificationId,
+      createdByMemberId: session.user.id,
+      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+      originalPaymentStatus: result.paymentStatus,
+      priceDiffCents: result.priceDiffCents,
+      changeFeeCents: 0,
+      datesChanged: false,
+      requiresAdditionalStripePayment:
+        result.hasIssuedXeroInvoice && result.priceDiffCents > 0 && result.hasSucceededPayment,
+      additionalPaymentIntentId,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest addition")
+    );
 
     // Send email
     const member = await prisma.member.findUnique({

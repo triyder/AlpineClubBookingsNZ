@@ -25,12 +25,7 @@ import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
-import {
-  enqueueXeroBookingInvoiceUpdateOperation,
-  enqueueXeroModificationCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -463,6 +458,7 @@ export async function PUT(
         oldCheckOut,
         hasSucceededPayment,
         hasIssuedXeroInvoice,
+        paymentStatus: booking.payment?.status ?? null,
         xeroRefundAmountCents,
         xeroAdditionalAmountCents,
         paymentId: booking.payment?.id ?? null,
@@ -493,6 +489,7 @@ export async function PUT(
 
     // Create additional PaymentIntent for price increases (outside transaction to avoid holding advisory lock)
     let additionalPaymentClientSecret: string | undefined;
+    let additionalPaymentIntentId: string | undefined;
     if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
       try {
         let customerId = result.paymentCustomerId ?? undefined;
@@ -527,6 +524,7 @@ export async function PUT(
         });
 
         additionalPaymentClientSecret = pi.client_secret ?? undefined;
+        additionalPaymentIntentId = pi.id;
       } catch (piErr) {
         logger.error({ err: piErr, bookingId }, "Failed to create additional PaymentIntent for modification");
         // Non-fatal: modification already applied, payment can be collected via booking detail page
@@ -568,55 +566,21 @@ export async function PUT(
       ipAddress,
     });
 
-    // XER-01: Xero invoice adjustment (fire-and-forget)
-    const kickQueuedXeroOperation = async (queued: { queueOperationId: string | null }) => {
-      if (queued.queueOperationId) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      }
-    };
-
-    if (result.xeroAdditionalAmountCents > 0) {
-      void enqueueXeroSupplementaryInvoiceOperation(
-        {
-          bookingId,
-          priceDiffCents: Math.max(result.priceDiffCents, 0),
-          changeFeeCents: result.changeFeeCents,
-          bookingModificationId: result.bookingModificationId,
-        },
-        {
-          createdByMemberId: session.user.id,
-        }
-      )
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for modification")
-        );
-    } else if (result.xeroRefundAmountCents > 0) {
-      void enqueueXeroModificationCreditNoteOperation(
-        {
-          bookingId,
-          refundAmountCents: result.xeroRefundAmountCents,
-          bookingModificationId: result.bookingModificationId,
-        },
-        {
-          createdByMemberId: session.user.id,
-        }
-      )
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero credit note for modification")
-        );
-    }
-
-    if (result.hasIssuedXeroInvoice && result.datesChanged) {
-      void enqueueXeroBookingInvoiceUpdateOperation(bookingId, {
-        createdByMemberId: session.user.id,
-      })
-        .then(kickQueuedXeroOperation)
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero primary invoice update for date modification")
-        );
-    }
+    void queueXeroBookingEditSettlement({
+      bookingId,
+      bookingModificationId: result.bookingModificationId,
+      createdByMemberId: session.user.id,
+      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+      originalPaymentStatus: result.paymentStatus,
+      priceDiffCents: result.priceDiffCents,
+      changeFeeCents: result.changeFeeCents,
+      datesChanged: result.datesChanged,
+      requiresAdditionalStripePayment:
+        result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
+      additionalPaymentIntentId,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to queue Xero settlement for date modification")
+    );
 
     // Send email notification (fire-and-forget)
     const member = await prisma.member.findUnique({

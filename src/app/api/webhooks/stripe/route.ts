@@ -7,6 +7,7 @@ import {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
@@ -482,6 +483,12 @@ async function handleAdditionalModificationPaymentSucceeded(
   }
 
   if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+      paymentIntent.id
+    );
+    if (released.released > 0) {
+      void kickQueuedXeroOutboxOperationsIfConnected({ limit: released.released });
+    }
     logger.info({ paymentIntentId: paymentIntent.id, bookingId }, "Additional modification payment already recorded");
     return;
   }
@@ -512,8 +519,15 @@ async function handleAdditionalModificationPaymentSucceeded(
     paymentMethodId:
       typeof paymentIntent.payment_method === "string"
         ? paymentIntent.payment_method
-        : paymentIntent.payment_method?.id ?? null,
+      : paymentIntent.payment_method?.id ?? null,
   });
+
+  const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+    paymentIntent.id
+  );
+  if (released.released > 0) {
+    void kickQueuedXeroOutboxOperationsIfConnected({ limit: released.released });
+  }
 
   logger.info(
     { bookingId, paymentIntentId: paymentIntent.id, additionalAmountCents: paymentTransaction.amountCents },

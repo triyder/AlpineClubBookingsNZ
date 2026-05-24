@@ -5927,6 +5927,37 @@ function mergeBookingInvoiceLineItemDescriptions(
   });
 }
 
+function readXeroAmount(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function getPrimaryInvoiceUpdateSkipReason(invoice: Invoice): string | null {
+  const amountPaid = readXeroAmount(invoice.amountPaid);
+  const amountCredited = readXeroAmount(invoice.amountCredited);
+  const status = String(invoice.status ?? "").toUpperCase();
+
+  if (amountPaid > 0 || status === "PAID" || invoice.fullyPaidOnDate) {
+    return "Skipped primary Xero invoice update because the invoice has payment applied.";
+  }
+
+  if (amountCredited > 0) {
+    return "Skipped primary Xero invoice update because the invoice has credit applied.";
+  }
+
+  if (status === "VOIDED" || status === "DELETED") {
+    return `Skipped primary Xero invoice update because the invoice status is ${status}.`;
+  }
+
+  return null;
+}
+
 export async function updateXeroBookingInvoiceForBooking(
   bookingId: string,
   options?: UpdateXeroBookingInvoiceOptions
@@ -6041,6 +6072,36 @@ export async function updateXeroBookingInvoiceForBooking(
     }
     if (!currentInvoice.contact) {
       throw new Error(`Xero invoice ${invoiceId} is missing its contact.`);
+    }
+
+    const skipReason = getPrimaryInvoiceUpdateSkipReason(currentInvoice);
+    if (skipReason) {
+      await completeXeroSyncOperation(operationId, {
+        responsePayload: {
+          skipped: true,
+          reason: skipReason,
+          previousInvoice: currentInvoiceResponse.body,
+          bookingId,
+          invoiceId,
+        },
+        xeroObjectType: "INVOICE",
+        xeroObjectId: invoiceId,
+        xeroObjectNumber: currentInvoice.invoiceNumber ?? null,
+        xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+        extraLinks: [
+          {
+            localModel: "Payment",
+            localId: booking.payment.id,
+            xeroObjectType: "INVOICE",
+            xeroObjectId: invoiceId,
+            xeroObjectNumber: currentInvoice.invoiceNumber ?? null,
+            xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+            role: "PRIMARY_INVOICE",
+          },
+        ],
+      });
+
+      return invoiceId;
     }
 
     const currentLineItems = currentInvoice.lineItems ?? [];
@@ -6780,6 +6841,7 @@ export async function createXeroSupplementaryInvoice(params: {
   changeFeeCents: number;
   bookingModificationId?: string;
   createdByMemberId?: string;
+  recordPayment?: boolean;
   repairExistingLink?: boolean;
   syncOperationId?: string;
 }): Promise<string | null> {
@@ -6789,6 +6851,7 @@ export async function createXeroSupplementaryInvoice(params: {
     changeFeeCents,
     bookingModificationId,
     createdByMemberId,
+    recordPayment = true,
     repairExistingLink,
     syncOperationId,
   } = params;
@@ -6951,48 +7014,58 @@ export async function createXeroSupplementaryInvoice(params: {
       throw new Error("Failed to create supplementary Xero invoice");
     }
 
-    // Record Stripe payment against the supplementary invoice so it doesn't show as unpaid in Xero
     let paymentResponseBody: XeroPayment | null = null;
     let paymentError: unknown = null;
+    const paymentSkipped = !recordPayment;
+    const paymentSkipReason = paymentSkipped
+      ? "Supplementary invoice payment recording is deferred until an additional Stripe payment succeeds or an admin records payment."
+      : null;
 
-    try {
-      const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-      const totalCents = priceDiffCents + changeFeeCents;
-      const paymentIdempotencyKey = buildXeroIdempotencyKey(
-        bookingModificationId ? "booking-mod" : "booking",
-        localId,
-        "supplementary-payment",
-        totalCents,
-        "v1"
+    if (recordPayment) {
+      try {
+        const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+        const totalCents = priceDiffCents + changeFeeCents;
+        const paymentIdempotencyKey = buildXeroIdempotencyKey(
+          bookingModificationId ? "booking-mod" : "booking",
+          localId,
+          "supplementary-payment",
+          totalCents,
+          "v1"
+        );
+        const paymentResponse = await callXeroApi(
+          () =>
+            xero.accountingApi.createPayments(
+              tenantId,
+              {
+                payments: [{
+                  invoice: { invoiceID: created.invoiceID },
+                  account: { code: stripeBankCode },
+                  amount: totalCents / 100,
+                  date: formatDate(new Date()),
+                  reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
+                }],
+              },
+              undefined,
+              paymentIdempotencyKey
+            ),
+          {
+            operation: "createPayments",
+            resourceType: "PAYMENT",
+            workflow: "createXeroSupplementaryInvoice",
+            context: `createPayments(supplementary ${localId})`,
+          }
+        );
+        paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
+      } catch (error) {
+        paymentError = error;
+        // Non-fatal: invoice exists, payment recording is for reconciliation convenience
+        logger.warn({ err: error, invoiceId: created.invoiceID }, "Failed to record Xero payment for supplementary invoice");
+      }
+    } else {
+      logger.info(
+        { bookingId, invoiceId: created.invoiceID },
+        "Skipping Xero payment recording for supplementary invoice"
       );
-      const paymentResponse = await callXeroApi(
-        () =>
-          xero.accountingApi.createPayments(
-            tenantId,
-            {
-              payments: [{
-                invoice: { invoiceID: created.invoiceID },
-                account: { code: stripeBankCode },
-                amount: totalCents / 100,
-                date: formatDate(new Date()),
-                reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
-              }],
-            },
-            undefined,
-            paymentIdempotencyKey
-          ),
-        {
-          operation: "createPayments",
-          resourceType: "PAYMENT",
-          workflow: "createXeroSupplementaryInvoice",
-          context: `createPayments(supplementary ${localId})`,
-        }
-      );
-      paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
-    } catch (error) {
-      paymentError = error;
-      // Non-fatal: invoice exists, payment recording is for reconciliation convenience
-      logger.warn({ err: error, invoiceId: created.invoiceID }, "Failed to record Xero payment for supplementary invoice");
     }
 
     await completeXeroSyncOperation(operationId!, {
@@ -7001,6 +7074,8 @@ export async function createXeroSupplementaryInvoice(params: {
         invoice: response.body,
         payment: paymentResponseBody,
         paymentError,
+        paymentSkipped,
+        paymentSkipReason,
       },
       xeroObjectType: "INVOICE",
       xeroObjectId: created.invoiceID,

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   findManyOperations: vi.fn(),
   updateManyOperation: vi.fn(),
   startXeroSyncOperation: vi.fn(),
+  completeXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
   findCanonicalPaymentRefundCreditNote: vi.fn(),
   upsertXeroObjectLink: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock("@/lib/xero-sync", () => ({
       .map((part) => String(part))
       .join(":"),
   startXeroSyncOperation: mocks.startXeroSyncOperation,
+  completeXeroSyncOperation: mocks.completeXeroSyncOperation,
   failXeroSyncOperation: mocks.failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote: mocks.findCanonicalPaymentRefundCreditNote,
   upsertXeroObjectLink: mocks.upsertXeroObjectLink,
@@ -91,6 +93,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
@@ -377,7 +380,68 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
           priceDiffCents: 2500,
           changeFeeCents: 500,
           bookingModificationId: "mod_1",
+          recordPayment: true,
+          paymentIntentId: null,
+          waitForConfirmedAdditionalPayment: false,
         },
+      })
+    );
+  });
+
+  it("can hold supplementary invoices until additional Stripe payment succeeds", async () => {
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId: "booking_1",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          bookingModificationId: "mod_1",
+        },
+        {
+          createdByMemberId: "admin_1",
+          paymentIntentId: "pi_additional",
+          waitForConfirmedAdditionalPayment: true,
+          recordPayment: true,
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_supplementary_1",
+      message: "Xero supplementary invoice is waiting for confirmed additional payment.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "WAITING_PAYMENT",
+        requestPayload: expect.objectContaining({
+          paymentIntentId: "pi_additional",
+          waitForConfirmedAdditionalPayment: true,
+          recordPayment: true,
+        }),
+      })
+    );
+  });
+
+  it("releases waiting supplementary invoice operations after payment confirmation", async () => {
+    mocks.findManyOperations.mockResolvedValue([{ id: "op_supplementary_1" }]);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    await expect(
+      releaseXeroSupplementaryInvoiceOperationsForPaymentIntent("pi_additional")
+    ).resolves.toEqual({
+      released: 1,
+      queueOperationIds: ["op_supplementary_1"],
+    });
+
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { in: ["op_supplementary_1"] },
+          status: "WAITING_PAYMENT",
+        }),
+        data: expect.objectContaining({
+          status: "PENDING",
+          startedAt: null,
+        }),
       })
     );
   });
@@ -818,6 +882,7 @@ describe("processQueuedXeroOutboxOperations", () => {
       priceDiffCents: 2500,
       changeFeeCents: 500,
       bookingModificationId: "mod_1",
+      recordPayment: true,
       createdByMemberId: "admin_1",
       syncOperationId: "op_supplementary_1",
     });

@@ -15,6 +15,7 @@ const {
   mockEnqueueXeroBookingInvoiceOperation,
   mockEnqueueXeroRefundCreditNoteOperation,
   mockKickQueuedXeroOutboxOperationsIfConnected,
+  mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   mockNotifyXeroSyncError,
   mockSendBookingConfirmedEmail,
   mockSendAdminPaymentFailureAlert,
@@ -56,6 +57,10 @@ const {
     succeeded: 1,
     failed: 0,
     skipped: 0,
+  }),
+  mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn().mockResolvedValue({
+    released: 0,
+    queueOperationIds: [],
   }),
   mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
   mockSendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
@@ -152,6 +157,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     mockEnqueueXeroRefundCreditNoteOperation(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
     mockKickQueuedXeroOutboxOperationsIfConnected(...args),
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: (...args: unknown[]) =>
+    mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent(...args),
 }));
 
 vi.mock("@/lib/xero-error-alert", () => ({

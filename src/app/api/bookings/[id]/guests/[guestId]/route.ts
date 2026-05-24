@@ -13,10 +13,7 @@ import {
 } from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import {
-  enqueueXeroModificationCreditNoteOperation,
-  kickQueuedXeroOutboxOperationsIfConnected,
-} from "@/lib/xero-operation-outbox";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -308,6 +305,8 @@ export async function DELETE(
         priceDiffCents,
         refundAmountCents,
         xeroRefundAmountCents,
+        hasIssuedXeroInvoice,
+        paymentStatus: booking.payment?.status ?? null,
         paymentId: booking.payment?.id ?? null,
         promoRemoved,
         choreWarnings,
@@ -361,27 +360,18 @@ export async function DELETE(
       ipAddress,
     });
 
-    // XER-01: Xero credit note for price decrease (fire-and-forget)
-    if (result.xeroRefundAmountCents > 0) {
-      void enqueueXeroModificationCreditNoteOperation(
-        {
-          bookingId,
-          refundAmountCents: result.xeroRefundAmountCents,
-          bookingModificationId: result.bookingModificationId,
-        },
-        {
-          createdByMemberId: session.user.id,
-        }
-      )
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
-        .catch((err) =>
-          logger.error({ err, bookingId }, "Failed to queue Xero credit note for guest removal")
-        );
-    }
+    void queueXeroBookingEditSettlement({
+      bookingId,
+      bookingModificationId: result.bookingModificationId,
+      createdByMemberId: session.user.id,
+      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+      originalPaymentStatus: result.paymentStatus,
+      priceDiffCents: result.priceDiffCents,
+      changeFeeCents: 0,
+      datesChanged: false,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
+    );
 
     // Send email
     const member = await prisma.member.findUnique({

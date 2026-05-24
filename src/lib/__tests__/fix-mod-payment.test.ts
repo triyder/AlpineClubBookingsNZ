@@ -45,6 +45,8 @@ const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ que
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
+const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
+const mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent = vi.fn().mockResolvedValue({ released: 1, queueOperationIds: ["op_supplementary"] });
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -133,6 +135,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
+  recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 }));
 vi.mock("@/lib/webhook-log", () => ({ recordWebhookLog: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/logger", () => ({
@@ -356,9 +360,16 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       },
       {
         createdByMemberId: "m1",
+        paymentIntentId: "pi_additional",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
       }
     );
-    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith("bk1", {
+    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
+    expect(mockRecordSkippedXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      bookingModificationId: "mod1",
+      reason: expect.stringContaining("Skipped primary Xero invoice update"),
       createdByMemberId: "m1",
     });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
@@ -573,6 +584,9 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       },
       {
         createdByMemberId: "m1",
+        paymentIntentId: null,
+        waitForConfirmedAdditionalPayment: false,
+        recordPayment: false,
       }
     );
   });
@@ -657,7 +671,11 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     await Promise.resolve();
     expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
     expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
-    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith("bk1", {
+    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
+    expect(mockRecordSkippedXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      bookingModificationId: "mod1",
+      reason: expect.stringContaining("Skipped primary Xero invoice update"),
       createdByMemberId: "m1",
     });
   });
@@ -744,6 +762,9 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       },
       {
         createdByMemberId: "m1",
+        paymentIntentId: "pi_guest_extra",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
       }
     );
   });

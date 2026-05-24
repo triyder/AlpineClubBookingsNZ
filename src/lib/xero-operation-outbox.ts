@@ -3,6 +3,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
   buildXeroIdempotencyKey,
+  completeXeroSyncOperation,
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
@@ -67,6 +68,9 @@ interface QueuedSupplementaryInvoiceOutboxPayload {
   priceDiffCents: number;
   changeFeeCents: number;
   bookingModificationId?: string;
+  recordPayment?: boolean;
+  paymentIntentId?: string;
+  waitForConfirmedAdditionalPayment?: boolean;
 }
 
 interface QueuedModificationCreditNoteOutboxPayload {
@@ -200,6 +204,13 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
       priceDiffCents,
       changeFeeCents,
       bookingModificationId: readString(payload.bookingModificationId) ?? undefined,
+      recordPayment:
+        typeof payload.recordPayment === "boolean" ? payload.recordPayment : undefined,
+      paymentIntentId: readString(payload.paymentIntentId) ?? undefined,
+      waitForConfirmedAdditionalPayment:
+        typeof payload.waitForConfirmedAdditionalPayment === "boolean"
+          ? payload.waitForConfirmedAdditionalPayment
+          : undefined,
     };
   }
 
@@ -820,7 +831,12 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     changeFeeCents: number;
     bookingModificationId?: string;
   },
-  options?: { createdByMemberId?: string }
+  options?: {
+    createdByMemberId?: string;
+    paymentIntentId?: string | null;
+    waitForConfirmedAdditionalPayment?: boolean;
+    recordPayment?: boolean;
+  }
 ) {
   const {
     bookingId,
@@ -898,7 +914,7 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
       localModel,
       localId,
       status: {
-        in: ["PENDING", "RUNNING"],
+        in: ["PENDING", "RUNNING", "WAITING_PAYMENT"],
       },
     },
     orderBy: {
@@ -919,7 +935,7 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     operationType: "CREATE",
     localModel,
     localId,
-    status: "PENDING",
+    status: options?.waitForConfirmedAdditionalPayment ? "WAITING_PAYMENT" : "PENDING",
     idempotencyKey: correlationKey,
     correlationKey,
     requestPayload: {
@@ -928,13 +944,150 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
       priceDiffCents,
       changeFeeCents,
       bookingModificationId: bookingModificationId ?? null,
+      recordPayment: options?.recordPayment ?? true,
+      paymentIntentId: options?.paymentIntentId ?? null,
+      waitForConfirmedAdditionalPayment:
+        options?.waitForConfirmedAdditionalPayment ?? false,
     },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
   return {
     queueOperationId: queuedOperation.id,
-    message: "Xero supplementary invoice queued for background processing.",
+    message: options?.waitForConfirmedAdditionalPayment
+      ? "Xero supplementary invoice is waiting for confirmed additional payment."
+      : "Xero supplementary invoice queued for background processing.",
+  };
+}
+
+export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  paymentIntentId: string
+) {
+  const waitingOperations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      status: "WAITING_PAYMENT",
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      requestPayload: {
+        path: ["paymentIntentId"],
+        equals: paymentIntentId,
+      },
+    },
+    select: { id: true },
+  });
+
+  if (waitingOperations.length === 0) {
+    return {
+      released: 0,
+      queueOperationIds: [] as string[],
+    };
+  }
+
+  const queueOperationIds = waitingOperations.map((operation) => operation.id);
+  const updateResult = await prisma.xeroSyncOperation.updateMany({
+    where: {
+      id: {
+        in: queueOperationIds,
+      },
+      status: "WAITING_PAYMENT",
+    },
+    data: {
+      status: "PENDING",
+      startedAt: null,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+    },
+  });
+
+  return {
+    released: updateResult.count,
+    queueOperationIds,
+  };
+}
+
+export async function recordSkippedXeroBookingInvoiceUpdateOperation(params: {
+  bookingId: string;
+  bookingModificationId: string;
+  reason: string;
+  createdByMemberId?: string;
+}) {
+  const booking = await prisma.booking.findUnique({
+    where: { id: params.bookingId },
+    select: {
+      payment: {
+        select: {
+          id: true,
+          xeroInvoiceId: true,
+          xeroInvoiceNumber: true,
+        },
+      },
+    },
+  });
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "booking-mod",
+    params.bookingModificationId,
+    "primary-invoice-update",
+    "skipped",
+    "v1"
+  );
+  const existingOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      localModel: "BookingModification",
+      localId: params.bookingModificationId,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: { id: true },
+  });
+
+  if (existingOperation) {
+    return {
+      queueOperationId: existingOperation.id,
+      message: "Skipped Xero primary invoice update already recorded for this modification.",
+    };
+  }
+
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "UPDATE",
+    localModel: "BookingModification",
+    localId: params.bookingModificationId,
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
+      bookingId: params.bookingId,
+      xeroInvoiceId: booking?.payment?.xeroInvoiceId ?? null,
+      skippedByPolicy: true,
+      reason: params.reason,
+    },
+    createdByMemberId: params.createdByMemberId ?? null,
+  });
+
+  await completeXeroSyncOperation(operation.id, {
+    responsePayload: {
+      skipped: true,
+      reason: params.reason,
+      bookingId: params.bookingId,
+      bookingModificationId: params.bookingModificationId,
+      paymentId: booking?.payment?.id ?? null,
+    },
+    xeroObjectType: booking?.payment?.xeroInvoiceId ? "INVOICE" : null,
+    xeroObjectId: booking?.payment?.xeroInvoiceId ?? null,
+    xeroObjectNumber: booking?.payment?.xeroInvoiceNumber ?? null,
+  });
+
+  return {
+    queueOperationId: operation.id,
+    message: "Skipped Xero primary invoice update recorded for this modification.",
   };
 }
 
@@ -1355,6 +1508,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           priceDiffCents: payload.priceDiffCents,
           changeFeeCents: payload.changeFeeCents,
           bookingModificationId: payload.bookingModificationId,
+          recordPayment: payload.recordPayment ?? true,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });

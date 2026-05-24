@@ -25,6 +25,7 @@ const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
+const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
 
 const mockBookingGuestValidationError = class BookingGuestValidationError extends Error {
   status: number;
@@ -128,6 +129,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
+  recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -509,6 +511,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
       },
       {
         createdByMemberId: "m1",
+        paymentIntentId: "pi_batch",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
       }
     );
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
@@ -760,7 +765,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
     await Promise.resolve();
     expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
     expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
-    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith("bk1", {
+    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).not.toHaveBeenCalled();
+    expect(mockRecordSkippedXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      bookingModificationId: "mod_1",
+      reason: expect.stringContaining("Skipped primary Xero invoice update"),
       createdByMemberId: "m1",
     });
   });

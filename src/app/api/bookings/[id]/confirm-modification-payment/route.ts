@@ -10,6 +10,10 @@ import {
   findPaymentTransactionByIntentId,
   markPaymentIntentTransactionSucceeded,
 } from "@/lib/payment-transactions";
+import {
+  kickQueuedXeroOutboxOperationsIfConnected,
+  releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+} from "@/lib/xero-operation-outbox";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -80,6 +84,12 @@ export async function POST(
       paymentTransaction.status === "PARTIALLY_REFUNDED" ||
       paymentTransaction.status === "REFUNDED"
     ) {
+      const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+        paymentIntentId
+      );
+      if (released.released > 0) {
+        void kickQueuedXeroOutboxOperationsIfConnected({ limit: released.released });
+      }
       return NextResponse.json({ success: true });
     }
 
@@ -104,8 +114,15 @@ export async function POST(
       paymentMethodId:
         typeof pi.payment_method === "string"
           ? pi.payment_method
-          : pi.payment_method?.id ?? null,
+        : pi.payment_method?.id ?? null,
     });
+
+    const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
+      pi.id
+    );
+    if (released.released > 0) {
+      void kickQueuedXeroOutboxOperationsIfConnected({ limit: released.released });
+    }
 
     logAudit({
       action: "booking.modification.payment.confirmed",
