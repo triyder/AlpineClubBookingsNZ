@@ -1,5 +1,24 @@
-import { describe, expect, it } from "vitest";
-import { classifyXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  enqueueXeroBookingInvoiceOperation: vi.fn(),
+  enqueueXeroBookingInvoiceUpdateOperation: vi.fn(),
+  enqueueXeroModificationCreditNoteOperation: vi.fn(),
+  enqueueXeroSupplementaryInvoiceOperation: vi.fn(),
+  kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
+  recordSkippedXeroBookingInvoiceUpdateOperation: vi.fn(),
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => mocks);
+
+vi.mock("@/lib/logger", () => ({
+  default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+import {
+  classifyXeroBookingEditSettlement,
+  queueXeroBookingEditSettlement,
+} from "@/lib/xero-booking-edit-settlement";
 
 describe("classifyXeroBookingEditSettlement", () => {
   it("waits for confirmed additional Stripe payment before supplementary invoice payment recording", () => {
@@ -74,5 +93,93 @@ describe("classifyXeroBookingEditSettlement", () => {
       type: "queue",
       reason: expect.stringContaining("safe primary invoice"),
     });
+  });
+});
+
+describe("queueXeroBookingEditSettlement (side effects)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
+      queueOperationId: "op-primary",
+    });
+    mocks.enqueueXeroBookingInvoiceUpdateOperation.mockResolvedValue({
+      queueOperationId: "op-update",
+    });
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
+      queueOperationId: "op-credit",
+    });
+    mocks.enqueueXeroSupplementaryInvoiceOperation.mockResolvedValue({
+      queueOperationId: "op-supp",
+    });
+    mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(null);
+    mocks.recordSkippedXeroBookingInvoiceUpdateOperation.mockResolvedValue(
+      undefined,
+    );
+  });
+
+  it("queues a supplementary invoice waiting on the additional Stripe payment and records a primary-update skip", async () => {
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      datesChanged: true,
+      requiresAdditionalStripePayment: true,
+      additionalPaymentIntentId: "pi_additional",
+    });
+
+    expect(decision.financialAction.type).toBe("supplementary-invoice");
+    expect(mocks.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_1",
+        priceDiffCents: 4500,
+        changeFeeCents: 500,
+        bookingModificationId: "mod_1",
+      }),
+      expect.objectContaining({
+        createdByMemberId: "admin_1",
+        paymentIntentId: "pi_additional",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
+      }),
+    );
+    expect(
+      mocks.recordSkippedXeroBookingInvoiceUpdateOperation,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        createdByMemberId: "admin_1",
+      }),
+    );
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
+  });
+
+  it("queues a modification credit note for a negative delta on a paid booking", async () => {
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "booking_2",
+      bookingModificationId: "mod_2",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -3000,
+      datesChanged: false,
+    });
+
+    expect(decision.financialAction.type).toBe("modification-credit-note");
+    expect(
+      mocks.enqueueXeroModificationCreditNoteOperation,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_2",
+        refundAmountCents: 3000,
+        bookingModificationId: "mod_2",
+      }),
+      expect.objectContaining({ createdByMemberId: "admin_1" }),
+    );
+    expect(mocks.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
   });
 });
