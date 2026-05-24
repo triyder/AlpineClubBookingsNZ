@@ -3,6 +3,7 @@
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -424,14 +425,17 @@ export default function RosterSetupWizard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white flex items-center justify-center">
         <div className="text-2xl">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white p-4 select-none max-w-4xl mx-auto">
+    <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white p-4 select-none max-w-4xl mx-auto">
+      <div className="mb-4 flex justify-end">
+        <ThemeSwitcher className="w-full max-w-sm" />
+      </div>
       {/* Header */}
       <header className="mb-6">
         <div className="flex items-center justify-between mb-2">

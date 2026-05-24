@@ -19,7 +19,7 @@ export default async function FinanceLayout({
   const effectiveModules = await loadEffectiveModuleFlags();
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
       <NavBar
         features={effectiveModules}
         user={{
@@ -30,15 +30,15 @@ export default async function FinanceLayout({
         }}
       />
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-8 flex flex-col gap-3 rounded-2xl border bg-card p-6 text-card-foreground shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
               Finance
             </p>
-            <h1 className="text-3xl font-semibold text-slate-900">
+            <h1 className="text-3xl font-semibold text-foreground">
               {CLUB_NAME} finance workspace
             </h1>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-muted-foreground">
               Review finance reports, booking performance, and sync status in
               one place.
             </p>

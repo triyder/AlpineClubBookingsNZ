@@ -29,5 +29,9 @@ export default async function LodgeLayout({
     redirect("/change-password");
   }
 
-  return <>{children}</>;
+  return (
+    <div className="app-theme-scope min-h-screen bg-background text-foreground">
+      {children}
+    </div>
+  );
 }

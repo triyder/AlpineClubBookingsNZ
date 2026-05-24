@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useState } from "react";
 import { Menu, Mountain, LogOut, User, ChevronDown } from "lucide-react";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -90,12 +91,12 @@ export function NavBar({ user, features }: NavBarProps) {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-white shadow-sm print:hidden">
+    <header className="sticky top-0 z-50 w-full border-b bg-background/95 shadow-sm backdrop-blur print:hidden">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Branding */}
         <Link
           href={getAuthenticatedBrandHref()}
-          className="flex items-center gap-2 font-bold text-slate-900 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-2 font-bold text-foreground transition-opacity hover:opacity-80"
         >
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
@@ -114,7 +115,7 @@ export function NavBar({ user, features }: NavBarProps) {
                 "rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive(link.href)
                   ? "app-nav-link-active"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               )}
             >
               {link.label}
@@ -149,8 +150,12 @@ export function NavBar({ user, features }: NavBarProps) {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              <div className="px-2 py-1.5">
+                <ThemeSwitcher />
+              </div>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
-                className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+                className="cursor-pointer text-red-600 focus:bg-red-50 focus:text-red-600 dark:text-red-400 dark:focus:bg-red-950/40 dark:focus:text-red-300"
                 onClick={() => signOut({ callbackUrl: "/login" })}
               >
                 <LogOut className="mr-2 h-4 w-4" />
@@ -192,7 +197,7 @@ export function NavBar({ user, features }: NavBarProps) {
                     "rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
                     isActive(link.href)
                       ? "app-nav-link-active"
-                      : "text-slate-700 hover:bg-slate-100"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                   )}
                 >
                   {link.label}
@@ -202,23 +207,26 @@ export function NavBar({ user, features }: NavBarProps) {
 
             <div className="mt-6 border-t pt-6">
               <div className="mb-3 px-3">
-                <p className="text-sm font-medium text-slate-900">{user.name}</p>
+                <p className="text-sm font-medium text-foreground">{user.name}</p>
                 <p className="text-xs text-muted-foreground">{user.email}</p>
               </div>
               <Link
                 href={profileHref}
                 onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                className="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <User className="h-4 w-4" />
                 Profile
               </Link>
+              <div className="mt-4 px-3">
+                <ThemeSwitcher />
+              </div>
               <button
                 onClick={() => {
                   setMobileOpen(false);
                   signOut({ callbackUrl: "/login" });
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+                className="mt-4 flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
               >
                 <LogOut className="h-4 w-4" />
                 Log out

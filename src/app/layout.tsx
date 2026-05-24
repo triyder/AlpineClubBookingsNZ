@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { SessionProvider } from "next-auth/react";
+import { AppThemeProvider } from "@/components/app-theme-provider";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
 import { CspNonceProvider } from "@/components/security/csp-nonce-provider";
 import { Toaster } from "@/components/ui/sonner";
@@ -49,13 +50,15 @@ export default async function RootLayout({
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col font-sans">
         <CspNonceProvider nonce={nonce}>
-          <ClubIdentityProvider value={clubIdentity}>
-            <SessionProvider>{children}</SessionProvider>
-            <Toaster richColors position="top-right" />
-          </ClubIdentityProvider>
+          <AppThemeProvider nonce={nonce}>
+            <ClubIdentityProvider value={clubIdentity}>
+              <SessionProvider>{children}</SessionProvider>
+              <Toaster richColors position="top-right" />
+            </ClubIdentityProvider>
+          </AppThemeProvider>
         </CspNonceProvider>
       </body>
     </html>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import type { KioskTier } from "@/lib/kiosk-access";
 
 interface Guest {
@@ -351,14 +352,17 @@ export default function KioskPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center">
+      <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white flex items-center justify-center">
         <div className="text-2xl">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white p-4 select-none">
+    <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white p-4 select-none">
+      <div className="mb-4 flex justify-end">
+        <ThemeSwitcher className="w-full max-w-sm" />
+      </div>
       {actionError && (
         <div className="bg-red-600 text-white text-center py-2 text-sm font-medium">
           {actionError}

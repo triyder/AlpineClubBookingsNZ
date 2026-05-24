@@ -53,7 +53,7 @@ export default async function AdminLayout({
   const effectiveModules = await loadEffectiveModuleFlags();
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
       <NavBar user={user} features={effectiveModules} />
       <div className="flex flex-1">
         <AdminSidebar features={effectiveModules} />

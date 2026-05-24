@@ -80,7 +80,7 @@ export default async function AuthenticatedLayout({
   const effectiveModules = await loadEffectiveModuleFlags();
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
+    <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
       <NavBar user={user} features={effectiveModules} />
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {children}
