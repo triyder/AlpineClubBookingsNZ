@@ -6,19 +6,12 @@ import {
   MemberLifecycleActionError,
 } from "@/lib/member-lifecycle-actions";
 import logger from "@/lib/logger";
+import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const deleteRequestSchema = z.object({
   reason: z.string().trim().min(1).max(1000),
 });
-
-function getIpAddress(request: NextRequest) {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown"
-  );
-}
 
 export async function POST(
   request: NextRequest,
@@ -52,7 +45,7 @@ export async function POST(
       memberId: id,
       requestedByMemberId: session.user.id,
       reason: body.reason,
-      ipAddress: getIpAddress(request),
+      ipAddress: getClientIp(request),
     });
 
     return NextResponse.json(result);

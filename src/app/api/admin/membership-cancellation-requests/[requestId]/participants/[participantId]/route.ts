@@ -6,20 +6,13 @@ import {
   reviewMembershipCancellationParticipant,
 } from "@/lib/membership-cancellation-admin";
 import logger from "@/lib/logger";
+import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const reviewSchema = z.object({
   action: z.enum(["approve", "reject"]),
   note: z.string().max(1000).optional(),
 });
-
-function getIpAddress(request: NextRequest) {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown"
-  );
-}
 
 export async function POST(
   request: NextRequest,
@@ -57,7 +50,7 @@ export async function POST(
       action: body.action,
       adminMemberId: session.user.id,
       adminNote: body.note,
-      ipAddress: getIpAddress(request),
+      ipAddress: getClientIp(request),
     });
 
     return NextResponse.json(result);

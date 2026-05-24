@@ -21,6 +21,7 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 
 export async function DELETE(
   request: NextRequest,
@@ -74,6 +75,25 @@ export async function DELETE(
       if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
         throw new ApiError(
           "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
+          400
+        );
+      }
+
+      const editPolicy = getBookingEditPolicy({
+        status: booking.status,
+        role: session.user.role,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      });
+      if (!editPolicy.canModify) {
+        throw new ApiError(
+          editPolicy.reason ?? "This booking cannot be modified",
+          400
+        );
+      }
+      if (editPolicy.mode !== "future") {
+        throw new ApiError(
+          "Use the full booking edit flow for in-progress booking guest changes",
           400
         );
       }

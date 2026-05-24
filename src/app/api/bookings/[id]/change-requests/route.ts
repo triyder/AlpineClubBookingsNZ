@@ -9,6 +9,8 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -22,11 +24,12 @@ const createChangeRequestSchema = z.object({
         lastName: nameField(),
         ageTier: ageTierEnum,
         isMember: z.boolean(),
-        memberId: z.string().min(1).optional(),
+        memberId: z.string().trim().min(1).optional(),
       })
     )
+    .max(LODGE_CAPACITY)
     .optional(),
-  removeGuestIds: z.array(z.string()).optional(),
+  removeGuestIds: z.array(z.string().trim().min(1)).max(LODGE_CAPACITY).optional(),
   requestedEffectiveDate: z.string().optional(),
   reason: z.string().max(2000).optional(),
 });
@@ -160,7 +163,26 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const parsed = createChangeRequestSchema.safeParse(await req.json());
+  const rl = checkRateLimit(rateLimiters.bookingChangeRequest, session.user.id);
+  if (!rl.success) {
+    const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter) },
+      }
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = createChangeRequestSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -201,12 +223,28 @@ export async function POST(
     return NextResponse.json({ error: "Invalid booking date" }, { status: 400 });
   }
 
+  const nextCheckIn = requestedCheckIn ?? normalizeDateOnlyForTimeZone(booking.checkIn);
+  const nextCheckOut = requestedCheckOut ?? normalizeDateOnlyForTimeZone(booking.checkOut);
+  if (nextCheckOut <= nextCheckIn) {
+    return NextResponse.json(
+      { error: "Check-out must be after check-in" },
+      { status: 400 }
+    );
+  }
+
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role: session.user.role,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
+  if (!editPolicy.canModify) {
+    return NextResponse.json(
+      { error: editPolicy.reason ?? "This booking cannot be modified" },
+      { status: 400 }
+    );
+  }
+
   const touchesLockedPeriod = requestTouchesLockedPeriod({
     booking,
     editPolicy,
@@ -242,6 +280,16 @@ export async function POST(
   }
 
   const removeSet = new Set(removeGuestIds ?? []);
+  const invalidRemoveGuestIds = [...removeSet].filter(
+    (guestId) => !booking.guests.some((guest) => guest.id === guestId)
+  );
+  if (invalidRemoveGuestIds.length > 0) {
+    return NextResponse.json(
+      { error: "One or more guests were not found on this booking" },
+      { status: 400 }
+    );
+  }
+
   const removedGuests = booking.guests
     .filter((guest) => removeSet.has(guest.id))
     .map((guest) => ({
@@ -329,7 +377,7 @@ export async function POST(
       requestedSummary,
       touchesLockedPeriod,
     },
-    ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
+    ipAddress: getClientIp(req),
   });
 
   sendAdminBookingChangeRequestAlert({
@@ -383,6 +431,7 @@ export async function GET(
       reviewedBy: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: { createdAt: "desc" },
+    take: 50,
   });
 
   return NextResponse.json(requests);

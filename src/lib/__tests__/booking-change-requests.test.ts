@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   bookingChangeRequestCount: vi.fn(),
   bookingChangeRequestFindUnique: vi.fn(),
   bookingChangeRequestUpdateMany: vi.fn(),
+  checkRateLimit: vi.fn(),
+  getClientIp: vi.fn(),
   logAudit: vi.fn(),
   sendAdminBookingChangeRequestAlert: vi.fn(),
 }));
@@ -35,6 +37,18 @@ vi.mock("@/lib/prisma", () => ({
       count: (...args: unknown[]) => mocks.bookingChangeRequestCount(...args),
       findUnique: (...args: unknown[]) => mocks.bookingChangeRequestFindUnique(...args),
       updateMany: (...args: unknown[]) => mocks.bookingChangeRequestUpdateMany(...args),
+    },
+  },
+}));
+
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: (...args: unknown[]) => mocks.checkRateLimit(...args),
+  getClientIp: (...args: unknown[]) => mocks.getClientIp(...args),
+  rateLimiters: {
+    bookingChangeRequest: {
+      id: "booking-change-request",
+      limit: 5,
+      windowSeconds: 24 * 60 * 60,
     },
   },
 }));
@@ -106,6 +120,13 @@ describe("booking change requests", () => {
       user: { id: "member-1", role: "MEMBER" },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
+    mocks.checkRateLimit.mockReturnValue({
+      success: true,
+      limit: 5,
+      remaining: 4,
+      resetAt: Date.now() + 24 * 60 * 60 * 1000,
+    });
+    mocks.getClientIp.mockReturnValue("127.0.0.1");
     mocks.bookingChangeRequestFindFirst.mockResolvedValue(null);
     mocks.bookingChangeRequestCreate.mockResolvedValue({
       id: "request-1",
@@ -181,6 +202,7 @@ describe("booking change requests", () => {
         action: "booking-change-request.create",
         entityId: "request-1",
         subjectMemberId: "member-1",
+        ipAddress: "127.0.0.1",
       })
     );
   });
@@ -205,6 +227,91 @@ describe("booking change requests", () => {
     });
 
     expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects booking change requests when the booking has no editable future nights", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      makeBooking({
+        checkIn: new Date("2026-05-20T00:00:00.000Z"),
+        checkOut: new Date("2026-05-22T00:00:00.000Z"),
+      })
+    );
+
+    const request = new NextRequest(
+      "http://localhost/api/bookings/booking-1/change-requests",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          requestedEffectiveDate: "2026-05-24",
+          reason: "Late correction.",
+        }),
+      }
+    );
+
+    const response = await postBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects removal requests for guests outside the booking", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+
+    const request = new NextRequest(
+      "http://localhost/api/bookings/booking-1/change-requests",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          removeGuestIds: ["guest-missing"],
+          requestedEffectiveDate: "2026-05-24",
+          reason: "Wrong guest.",
+        }),
+      }
+    );
+
+    const response = await postBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
+  });
+
+  it("rate limits repeated booking change request submissions by member", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+    mocks.checkRateLimit.mockReturnValue({
+      success: false,
+      limit: 5,
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+    });
+
+    const request = new NextRequest(
+      "http://localhost/api/bookings/booking-1/change-requests",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          checkOut: "2026-05-24",
+          reason: "Weather closed the road.",
+        }),
+      }
+    );
+
+    const response = await postBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "booking-change-request" }),
+      "member-1"
+    );
     expect(mocks.bookingChangeRequestCreate).not.toHaveBeenCalled();
   });
 
@@ -299,6 +406,7 @@ describe("booking change requests", () => {
     expect(mocks.bookingChangeRequestFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { bookingId: "booking-1" },
+        take: 50,
       })
     );
   });

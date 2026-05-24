@@ -31,6 +31,8 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
@@ -113,21 +115,51 @@ export async function PUT(
         );
       }
 
+      const editPolicy = getBookingEditPolicy({
+        status: booking.status,
+        role: session.user.role,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      });
+      if (!editPolicy.canModify) {
+        throw new ApiError(
+          editPolicy.reason ?? "This booking cannot be modified",
+          400
+        );
+      }
+      if (editPolicy.mode !== "future") {
+        throw new ApiError(
+          "Use the full booking edit flow for in-progress booking date changes",
+          400
+        );
+      }
+
       const newCheckIn = newCheckInStr
-        ? new Date(newCheckInStr)
+        ? parseDateOnly(newCheckInStr)
         : booking.checkIn;
       const newCheckOut = newCheckOutStr
-        ? new Date(newCheckOutStr)
+        ? parseDateOnly(newCheckOutStr)
         : booking.checkOut;
+
+      if (
+        Number.isNaN(newCheckIn.getTime()) ||
+        Number.isNaN(newCheckOut.getTime())
+      ) {
+        throw new ApiError("Invalid booking dates", 400);
+      }
 
       if (newCheckOut <= newCheckIn) {
         throw new ApiError("Check-out must be after check-in", 400);
       }
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (newCheckIn < today) {
-        throw new ApiError("Check-in cannot be in the past", 400);
+      if (
+        session.user.role !== "ADMIN" &&
+        normalizeDateOnlyForTimeZone(newCheckIn) <= editPolicy.today
+      ) {
+        throw new ApiError(
+          "NZ today and earlier are locked for self-service changes",
+          400
+        );
       }
 
       // Minimum stay policy validation (skip for admins)

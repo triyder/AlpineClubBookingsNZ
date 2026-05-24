@@ -6,20 +6,13 @@ import {
   reviewMemberLifecycleActionRequest,
 } from "@/lib/member-lifecycle-actions";
 import logger from "@/lib/logger";
+import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const reviewSchema = z.object({
   action: z.enum(["approve", "reject"]),
   note: z.string().max(1000).optional(),
 });
-
-function getIpAddress(request: NextRequest) {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    "unknown"
-  );
-}
 
 export async function PATCH(
   request: NextRequest,
@@ -54,7 +47,7 @@ export async function PATCH(
       reviewedByMemberId: session.user.id,
       action: body.action,
       reviewNote: body.note,
-      ipAddress: getIpAddress(request),
+      ipAddress: getClientIp(request),
     });
 
     return NextResponse.json(result);
