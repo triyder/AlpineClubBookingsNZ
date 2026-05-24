@@ -1349,6 +1349,37 @@ export function joinRequestConfirmationTemplate(
   `);
 }
 
+export function membershipCancellationConfirmationTemplate(params: {
+  firstName: string;
+  requesterName: string;
+  participantName: string;
+  confirmationUrl: string;
+  expiresAt: Date;
+}): string {
+  return layout(`
+    ${heading("Confirm Membership Cancellation")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ",")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(params.requesterName) +
+        "</strong> has included <strong>" +
+        escapeHtml(params.participantName) +
+        "</strong> in a membership cancellation request."
+    )}
+    ${alertBox(
+      "Your membership will remain active unless you sign in and confirm that you want to be included. This confirmation does not approve or process the cancellation; an administrator still needs to review the request.",
+      "warning"
+    )}
+    ${paragraph(
+      "This link expires on <strong>" +
+        escapeHtml(formatNZDateTime(params.expiresAt)) +
+        "</strong>."
+    )}
+    ${button("Review Cancellation Request", params.confirmationUrl, { sameOrigin: true })}
+    ${muted("If you do not want to be included, use the link and choose Decline. If you were not expecting this request, you can ignore this email or contact the club.")}
+  `);
+}
+
 export function adminMembershipApplicationPendingTemplate(data: {
   applicantName: string;
   applicantEmail: string;

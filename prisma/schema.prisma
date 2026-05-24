@@ -126,6 +126,8 @@ enum MembershipCancellationRequestStatus {
 
 enum MembershipCancellationParticipantStatus {
   REQUESTED
+  PENDING_CONFIRMATION
+  DECLINED
   APPROVED
   REJECTED
   CANCELLED
@@ -451,17 +453,21 @@ model MembershipCancellationRequest {
 }
 
 model MembershipCancellationRequestParticipant {
-  id                 String                                  @id @default(cuid())
-  requestId          String
-  memberId           String
-  status             MembershipCancellationParticipantStatus @default(REQUESTED)
-  reason             String?
-  adminNote          String?
-  cancelledAt        DateTime?
-  reviewedByMemberId String?
-  reviewedAt         DateTime?
-  createdAt          DateTime                                @default(now())
-  updatedAt          DateTime                                @updatedAt
+  id                         String                                  @id @default(cuid())
+  requestId                  String
+  memberId                   String
+  status                     MembershipCancellationParticipantStatus @default(REQUESTED)
+  reason                     String?
+  adminNote                  String?
+  confirmationTokenHash      String?                                 @unique
+  confirmationTokenExpiresAt DateTime?
+  confirmedAt                DateTime?
+  declinedAt                 DateTime?
+  cancelledAt                DateTime?
+  reviewedByMemberId         String?
+  reviewedAt                 DateTime?
+  createdAt                  DateTime                                @default(now())
+  updatedAt                  DateTime                                @updatedAt
 
   request    MembershipCancellationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   member     Member                        @relation("MembershipCancellationParticipantMember", fields: [memberId], references: [id], onDelete: Restrict)
@@ -471,6 +477,8 @@ model MembershipCancellationRequestParticipant {
   @@index([requestId, status])
   @@index([memberId, status])
   @@index([reviewedByMemberId])
+  @@index([confirmationTokenHash])
+  @@index([confirmationTokenExpiresAt])
   @@index([cancelledAt])
 }
 

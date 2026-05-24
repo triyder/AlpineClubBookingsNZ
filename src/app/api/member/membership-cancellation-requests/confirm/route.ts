@@ -1,0 +1,83 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/lib/auth";
+import {
+  MembershipCancellationRequestError,
+  respondToMembershipCancellationConfirmation,
+} from "@/lib/membership-cancellation-requests";
+import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
+import { requireActiveSessionUser } from "@/lib/session-guards";
+import logger from "@/lib/logger";
+
+const confirmationSchema = z.object({
+  token: z.string().trim().min(1),
+  decision: z.enum(["confirm", "decline"]),
+});
+
+function errorResponse(error: unknown) {
+  if (error instanceof MembershipCancellationRequestError) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: error.statusCode },
+    );
+  }
+
+  logger.error(
+    { err: error },
+    "Membership cancellation confirmation API failed",
+  );
+  return NextResponse.json(
+    { error: "Membership cancellation confirmation failed" },
+    { status: 500 },
+  );
+}
+
+export async function POST(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
+
+  const rl = checkRateLimit(
+    rateLimiters.membershipCancellationConfirmation,
+    session.user.id,
+  );
+  if (!rl.success) {
+    const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter) },
+      },
+    );
+  }
+
+  let parsed: z.infer<typeof confirmationSchema>;
+  try {
+    parsed = confirmationSchema.parse(await request.json());
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid cancellation confirmation payload" },
+      { status: 422 },
+    );
+  }
+
+  try {
+    return NextResponse.json(
+      await respondToMembershipCancellationConfirmation({
+        token: parsed.token,
+        memberId: session.user.id,
+        decision: parsed.decision,
+        ipAddress: getClientIp(request),
+      }),
+    );
+  } catch (error) {
+    return errorResponse(error);
+  }
+}

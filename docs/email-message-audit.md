@@ -1055,6 +1055,37 @@ Triggers and frequency:
 - Member submits a family-group join request.
 - Sent to the requester once per request.
 
+### membership-cancellation-confirmation
+
+Subject:
+
+```text
+Confirm membership cancellation request — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Confirm Membership Cancellation
+
+Hi {{firstName}},
+
+{{requesterName}} has included {{participantName}} in a membership cancellation request.
+
+Your membership will remain active unless you sign in and confirm that you want to be included. This confirmation does not approve or process the cancellation; an administrator still needs to review the request.
+
+Review Cancellation Request: {{BASE_URL}}/membership-cancellation/{{token}}
+
+This link expires on {{expiresAt}}.
+
+If you do not want to be included, use the link and choose Decline. If you were not expecting this request, you can ignore this email or contact the club.
+```
+
+Triggers and frequency:
+
+- Member includes another login-capable adult in a membership cancellation request.
+- Sent once per pending participant confirmation.
+
 ### age-up-invitation
 
 Subject:

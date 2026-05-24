@@ -186,6 +186,10 @@ export const rateLimiters = {
   dataExport: { id: "data-export", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Account deletion request: 3 per day */
   deletionRequest: { id: "deletion-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Membership cancellation request: 3 per day */
+  membershipCancellationRequest: { id: "membership-cancellation-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Membership cancellation confirmation links: 10 per 15 minutes */
+  membershipCancellationConfirmation: { id: "membership-cancellation-confirmation", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing
