@@ -97,6 +97,12 @@ function adminMember() {
     bookings: [],
     promoCodes: [],
     auditLogs: [],
+    deleteEligibility: {
+      eligible: true,
+      blockers: [],
+      checkedAt: "2026-05-24T00:00:00.000Z",
+    },
+    lifecycleActionRequests: [],
     stats: { totalBookings: 0, totalSpendCents: 0, lastStay: null },
     dependents: [],
     streetAddressLine1: "1 Main Road",

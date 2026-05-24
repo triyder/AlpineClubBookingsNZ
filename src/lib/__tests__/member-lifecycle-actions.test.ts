@@ -48,6 +48,25 @@ const mockPrisma = vi.hoisted(() => {
   };
 });
 
+vi.mock("@prisma/client", async () => {
+  const actual = await vi.importActual<typeof import("@prisma/client")>("@prisma/client");
+
+  return {
+    ...actual,
+    MemberLifecycleAction: { DELETE: "DELETE" },
+    MemberLifecycleActionRequestStatus: {
+      REQUESTED: "REQUESTED",
+      APPROVED: "APPROVED",
+      REJECTED: "REJECTED",
+    },
+    Role: {
+      MEMBER: "MEMBER",
+      ADMIN: "ADMIN",
+      LODGE: "LODGE",
+    },
+  };
+});
+
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 vi.mock("@/lib/auth", () => ({
