@@ -385,6 +385,126 @@ async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordSc
   };
 }
 
+async function getMembershipCancellationRequestScope(localId: string): Promise<XeroRecordScope | null> {
+  const request = await prisma.membershipCancellationRequest.findUnique({
+    where: { id: localId },
+    select: {
+      id: true,
+      status: true,
+      submittedAt: true,
+      participants: {
+        orderBy: { createdAt: "asc" },
+        select: {
+          id: true,
+          status: true,
+          member: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!request) {
+    return null;
+  }
+
+  const rootRecord = createRecordReference(
+    "MembershipCancellationRequest",
+    request.id,
+    `Membership cancellation ${formatDisplayDate(request.submittedAt)} (${formatStatusLabel(request.status)})`,
+    "Membership Cancellation Request",
+  );
+  const participantRecords = request.participants.map((participant) =>
+    createRecordReference(
+      "MembershipCancellationRequestParticipant",
+      participant.id,
+      `${participant.member.firstName} ${participant.member.lastName} (${formatStatusLabel(participant.status)})`,
+      "Cancellation Participant",
+    )
+  );
+  const relatedMembers = request.participants.map((participant) =>
+    createRecordReference(
+      "Member",
+      participant.member.id,
+      `${participant.member.firstName} ${participant.member.lastName}`,
+      "Member",
+    )
+  );
+
+  return {
+    rootRecord,
+    scopeRecords: [rootRecord, ...participantRecords],
+    relatedRecords: relatedMembers,
+    backLink: {
+      href: "/admin/membership-cancellations?status=ALL",
+      label: "Back to Membership Cancellations",
+    },
+  };
+}
+
+async function getMembershipCancellationParticipantScope(localId: string): Promise<XeroRecordScope | null> {
+  const participant = await prisma.membershipCancellationRequestParticipant.findUnique({
+    where: { id: localId },
+    select: {
+      id: true,
+      status: true,
+      requestId: true,
+      request: {
+        select: {
+          id: true,
+          status: true,
+          submittedAt: true,
+        },
+      },
+      member: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
+  });
+
+  if (!participant) {
+    return null;
+  }
+
+  const rootRecord = createRecordReference(
+    "MembershipCancellationRequestParticipant",
+    participant.id,
+    `${participant.member.firstName} ${participant.member.lastName} cancellation (${formatStatusLabel(participant.status)})`,
+    "Cancellation Participant",
+  );
+  const requestRecord = createRecordReference(
+    "MembershipCancellationRequest",
+    participant.request.id,
+    `Membership cancellation ${formatDisplayDate(participant.request.submittedAt)} (${formatStatusLabel(participant.request.status)})`,
+    "Membership Cancellation Request",
+  );
+  const relatedMember = createRecordReference(
+    "Member",
+    participant.member.id,
+    `${participant.member.firstName} ${participant.member.lastName}`,
+    "Member",
+  );
+
+  return {
+    rootRecord,
+    scopeRecords: [rootRecord, requestRecord],
+    relatedRecords: [relatedMember],
+    backLink: {
+      href: "/admin/membership-cancellations?status=ALL",
+      label: "Back to Membership Cancellations",
+    },
+  };
+}
+
 async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): Promise<XeroRecordScope | null> {
   switch (localModel) {
     case "Member":
@@ -397,6 +517,10 @@ async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): 
       return getBookingModificationScope(localId);
     case "MemberSubscription":
       return getMemberSubscriptionScope(localId);
+    case "MembershipCancellationRequest":
+      return getMembershipCancellationRequestScope(localId);
+    case "MembershipCancellationRequestParticipant":
+      return getMembershipCancellationParticipantScope(localId);
     default:
       return null;
   }

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findFirstLink: vi.fn(),
   findUniqueBooking: vi.fn(),
+  findUniqueMember: vi.fn(),
+  findUniqueMemberSubscription: vi.fn(),
   findUniquePayment: vi.fn(),
   findFirstOperation: vi.fn(),
   findManyOperations: vi.fn(),
@@ -21,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   createXeroInvoiceForBooking: vi.fn(),
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
+  createXeroMembershipCancellationCreditNote: vi.fn(),
+  syncXeroMembershipCancellationContact: vi.fn(),
   isXeroConnected: vi.fn().mockResolvedValue(false),
 }));
 
@@ -28,6 +32,12 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
       findUnique: mocks.findUniqueBooking,
+    },
+    member: {
+      findUnique: mocks.findUniqueMember,
+    },
+    memberSubscription: {
+      findUnique: mocks.findUniqueMemberSubscription,
     },
     payment: {
       findUnique: mocks.findUniquePayment,
@@ -83,12 +93,20 @@ vi.mock("@/lib/xero", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 
+vi.mock("@/lib/membership-cancellation-xero", () => ({
+  createXeroMembershipCancellationCreditNote:
+    mocks.createXeroMembershipCancellationCreditNote,
+  syncXeroMembershipCancellationContact: mocks.syncXeroMembershipCancellationContact,
+}));
+
 import {
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
+  enqueueXeroMembershipCancellationContactOperation,
+  enqueueXeroMembershipCancellationCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
@@ -683,6 +701,123 @@ describe("enqueueXeroCreditNoteAllocationOperation", () => {
   });
 });
 
+describe("membership cancellation Xero enqueue operations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_cancel_1" });
+  });
+
+  it("queues credit notes for unpaid current-season membership subscriptions", async () => {
+    mocks.findUniqueMemberSubscription.mockResolvedValue({
+      id: "sub_1",
+      status: "UNPAID",
+      xeroInvoiceId: "inv_sub_1",
+    });
+
+    await expect(
+      enqueueXeroMembershipCancellationCreditNoteOperation(
+        {
+          subscriptionId: "sub_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+        { createdByMemberId: "admin_1" }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_cancel_1",
+      message: "Xero membership cancellation credit note queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "MemberSubscription",
+        localId: "sub_1",
+        status: "PENDING",
+        idempotencyKey:
+          "member-subscription:sub_1:membership-cancellation-credit:participant_1:v1",
+        correlationKey:
+          "member-subscription:sub_1:membership-cancellation-credit:participant_1:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
+          subscriptionId: "sub_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      })
+    );
+  });
+
+  it("does not queue membership cancellation credit notes for paid subscriptions", async () => {
+    mocks.findUniqueMemberSubscription.mockResolvedValue({
+      id: "sub_1",
+      status: "PAID",
+      xeroInvoiceId: "inv_sub_1",
+    });
+
+    await expect(
+      enqueueXeroMembershipCancellationCreditNoteOperation({
+        subscriptionId: "sub_1",
+        requestId: "request_1",
+        participantId: "participant_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "No Xero membership cancellation credit note is required for this subscription status.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("queues contact cleanup when the cancelling member has a Xero contact", async () => {
+    mocks.findUniqueMember.mockResolvedValue({
+      id: "member_1",
+      xeroContactId: "contact_1",
+    });
+
+    await expect(
+      enqueueXeroMembershipCancellationContactOperation(
+        {
+          memberId: "member_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+        { createdByMemberId: "admin_1" }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_cancel_1",
+      message: "Xero membership cancellation contact cleanup queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "CONTACT",
+        operationType: "UPDATE",
+        localModel: "MembershipCancellationRequestParticipant",
+        localId: "participant_1",
+        status: "PENDING",
+        idempotencyKey:
+          "membership-cancellation:participant_1:contact:member_1:v1",
+        correlationKey:
+          "membership-cancellation:participant_1:contact:member_1:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_CANCELLATION_CONTACT",
+          memberId: "member_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      })
+    );
+  });
+});
+
 describe("processQueuedXeroOutboxOperations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -959,6 +1094,99 @@ describe("processQueuedXeroOutboxOperations", () => {
         createdByMemberId: "admin_1",
         syncOperationId: "op_allocation_1",
       }
+    );
+  });
+
+  it("claims and processes queued membership cancellation credit notes", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_membership_cancel_credit_1",
+        localId: "sub_1",
+        localModel: "MemberSubscription",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
+          subscriptionId: "sub_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      },
+    ]);
+    mocks.createXeroMembershipCancellationCreditNote.mockResolvedValue("cn_sub_1");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.createXeroMembershipCancellationCreditNote).toHaveBeenCalledWith({
+      subscriptionId: "sub_1",
+      requestId: "request_1",
+      participantId: "participant_1",
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_membership_cancel_credit_1",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: { in: ["MemberSubscription"] },
+        }),
+      })
+    );
+  });
+
+  it("claims and processes queued membership cancellation contact cleanup", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_membership_cancel_contact_1",
+        localId: "participant_1",
+        localModel: "MembershipCancellationRequestParticipant",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_CANCELLATION_CONTACT",
+          memberId: "member_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      },
+    ]);
+    mocks.syncXeroMembershipCancellationContact.mockResolvedValue({
+      memberId: "member_1",
+      xeroContactId: "contact_1",
+      addedGroupIds: ["cancelled_group"],
+      removedGroupIds: ["adult_group"],
+      archived: true,
+      skippedReason: null,
+    });
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.syncXeroMembershipCancellationContact).toHaveBeenCalledWith({
+      memberId: "member_1",
+      requestId: "request_1",
+      participantId: "participant_1",
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_membership_cancel_contact_1",
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          entityType: "CONTACT",
+          operationType: "UPDATE",
+          localModel: { in: ["MembershipCancellationRequestParticipant"] },
+        }),
+      })
     );
   });
 

@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 
 const VALID_KEYS = [
   "hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome",
-  "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem", "entranceFeeAmountCents",
+  "membershipCancellationCredit", "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem", "entranceFeeAmountCents",
 ] as const;
 
 /**
@@ -56,6 +56,7 @@ const UpdateMappingsSchema = z.object({
   stripeBankAccount: MappingValueSchema.optional(),
   stripeFees: MappingValueSchema.optional(),
   subscriptionIncome: MappingValueSchema.optional(),
+  membershipCancellationCredit: MappingValueSchema.optional(),
   hutFeeItem: MappingValueSchema.optional(),
   hutFeeRefundItem: MappingValueSchema.optional(),
   entranceFeeItem: MappingValueSchema.optional(),

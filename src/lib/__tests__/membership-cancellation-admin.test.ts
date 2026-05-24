@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
     sendApprovedEmail: vi.fn(),
     sendRejectedEmail: vi.fn(),
     loadSettings: vi.fn(),
+    queueCancellationXeroOperations: vi.fn(),
   };
 });
 
@@ -67,6 +68,11 @@ vi.mock("@/lib/email", () => ({
 
 vi.mock("@/lib/membership-cancellation-settings", () => ({
   loadMembershipCancellationSettings: mocks.loadSettings,
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  queueApprovedMembershipCancellationXeroOperations:
+    mocks.queueCancellationXeroOperations,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -170,6 +176,10 @@ describe("membership cancellation admin review", () => {
     mocks.sendApprovedEmail.mockResolvedValue(undefined);
     mocks.sendRejectedEmail.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.queueCancellationXeroOperations.mockResolvedValue({
+      seasonYear: 2026,
+      results: [],
+    });
   });
 
   it("approves a confirmed participant and locally cancels the membership", async () => {
@@ -217,6 +227,12 @@ describe("membership cancellation admin review", () => {
       }),
       mocks.tx,
     );
+    expect(mocks.queueCancellationXeroOperations).toHaveBeenCalledWith({
+      memberId: "member-1",
+      requestId: "request-1",
+      participantId: "participant-1",
+      createdByMemberId: "admin-1",
+    });
     expect(mocks.sendApprovedEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "alice@example.org",

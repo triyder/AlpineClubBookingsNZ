@@ -124,6 +124,7 @@ describe("GET /api/admin/xero/account-mappings", () => {
       { key: "stripeBankAccount", code: "607", itemCode: null },
       { key: "stripeFees", code: "490", itemCode: null },
       { key: "subscriptionIncome", code: "205", itemCode: null },
+      { key: "membershipCancellationCredit", code: "206", itemCode: "CANCEL-CREDIT" },
     ]);
     const res = await getMappings();
     expect(res.status).toBe(200);
@@ -133,6 +134,7 @@ describe("GET /api/admin/xero/account-mappings", () => {
     expect(data.stripeBankAccount).toEqual({ code: "607", itemCode: null });
     expect(data.stripeFees).toEqual({ code: "490", itemCode: null });
     expect(data.subscriptionIncome).toEqual({ code: "205", itemCode: null });
+    expect(data.membershipCancellationCredit).toEqual({ code: "206", itemCode: "CANCEL-CREDIT" });
   });
 
   it("returns null for keys not in DB", async () => {
@@ -146,6 +148,7 @@ describe("GET /api/admin/xero/account-mappings", () => {
     expect(data.stripeBankAccount).toEqual({ code: null, itemCode: null });
     expect(data.stripeFees).toEqual({ code: null, itemCode: null });
     expect(data.subscriptionIncome).toEqual({ code: null, itemCode: null });
+    expect(data.membershipCancellationCredit).toEqual({ code: null, itemCode: null });
   });
 
   it("returns 500 on DB error", async () => {
@@ -168,6 +171,7 @@ describe("PUT /api/admin/xero/account-mappings", () => {
       { key: "stripeBankAccount", code: "606", itemCode: null },
       { key: "stripeFees", code: null, itemCode: null },
       { key: "subscriptionIncome", code: "203", itemCode: null },
+      { key: "membershipCancellationCredit", code: "203", itemCode: null },
     ]);
   });
 
@@ -225,6 +229,20 @@ describe("PUT /api/admin/xero/account-mappings", () => {
       expect.objectContaining({
         where: { key: "hutFeeItem" },
         update: { itemCode: "HUT-FEE" },
+      })
+    );
+  });
+
+  it("upserts membership cancellation credit account and item mappings", async () => {
+    const req = makePutRequest({
+      membershipCancellationCredit: { code: "206", itemCode: "CANCEL-CREDIT" },
+    });
+    const res = await putMappings(req);
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "membershipCancellationCredit" },
+        update: { code: "206", itemCode: "CANCEL-CREDIT" },
       })
     );
   });
@@ -470,6 +488,12 @@ describe("getAccountMapping", () => {
   it("returns correct default for subscriptionIncome", async () => {
     mockPrisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
     const code = await getAccountMapping("subscriptionIncome");
+    expect(code).toBe("203");
+  });
+
+  it("returns correct default for membershipCancellationCredit", async () => {
+    mockPrisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+    const code = await getAccountMapping("membershipCancellationCredit");
     expect(code).toBe("203");
   });
 

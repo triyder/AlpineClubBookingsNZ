@@ -528,6 +528,7 @@ const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
   stripeBankAccount: "606",
   stripeFees: null,
   subscriptionIncome: "203",
+  membershipCancellationCredit: "203",
 };
 
 type ResolvedAccountMapping = {
@@ -536,7 +537,7 @@ type ResolvedAccountMapping = {
   codeExplicitlyConfigured: boolean;
 };
 
-async function getResolvedAccountMapping(key: string): Promise<ResolvedAccountMapping> {
+export async function getResolvedAccountMapping(key: string): Promise<ResolvedAccountMapping> {
   try {
     const mapping = await prisma.xeroAccountMapping.findUnique({
       where: { key },

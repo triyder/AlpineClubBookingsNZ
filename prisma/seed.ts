@@ -343,6 +343,7 @@ async function main() {
     { key: "stripeBankAccount", code: "606" },
     { key: "stripeFees", code: null },
     { key: "subscriptionIncome", code: "203" },
+    { key: "membershipCancellationCredit", code: "203" },
   ];
   for (const mapping of accountMappings) {
     await prisma.xeroAccountMapping.upsert({

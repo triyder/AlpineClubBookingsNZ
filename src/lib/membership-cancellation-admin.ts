@@ -13,6 +13,7 @@ import {
 import logger from "@/lib/logger";
 import { loadMembershipCancellationSettings } from "@/lib/membership-cancellation-settings";
 import { prisma } from "@/lib/prisma";
+import { queueApprovedMembershipCancellationXeroOperations } from "@/lib/xero-operation-outbox";
 
 const REVIEWABLE_REQUEST_STATUSES: readonly MembershipCancellationRequestStatus[] = [
   MembershipCancellationRequestStatus.REQUESTED,
@@ -708,6 +709,22 @@ export async function reviewMembershipCancellationParticipant({
       note,
     );
   });
+
+  if (action === "approve") {
+    try {
+      await queueApprovedMembershipCancellationXeroOperations({
+        memberId: participant.memberId,
+        requestId: participant.requestId,
+        participantId: participant.id,
+        createdByMemberId: adminMemberId,
+      });
+    } catch (err) {
+      logger.error(
+        { err, memberId: participant.memberId, requestId: participant.requestId },
+        "Failed to queue Xero membership cancellation operations",
+      );
+    }
+  }
 
   await sendCancellationOutcomeEmail({
     action,

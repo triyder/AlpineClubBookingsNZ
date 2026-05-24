@@ -1,6 +1,11 @@
 import type { EntranceFeeCategory } from "@prisma/client";
 import logger from "@/lib/logger";
+import {
+  createXeroMembershipCancellationCreditNote,
+  syncXeroMembershipCancellationContact,
+} from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
+import { getSeasonYear } from "@/lib/utils";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -32,6 +37,10 @@ const XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE = "ACCOUNT_CREDIT_NOTE";
 const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE = "SUPPLEMENTARY_INVOICE";
 const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE = "MODIFICATION_CREDIT_NOTE";
 const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE = "CREDIT_NOTE_ALLOCATION";
+const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE =
+  "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
+const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
+  "MEMBERSHIP_CANCELLATION_CONTACT";
 
 interface QueuedEntranceFeeOutboxPayload {
   queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
@@ -88,6 +97,20 @@ interface QueuedCreditNoteAllocationOutboxPayload {
   role?: string;
 }
 
+interface QueuedMembershipCancellationCreditNoteOutboxPayload {
+  queueType: typeof XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE;
+  subscriptionId: string;
+  requestId: string;
+  participantId: string;
+}
+
+interface QueuedMembershipCancellationContactOutboxPayload {
+  queueType: typeof XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE;
+  memberId: string;
+  requestId: string;
+  participantId: string;
+}
+
 type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
@@ -96,7 +119,9 @@ type QueuedOutboxPayload =
   | QueuedAccountCreditNoteOutboxPayload
   | QueuedSupplementaryInvoiceOutboxPayload
   | QueuedModificationCreditNoteOutboxPayload
-  | QueuedCreditNoteAllocationOutboxPayload;
+  | QueuedCreditNoteAllocationOutboxPayload
+  | QueuedMembershipCancellationCreditNoteOutboxPayload
+  | QueuedMembershipCancellationContactOutboxPayload;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -248,6 +273,40 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
     };
   }
 
+  if (queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE) {
+    const subscriptionId = readString(payload.subscriptionId);
+    const requestId = readString(payload.requestId);
+    const participantId = readString(payload.participantId);
+
+    if (!subscriptionId || !requestId || !participantId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      subscriptionId,
+      requestId,
+      participantId,
+    };
+  }
+
+  if (queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE) {
+    const memberId = readString(payload.memberId);
+    const requestId = readString(payload.requestId);
+    const participantId = readString(payload.participantId);
+
+    if (!memberId || !requestId || !participantId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      memberId,
+      requestId,
+      participantId,
+    };
+  }
+
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;
   }
@@ -285,9 +344,16 @@ function readQueueType(value: unknown): string | null {
 async function claimQueuedOutboxOperation(
   operationId: string,
   expectedOperation: {
-    entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION";
+    entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT";
     operationType: "CREATE" | "UPDATE" | "ALLOCATE";
-    localModels: ReadonlyArray<"Member" | "Payment" | "Booking" | "BookingModification">;
+    localModels: ReadonlyArray<
+      | "Member"
+      | "Payment"
+      | "Booking"
+      | "BookingModification"
+      | "MemberSubscription"
+      | "MembershipCancellationRequestParticipant"
+    >;
   }
 ) {
   const result = await prisma.xeroSyncOperation.updateMany({
@@ -1317,6 +1383,273 @@ export async function enqueueXeroCreditNoteAllocationOperation(
   };
 }
 
+export async function enqueueXeroMembershipCancellationCreditNoteOperation(
+  params: {
+    subscriptionId: string;
+    requestId: string;
+    participantId: string;
+  },
+  options?: { createdByMemberId?: string }
+) {
+  const subscription = await prisma.memberSubscription.findUnique({
+    where: { id: params.subscriptionId },
+    select: {
+      id: true,
+      status: true,
+      xeroInvoiceId: true,
+    },
+  });
+
+  if (!subscription) {
+    return {
+      queueOperationId: null,
+      message: "Membership subscription was not found for cancellation Xero crediting.",
+    };
+  }
+
+  if (
+    subscription.status !== "UNPAID" &&
+    subscription.status !== "OVERDUE"
+  ) {
+    return {
+      queueOperationId: null,
+      message: "No Xero membership cancellation credit note is required for this subscription status.",
+    };
+  }
+
+  if (!subscription.xeroInvoiceId) {
+    return {
+      queueOperationId: null,
+      message: "No Xero subscription invoice is linked for cancellation crediting.",
+    };
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "MemberSubscription",
+      localId: params.subscriptionId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero membership cancellation credit note already linked.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "member-subscription",
+    params.subscriptionId,
+    "membership-cancellation-credit",
+    params.participantId,
+    "v1"
+  );
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "MemberSubscription",
+      localId: params.subscriptionId,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero membership cancellation credit note is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "MemberSubscription",
+    localId: params.subscriptionId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+      subscriptionId: params.subscriptionId,
+      requestId: params.requestId,
+      participantId: params.participantId,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero membership cancellation credit note queued for background processing.",
+  };
+}
+
+export async function enqueueXeroMembershipCancellationContactOperation(
+  params: {
+    memberId: string;
+    requestId: string;
+    participantId: string;
+  },
+  options?: { createdByMemberId?: string }
+) {
+  const member = await prisma.member.findUnique({
+    where: { id: params.memberId },
+    select: { id: true, xeroContactId: true },
+  });
+
+  if (!member?.xeroContactId) {
+    return {
+      queueOperationId: null,
+      message: "No Xero contact is linked for membership cancellation contact cleanup.",
+    };
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "MembershipCancellationRequestParticipant",
+      localId: params.participantId,
+      xeroObjectType: "CONTACT",
+      role: "MEMBERSHIP_CANCELLATION_CONTACT",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero membership cancellation contact cleanup already linked.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "membership-cancellation",
+    params.participantId,
+    "contact",
+    params.memberId,
+    "v1"
+  );
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "CONTACT",
+      operationType: "UPDATE",
+      localModel: "MembershipCancellationRequestParticipant",
+      localId: params.participantId,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero membership cancellation contact cleanup is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CONTACT",
+    operationType: "UPDATE",
+    localModel: "MembershipCancellationRequestParticipant",
+    localId: params.participantId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
+      memberId: params.memberId,
+      requestId: params.requestId,
+      participantId: params.participantId,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero membership cancellation contact cleanup queued for background processing.",
+  };
+}
+
+export async function queueApprovedMembershipCancellationXeroOperations(params: {
+  memberId: string;
+  requestId: string;
+  participantId: string;
+  createdByMemberId?: string;
+}) {
+  const seasonYear = getSeasonYear(new Date());
+  const subscription = await prisma.memberSubscription.findUnique({
+    where: {
+      memberId_seasonYear: {
+        memberId: params.memberId,
+        seasonYear,
+      },
+    },
+    select: { id: true },
+  });
+  const queuedResults: Array<{ queueOperationId: string | null; message: string }> = [];
+
+  queuedResults.push(
+    await enqueueXeroMembershipCancellationContactOperation(
+      {
+        memberId: params.memberId,
+        requestId: params.requestId,
+        participantId: params.participantId,
+      },
+      { createdByMemberId: params.createdByMemberId }
+    )
+  );
+
+  if (subscription) {
+    queuedResults.push(
+      await enqueueXeroMembershipCancellationCreditNoteOperation(
+        {
+          subscriptionId: subscription.id,
+          requestId: params.requestId,
+          participantId: params.participantId,
+        },
+        { createdByMemberId: params.createdByMemberId }
+      )
+    );
+  } else {
+    queuedResults.push({
+      queueOperationId: null,
+      message: "No current-season membership subscription record exists for cancellation crediting.",
+    });
+  }
+
+  if (queuedResults.some((result) => result.queueOperationId)) {
+    void kickQueuedXeroOutboxOperationsIfConnected({ limit: queuedResults.length }).catch(
+      (error) => {
+        logger.error(
+          { err: error, memberId: params.memberId, requestId: params.requestId },
+          "Failed to kick queued Xero membership cancellation operations"
+        );
+      }
+    );
+  }
+
+  return {
+    seasonYear,
+    results: queuedResults,
+  };
+}
+
 export interface ProcessQueuedXeroOutboxOperationsResult {
   found: number;
   processed: number;
@@ -1392,6 +1725,18 @@ export async function processQueuedXeroOutboxOperations(options?: {
             equals: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
           },
         },
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
+          },
+        },
       ],
     },
     orderBy: {
@@ -1418,6 +1763,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
             operationType: "UPDATE" as const,
             localModels: ["Payment"] as const,
           }
+        : queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE
+        ? {
+            entityType: "CONTACT" as const,
+            operationType: "UPDATE" as const,
+            localModels: ["MembershipCancellationRequestParticipant"] as const,
+          }
         : queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE
         ? {
             entityType: "ALLOCATION" as const,
@@ -1427,13 +1778,16 @@ export async function processQueuedXeroOutboxOperations(options?: {
         : queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
           || queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE
           || queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
+          || queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE
         ? {
             entityType: "CREDIT_NOTE" as const,
             operationType: "CREATE" as const,
             localModels:
               queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
                 ? (["Booking", "BookingModification"] as const)
-                : (["Payment"] as const),
+                : queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE
+                  ? (["MemberSubscription"] as const)
+                  : (["Payment"] as const),
           }
         : {
             entityType: "INVOICE" as const,
@@ -1521,6 +1875,26 @@ export async function processQueuedXeroOutboxOperations(options?: {
           syncOperationId: queuedOperation.id,
         });
       } else if (
+        payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE
+      ) {
+        await createXeroMembershipCancellationCreditNote({
+          subscriptionId: payload.subscriptionId,
+          requestId: payload.requestId,
+          participantId: payload.participantId,
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
+      } else if (
+        payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE
+      ) {
+        await syncXeroMembershipCancellationContact({
+          memberId: payload.memberId,
+          requestId: payload.requestId,
+          participantId: payload.participantId,
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
+      } else if (
         payload?.queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE &&
         queuedOperation.localModel &&
         queuedOperation.localId
@@ -1545,7 +1919,11 @@ export async function processQueuedXeroOutboxOperations(options?: {
     } catch (error) {
       if (
         error instanceof Error &&
-        error.message === "Queued Xero outbox payload is incomplete."
+        (
+          error.message === "Queued Xero outbox payload is incomplete." ||
+          payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE ||
+          payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE
+        )
       ) {
         await failXeroSyncOperation(queuedOperation.id, error);
       }

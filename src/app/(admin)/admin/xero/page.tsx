@@ -439,6 +439,7 @@ type AccountMappings = {
   stripeBankAccount: MappingValue
   stripeFees: MappingValue
   subscriptionIncome: MappingValue
+  membershipCancellationCredit: MappingValue
   hutFeeItem: MappingValue
   hutFeeRefundItem: MappingValue
   entranceFeeItem: MappingValue
@@ -446,7 +447,8 @@ type AccountMappings = {
 }
 
 // Account code mapping keys (shown with chart-of-accounts dropdown)
-const ACCOUNT_MAPPING_KEYS = ["hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome"] as const
+const ACCOUNT_MAPPING_KEYS = ["hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome", "membershipCancellationCredit"] as const
+const CREDIT_ITEM_MAPPING_KEYS = ["hutFeeRefundItem", "membershipCancellationCredit"] as const
 
 const MAPPING_LABELS: Record<string, string> = {
   hutFeesIncome: "Hut Fees Income",
@@ -454,6 +456,8 @@ const MAPPING_LABELS: Record<string, string> = {
   stripeBankAccount: "Stripe Bank Account",
   stripeFees: "Stripe Fees",
   subscriptionIncome: "Subscription Income",
+  membershipCancellationCredit: "Membership Cancellation Credits",
+  hutFeeRefundItem: "Hut Fee Refund Item",
 }
 
 const MAPPING_DESCRIPTIONS: Record<string, string> = {
@@ -462,6 +466,8 @@ const MAPPING_DESCRIPTIONS: Record<string, string> = {
   stripeBankAccount: "Bank account used to record Stripe payments",
   stripeFees: "Expense account for Stripe transaction fees (optional)",
   subscriptionIncome: "Account code used to detect annual subscription invoices",
+  membershipCancellationCredit: "Credit note account and item used to reverse unpaid annual subscription invoices when membership cancellation is approved",
+  hutFeeRefundItem: "Xero Item for refund credit note line items",
 }
 
 /** Which Xero account types each mapping accepts */
@@ -471,6 +477,7 @@ const MAPPING_TYPE_FILTER: Record<string, string> = {
   stripeBankAccount: "BANK",
   stripeFees: "EXPENSE",
   subscriptionIncome: "REVENUE",
+  membershipCancellationCredit: "REVENUE",
 }
 
 function SyncReportSection({
@@ -3613,19 +3620,18 @@ export default function XeroPage() {
                 })}
 
                 <Separator />
-                <h4 className="text-sm font-semibold text-slate-700">Refund Item Code</h4>
+                <h4 className="text-sm font-semibold text-slate-700">Credit Note Item Codes</h4>
                 <p className="text-xs text-muted-foreground">
-                  Xero Item for refund credit note line items. When set, Xero auto-fills the account code from the item configuration.
+                  Xero Items for credit note line items. When set, Xero can apply the item configuration while the mapped account remains available for reporting.
                 </p>
-                {accountMappings && (() => {
-                  const key = "hutFeeRefundItem" as const
+                {accountMappings && CREDIT_ITEM_MAPPING_KEYS.map((key) => {
                   const currentItemCode = accountMappings[key]?.itemCode
                   const matchedItem = xeroItems.find((i) => i.code === currentItemCode)
                   return (
-                    <div className="grid grid-cols-3 gap-4 items-start">
+                    <div key={key} className="grid grid-cols-3 gap-4 items-start">
                       <div>
-                        <p className="text-sm font-medium">Hut Fee Refund Item</p>
-                        <p className="text-xs text-muted-foreground">Xero Item for refund credit note line items</p>
+                        <p className="text-sm font-medium">{MAPPING_LABELS[key]}</p>
+                        <p className="text-xs text-muted-foreground">{MAPPING_DESCRIPTIONS[key]}</p>
                       </div>
                       <div className="col-span-2">
                         {isEditingMappings ? (
@@ -3663,7 +3669,7 @@ export default function XeroPage() {
                       </div>
                     </div>
                   )
-                })()}
+                })}
 
                 <Separator />
                 <h4 className="text-sm font-semibold text-slate-700">Hut Fee Item Codes</h4>

@@ -6,6 +6,8 @@ export const XERO_LOCAL_MODELS = [
   "Payment",
   "BookingModification",
   "MemberSubscription",
+  "MembershipCancellationRequest",
+  "MembershipCancellationRequestParticipant",
 ] as const;
 
 export type XeroLocalModel = (typeof XERO_LOCAL_MODELS)[number];
@@ -36,6 +38,9 @@ export function buildLocalAdminUrl(localModel: string | null, localId: string | 
     case "BookingModification":
     case "MemberSubscription":
       return buildXeroRecordActivityUrl(localModel, localId);
+    case "MembershipCancellationRequest":
+    case "MembershipCancellationRequestParticipant":
+      return buildXeroRecordActivityUrl(localModel, localId, "/admin/membership-cancellations?status=ALL");
     default:
       return null;
   }
