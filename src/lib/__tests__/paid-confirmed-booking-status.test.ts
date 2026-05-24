@@ -84,6 +84,9 @@ describe("paid legacy CONFIRMED booking repair", () => {
   it("keeps status helper semantics aligned with the paid repair", () => {
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(BookingStatus.PAID);
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(BookingStatus.PENDING);
+    expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(
+      BookingStatus.COMPLETED
+    );
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).not.toContain(
       BookingStatus.CONFIRMED
     );
@@ -127,6 +130,34 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(result.nightDetails.map((night) => night.occupiedBeds)).toEqual([
       2,
       2,
+    ]);
+  });
+
+  it("counts COMPLETED bookings when checking capacity", async () => {
+    prismaMocks.bookingFindMany.mockResolvedValueOnce([
+      makeBooking(4, BookingStatus.COMPLETED),
+    ]);
+
+    const result = await checkCapacity(
+      dateOnly(2026, 6, 10),
+      dateOnly(2026, 6, 12),
+      LODGE_CAPACITY - 4
+    );
+
+    expect(prismaMocks.bookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: {
+            in: expect.arrayContaining([BookingStatus.COMPLETED]),
+          },
+        }),
+      })
+    );
+    expect(result.available).toBe(true);
+    expect(result.minAvailable).toBe(LODGE_CAPACITY - 4);
+    expect(result.nightDetails.map((night) => night.occupiedBeds)).toEqual([
+      4,
+      4,
     ]);
   });
 

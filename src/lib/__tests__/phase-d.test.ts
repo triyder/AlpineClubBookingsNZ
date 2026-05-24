@@ -149,6 +149,38 @@ describe("#33: Admin Bookings Calendar API", () => {
     expect(call.where.checkIn.lt).toEqual(new Date("2026-05-01T00:00:00.000Z"));
     expect(call.where.checkOut.gt).toEqual(new Date("2026-04-01T00:00:00.000Z"));
   });
+
+  it("returns reduced available beds for completed-booking occupancy", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "b1",
+        checkIn: new Date("2026-04-10"),
+        checkOut: new Date("2026-04-12"),
+        status: "COMPLETED",
+        finalPriceCents: 5000,
+        member: { firstName: "John", lastName: "Smith" },
+        _count: { guests: 4 },
+      },
+    ]);
+    const { getMonthAvailability } = await import("@/lib/capacity");
+    vi.mocked(getMonthAvailability).mockResolvedValueOnce(
+      new Map([["2026-04-10", 4]])
+    );
+
+    const { GET } = await import("@/app/api/admin/bookings/route");
+    const req = new NextRequest(
+      "http://localhost/api/admin/bookings?calendarMonth=2026-04"
+    );
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.bookings[0].status).toBe("COMPLETED");
+    expect(data.bookings[0].guestCount).toBe(4);
+    expect(data.availability["2026-04-10"]).toBe(25);
+    expect(getMonthAvailability).toHaveBeenCalledWith(2026, 3);
+  });
 });
 
 // ---------------------------------------------------------------------------

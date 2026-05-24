@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BookingStatus } from "@prisma/client";
 import { parseDateOnly } from "@/lib/date-only";
 
 const mocks = vi.hoisted(() => ({
@@ -13,7 +14,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { getMonthAvailability } from "@/lib/capacity";
+import { checkCapacity, getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
 
 describe("capacity calendar availability", () => {
   beforeEach(() => {
@@ -53,5 +54,65 @@ describe("capacity calendar availability", () => {
 
     expect(availability.get("2026-04-29")).toBe(0);
     expect(availability.get("2026-04-30")).toBe(2);
+  });
+
+  it("queries completed bookings as capacity-holding bookings", async () => {
+    await getMonthAvailability(2026, 3);
+
+    const call = mocks.bookingFindMany.mock.calls[0][0];
+    expect(call.where.status.in).toEqual(
+      expect.arrayContaining([BookingStatus.COMPLETED])
+    );
+  });
+
+  it("counts completed bookings in monthly occupied beds", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.COMPLETED,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        guests: [{ id: "g1" }, { id: "g2" }, { id: "g3" }, { id: "g4" }],
+      },
+    ]);
+
+    const availability = await getMonthAvailability(2026, 3);
+
+    expect(availability.get("2026-04-09")).toBe(0);
+    expect(availability.get("2026-04-10")).toBe(4);
+    expect(availability.get("2026-04-11")).toBe(4);
+    expect(availability.get("2026-04-12")).toBe(0);
+  });
+
+  it("counts completed bookings when checking capacity", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.COMPLETED,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        guests: [{ id: "g1" }, { id: "g2" }, { id: "g3" }, { id: "g4" }],
+      },
+    ]);
+
+    const result = await checkCapacity(
+      parseDateOnly("2026-04-10"),
+      parseDateOnly("2026-04-12"),
+      LODGE_CAPACITY - 4
+    );
+
+    expect(mocks.bookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: {
+            in: expect.arrayContaining([BookingStatus.COMPLETED]),
+          },
+        }),
+      })
+    );
+    expect(result.available).toBe(true);
+    expect(result.minAvailable).toBe(LODGE_CAPACITY - 4);
+    expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([
+      LODGE_CAPACITY - 4,
+      LODGE_CAPACITY - 4,
+    ]);
   });
 });

@@ -3,6 +3,9 @@ import { BookingStatus } from "@prisma/client";
 export const CAPACITY_HOLDING_BOOKING_STATUSES = [
   BookingStatus.PAID,
   BookingStatus.PENDING,
+  // COMPLETED means the stay has started or remains operationally active.
+  // It must keep consuming lodge capacity until checkout.
+  BookingStatus.COMPLETED,
 ] as const;
 
 export const PAYMENT_OWED_BOOKING_STATUSES = [
