@@ -14,7 +14,7 @@ import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
-import { canModifyBookingStatus } from "@/lib/booking-modify-permissions";
+import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { paymentStatusClass } from "@/lib/status-colors";
@@ -126,10 +126,14 @@ export default async function BookingDetailPage({
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const canCancel = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
-  const isFutureCheckIn = new Date(booking.checkIn) > new Date();
   const showArrivalTime = !["CANCELLED", "COMPLETED"].includes(booking.status);
-  const canModify =
-    canModifyBookingStatus(booking.status, session.user.role) && isFutureCheckIn;
+  const editPolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: session.user.role,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+  });
+  const canModify = editPolicy.canModify;
   const cancellationSettlement = booking.payment
     ? getCancellationSettlementBreakdown(
         booking.payment.refundedAmountCents,
@@ -200,6 +204,11 @@ export default async function BookingDetailPage({
       : null,
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
+    editPolicy: {
+      mode: editPolicy.mode,
+      editableFrom: editPolicy.editableFrom?.toISOString().slice(0, 10) ?? null,
+      checkInEditable: editPolicy.checkInEditable,
+    },
   };
   const backHref = resolveInternalReturnPath(
     query.returnTo,
@@ -239,7 +248,7 @@ export default async function BookingDetailPage({
             <ArrivalTimeEditor
               bookingId={booking.id}
               initialTime={booking.expectedArrivalTime}
-              canEdit={isFutureCheckIn}
+              canEdit={editPolicy.mode === "future"}
             />
           </CardContent>
         </Card>

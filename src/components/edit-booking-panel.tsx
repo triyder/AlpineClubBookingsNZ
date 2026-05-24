@@ -45,6 +45,11 @@ interface BookingData {
   totalPriceCents: number;
   discountCents: number;
   promo: PromoInfo | null;
+  editPolicy: {
+    mode: "future" | "in-progress" | null;
+    editableFrom: string | null;
+    checkInEditable: boolean;
+  };
 }
 
 interface NewGuest {
@@ -117,6 +122,9 @@ export function EditBookingPanel({
   const [saveError, setSaveError] = useState("");
 
   const today = new Date().toISOString().split("T")[0];
+  const minEditableDate = booking.editPolicy.editableFrom ?? today;
+  const checkInLocked = !booking.editPolicy.checkInEditable;
+  const promoLocked = booking.editPolicy.mode === "in-progress";
 
   useEffect(() => {
     let cancelled = false;
@@ -276,6 +284,7 @@ export function EditBookingPanel({
   }
 
   function handleApplyPromo() {
+    if (promoLocked) return;
     if (!newPromoInput.trim()) return;
     setPromoAction({ type: "new", code: newPromoInput.trim() });
     setNewPromoInput("");
@@ -347,6 +356,7 @@ export function EditBookingPanel({
                 type="date"
                 value={checkIn}
                 min={today}
+                disabled={checkInLocked}
                 onChange={(e) => setCheckIn(e.target.value)}
               />
             </div>
@@ -356,7 +366,7 @@ export function EditBookingPanel({
                 id="edit-checkout"
                 type="date"
                 value={checkOut}
-                min={checkIn || today}
+                min={booking.editPolicy.mode === "in-progress" ? minEditableDate : checkIn || today}
                 onChange={(e) => setCheckOut(e.target.value)}
               />
             </div>
@@ -543,6 +553,7 @@ export function EditBookingPanel({
       </Card>
 
       {/* Promo Code */}
+      {!promoLocked && (
       <Card>
         <CardHeader>
           <CardTitle>Promo Code</CardTitle>
@@ -631,6 +642,7 @@ export function EditBookingPanel({
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Price Summary */}
       {hasChanges && (

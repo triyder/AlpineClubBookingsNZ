@@ -53,6 +53,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: vi.fn(),
+  checkCapacityForGuestRanges: vi.fn(),
   LODGE_CAPACITY: 29,
 }));
 vi.mock("@/lib/pricing", () => ({

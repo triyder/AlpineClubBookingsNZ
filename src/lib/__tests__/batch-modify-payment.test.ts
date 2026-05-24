@@ -61,6 +61,7 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: mockCheckCapacity,
+  checkCapacityForGuestRanges: mockCheckCapacity,
 }));
 
 vi.mock("@/lib/pricing", () => ({
@@ -772,5 +773,243 @@ describe("PUT /api/bookings/[id]/modify", () => {
       reason: expect.stringContaining("Skipped primary Xero invoice update"),
       createdByMemberId: "m1",
     });
+  });
+
+  it("shortens an in-progress completed booking from NZ tomorrow without deleting past guest occupancy", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
+
+    try {
+      const booking = makeBooking({
+        status: "COMPLETED",
+        checkIn: new Date("2026-08-20T00:00:00.000Z"),
+        checkOut: new Date("2026-08-24T00:00:00.000Z"),
+        totalPriceCents: 10000,
+        finalPriceCents: 10000,
+        guests: [
+          {
+            id: "g1",
+            bookingId: "bk1",
+            firstName: "Alice",
+            lastName: "Member",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "m1",
+            stayStart: new Date("2026-08-20T00:00:00.000Z"),
+            stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+            priceCents: 10000,
+          },
+        ],
+        payment: {
+          id: "pay_1",
+          bookingId: "bk1",
+          amountCents: 10000,
+          status: "SUCCEEDED",
+          stripePaymentIntentId: "pi_original",
+          xeroInvoiceId: "inv_primary",
+          stripeCustomerId: null,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+        },
+      });
+      const tx = makeTx(booking);
+
+      mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+        fn(tx)
+      );
+      mockCalculateBookingPrice.mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      });
+
+      const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+      const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          checkOut: "2026-08-22",
+          removeGuestIds: ["g1"],
+        }),
+      });
+
+      const response = await PUT(request, {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.refundAmountCents).toBe(5000);
+      expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+      expect(tx.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g1" },
+        data: {
+          stayStart: new Date("2026-08-20T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-22T00:00:00.000Z"),
+          priceCents: 5000,
+        },
+      });
+
+      await Promise.resolve();
+      expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+        {
+          bookingId: "bk1",
+          refundAmountCents: 5000,
+          bookingModificationId: "mod_1",
+        },
+        {
+          createdByMemberId: "m1",
+        }
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("adds guests to an in-progress completed booking from NZ tomorrow only", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
+
+    try {
+      const booking = makeBooking({
+        status: "COMPLETED",
+        checkIn: new Date("2026-08-20T00:00:00.000Z"),
+        checkOut: new Date("2026-08-24T00:00:00.000Z"),
+        totalPriceCents: 10000,
+        finalPriceCents: 10000,
+        guests: [
+          {
+            id: "g1",
+            bookingId: "bk1",
+            firstName: "Alice",
+            lastName: "Member",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "m1",
+            stayStart: new Date("2026-08-20T00:00:00.000Z"),
+            stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+            priceCents: 10000,
+          },
+        ],
+        payment: {
+          id: "pay_1",
+          bookingId: "bk1",
+          amountCents: 10000,
+          status: "SUCCEEDED",
+          stripePaymentIntentId: "pi_original",
+          xeroInvoiceId: "inv_primary",
+          stripeCustomerId: null,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+        },
+      });
+      const tx = makeTx(booking);
+
+      mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+        fn(tx)
+      );
+      mockCalculateBookingPrice
+        .mockReturnValueOnce({
+          totalPriceCents: 5000,
+          guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+        })
+        .mockReturnValueOnce({
+          totalPriceCents: 5000,
+          guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+        })
+        .mockReturnValueOnce({
+          totalPriceCents: 6000,
+          guests: [{ priceCents: 6000, perNightCents: [3000, 3000] }],
+        });
+
+      const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+      const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          addGuests: [
+            {
+              firstName: "Bob",
+              lastName: "Guest",
+              ageTier: "ADULT",
+              isMember: false,
+            },
+          ],
+        }),
+      });
+
+      const response = await PUT(request, {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.additionalAmountCents).toBe(6000);
+      expect(tx.bookingGuest.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          bookingId: "bk1",
+          firstName: "Bob",
+          stayStart: new Date("2026-08-22T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+          priceCents: 6000,
+        }),
+      });
+
+      await Promise.resolve();
+      expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+        {
+          bookingId: "bk1",
+          priceDiffCents: 6000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_1",
+        },
+        {
+          createdByMemberId: "m1",
+          paymentIntentId: "pi_batch",
+          waitForConfirmedAdditionalPayment: true,
+          recordPayment: true,
+        }
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects in-progress member attempts to change check-in", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
+
+    try {
+      const booking = makeBooking({
+        status: "COMPLETED",
+        checkIn: new Date("2026-08-20T00:00:00.000Z"),
+        checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      });
+      const tx = makeTx(booking);
+
+      mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+        fn(tx)
+      );
+
+      const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+      const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+        method: "PUT",
+        body: JSON.stringify({
+          checkIn: "2026-08-21",
+          checkOut: "2026-08-24",
+        }),
+      });
+
+      const response = await PUT(request, {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe("Check-in cannot be changed for an in-progress booking");
+      expect(tx.booking.update).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

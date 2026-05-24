@@ -84,6 +84,7 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: vi.fn(),
+  checkCapacityForGuestRanges: vi.fn(),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
   LODGE_CAPACITY: 29,
 }));
