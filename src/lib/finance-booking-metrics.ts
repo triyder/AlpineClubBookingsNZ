@@ -1,6 +1,7 @@
 import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
+import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import {
   OPERATIONAL_STAY_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
@@ -55,6 +56,8 @@ const bookingMetricsSelect = Prisma.validator<Prisma.BookingSelect>()({
   guests: {
     select: {
       id: true,
+      stayStart: true,
+      stayEnd: true,
     },
   },
   payment: {
@@ -668,22 +671,38 @@ function accumulateBookingIntoBucket<Status extends string>(input: {
     revenueByNight,
     bookingIndexOffset,
   } = input;
-  const guestCount = booking.guests.length;
+  const activeGuestCounts = contributingDates.map((date) =>
+    countActiveGuestsForNight(
+      booking.guests,
+      new Date(`${date}T00:00:00.000Z`),
+      booking
+    )
+  );
+  const activeDateCount = activeGuestCounts.filter((count) => count > 0).length;
+  const guestNightCount = activeGuestCounts.reduce(
+    (total, count) => total + count,
+    0
+  );
 
-  if (guestCount < 1 || contributingDates.length < 1) {
+  if (guestNightCount < 1 || activeDateCount < 1) {
     return;
   }
 
   bucket.bookingIds.add(booking.id);
-  bucket.bookingNights += contributingDates.length;
-  bucket.guestNights += guestCount * contributingDates.length;
+  bucket.bookingNights += activeDateCount;
+  bucket.guestNights += guestNightCount;
 
   const statusAccumulator = bucket.statusBreakdown[bucketStatus];
   statusAccumulator.bookingIds.add(booking.id);
-  statusAccumulator.bookingNights += contributingDates.length;
-  statusAccumulator.guestNights += guestCount * contributingDates.length;
+  statusAccumulator.bookingNights += activeDateCount;
+  statusAccumulator.guestNights += guestNightCount;
 
   for (const [index, date] of contributingDates.entries()) {
+    const activeGuestCount = activeGuestCounts[index] ?? 0;
+    if (activeGuestCount < 1) {
+      continue;
+    }
+
     const dailyAccumulator = bucket.byDate.get(date);
     const nightlyRevenue = revenueByNight[bookingIndexOffset + index] ?? 0;
 
@@ -692,7 +711,7 @@ function accumulateBookingIntoBucket<Status extends string>(input: {
     }
 
     dailyAccumulator.bookingCount += 1;
-    dailyAccumulator.guestNights += guestCount;
+    dailyAccumulator.guestNights += activeGuestCount;
     dailyAccumulator.bookedRevenueCents += nightlyRevenue;
 
     bucket.bookedRevenueCents += nightlyRevenue;

@@ -8,6 +8,7 @@ import {
   getTodayDateOnly,
 } from "@/lib/date-only";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 
 /**
  * GET /api/admin/hut-leaders/unassigned-dates
@@ -45,7 +46,12 @@ export async function GET() {
     select: {
       checkIn: true,
       checkOut: true,
-      _count: { select: { guests: true } },
+      guests: {
+        select: {
+          stayStart: true,
+          stayEnd: true,
+        },
+      },
     },
   });
 
@@ -60,8 +66,15 @@ export async function GET() {
     let guestCount = 0;
     for (const b of bookings) {
       if (b.checkIn.getTime() <= date.getTime() && b.checkOut.getTime() > date.getTime()) {
-        bookingCount++;
-        guestCount += b._count.guests;
+        const legacyGuestCount = (b as { _count?: { guests?: number } })._count?.guests ?? 0;
+        const activeGuestCount = Array.isArray(b.guests)
+          ? countActiveGuestsForNight(b.guests, date, b)
+          : legacyGuestCount;
+
+        if (activeGuestCount > 0) {
+          bookingCount++;
+          guestCount += activeGuestCount;
+        }
       }
     }
     return { bookingCount, guestCount };

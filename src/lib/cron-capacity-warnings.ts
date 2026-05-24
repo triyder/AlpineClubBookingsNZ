@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { sendAdminCapacityWarningAlert } from "./email";
-import { LODGE_CAPACITY } from "./capacity";
+import { getOccupiedBedsForNight, LODGE_CAPACITY } from "./capacity";
 import { getNZSTToday } from "./nzst-date";
 import { eachDayOfInterval, addDays } from "date-fns";
 import logger from "@/lib/logger";
@@ -39,16 +39,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
   }> = [];
 
   for (const night of nights) {
-    const nightTime = night.getTime();
-    let occupiedBeds = 0;
-
-    for (const booking of overlappingBookings) {
-      const checkIn = new Date(booking.checkIn).getTime();
-      const checkOut = new Date(booking.checkOut).getTime();
-      if (nightTime >= checkIn && nightTime < checkOut) {
-        occupiedBeds += booking.guests.length;
-      }
-    }
+    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
 
     const availableBeds = LODGE_CAPACITY - occupiedBeds;
     if (availableBeds <= WARN_THRESHOLD_BEDS) {

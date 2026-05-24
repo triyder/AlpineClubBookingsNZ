@@ -10,6 +10,11 @@ import {
   GuestInput,
   ChoreHistoryEntry,
 } from "@/lib/chore-allocator";
+import {
+  getActiveGuestsForNight,
+  getGuestStayEnd,
+  getGuestStayStart,
+} from "@/lib/booking-guest-stay-ranges";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
@@ -68,13 +73,23 @@ export async function POST(
 
     // Get guests staying on this date
     const bookings = await prisma.booking.findMany({
-    where: {
-      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-      checkIn: { lte: date },
-      checkOut: { gt: date },
-    },
+      where: {
+        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
+        checkIn: { lte: date },
+        checkOut: { gt: date },
+        guests: {
+          some: {
+            stayStart: { lte: date },
+            stayEnd: { gt: date },
+          },
+        },
+      },
       include: {
         guests: {
+          where: {
+            stayStart: { lte: date },
+            stayEnd: { gt: date },
+          },
           include: {
             member: {
               select: { ageTier: true },
@@ -85,14 +100,14 @@ export async function POST(
     });
 
     const guests: GuestInput[] = bookings.flatMap((b) =>
-      b.guests.map((g) => ({
+      getActiveGuestsForNight(b.guests, date, b).map((g) => ({
         id: g.id,
         bookingId: b.id,
         firstName: g.firstName,
         lastName: g.lastName,
         ageTier: getBookingGuestDisplayAgeTier(g),
-        isArriving: b.checkIn.getTime() === date.getTime(),
-        isDeparting: b.checkOut.getTime() === nextDay.getTime(),
+        isArriving: getGuestStayStart(g, b).getTime() === date.getTime(),
+        isDeparting: getGuestStayEnd(g, b).getTime() === nextDay.getTime(),
       }))
     );
 

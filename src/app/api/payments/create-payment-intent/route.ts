@@ -12,6 +12,7 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { getOccupiedBedsForNight } from "@/lib/capacity";
 
 export async function POST(request: NextRequest) {
   try {
@@ -166,15 +167,7 @@ export async function POST(request: NextRequest) {
         const { LODGE_CAPACITY } = await import("@/lib/capacity");
 
         for (const night of nights) {
-          const nightTime = night.getTime();
-          let occupiedBeds = 0;
-          for (const b of overlapping) {
-            const bIn = new Date(b.checkIn).getTime();
-            const bOut = new Date(b.checkOut).getTime();
-            if (nightTime >= bIn && nightTime < bOut) {
-              occupiedBeds += b.guests.length;
-            }
-          }
+          const occupiedBeds = getOccupiedBedsForNight(night, overlapping);
           if (occupiedBeds + freshBooking.guests.length > LODGE_CAPACITY) {
             throw new Error("Not enough beds available for your dates. Please choose different dates.");
           }

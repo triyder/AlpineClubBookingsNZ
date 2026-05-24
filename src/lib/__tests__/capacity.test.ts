@@ -115,4 +115,36 @@ describe("capacity calendar availability", () => {
       LODGE_CAPACITY - 4,
     ]);
   });
+
+  it("counts guests only on nights inside their individual stay ranges", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-15"),
+        guests: [
+          {
+            id: "full-stay",
+            stayStart: parseDateOnly("2026-04-10"),
+            stayEnd: parseDateOnly("2026-04-15"),
+          },
+          {
+            id: "cut-short",
+            stayStart: parseDateOnly("2026-04-10"),
+            stayEnd: parseDateOnly("2026-04-13"),
+          },
+        ],
+      },
+    ]);
+
+    const availability = await getMonthAvailability(2026, 3);
+
+    expect(availability.get("2026-04-09")).toBe(0);
+    expect(availability.get("2026-04-10")).toBe(2);
+    expect(availability.get("2026-04-11")).toBe(2);
+    expect(availability.get("2026-04-12")).toBe(2);
+    expect(availability.get("2026-04-13")).toBe(1);
+    expect(availability.get("2026-04-14")).toBe(1);
+    expect(availability.get("2026-04-15")).toBe(0);
+  });
 });

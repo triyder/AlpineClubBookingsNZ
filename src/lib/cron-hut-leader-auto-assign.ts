@@ -39,6 +39,15 @@ export async function autoAssignHutLeaders(): Promise<{
         status: "PAID",
         checkIn: { lte: day },
         checkOut: { gt: day },
+        guests: {
+          some: {
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: { not: null },
+            stayStart: { lte: day },
+            stayEnd: { gt: day },
+          },
+        },
       },
       include: {
         guests: {
@@ -46,9 +55,13 @@ export async function autoAssignHutLeaders(): Promise<{
             ageTier: "ADULT",
             isMember: true,
             memberId: { not: null },
+            stayStart: { lte: day },
+            stayEnd: { gt: day },
           },
           select: {
             memberId: true,
+            stayStart: true,
+            stayEnd: true,
             member: { select: { id: true, firstName: true, lastName: true, active: true } },
           },
         },
@@ -69,8 +82,8 @@ export async function autoAssignHutLeaders(): Promise<{
           adultMembers.set(guest.memberId, {
             id: guest.memberId,
             name: `${guest.member.firstName} ${guest.member.lastName}`,
-            checkIn: booking.checkIn,
-            checkOut: booking.checkOut,
+            checkIn: guest.stayStart,
+            checkOut: guest.stayEnd,
           });
         }
       }

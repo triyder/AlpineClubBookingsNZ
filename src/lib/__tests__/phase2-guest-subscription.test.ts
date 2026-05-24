@@ -68,7 +68,10 @@ vi.mock("@/lib/booking-policies", () => ({
   validateMinimumStay: vi.fn().mockResolvedValue({ valid: true, violations: [] }),
   formatViolationsDetail: vi.fn().mockReturnValue(""),
 }));
-vi.mock("@/lib/capacity", () => ({ LODGE_CAPACITY: 29 }));
+vi.mock("@/lib/capacity", () => ({
+  getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
+  LODGE_CAPACITY: 29,
+}));
 vi.mock("@/lib/bumping", () => ({ bumpPendingBookings: vi.fn(), sendBumpedNotifications: vi.fn() }));
 vi.mock("@/lib/promo", () => ({ validatePromoCodeRules: vi.fn().mockReturnValue(null), redeemPromoCode: vi.fn(), getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0) }));
 vi.mock("@/lib/rate-limit", () => ({ applyRateLimit: vi.fn().mockReturnValue(null), rateLimiters: { bookingCreate: {} } }));

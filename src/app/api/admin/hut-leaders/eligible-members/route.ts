@@ -43,6 +43,8 @@ export async function GET(req: NextRequest) {
     where: {
       ageTier: "ADULT",
       memberId: { not: null },
+      stayStart: { lte: rangeEnd },
+      stayEnd: { gt: rangeStart },
       booking: {
         status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
         checkIn: { lte: rangeEnd },
@@ -51,6 +53,8 @@ export async function GET(req: NextRequest) {
     },
     select: {
       memberId: true,
+      stayStart: true,
+      stayEnd: true,
       member: {
         select: { id: true, firstName: true, lastName: true, email: true, active: true },
       },
@@ -71,11 +75,13 @@ export async function GET(req: NextRequest) {
 
   for (const g of guests) {
     if (!g.memberId || !g.member || !g.member.active) continue;
+    const guestStayStart = g.stayStart ?? g.booking.checkIn;
+    const guestStayEnd = g.stayEnd ?? g.booking.checkOut;
     const existing = memberBookings.get(g.memberId);
     if (existing) {
       // Avoid duplicate booking entries
-      if (!existing.bookings.some((b) => b.checkIn.getTime() === g.booking.checkIn.getTime())) {
-        existing.bookings.push({ checkIn: g.booking.checkIn, checkOut: g.booking.checkOut });
+      if (!existing.bookings.some((b) => b.checkIn.getTime() === guestStayStart.getTime())) {
+        existing.bookings.push({ checkIn: guestStayStart, checkOut: guestStayEnd });
       }
     } else {
       memberBookings.set(g.memberId, {
@@ -83,7 +89,7 @@ export async function GET(req: NextRequest) {
         firstName: g.member.firstName,
         lastName: g.member.lastName,
         email: g.member.email,
-        bookings: [{ checkIn: g.booking.checkIn, checkOut: g.booking.checkOut }],
+        bookings: [{ checkIn: guestStayStart, checkOut: guestStayEnd }],
       });
     }
   }

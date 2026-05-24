@@ -501,7 +501,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           booking: expect.objectContaining({
-            checkOut: new Date("2026-07-10T00:00:00.000Z"),
+            checkOut: { gte: new Date("2026-07-10T00:00:00.000Z") },
           }),
         }),
       })

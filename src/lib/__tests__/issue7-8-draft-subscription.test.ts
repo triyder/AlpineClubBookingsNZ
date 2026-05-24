@@ -105,6 +105,7 @@ vi.mock("@/lib/booking-policies", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
   LODGE_CAPACITY: 29,
 }));
 

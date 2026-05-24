@@ -12,7 +12,7 @@ import {
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacity, getOccupiedBedsForNight } from "@/lib/capacity";
 import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
@@ -420,6 +420,8 @@ export async function POST(request: NextRequest) {
                 ageTier: g.ageTier,
                 isMember: g.isMember,
                 memberId: g.memberId || null,
+                stayStart: checkIn,
+                stayEnd: checkOut,
                 priceCents: price.guests[i].priceCents,
               })),
             },
@@ -534,16 +536,10 @@ export async function POST(request: NextRequest) {
       const nightDetails: Array<{ date: string; occupiedBeds: number; availableBeds: number }> = [];
       let capacityExceeded = false;
       for (const night of nights) {
-        const nightTime = night.getTime();
-        let occupiedBeds = 0;
-
-        for (const b of overlappingBookings) {
-          const bCheckIn = new Date(b.checkIn).getTime();
-          const bCheckOut = new Date(b.checkOut).getTime();
-          if (nightTime >= bCheckIn && nightTime < bCheckOut) {
-            occupiedBeds += b.guests.length;
-          }
-        }
+        const occupiedBeds = getOccupiedBedsForNight(
+          night,
+          overlappingBookings
+        );
 
         nightDetails.push({
           date: night.toISOString().split("T")[0],
@@ -716,6 +712,8 @@ export async function POST(request: NextRequest) {
               ageTier: g.ageTier,
               isMember: g.isMember,
               memberId: g.memberId || null,
+              stayStart: checkIn,
+              stayEnd: checkOut,
               priceCents: price.guests[i].priceCents,
             })),
           },
@@ -1131,6 +1129,8 @@ async function createWaitlistedBooking(params: {
             ageTier: g.ageTier as AgeTier,
             isMember: g.isMember,
             memberId: g.memberId || null,
+            stayStart: checkIn,
+            stayEnd: checkOut,
             priceCents: price.guests[i].priceCents,
           })),
         },

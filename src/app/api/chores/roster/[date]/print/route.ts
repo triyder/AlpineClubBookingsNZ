@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth"
 import { requireActiveSessionUser } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
+import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges"
 
 /**
  * GET /api/chores/roster/[date]/print
@@ -41,11 +42,27 @@ export async function GET(
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: { gt: date },
+      guests: {
+        some: {
+          stayStart: { lte: date },
+          stayEnd: { gt: date },
+        },
+      },
     },
-    include: { guests: true },
+    include: {
+      guests: {
+        where: {
+          stayStart: { lte: date },
+          stayEnd: { gt: date },
+        },
+      },
+    },
   })
 
-  const guestCount = bookings.reduce((sum, b) => sum + b.guests.length, 0)
+  const guestCount = bookings.reduce(
+    (sum, b) => sum + countActiveGuestsForNight(b.guests, date, b),
+    0
+  )
 
   // Group by chore
   const byChore = new Map<string, {

@@ -21,7 +21,10 @@ import {
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
+import {
+  cleanupChoreAssignmentsForDateChange,
+  cleanupChoreAssignmentsForGuestStayRanges,
+} from "@/lib/chore-cleanup";
 import {
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationCreditNoteOperation,
@@ -376,7 +379,11 @@ export async function PUT(
         booking.guests.map((g, i) =>
           tx.bookingGuest.update({
             where: { id: g.id },
-            data: { priceCents: priceBreakdown.guests[i].priceCents },
+            data: {
+              stayStart: newCheckIn,
+              stayEnd: newCheckOut,
+              priceCents: priceBreakdown.guests[i].priceCents,
+            },
           })
         )
       );
@@ -387,12 +394,20 @@ export async function PUT(
       const datesChanged =
         newCheckIn.getTime() !== oldCheckIn.getTime() ||
         newCheckOut.getTime() !== oldCheckOut.getTime();
-      const { choreWarnings } = await cleanupChoreAssignmentsForDateChange(
+      const dateCleanup = await cleanupChoreAssignmentsForDateChange(
         tx,
         bookingId,
         newCheckIn,
         newCheckOut
       );
+      const rangeCleanup = await cleanupChoreAssignmentsForGuestStayRanges(
+        tx,
+        bookingId
+      );
+      const choreWarnings = [
+        ...dateCleanup.choreWarnings,
+        ...rangeCleanup.choreWarnings,
+      ];
 
       // Update booking
       const updatedBooking = await tx.booking.update({

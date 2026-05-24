@@ -55,3 +55,54 @@ export async function cleanupChoreAssignmentsForDateChange(
 
   return { deletedCount, choreWarnings };
 }
+
+export async function cleanupChoreAssignmentsForGuestStayRanges(
+  tx: Tx,
+  bookingId: string
+): Promise<ChoreCleanupResult> {
+  const choreWarnings: string[] = [];
+  let deletedCount = 0;
+
+  const assignments = await tx.choreAssignment.findMany({
+    where: {
+      bookingId,
+      bookingGuestId: { not: null },
+    },
+    include: {
+      choreTemplate: true,
+      bookingGuest: {
+        select: {
+          stayStart: true,
+          stayEnd: true,
+        },
+      },
+    },
+  });
+
+  for (const assignment of assignments) {
+    if (!assignment.bookingGuest) {
+      continue;
+    }
+
+    const assignmentDate = assignment.date.getTime();
+    const stayStart = assignment.bookingGuest.stayStart.getTime();
+    const stayEnd = assignment.bookingGuest.stayEnd.getTime();
+    const isOutsideGuestStay =
+      assignmentDate < stayStart || assignmentDate >= stayEnd;
+
+    if (!isOutsideGuestStay) {
+      continue;
+    }
+
+    if (assignment.status === "SUGGESTED") {
+      await tx.choreAssignment.delete({ where: { id: assignment.id } });
+      deletedCount++;
+    } else {
+      choreWarnings.push(
+        `${assignment.choreTemplate.name} on ${assignment.date.toISOString().split("T")[0]} is ${assignment.status} and falls outside the guest's stay range`
+      );
+    }
+  }
+
+  return { deletedCount, choreWarnings };
+}

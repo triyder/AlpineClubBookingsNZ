@@ -275,6 +275,72 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     );
   });
 
+  it("filters lodge guest lists by individual guest stay ranges", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-1",
+        checkIn: new Date("2026-07-10T00:00:00.000Z"),
+        checkOut: new Date("2026-07-15T00:00:00.000Z"),
+        expectedArrivalTime: null,
+        member: { firstName: "Booking", lastName: "Owner" },
+        guests: [
+          {
+            id: "active-guest",
+            firstName: "Active",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: true,
+            stayStart: new Date("2026-07-10T00:00:00.000Z"),
+            stayEnd: new Date("2026-07-15T00:00:00.000Z"),
+            arrivedAt: null,
+            departedAt: null,
+            member: { ageTier: "ADULT" },
+          },
+          {
+            id: "departed-guest",
+            firstName: "Departed",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: true,
+            stayStart: new Date("2026-07-10T00:00:00.000Z"),
+            stayEnd: new Date("2026-07-12T00:00:00.000Z"),
+            arrivedAt: null,
+            departedAt: null,
+            member: { ageTier: "ADULT" },
+          },
+        ],
+      },
+    ]);
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const res = await GET(
+      new Request("http://localhost/api/lodge/guests/2026-07-12") as any,
+      { params: Promise.resolve({ date: "2026-07-12" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          guests: {
+            some: {
+              stayStart: { lte: new Date("2026-07-12T00:00:00.000Z") },
+              stayEnd: { gt: new Date("2026-07-12T00:00:00.000Z") },
+            },
+          },
+        }),
+      })
+    );
+    const data = await res.json();
+    expect(data.totalGuests).toBe(1);
+    expect(data.bookings[0].guests.map((guest: { id: string }) => guest.id)).toEqual([
+      "active-guest",
+    ]);
+  });
+
   it("rotates hut leader PINs and returns the new PIN once for admins", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },

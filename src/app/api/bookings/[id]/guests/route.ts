@@ -231,6 +231,8 @@ export async function POST(
             ageTier: normalizedNewGuests[i].ageTier,
             isMember: normalizedNewGuests[i].isMember,
             memberId: normalizedNewGuests[i].memberId || null,
+            stayStart: booking.checkIn,
+            stayEnd: booking.checkOut,
             priceCents: newGuestPrice.guests[i].priceCents,
           },
         });

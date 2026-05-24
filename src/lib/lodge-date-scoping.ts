@@ -9,6 +9,8 @@ export async function findLodgeGuestForDate(bookingGuestId: string, date: Date) 
   return prisma.bookingGuest.findFirst({
     where: {
       id: bookingGuestId,
+      stayStart: { lte: date },
+      stayEnd: { gt: date },
       booking: {
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         checkIn: { lte: date },
@@ -39,10 +41,12 @@ export async function findLodgeGuestDepartingOnDate(
   return prisma.bookingGuest.findFirst({
     where: {
       id: bookingGuestId,
+      stayStart: { lte: date },
+      stayEnd: date,
       booking: {
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         checkIn: { lte: date },
-        checkOut: date,
+        checkOut: { gte: date },
       },
     },
     select: {
@@ -85,6 +89,8 @@ export async function validateRosterAllocationsForDate(
   const guests = await prisma.bookingGuest.findMany({
     where: {
       id: { in: guestIds },
+      stayStart: { lte: date },
+      stayEnd: { gt: date },
       booking: {
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         checkIn: { lte: date },

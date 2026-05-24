@@ -26,7 +26,10 @@ import {
 } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
+import {
+  cleanupChoreAssignmentsForDateChange,
+  cleanupChoreAssignmentsForGuestStayRanges,
+} from "@/lib/chore-cleanup";
 import {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
@@ -496,6 +499,8 @@ export async function PUT(
             ageTier: g.ageTier,
             isMember: g.isMember,
             memberId: g.memberId || null,
+            stayStart: newCheckIn,
+            stayEnd: newCheckOut,
             priceCents: priceBreakdown.guests[guestPriceIndex].priceCents,
           },
         });
@@ -506,7 +511,11 @@ export async function PUT(
       for (let i = 0; i < remainingGuests.length; i++) {
         await tx.bookingGuest.update({
           where: { id: remainingGuests[i].id },
-          data: { priceCents: priceBreakdown.guests[i].priceCents },
+          data: {
+            stayStart: newCheckIn,
+            stayEnd: newCheckOut,
+            priceCents: priceBreakdown.guests[i].priceCents,
+          },
         });
       }
 
@@ -521,6 +530,11 @@ export async function PUT(
         );
         choreWarnings = result.choreWarnings;
       }
+      const rangeCleanup = await cleanupChoreAssignmentsForGuestStayRanges(
+        tx,
+        bookingId
+      );
+      choreWarnings = [...choreWarnings, ...rangeCleanup.choreWarnings];
 
       // --- Handle Stripe payment adjustments ---
       let refundAmountCents = 0;

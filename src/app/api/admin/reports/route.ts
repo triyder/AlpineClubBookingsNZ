@@ -4,7 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { BookingStatus, SubscriptionStatus } from "@prisma/client";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { getOccupiedBedsForNight, LODGE_CAPACITY } from "@/lib/capacity";
 import { eachDayOfInterval, format } from "date-fns";
 import logger from "@/lib/logger";
 import { buildRevenueSeries } from "@/lib/admin-reports";
@@ -129,15 +129,7 @@ export async function GET(request: NextRequest) {
     const days = eachDayOfInterval({ start: occupancyFromDate, end: occupancyToDate });
 
     const occupancyByDate = days.map((day) => {
-      const dayTime = day.getTime();
-      let beds = 0;
-      for (const b of occupancyBookings) {
-        const ci = new Date(b.checkIn).getTime();
-        const co = new Date(b.checkOut).getTime();
-        if (dayTime >= ci && dayTime < co) {
-          beds += b.guests.length;
-        }
-      }
+      const beds = getOccupiedBedsForNight(day, occupancyBookings);
       return {
         date: format(day, "yyyy-MM-dd"),
         occupiedBeds: beds,

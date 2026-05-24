@@ -113,6 +113,9 @@ vi.mock("@/lib/chore-cleanup", () => ({
   cleanupChoreAssignmentsForDateChange: vi.fn().mockResolvedValue({
     choreWarnings: [],
   }),
+  cleanupChoreAssignmentsForGuestStayRanges: vi.fn().mockResolvedValue({
+    choreWarnings: [],
+  }),
 }));
 
 vi.mock("@/lib/xero", () => ({
@@ -261,6 +264,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       }),
     },
     choreAssignment: {
+      findMany: vi.fn().mockResolvedValue([]),
+      delete: vi.fn().mockResolvedValue(undefined),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     payment: {

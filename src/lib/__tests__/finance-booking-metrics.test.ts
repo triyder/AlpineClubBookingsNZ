@@ -403,6 +403,59 @@ describe("finance-booking-metrics", () => {
     });
   });
 
+  it("uses guest stay ranges for finance guest-night occupancy", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-with-cut-short-guest",
+        checkIn: new Date("2026-04-10T00:00:00.000Z"),
+        checkOut: new Date("2026-04-15T00:00:00.000Z"),
+        status: BookingStatus.PAID,
+        finalPriceCents: 50000,
+        guests: [
+          {
+            id: "guest-full",
+            stayStart: new Date("2026-04-10T00:00:00.000Z"),
+            stayEnd: new Date("2026-04-15T00:00:00.000Z"),
+          },
+          {
+            id: "guest-cut-short",
+            stayStart: new Date("2026-04-10T00:00:00.000Z"),
+            stayEnd: new Date("2026-04-13T00:00:00.000Z"),
+          },
+        ],
+        payment: null,
+      },
+    ]);
+
+    const metrics = await getFinanceBookingMetrics({
+      realized: {
+        from: "2026-04-10",
+        to: "2026-04-14",
+        cutoffDate: "2026-04-14",
+      },
+    });
+
+    expect(metrics.realized?.totals).toMatchObject({
+      bookingCount: 1,
+      bookingNights: 5,
+      guestNights: 8,
+      bookedRevenueCents: 50000,
+    });
+    expect(
+      metrics.realized?.byDate.map((row) => ({
+        date: row.date,
+        guestNights: row.guestNights,
+        occupiedBeds: row.occupiedBeds,
+      }))
+    ).toEqual([
+      { date: "2026-04-10", guestNights: 2, occupiedBeds: 2 },
+      { date: "2026-04-11", guestNights: 2, occupiedBeds: 2 },
+      { date: "2026-04-12", guestNights: 2, occupiedBeds: 2 },
+      { date: "2026-04-13", guestNights: 1, occupiedBeds: 1 },
+      { date: "2026-04-14", guestNights: 1, occupiedBeds: 1 },
+    ]);
+  });
+
   it("rejects an empty query", async () => {
     await expect(getFinanceBookingMetrics({})).rejects.toThrow(
       "At least one finance booking metrics section is required"

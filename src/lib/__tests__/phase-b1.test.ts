@@ -125,7 +125,11 @@ describe("#24: Kiosk Access Tiers", () => {
           where: expect.objectContaining({
             OR: [
               { memberId: "user-1" },
-              { guests: { some: { memberId: "user-1" } } },
+              {
+                guests: {
+                  some: expect.objectContaining({ memberId: "user-1" }),
+                },
+              },
             ],
           }),
         })
@@ -168,7 +172,11 @@ describe("#24: Kiosk Access Tiers", () => {
     it("returns date range based on booking dates with one night either side", async () => {
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.booking.findMany.mockResolvedValue([
-        { checkIn: makeDate("2026-04-10"), checkOut: makeDate("2026-04-13") },
+        {
+          memberId: "user-1",
+          checkIn: makeDate("2026-04-10"),
+          checkOut: makeDate("2026-04-13"),
+        },
       ]);
       const { getKioskDateRange } = await import("@/lib/kiosk-access");
       const range = await getKioskDateRange("user-1", "MEMBER");
@@ -230,7 +238,11 @@ describe("#24: Kiosk Access Tiers", () => {
       mockPrisma.booking.count.mockResolvedValue(1);
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.booking.findMany.mockResolvedValue([
-        { checkIn: makeDate("2026-04-08"), checkOut: makeDate("2026-04-11") },
+        {
+          memberId: "user-1",
+          checkIn: makeDate("2026-04-08"),
+          checkOut: makeDate("2026-04-11"),
+        },
       ]);
       const { getKioskAccessInfo } = await import("@/lib/kiosk-access");
       const info = await getKioskAccessInfo("user-1", "MEMBER", makeDate("2026-04-08"));

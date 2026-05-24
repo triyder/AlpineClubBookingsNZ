@@ -9,6 +9,8 @@ import { sendChoreRosterEmail } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { getEffectiveEmail } from "@/lib/member-utils"
 import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { getActiveGuestsForNight, getGuestStayEnd, getGuestStayStart } from "@/lib/booking-guest-stay-ranges"
+import { validateRosterAllocationsForDate } from "@/lib/lodge-date-scoping"
 import { z } from "zod"
 import logger from "@/lib/logger"
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
@@ -44,9 +46,19 @@ async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: { gt: date },
+      guests: {
+        some: {
+          stayStart: { lte: date },
+          stayEnd: { gt: date },
+        },
+      },
     },
     include: {
       guests: {
+        where: {
+          stayStart: { lte: date },
+          stayEnd: { gt: date },
+        },
         include: {
           member: {
             select: { ageTier: true },
@@ -59,14 +71,14 @@ async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
   const nextDay = addDaysDateOnly(date, 1)
 
   return bookings.flatMap((b) =>
-    b.guests.map((g) => ({
+    getActiveGuestsForNight(b.guests, date, b).map((g) => ({
       id: g.id,
       bookingId: b.id,
       firstName: g.firstName,
       lastName: g.lastName,
       ageTier: getBookingGuestDisplayAgeTier(g),
-      isArriving: b.checkIn.getTime() === date.getTime(),
-      isDeparting: b.checkOut.getTime() === nextDay.getTime(),
+      isArriving: getGuestStayStart(g, b).getTime() === date.getTime(),
+      isDeparting: getGuestStayEnd(g, b).getTime() === nextDay.getTime(),
     }))
   )
 }
@@ -348,6 +360,23 @@ export async function PUT(
   try {
   switch (data.action) {
     case "reassign": {
+      const assignment = await prisma.choreAssignment.findUnique({
+        where: { id: data.assignmentId },
+        select: { bookingId: true },
+      })
+      if (!assignment) {
+        return NextResponse.json({ error: "Assignment not found" }, { status: 404 })
+      }
+      const allocationIsValid = await validateRosterAllocationsForDate(
+        [{ bookingGuestId: data.bookingGuestId, bookingId: assignment.bookingId }],
+        date
+      )
+      if (!allocationIsValid) {
+        return NextResponse.json(
+          { error: "Assignment must reference a guest staying on this date" },
+          { status: 400 }
+        )
+      }
       await prisma.choreAssignment.update({
         where: { id: data.assignmentId },
         data: { bookingGuestId: data.bookingGuestId },
@@ -355,6 +384,16 @@ export async function PUT(
       break
     }
     case "add": {
+      const allocationIsValid = await validateRosterAllocationsForDate(
+        [{ bookingGuestId: data.bookingGuestId, bookingId: data.bookingId }],
+        date
+      )
+      if (!allocationIsValid) {
+        return NextResponse.json(
+          { error: "Assignment must reference a guest staying on this date" },
+          { status: 400 }
+        )
+      }
       await prisma.choreAssignment.create({
         data: {
           choreTemplateId: data.choreTemplateId,

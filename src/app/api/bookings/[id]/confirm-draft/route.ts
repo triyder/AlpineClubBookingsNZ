@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { getOccupiedBedsForNight, LODGE_CAPACITY } from "@/lib/capacity";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { getSeasonYear } from "@/lib/utils";
 import {
@@ -104,15 +104,7 @@ export async function POST(
     });
 
     for (const night of nights) {
-      const nightTime = night.getTime();
-      let occupiedBeds = 0;
-      for (const b of overlapping) {
-        const bIn = new Date(b.checkIn).getTime();
-        const bOut = new Date(b.checkOut).getTime();
-        if (nightTime >= bIn && nightTime < bOut) {
-          occupiedBeds += b.guests.length;
-        }
-      }
+      const occupiedBeds = getOccupiedBedsForNight(night, overlapping);
       if (occupiedBeds + freshBooking.guests.length > LODGE_CAPACITY) {
         throw new Error("Not enough beds available for your dates.");
       }

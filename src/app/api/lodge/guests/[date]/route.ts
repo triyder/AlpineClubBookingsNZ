@@ -9,6 +9,11 @@ import { formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import {
+  getGuestStayEnd,
+  getGuestStayStart,
+  getLodgeVisibleGuestsForDate,
+} from "@/lib/booking-guest-stay-ranges";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const LODGE_LIST_SCOPE = "lodge-list";
@@ -51,9 +56,19 @@ export async function GET(
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: isLodgeListScope ? { gte: date } : { gt: date },
+      guests: {
+        some: {
+          stayStart: { lte: date },
+          stayEnd: isLodgeListScope ? { gte: date } : { gt: date },
+        },
+      },
     },
     include: {
       guests: {
+        where: {
+          stayStart: { lte: date },
+          stayEnd: isLodgeListScope ? { gte: date } : { gt: date },
+        },
         include: {
           member: {
             select: {
@@ -70,29 +85,40 @@ export async function GET(
     orderBy: { checkIn: "asc" },
   });
 
-  const result = bookings.map((b) => ({
-    bookingId: b.id,
-    memberName: `${b.member.firstName} ${b.member.lastName}`,
-    expectedArrivalTime: b.expectedArrivalTime,
-    guests: b.guests.map((g) => {
-      const ageTier = getBookingGuestDisplayAgeTier(g);
+  const result = bookings
+    .map((b) => {
+      const visibleGuests = getLodgeVisibleGuestsForDate(b.guests, date, b, {
+        includeDepartureDate: isLodgeListScope,
+      });
 
       return {
-        id: g.id,
-        firstName: g.firstName,
-        lastName: g.lastName,
-        ageTier,
-        isMember: g.isMember,
-        isArriving: b.checkIn.getTime() === date.getTime(),
-        isDeparting: isLodgeListScope
-          ? b.checkOut.getTime() === date.getTime()
-          : b.checkOut.getTime() === nextDay.getTime(),
-        arrivedAt: g.arrivedAt?.toISOString() ?? null,
-        departedAt: g.departedAt?.toISOString() ?? null,
-        phone: ageTier === "ADULT" && g.member ? formatXeroPhone(g.member) : null,
+        bookingId: b.id,
+        memberName: `${b.member.firstName} ${b.member.lastName}`,
+        expectedArrivalTime: b.expectedArrivalTime,
+        guests: visibleGuests.map((g) => {
+          const ageTier = getBookingGuestDisplayAgeTier(g);
+          const stayStart = getGuestStayStart(g, b);
+          const stayEnd = getGuestStayEnd(g, b);
+
+          return {
+            id: g.id,
+            firstName: g.firstName,
+            lastName: g.lastName,
+            ageTier,
+            isMember: g.isMember,
+            isArriving: stayStart.getTime() === date.getTime(),
+            isDeparting: isLodgeListScope
+              ? stayEnd.getTime() === date.getTime()
+              : stayEnd.getTime() === nextDay.getTime(),
+            arrivedAt: g.arrivedAt?.toISOString() ?? null,
+            departedAt: g.departedAt?.toISOString() ?? null,
+            phone:
+              ageTier === "ADULT" && g.member ? formatXeroPhone(g.member) : null,
+          };
+        }),
       };
-    }),
-  }));
+    })
+    .filter((booking) => booking.guests.length > 0);
 
   return NextResponse.json({
     date: dateStr,

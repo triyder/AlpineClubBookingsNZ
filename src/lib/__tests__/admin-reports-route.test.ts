@@ -27,6 +27,9 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/capacity", () => ({
+  getOccupiedBedsForNight: vi.fn((date: Date, bookings: Array<{ guests?: unknown[] }>) =>
+    bookings.reduce((total, booking) => total + (booking.guests?.length ?? 0), 0)
+  ),
   LODGE_CAPACITY: 29,
 }));
 

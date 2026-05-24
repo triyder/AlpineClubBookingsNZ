@@ -81,6 +81,23 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(paidRepair).toContain('"updatedAt" = NOW()');
   });
 
+  it("backfills booking guest stay ranges from parent booking dates", () => {
+    const stayRangeMigration = readRepoFile(
+      "prisma/migrations/20260524090000_add_booking_guest_stay_ranges/migration.sql"
+    );
+
+    expect(stayRangeMigration).toContain('ADD COLUMN "stayStart" DATE');
+    expect(stayRangeMigration).toContain('ADD COLUMN "stayEnd" DATE');
+    expect(stayRangeMigration).toContain('"stayStart" = b."checkIn"::date');
+    expect(stayRangeMigration).toContain('"stayEnd" = b."checkOut"::date');
+    expect(stayRangeMigration).toContain(
+      'ALTER COLUMN "stayStart" SET NOT NULL'
+    );
+    expect(stayRangeMigration).toContain(
+      'ALTER COLUMN "stayEnd" SET NOT NULL'
+    );
+  });
+
   it("keeps status helper semantics aligned with the paid repair", () => {
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(BookingStatus.PAID);
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(BookingStatus.PENDING);
@@ -182,6 +199,8 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(prismaMocks.bookingGuestFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
+          stayStart: { lte: dateOnly(2026, 6, 10) },
+          stayEnd: { gt: dateOnly(2026, 6, 10) },
           booking: expect.objectContaining({
             status: { in: expect.arrayContaining([BookingStatus.PAID]) },
           }),
@@ -191,6 +210,8 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(prismaMocks.bookingGuestFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
+          stayStart: { lte: dateOnly(2026, 6, 10) },
+          stayEnd: { gt: dateOnly(2026, 6, 10) },
           booking: expect.objectContaining({
             status: { in: expect.arrayContaining([BookingStatus.PAID]) },
           }),

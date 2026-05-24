@@ -8,6 +8,10 @@ import {
   normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  countActiveGuestsForNight,
+  type GuestStayRange,
+} from "@/lib/booking-guest-stay-ranges";
 
 type PrismaClient = typeof prisma;
 type TransactionClient = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
@@ -38,19 +42,30 @@ function getNextMonthStartDateOnly(year: number, month: number): Date {
   return getMonthStartDateOnly(nextMonthYear, nextMonth);
 }
 
-function getOccupiedBedsForNight(
+export function getOccupiedBedsForNight(
   night: Date,
-  bookings: Array<{ checkIn: Date; checkOut: Date; guests: unknown[] }>
+  bookings: Array<{
+    checkIn?: Date | null;
+    checkOut?: Date | null;
+    guests?: GuestStayRange[] | null;
+  }>
 ): number {
   const nightKey = formatDateOnly(night);
   let occupiedBeds = 0;
 
   for (const booking of bookings) {
+    if (!booking.checkIn || !booking.checkOut) {
+      continue;
+    }
+
     const bookingCheckInKey = formatDateOnlyForTimeZone(booking.checkIn);
     const bookingCheckOutKey = formatDateOnlyForTimeZone(booking.checkOut);
 
     if (nightKey >= bookingCheckInKey && nightKey < bookingCheckOutKey) {
-      occupiedBeds += booking.guests.length;
+      occupiedBeds += countActiveGuestsForNight(booking.guests, night, {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      });
     }
   }
 

@@ -48,7 +48,15 @@ export async function getKioskAccessTier(
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         OR: [
           { memberId: userId },
-          { guests: { some: { memberId: userId } } },
+          {
+            guests: {
+              some: {
+                memberId: userId,
+                stayStart: { lte: nextDay },
+                stayEnd: { gte: date },
+              },
+            },
+          },
         ],
         // checkIn - 1 day <= date means checkIn <= date + 1 day
         checkIn: { lte: nextDay },
@@ -108,7 +116,19 @@ export async function getKioskDateRange(
       status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
       OR: [
         { memberId: userId },
-        { guests: { some: { memberId: userId } } },
+        {
+          guests: {
+            some: {
+              memberId: userId,
+              ...(date && nextDay
+                ? {
+                    stayStart: { lte: nextDay },
+                    stayEnd: { gte: date },
+                  }
+                : {}),
+            },
+          },
+        },
       ],
       ...(date && nextDay
         ? {
@@ -117,7 +137,18 @@ export async function getKioskDateRange(
           }
         : {}),
     },
-    select: { checkIn: true, checkOut: true },
+    select: {
+      memberId: true,
+      checkIn: true,
+      checkOut: true,
+      guests: {
+        where: { memberId: userId },
+        select: {
+          stayStart: true,
+          stayEnd: true,
+        },
+      },
+    },
   });
 
   if (assignments.length === 0 && bookings.length === 0) return null;
@@ -135,12 +166,19 @@ export async function getKioskDateRange(
   }
 
   for (const b of bookings) {
-    // Day-before access
-    const start = addDaysDateOnly(b.checkIn, -1);
-    const end = b.checkOut;
+    const guestRanges =
+      b.memberId === userId
+        ? [{ stayStart: b.checkIn, stayEnd: b.checkOut }]
+        : (b.guests ?? []);
 
-    if (!minDate || start < minDate) minDate = start;
-    if (!maxDate || end > maxDate) maxDate = end;
+    for (const range of guestRanges) {
+      // Day-before access
+      const start = addDaysDateOnly(range.stayStart, -1);
+      const end = range.stayEnd;
+
+      if (!minDate || start < minDate) minDate = start;
+      if (!maxDate || end > maxDate) maxDate = end;
+    }
   }
 
   if (!minDate || !maxDate) return null;

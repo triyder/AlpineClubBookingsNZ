@@ -80,7 +80,11 @@ const mockRequireActiveSessionUser = vi.fn(async () => null);
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
-vi.mock("@/lib/capacity", () => ({ checkCapacity: vi.fn(), LODGE_CAPACITY: 29 }));
+vi.mock("@/lib/capacity", () => ({
+  checkCapacity: vi.fn(),
+  getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
+  LODGE_CAPACITY: 29,
+}));
 vi.mock("@/lib/pricing", () => ({
   calculateBookingPrice: vi.fn(),
   calculatePromoDiscount: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
@@ -164,6 +168,7 @@ vi.mock("@/lib/payment-recovery", () => ({
 // Chore cleanup mock
 vi.mock("@/lib/chore-cleanup", () => ({
   cleanupChoreAssignmentsForDateChange: vi.fn().mockResolvedValue({ choreWarnings: [] }),
+  cleanupChoreAssignmentsForGuestStayRanges: vi.fn().mockResolvedValue({ choreWarnings: [] }),
 }));
 
 import { auth } from "@/lib/auth";
