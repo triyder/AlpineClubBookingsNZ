@@ -106,13 +106,26 @@ After signing in as an administrator, open `/admin/setup` to review:
 
 - club config and module controls
 - first admin and seeded database settings
-- booking policies, age tiers, seasons, and rates
+- booking policies, membership cancellation settings, age tiers, seasons, and rates
 - Stripe, SES/email, Sentry, operational Xero, and finance Xero readiness
 - Xero account and item-code mappings
 
 Provider tests on `/admin/setup` run only when an admin clicks the relevant test
 button. They should use test/demo provider credentials until the environment is
 ready for production.
+
+## Membership Cancellation Settings
+
+Membership cancellation setup is stored in database settings, not environment
+variables. `/admin/setup` exposes:
+
+- cancellation warning text shown by future member-facing request flows
+- rejoin-process text for cancelled members
+- operational Xero contact groups that represent cancelled members
+- whether approved cancellation processing should archive the Xero contact
+
+These settings are audited when saved. They do not call Xero on save; future
+approval processing must keep Xero writes outside long database transactions.
 
 ## App Defaults
 

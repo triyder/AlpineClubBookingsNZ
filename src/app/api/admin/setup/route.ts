@@ -18,6 +18,7 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     cancellationPolicyCount,
     bookingDefaults,
     groupDiscount,
+    membershipCancellationSettings,
     operationalXeroToken,
     financeXeroToken,
     xeroAccountMappingCount,
@@ -40,6 +41,15 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     prisma.cancellationPolicy.count(),
     prisma.bookingDefaults.findUnique({ where: { id: "default" } }),
     prisma.groupDiscountSetting.findUnique({ where: { id: "default" } }),
+    prisma.membershipCancellationSetting.findUnique({
+      where: { id: "default" },
+      select: {
+        xeroArchiveContactsOnCancellation: true,
+        _count: {
+          select: { xeroContactGroups: true },
+        },
+      },
+    }),
     prisma.xeroToken.findFirst({
       orderBy: { updatedAt: "desc" },
       select: { expiresAt: true },
@@ -75,6 +85,12 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
     cancellationPolicyCount,
     bookingDefaultsConfigured: Boolean(bookingDefaults),
     groupDiscountConfigured: Boolean(groupDiscount),
+    membershipCancellationSettingsConfigured: Boolean(membershipCancellationSettings),
+    membershipCancellationXeroGroupCount:
+      membershipCancellationSettings?._count.xeroContactGroups ?? 0,
+    membershipCancellationArchiveContacts: Boolean(
+      membershipCancellationSettings?.xeroArchiveContactsOnCancellation,
+    ),
     operationalXeroConnected: Boolean(
       operationalXeroToken && operationalXeroToken.expiresAt > now,
     ),

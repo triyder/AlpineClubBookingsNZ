@@ -15,6 +15,7 @@ import {
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmailMessageSettingsPanel } from "@/components/admin/email-settings/email-message-settings-panel";
+import { MembershipCancellationSettingsPanel } from "@/components/admin/membership-cancellation-settings-panel";
 import {
   Card,
   CardContent,
@@ -479,6 +480,18 @@ export default function SetupPage() {
               </section>
             ))}
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Membership Cancellation</CardTitle>
+              <CardDescription>
+                Configure cancellation copy and Xero handling before member cancellation requests go live.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MembershipCancellationSettingsPanel />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>

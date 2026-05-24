@@ -77,7 +77,8 @@ npm run setup:wizard
 The CLI only writes `config/club.json`. API keys, OAuth secrets, SMTP secrets,
 and deployment secrets stay in environment variables. After migrations and seed
 data are in place, log in as an admin and finish the in-app checklist at
-`/admin/setup`.
+`/admin/setup`, including booking policy, membership cancellation, email, and
+provider readiness settings.
 
 See `CONFIGURATION.md` for the full environment and `config/club.json` schema
 reference.

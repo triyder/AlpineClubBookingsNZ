@@ -111,7 +111,7 @@ unless you own that environment and intend to expose it.
 
 After signing in with the seeded administrator, open `/admin/setup` to finish
 the readiness checklist, run explicit provider tests, connect Xero, and review
-booking, rate, and mapping settings.
+booking, membership cancellation, rate, and mapping settings.
 
 ## 5. Configure Providers In Test Mode
 

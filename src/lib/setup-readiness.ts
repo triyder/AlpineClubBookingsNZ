@@ -15,6 +15,7 @@ export const SETUP_STEP_IDS = [
   "seed-admin",
   "feature-flags",
   "booking-policies",
+  "membership-cancellation",
   "age-tiers",
   "seasons-rates",
   "stripe",
@@ -55,6 +56,9 @@ export interface SetupDatabaseSnapshot {
   cancellationPolicyCount: number;
   bookingDefaultsConfigured: boolean;
   groupDiscountConfigured: boolean;
+  membershipCancellationSettingsConfigured: boolean;
+  membershipCancellationXeroGroupCount: number;
+  membershipCancellationArchiveContacts: boolean;
   operationalXeroConnected: boolean;
   operationalXeroTokenExpiresAt: string | null;
   financeXeroConnected: boolean;
@@ -570,6 +574,48 @@ function buildBookingPolicyCheck(
   );
 }
 
+function buildMembershipCancellationCheck(
+  db: SetupDatabaseSnapshot | undefined,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  if (!db) {
+    return applyProgress(
+      {
+        id: "membership-cancellation",
+        title: "Membership Cancellation",
+        description: "Warning text, rejoin process text, and Xero cancellation handling.",
+        status: "warning",
+        required: false,
+        message: "Membership cancellation settings were not checked.",
+        details: ["Review this in /admin/setup after migrations have run."],
+        href: "/admin/setup",
+      },
+      progress,
+    );
+  }
+
+  return applyProgress(
+    {
+      id: "membership-cancellation",
+      title: "Membership Cancellation",
+      description: "Warning text, rejoin process text, and Xero cancellation handling.",
+      status: db.membershipCancellationSettingsConfigured ? "complete" : "warning",
+      required: false,
+      message: db.membershipCancellationSettingsConfigured
+        ? "Membership cancellation settings have been saved."
+        : "Default membership cancellation settings are available; review and save club-specific copy before enabling requests.",
+      details: [
+        `Xero cancelled contact groups: ${db.membershipCancellationXeroGroupCount}`,
+        `Archive cancelled Xero contacts: ${
+          db.membershipCancellationArchiveContacts ? "enabled" : "disabled"
+        }`,
+      ],
+      href: "/admin/setup",
+    },
+    progress,
+  );
+}
+
 function buildAgeTierCheck(
   club: ClubConfigReadResult,
   db: SetupDatabaseSnapshot | undefined,
@@ -964,6 +1010,7 @@ export function buildSetupReadiness(input: {
     ],
     booking: [
       buildBookingPolicyCheck(input.database, progress),
+      buildMembershipCancellationCheck(input.database, progress),
       buildAgeTierCheck(club, input.database, progress),
       buildSeasonRateCheck(input.database, progress),
     ],

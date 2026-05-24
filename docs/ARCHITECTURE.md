@@ -94,9 +94,9 @@ code being touched:
 
 The source of truth is `prisma/schema.prisma`. Key domains are:
 
-- Members, family groups, dependent relationships, nominations, setup invites,
-  password/email tokens, notification preferences, deletion requests, and audit
-  logs.
+- Members, family groups, dependent relationships, nominations, membership
+  cancellation requests, setup invites, password/email tokens, notification
+  preferences, deletion requests, and audit logs.
 - Seasons, season rates, booking periods, minimum-stay policies, group
   discounts, age-tier settings, promo codes, and promo redemptions.
 - Bookings, guests, payments, refunds, booking modifications, waitlist offers,
