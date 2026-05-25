@@ -45,15 +45,14 @@ import {
   XeroSuggestedContactCard,
   type XeroSearchResult,
 } from "@/components/admin/xero-suggested-contact-card"
+import {
+  linkMemberXeroContact,
+  pushMemberToXero,
+  searchXeroContacts,
+  unlinkMemberXeroContact,
+  type XeroPushResponse,
+} from "@/lib/admin-member-xero-actions"
 import type { FinanceAccessLevel } from "@prisma/client"
-
-interface XeroPushResponse {
-  xeroContactId: string
-  xeroLink: string
-  entranceFeeInvoiceQueued?: boolean
-  entranceFeeInvoiceMessage?: string
-  warning?: string
-}
 
 interface AdminActor {
   id: string
@@ -1426,13 +1425,8 @@ const handleMemberSectionChange = (value: string[]) => {
     setXeroSearching(true)
     setXeroError("")
     try {
-      const res = await fetch(`/api/admin/xero/search-contacts?q=${encodeURIComponent(xeroSearchQuery)}`)
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Search failed")
-      }
-      const data = await res.json()
-      setXeroSearchResults(data.contacts ?? [])
+      const contacts = await searchXeroContacts(xeroSearchQuery)
+      setXeroSearchResults(contacts)
     } catch (err) {
       setXeroSearchResults([])
       setXeroError(err instanceof Error ? err.message : "Search failed")
@@ -1443,12 +1437,7 @@ const handleMemberSectionChange = (value: string[]) => {
   const handleXeroLink = async (xeroContactId: string) => {
     setXeroLinking(true); setXeroError("")
     try {
-      const res = await fetch(`/api/admin/members/${id}/xero-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ xeroContactId }),
-      })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Link failed") }
+      await linkMemberXeroContact(id, xeroContactId)
       setXeroChoice("")
       setSelectedXeroContactId("")
       setXeroSearchQuery("")
@@ -1465,8 +1454,7 @@ const handleMemberSectionChange = (value: string[]) => {
   const handleXeroUnlink = async () => {
     setXeroUnlinking(true); setXeroError("")
     try {
-      const res = await fetch(`/api/admin/members/${id}/xero-unlink`, { method: "POST" })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Unlink failed") }
+      await unlinkMemberXeroContact(id)
       setXeroChoice("")
       setSelectedXeroContactId("")
       setXeroSearchQuery("")
@@ -1480,44 +1468,8 @@ const handleMemberSectionChange = (value: string[]) => {
     finally { setXeroUnlinking(false) }
   }
 
-  const requestXeroPush = async (options?: {
-    createEntranceFeeInvoice?: boolean
-    entranceFeeInvoiceDecision?: "CREATE" | "SKIP"
-    entranceFeeInvoiceSkipReason?: string
-    entranceFeeInvoiceAmountCents?: number
-    entranceFeeInvoiceNarration?: string
-    forceCreate?: boolean
-  }) => {
-    const res = await fetch(`/api/admin/members/${id}/xero-push`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        createEntranceFeeInvoice: Boolean(options?.createEntranceFeeInvoice),
-        entranceFeeInvoiceDecision: options?.entranceFeeInvoiceDecision,
-        entranceFeeInvoiceSkipReason: options?.entranceFeeInvoiceSkipReason,
-        entranceFeeInvoiceAmountCents: options?.entranceFeeInvoiceAmountCents,
-        entranceFeeInvoiceNarration: options?.entranceFeeInvoiceNarration,
-        forceCreate: Boolean(options?.forceCreate),
-      }),
-    })
-    const data = await res.json().catch(() => ({}))
-
-    if (res.status === 409 && Array.isArray(data.suggestedContacts)) {
-      return {
-        status: "needsDecision" as const,
-        suggestedContacts: data.suggestedContacts as XeroSearchResult[],
-      }
-    }
-
-    if (!res.ok) {
-      throw new Error(data.error || "Push failed")
-    }
-
-    return {
-      status: "created" as const,
-      data,
-    }
-  }
+  const requestXeroPush = (options: Parameters<typeof pushMemberToXero>[1]) =>
+    pushMemberToXero(id, options)
 
   const applyXeroPushSuccess = async (
     data: XeroPushResponse,
@@ -1598,15 +1550,7 @@ const handleMemberSectionChange = (value: string[]) => {
     setXeroLinking(true)
     setXeroDecisionError("")
     try {
-      const res = await fetch(`/api/admin/members/${id}/xero-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ xeroContactId: xeroDecisionContactId }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || "Link failed")
-      }
+      await linkMemberXeroContact(id, xeroDecisionContactId)
       setXeroChoice("")
       setSelectedXeroContactId("")
       setXeroSearchQuery("")

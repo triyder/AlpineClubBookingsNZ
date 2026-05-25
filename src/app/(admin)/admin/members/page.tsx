@@ -41,6 +41,13 @@ import {
   XeroSuggestedContactCard,
   type XeroSearchResult,
 } from "@/components/admin/xero-suggested-contact-card"
+import {
+  linkMemberXeroContact,
+  pushMemberToXero,
+  searchXeroContacts,
+  unlinkMemberXeroContact,
+  type XeroPushOptions,
+} from "@/lib/admin-member-xero-actions"
 
 interface Member {
   id: string; firstName: string; lastName: string; email: string
@@ -470,8 +477,7 @@ export default function MembersPage() {
     setXeroUnlinking(true)
     setFormError("")
     try {
-      const res = await fetch(`/api/admin/members/${memberId}/xero-unlink`, { method: "POST" })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to unlink") }
+      await unlinkMemberXeroContact(memberId)
       if (editingMember) {
         setEditingMember({ ...editingMember, xeroContactId: null, xeroContactGroups: [] })
       }
@@ -486,13 +492,7 @@ export default function MembersPage() {
   const handleXeroLink = async (memberId: string, contactId: string) => {
     setFormError("")
     try {
-      const res = await fetch(`/api/admin/members/${memberId}/xero-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ xeroContactId: contactId }),
-      })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to link") }
-      const data = await res.json()
+      const data = await linkMemberXeroContact(memberId, contactId)
       if (editingMember) {
         setEditingMember({ ...editingMember, xeroContactId: contactId, xeroContactGroups: [] })
       }
@@ -505,40 +505,8 @@ export default function MembersPage() {
     } catch (err) { setFormError(err instanceof Error ? err.message : "Failed to link Xero contact") }
   }
 
-  const requestXeroPush = async (
-    memberId: string,
-    options?: Partial<XeroEntranceFeeInvoiceOptions> & { forceCreate?: boolean }
-  ) => {
-    const res = await fetch(`/api/admin/members/${memberId}/xero-push`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        createEntranceFeeInvoice: Boolean(options?.createEntranceFeeInvoice),
-        entranceFeeInvoiceDecision: options?.entranceFeeInvoiceDecision,
-        entranceFeeInvoiceSkipReason: options?.entranceFeeInvoiceSkipReason,
-        entranceFeeInvoiceAmountCents: options?.entranceFeeInvoiceAmountCents,
-        entranceFeeInvoiceNarration: options?.entranceFeeInvoiceNarration,
-        forceCreate: Boolean(options?.forceCreate),
-      }),
-    })
-    const data = await res.json().catch(() => ({}))
-
-    if (res.status === 409 && Array.isArray(data.suggestedContacts)) {
-      return {
-        status: "needsDecision" as const,
-        suggestedContacts: data.suggestedContacts as XeroSearchResult[],
-      }
-    }
-
-    if (!res.ok) {
-      throw new Error(data.error || "Failed to create Xero contact")
-    }
-
-    return {
-      status: "created" as const,
-      data,
-    }
-  }
+  const requestXeroPush = (memberId: string, options: XeroPushOptions) =>
+    pushMemberToXero(memberId, options)
 
   const handleXeroPush = async (memberId: string, memberName: string) => {
     setFormError("")
@@ -573,8 +541,13 @@ export default function MembersPage() {
           : "Xero contact created and linked"
       )
       setTimeout(() => setSuccess(""), 3000)
-      if (data.warning || (entranceFeeInvoiceOptions.createEntranceFeeInvoice && data.entranceFeeInvoiceMessage && !data.entranceFeeInvoiceQueued)) {
-        setError(data.warning || data.entranceFeeInvoiceMessage)
+      const warningMessage =
+        data.warning ||
+        (entranceFeeInvoiceOptions.createEntranceFeeInvoice && data.entranceFeeInvoiceMessage && !data.entranceFeeInvoiceQueued
+          ? data.entranceFeeInvoiceMessage
+          : "")
+      if (warningMessage) {
+        setError(warningMessage)
         setTimeout(() => setError(""), 8000)
       }
       fetchMembers()
@@ -598,15 +571,10 @@ export default function MembersPage() {
     setPendingXeroDecisionLoading(true)
     setPendingXeroDecisionError("")
     try {
-      const res = await fetch(`/api/admin/members/${pendingXeroCreateDecision.memberId}/xero-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ xeroContactId: pendingXeroDecisionContactId }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to link Xero contact")
-      }
+      const data = await linkMemberXeroContact(
+        pendingXeroCreateDecision.memberId,
+        pendingXeroDecisionContactId,
+      )
 
       if (editingMember?.id === pendingXeroCreateDecision.memberId) {
         setEditingMember({
@@ -689,10 +657,8 @@ export default function MembersPage() {
     setXeroSearchLoading(true)
     setFormError("")
     try {
-      const res = await fetch(`/api/admin/xero/search-contacts?q=${encodeURIComponent(query)}`)
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to search Xero contacts") }
-      const data = await res.json()
-      const availableContacts = (data.contacts as XeroSearchResult[]).filter((contact) => !contact.isLinked)
+      const contacts = await searchXeroContacts(query)
+      const availableContacts = contacts.filter((contact) => !contact.isLinked)
       setXeroSearchResults(availableContacts)
       if (availableContacts.length === 0) {
         setSelectedXeroContactId("")
@@ -749,16 +715,11 @@ export default function MembersPage() {
 
       if (!editingMember && xeroConnected) {
         if (xeroChoice === "link") {
-          const linkRes = await fetch(`/api/admin/members/${data.id}/xero-link`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ xeroContactId: selectedXeroContactId }),
-          })
-          if (!linkRes.ok) {
-            const linkData = await linkRes.json().catch(() => ({}))
-            warning = `Member created, but Xero link failed: ${linkData.error || "Unknown error"}`
-          } else {
+          try {
+            await linkMemberXeroContact(data.id, selectedXeroContactId)
             successMessage = "Member created and linked to Xero"
+          } catch (err) {
+            warning = `Member created, but Xero link failed: ${err instanceof Error ? err.message : "Unknown error"}`
           }
         } else if (xeroChoice === "create") {
           try {
