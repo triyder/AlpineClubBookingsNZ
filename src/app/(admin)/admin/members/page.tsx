@@ -33,6 +33,10 @@ import {
   getLifecycleStatusConfig,
   getLoginBadge,
 } from "@/lib/admin-member-badges"
+import {
+  useXeroEntranceFeeDecision,
+  type XeroEntranceFeeInvoiceOptions,
+} from "@/lib/admin-xero-entrance-fee"
 
 interface Member {
   id: string; firstName: string; lastName: string; email: string
@@ -75,14 +79,6 @@ interface PendingXeroCreateDecision {
   memberName: string
   entranceFeeInvoiceOptions: XeroEntranceFeeInvoiceOptions
   suggestedContacts: XeroSearchResult[]
-}
-
-interface XeroEntranceFeeInvoiceOptions {
-  createEntranceFeeInvoice: boolean
-  entranceFeeInvoiceDecision: "CREATE" | "SKIP"
-  entranceFeeInvoiceSkipReason?: string
-  entranceFeeInvoiceAmountCents?: number
-  entranceFeeInvoiceNarration?: string
 }
 
 interface MemberForm {
@@ -260,10 +256,18 @@ export default function MembersPage() {
   const [xeroSearchResults, setXeroSearchResults] = useState<XeroSearchResult[]>([])
   const [xeroSearchLoading, setXeroSearchLoading] = useState(false)
   const [selectedXeroContactId, setSelectedXeroContactId] = useState("")
-  const [xeroCreateEntranceFeeInvoice, setXeroCreateEntranceFeeInvoice] = useState(false)
-  const [xeroEntranceFeeSkipReason, setXeroEntranceFeeSkipReason] = useState("")
-  const [xeroEntranceFeeAmount, setXeroEntranceFeeAmount] = useState("")
-  const [xeroEntranceFeeNarration, setXeroEntranceFeeNarration] = useState("")
+  const {
+    xeroCreateEntranceFeeInvoice,
+    setXeroCreateEntranceFeeInvoice,
+    xeroEntranceFeeSkipReason,
+    setXeroEntranceFeeSkipReason,
+    xeroEntranceFeeAmount,
+    setXeroEntranceFeeAmount,
+    xeroEntranceFeeNarration,
+    setXeroEntranceFeeNarration,
+    resetXeroEntranceFeeDecision,
+    buildXeroEntranceFeeInvoiceOptions,
+  } = useXeroEntranceFeeDecision()
   const [pendingXeroCreateDecision, setPendingXeroCreateDecision] = useState<PendingXeroCreateDecision | null>(null)
   const [pendingXeroDecisionContactId, setPendingXeroDecisionContactId] = useState("")
   const [pendingXeroDecisionError, setPendingXeroDecisionError] = useState("")
@@ -365,45 +369,6 @@ export default function MembersPage() {
   const setFilter = (key: keyof Filters, value: string) => { setFilters(f => ({ ...f, [key]: value })); setPage(1) }
   const clearFilters = () => { setFilters(emptyFilters); setPage(1) }
   const activeFilterCount = Object.values(filters).filter(Boolean).length
-  const resetXeroEntranceFeeDecision = () => {
-    setXeroCreateEntranceFeeInvoice(false)
-    setXeroEntranceFeeSkipReason("")
-    setXeroEntranceFeeAmount("")
-    setXeroEntranceFeeNarration("")
-  }
-  const getXeroEntranceFeeInvoiceOptions = (): XeroEntranceFeeInvoiceOptions => {
-    if (!xeroCreateEntranceFeeInvoice) {
-      const reason = xeroEntranceFeeSkipReason.trim()
-      if (!reason) {
-        throw new Error("Enter a reason for not raising the entrance fee invoice.")
-      }
-
-      return {
-        createEntranceFeeInvoice: false,
-        entranceFeeInvoiceDecision: "SKIP",
-        entranceFeeInvoiceSkipReason: reason,
-      }
-    }
-
-    const amountText = xeroEntranceFeeAmount.trim()
-    let amountCents: number | undefined
-    if (amountText) {
-      const parsedAmount = Number(amountText)
-      amountCents = Math.round(parsedAmount * 100)
-      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
-        throw new Error("Enter a valid entrance fee amount, or leave it blank to use the configured amount.")
-      }
-    }
-
-    return {
-      createEntranceFeeInvoice: true,
-      entranceFeeInvoiceDecision: "CREATE",
-      ...(amountCents ? { entranceFeeInvoiceAmountCents: amountCents } : {}),
-      ...(xeroEntranceFeeNarration.trim()
-        ? { entranceFeeInvoiceNarration: xeroEntranceFeeNarration.trim() }
-        : {}),
-    }
-  }
   const renderXeroEntranceFeeDecisionFields = (idPrefix: string) => (
     <div className="space-y-3">
       <div className="flex items-start gap-2">
@@ -584,7 +549,7 @@ export default function MembersPage() {
   const handleXeroPush = async (memberId: string, memberName: string) => {
     setFormError("")
     try {
-      const entranceFeeInvoiceOptions = getXeroEntranceFeeInvoiceOptions()
+      const entranceFeeInvoiceOptions = buildXeroEntranceFeeInvoiceOptions()
       const result = await requestXeroPush(memberId, {
         ...entranceFeeInvoiceOptions,
       })
@@ -770,7 +735,7 @@ export default function MembersPage() {
 
       const entranceFeeInvoiceOptions =
         !editingMember && xeroConnected && xeroChoice === "create"
-          ? getXeroEntranceFeeInvoiceOptions()
+          ? buildXeroEntranceFeeInvoiceOptions()
           : null
 
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
