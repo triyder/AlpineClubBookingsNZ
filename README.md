@@ -227,6 +227,8 @@ forks or public CI. Configure your own service accounts and secrets.
   recovery guide
 - `docs/MAINTENANCE.md` - public maintenance, validation, CI, and release
   checklist
+- `docs/cancellations.md` - membership cancellation refund, credit-note, and
+  GST policy
 - `docs/ONGOING-DEVELOPMENT-WORKFLOW.md` - public upstream and private fork
   development workflow
 - `docs/STAGING_ACCESSIBILITY.md` - non-production staging and accessibility

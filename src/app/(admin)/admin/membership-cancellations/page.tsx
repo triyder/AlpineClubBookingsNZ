@@ -486,6 +486,11 @@ export default function MembershipCancellationsPage() {
                                   placeholder="Optional note for the member and audit log"
                                 />
                               </div>
+                              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                                Paid membership subscriptions are not refunded.
+                                Unpaid or overdue subscription invoices are
+                                cleared with an allocated Xero credit note.
+                              </div>
                               <div className="flex flex-wrap gap-2">
                                 <Button
                                   variant="outline"
