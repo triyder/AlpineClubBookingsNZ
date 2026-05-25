@@ -41,13 +41,11 @@ import {
   getLoginBadge,
 } from "@/lib/admin-member-badges"
 import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee"
+import {
+  XeroSuggestedContactCard,
+  type XeroSearchResult,
+} from "@/components/admin/xero-suggested-contact-card"
 import type { FinanceAccessLevel } from "@prisma/client"
-
-interface XeroSearchResult {
-  contactId: string; name: string; email: string | null; isLinked: boolean; linkedMemberName: string | null
-  matchReasons?: string[]
-  xeroLink?: string
-}
 
 interface XeroPushResponse {
   xeroContactId: string
@@ -2661,42 +2659,13 @@ const handleMemberSectionChange = (value: string[]) => {
           <div className="space-y-3">
             <div className="max-h-[360px] overflow-y-auto space-y-2">
               {xeroCreateDecisionResults.map((contact) => (
-                <label
+                <XeroSuggestedContactCard
                   key={contact.contactId}
-                  className={`flex items-start gap-3 rounded-md border p-3 ${
-                    contact.isLinked ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="member-detail-potential-xero-contact"
-                    value={contact.contactId}
-                    checked={xeroDecisionContactId === contact.contactId}
-                    onChange={() => setXeroDecisionContactId(contact.contactId)}
-                    disabled={contact.isLinked}
-                    className="mt-1 h-4 w-4 border-gray-300"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium text-slate-900">{contact.name}</p>
-                      {contact.matchReasons?.map((reason) => (
-                        <Badge key={`${contact.contactId}-${reason}`} variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
-                          {reason}
-                        </Badge>
-                      ))}
-                    </div>
-                    {contact.email && <p className="text-xs text-slate-500">{contact.email}</p>}
-                    {contact.isLinked && (
-                      <p className="text-xs text-amber-700">Already linked to {contact.linkedMemberName}</p>
-                    )}
-                    {contact.xeroLink && (
-                      <a href={contact.xeroLink} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                        View in Xero
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    )}
-                  </div>
-                </label>
+                  contact={contact}
+                  radioName="member-detail-potential-xero-contact"
+                  checked={xeroDecisionContactId === contact.contactId}
+                  onSelect={() => setXeroDecisionContactId(contact.contactId)}
+                />
               ))}
             </div>
             {xeroCreateEntranceFeeInvoice && (
