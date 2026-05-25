@@ -49,15 +49,25 @@ import {
   GET as getEmailTemplates,
   PUT as putEmailTemplate,
 } from "@/app/api/admin/email-templates/route";
+import { POST as previewEmailTemplate } from "@/app/api/admin/email-templates/preview/route";
 import { PUT as putEmailSettings } from "@/app/api/admin/email-settings/route";
 import {
   GET as getDeliveryPolicies,
   PUT as putDeliveryPolicy,
 } from "@/app/api/admin/notification-delivery-policies/route";
+import { getEmailTemplateDefinition } from "@/lib/email-message-registry";
 
 function request(path: string, body: unknown) {
   return new NextRequest(`http://localhost${path}`, {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function postRequest(path: string, body: unknown) {
+  return new NextRequest(`http://localhost${path}`, {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -234,6 +244,53 @@ describe("admin email message APIs", () => {
     expect(body.staleOverrides).toEqual([
       expect.objectContaining({ templateName: "retired-template" }),
     ]);
+  });
+
+  it("renders membership cancellation refund policy defaults through preview", async () => {
+    const templatesResponse = await getEmailTemplates();
+    const templatesBody = await templatesResponse.json();
+    const confirmationTemplate = templatesBody.templates.find(
+      (template: { key: string }) =>
+        template.key === "membership-cancellation-confirmation",
+    );
+    const approvedTemplate = templatesBody.templates.find(
+      (template: { key: string }) =>
+        template.key === "membership-cancellation-approved",
+    );
+
+    expect(confirmationTemplate.defaultBody).toContain(
+      "Paid subscriptions are non-refundable",
+    );
+    expect(confirmationTemplate.defaultBody).toContain(
+      "unpaid or overdue subscription invoice will be cancelled",
+    );
+    expect(approvedTemplate.defaultBody).toContain(
+      "Paid subscriptions will not be refunded",
+    );
+    expect(approvedTemplate.defaultBody).toContain(
+      "invoice has been cancelled with a Xero credit note",
+    );
+
+    for (const templateName of [
+      "membership-cancellation-confirmation",
+      "membership-cancellation-approved",
+    ] as const) {
+      const definition = getEmailTemplateDefinition(templateName);
+      expect(definition).toBeDefined();
+
+      const response = await previewEmailTemplate(
+        postRequest("/api/admin/email-templates/preview", {
+          templateName,
+          subject: definition!.defaultSubject,
+          bodyText: definition!.defaultBody,
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.html).toContain("Xero credit note");
+      expect(body.html).toMatch(/Paid subscriptions (are|will)/);
+    }
   });
 
   it("updates editable delivery policies and blocks locked system policies", async () => {
