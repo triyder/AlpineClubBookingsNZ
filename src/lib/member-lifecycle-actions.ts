@@ -2,6 +2,7 @@ import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
   Role,
+  SubscriptionStatus,
   type Prisma,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
@@ -187,6 +188,29 @@ type BlockerSpec = {
   ) => Promise<number>;
 };
 
+function meaningfulMemberSubscriptionWhere(
+  memberId: string,
+): Prisma.MemberSubscriptionWhereInput {
+  return {
+    memberId,
+    OR: [
+      {
+        status: {
+          in: [
+            SubscriptionStatus.UNPAID,
+            SubscriptionStatus.PAID,
+            SubscriptionStatus.OVERDUE,
+          ],
+        },
+      },
+      { xeroInvoiceId: { not: null } },
+      { xeroInvoiceNumber: { not: null } },
+      { xeroOnlineInvoiceUrl: { not: null } },
+      { paidAt: { not: null } },
+    ],
+  };
+}
+
 const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
   {
     code: "pending_delete_request",
@@ -262,9 +286,11 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
   },
   {
     code: "subscriptions",
-    label: "Membership subscriptions exist.",
+    label: "Membership subscriptions with invoice or payment history exist.",
     query: (db, memberId) =>
-      db.memberSubscription.count({ where: { memberId } }),
+      db.memberSubscription.count({
+        where: meaningfulMemberSubscriptionWhere(memberId),
+      }),
   },
   {
     code: "promo_redemptions",

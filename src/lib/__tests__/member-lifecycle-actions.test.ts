@@ -278,6 +278,7 @@ const countDelegates = [
   mockPrisma.hutLeaderAssignment,
   mockPrisma.issueReport,
   mockPrisma.bookingModification,
+  mockPrisma.bookingChangeRequest,
   mockPrisma.deletionRequest,
 ];
 
@@ -340,6 +341,52 @@ describe("member delete lifecycle actions", () => {
       expect.arrayContaining([
         expect.objectContaining({ code: "owned_bookings", count: 1 }),
         expect.objectContaining({ code: "credits", count: 2 }),
+      ]),
+    );
+  });
+
+  it("ignores placeholder subscription rows without invoice or payment history", async () => {
+    const eligibility = await getMemberDeleteEligibility({
+      memberId: "member-1",
+      currentAdminMemberId: "admin-2",
+    });
+
+    expect(eligibility.eligible).toBe(true);
+    expect(eligibility.blockers).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "subscriptions" }),
+      ]),
+    );
+    expect(mockPrisma.memberSubscription.count).toHaveBeenCalledWith({
+      where: {
+        memberId: "member-1",
+        OR: [
+          { status: { in: ["UNPAID", "PAID", "OVERDUE"] } },
+          { xeroInvoiceId: { not: null } },
+          { xeroInvoiceNumber: { not: null } },
+          { xeroOnlineInvoiceUrl: { not: null } },
+          { paidAt: { not: null } },
+        ],
+      },
+    });
+  });
+
+  it("reports subscription blockers when invoice or payment history exists", async () => {
+    mockPrisma.memberSubscription.count.mockResolvedValue(1);
+
+    const eligibility = await getMemberDeleteEligibility({
+      memberId: "member-1",
+      currentAdminMemberId: "admin-2",
+    });
+
+    expect(eligibility.eligible).toBe(false);
+    expect(eligibility.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "subscriptions",
+          label: "Membership subscriptions with invoice or payment history exist.",
+          count: 1,
+        }),
       ]),
     );
   });
