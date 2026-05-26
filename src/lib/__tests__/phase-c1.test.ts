@@ -201,11 +201,11 @@ describe("#26: Payments Page has clickable links", () => {
 // ---------------------------------------------------------------------------
 
 describe("#27: Xero Account Mappings lock/edit mode", () => {
-  it("page has edit mode toggle state and UI elements", async () => {
+  it("panel has edit mode toggle state and UI elements", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/page.tsx"),
+      path.resolve("src/app/(admin)/admin/xero/_components/mappings-panel.tsx"),
       "utf-8"
     );
     // Should have isEditingMappings state
@@ -231,7 +231,7 @@ describe("#27: Scan for Duplicates wording update", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/page.tsx"),
+      path.resolve("src/app/(admin)/admin/xero/_components/setup-panels.tsx"),
       "utf-8"
     );
     expect(content).toContain("Duplicates & Family Groups");
@@ -245,7 +245,7 @@ describe("#27: Xero import supports INFANT tier mapping", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/page.tsx"),
+      path.resolve("src/app/(admin)/admin/xero/_components/setup-panels.tsx"),
       "utf-8"
     );
     expect(content).toContain('<SelectItem value="INFANT">Infant</SelectItem>');
@@ -257,12 +257,12 @@ describe("#27: Xero contact sync admin action", () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/app/(admin)/admin/xero/page.tsx"),
+      path.resolve("src/app/(admin)/admin/xero/_components/contact-sync-panel.tsx"),
       "utf-8"
     );
 
-    expect(content).toContain('fetch("/api/admin/xero/sync-contacts", {');
-    expect(content).toContain('body: JSON.stringify({ fullResync: true })');
+    expect(content).toContain('"/api/admin/xero/sync-contacts"');
+    expect(content).toContain("{ fullResync: true }");
   });
 });
 
