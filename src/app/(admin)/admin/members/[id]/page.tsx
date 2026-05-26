@@ -3,48 +3,20 @@
 import { useCallback, useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { MemberAddressFields } from "@/components/member-address-fields"
-import { AuditTimeline } from "@/components/audit-timeline"
-import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog"
-import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ArrowLeft } from "lucide-react"
+import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog"
+import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card"
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
-import { Archive, ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus, Trash2 } from "lucide-react"
-import {
-  NZ_COUNTRY_NAME,
-  postalMatchesPhysical,
-  withDefaultNzCountry,
-  type MemberAddressValues,
-} from "@/lib/member-address"
-import { formatAgeYearsMonths } from "@/lib/member-age"
-import { formatCents } from "@/lib/utils"
-import { bookingStatusClass, bookingStatusLabel, subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors"
-import { buildHrefWithReturnTo, resolveInternalReturnPath } from "@/lib/internal-return-path"
-import {
-  financeAccessBadgeClass,
-  financeAccessLongLabels as financeAccessLabels,
-  getLoginBadge,
-} from "@/lib/admin-member-badges"
+  formatMemberAuditLogSummary as formatMemberAuditLogSummaryHelper,
+  getAuditActorDisplayName as getAuditActorDisplayNameHelper,
+  getMemberDetailBackLabel,
+  memberUsesSamePostalAddress,
+  parseInviteAuditDetails as parseInviteAuditDetailsHelper,
+  shouldDefaultLinkSideEffects,
+} from "@/lib/admin-member-detail-helpers"
+import { resolveInternalReturnPath } from "@/lib/internal-return-path"
 import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee"
-import {
-  XeroSuggestedContactCard,
-  type XeroSearchResult,
-} from "@/components/admin/xero-suggested-contact-card"
 import {
   linkMemberXeroContact,
   pushMemberToXero,
@@ -52,370 +24,99 @@ import {
   unlinkMemberXeroContact,
   type XeroPushResponse,
 } from "@/lib/admin-member-xero-actions"
-import type { FinanceAccessLevel } from "@prisma/client"
+import {
+  NZ_COUNTRY_NAME,
+  withDefaultNzCountry,
+  type MemberAddressValues,
+} from "@/lib/member-address"
+import { MemberDetailHeader } from "./_components/member-detail-header"
+import { MemberStatsCards } from "./_components/member-stats-cards"
+import { MemberInfoCard } from "./_components/member-info-card"
+import { MemberDeletionCard } from "./_components/member-deletion-card"
+import { MemberLifecycleCard } from "./_components/member-lifecycle-card"
+import { MemberParentLinksCard } from "./_components/member-parent-links-card"
+import { MemberPromoCodesCard } from "./_components/member-promo-codes-card"
+import { MemberDependentsCard } from "./_components/member-dependents-card"
+import { MemberCreditCard } from "./_components/member-credit-card"
+import { MemberHistoryAccordion } from "./_components/member-history-accordion"
+import { MemberEditDialog } from "./_components/member-edit-dialog"
+import { MemberXeroLinkDialog } from "./_components/member-xero-link-dialog"
+import { MemberXeroCreateDialog } from "./_components/member-xero-create-dialog"
+import { MemberXeroDecisionDialog } from "./_components/member-xero-decision-dialog"
+import { MemberParentLinkDialog } from "./_components/member-parent-link-dialog"
+import { MemberDependentDialog } from "./_components/member-dependent-dialog"
+import { MemberDeleteRequestDialog } from "./_components/member-delete-request-dialog"
+import { MemberDeleteReviewDialog } from "./_components/member-delete-review-dialog"
+import { useCollapsibleMemberSections } from "./_hooks/use-collapsible-member-sections"
+import type {
+  CreditHistoryItem,
+  DependentDialogMode,
+  DependentForm,
+  EditForm,
+  EmailInheritanceSearchResult,
+  LinkDependentSearchResult,
+  LinkParentSearchResult,
+  MemberDetail,
+  MemberLifecycleActionRequest,
+  PendingCreditAdjustmentItem,
+} from "./_types"
 
-interface AdminActor {
-  id: string
-  firstName: string
-  lastName: string
+// Re-exports preserve the existing import paths used by tests and other callers
+// that previously imported these helpers from the page route.
+export const formatMemberAuditLogSummary = formatMemberAuditLogSummaryHelper
+export const parseInviteAuditDetails = parseInviteAuditDetailsHelper
+export const getAuditActorDisplayName = getAuditActorDisplayNameHelper
+
+const defaultEditForm: EditForm = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phoneCountryCode: "",
+  phoneAreaCode: "",
+  phoneNumber: "",
+  dateOfBirth: "",
+  joinedDate: "",
+  role: "MEMBER",
+  ageTier: "ADULT",
+  financeAccessLevel: "NONE",
+  active: true,
+  canLogin: true,
+  forcePasswordChange: false,
+  inheritEmailFromId: null,
+  streetAddressLine1: "",
+  streetAddressLine2: "",
+  streetCity: "",
+  streetRegion: "",
+  streetPostalCode: "",
+  streetCountry: "",
+  postalAddressLine1: "",
+  postalAddressLine2: "",
+  postalCity: "",
+  postalRegion: "",
+  postalPostalCode: "",
+  postalCountry: "",
 }
 
-interface MemberDeleteEligibilityBlocker {
-  code: string
-  label: string
-  count?: number
-}
-
-interface MemberDeleteEligibility {
-  eligible: boolean
-  blockers: MemberDeleteEligibilityBlocker[]
-  checkedAt: string
-}
-
-interface LifecycleActor {
-  id: string
-  name: string
-  email: string
-}
-
-interface MemberLifecycleActionRequest {
-  id: string
-  memberId: string
-  action: "ARCHIVE" | "DELETE"
-  status: "REQUESTED" | "APPROVED" | "REJECTED"
-  reason: string
-  reviewNote: string | null
-  requestedAt: string
-  reviewedAt: string | null
-  processedAt: string | null
-  requestedBy: LifecycleActor | null
-  reviewedBy: LifecycleActor | null
-  memberSnapshot?: unknown
-}
-
-interface EmailInheritanceSearchResult {
-  id: string
-  firstName: string
-  lastName: string
-  email: string
-  active?: boolean
-}
-
-interface OpenCancellationRequestSummary {
-  id: string
-  status: string
-  reason: string | null
-  submittedAt: string
-  participantId: string
-  participantStatus: string
-  requestedBy: { id: string; name: string; email: string } | null
-  requestedByCurrentAdmin: boolean
-}
-
-interface MemberDetail {
-  id: string; firstName: string; lastName: string; email: string
-  phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
-  dateOfBirth: string | null
-  role: "MEMBER" | "ADMIN"; ageTier: string
-  financeAccessLevel: FinanceAccessLevel
-  active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
-  canLogin: boolean
-  cancelledAt: string | null
-  cancelledReason: string | null
-  archivedAt: string | null
-  archivedReason: string | null
-  archivedViaLifecycleActionRequestId: string | null
-  parentMemberId: string | null
-  secondaryParentId: string | null
-  parent: ParentMemberSummary | null
-  secondaryParent: ParentMemberSummary | null
-  parentLinks: ParentLinkSummary[]
-  xeroContactGroupsLoaded: boolean
-  xeroContactGroups: Array<{ id: string; name: string }>
-  inheritEmailFromId: string | null
-  inheritEmailFrom: { id: string; firstName: string; lastName: string; email: string } | null
-  familyGroups: { id: string; name: string | null }[]
-  subscriptions: Array<{ id: string; seasonYear: number; status: string; xeroInvoiceId: string | null; paidAt: string | null }>
-  bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
-  promoCodes: Array<{
-    id: string
-    code: string
-    description: string | null
-    type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS"
-    percentOff: number | null
-    valueCents: number | null
-    freeNights: number | null
-    assignedAt: string | null
-    active: boolean
-    archivedAt: string | null
-    validFrom: string | null
-    validUntil: string | null
-    bookingStartFrom: string | null
-    bookingStartUntil: string | null
-    maxRedemptions: number | null
-    currentRedemptions: number
-    singleUse: boolean
-    redemptionCount: number
-    freeNightsUsed: number
-    visibleToMember: boolean
-    statusReason: string
-  }>
-  lifecycleActionRequests: MemberLifecycleActionRequest[]
-  openCancellationRequest: OpenCancellationRequestSummary | null
-  auditLogs: AuditLogEntry[]
-  deleteEligibility: MemberDeleteEligibility
-  stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
-  dependents: Array<{ id: string; firstName: string; lastName: string; ageTier: string; active: boolean; dateOfBirth: string | null; canLogin: boolean; parentLinkType?: "PRIMARY" | "SECONDARY" }>
-  streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
-  streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
-  postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
-  postalRegion: string | null; postalPostalCode: string | null; postalCountry: string | null
-}
-
-interface ParentMemberSummary {
-  id: string
-  firstName: string
-  lastName: string
-  email: string
-  ageTier: string
-  active: boolean
-  canLogin: boolean
-  inheritEmailFromId?: string | null
-}
-
-interface ParentLinkSummary extends ParentMemberSummary {
-  parentLinkType: "PRIMARY" | "SECONDARY"
-}
-
-interface AuditActor {
-  id: string
-  firstName: string
-  lastName: string
-  email: string
-}
-
-interface AuditLogEntry {
-  id: string
-  action: string
-  details: string | null
-  createdAt: string
-  actor: AuditActor | null
-}
-
-interface InviteAuditDetails {
-  recipientEmail?: string
-  recipientName?: string
-  kind?: "invite" | "reset"
-  expiryLabel?: string
-}
-
-interface CreditHistoryItem {
-  id: string
-  amountCents: number
-  type: "CANCELLATION_REFUND" | "ADMIN_ADJUSTMENT" | "BOOKING_APPLIED"
-  description: string
-  createdAt: string
-  requestedBy: AdminActor | null
-  approvedBy: AdminActor | null
-  approvalRequest: { createdAt: string; reviewedAt: string | null } | null
-  sourceBooking: { id: string; checkIn: string; checkOut: string } | null
-  appliedToBooking: { id: string; checkIn: string; checkOut: string } | null
-}
-
-interface PendingCreditAdjustmentItem {
-  id: string
-  amountCents: number
-  description: string
-  createdAt: string
-  requestedBy: AdminActor
-}
-
-interface EditForm {
-  firstName: string; lastName: string; email: string
-  phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
-  dateOfBirth: string; joinedDate: string
-  role: "MEMBER" | "ADMIN"; ageTier: string; financeAccessLevel: FinanceAccessLevel; active: boolean; canLogin: boolean; forcePasswordChange: boolean
-  inheritEmailFromId: string | null
-  streetAddressLine1: string; streetAddressLine2: string; streetCity: string
-  streetRegion: string; streetPostalCode: string; streetCountry: string
-  postalAddressLine1: string; postalAddressLine2: string; postalCity: string
-  postalRegion: string; postalPostalCode: string; postalCountry: string
-}
-
-const collapsibleMemberSections = ["subs", "bookings", "xero", "audit"] as const
-type CollapsibleMemberSection = (typeof collapsibleMemberSections)[number]
-
-const memberSectionStorageKeys: Record<CollapsibleMemberSection, string> = {
-  subs: "admin-member-section:subs",
-  bookings: "admin-member-section:bookings",
-  xero: "admin-member-section:xero",
-  audit: "admin-member-section:audit",
-}
-
-function isCollapsibleMemberSection(
-  value: string
-): value is CollapsibleMemberSection {
-  return collapsibleMemberSections.includes(value as CollapsibleMemberSection)
-}
-
-function getMemberDetailBackLabel(returnTo: string) {
-  if (returnTo.startsWith("/admin/bookings")) return "Back to Bookings"
-  if (returnTo.startsWith("/admin/payments")) return "Back to Payments"
-  if (returnTo.startsWith("/admin/subscriptions")) return "Back to Subscriptions"
-  if (returnTo.startsWith("/admin/refund-requests")) return "Back to Refund Requests"
-  if (returnTo.startsWith("/admin/xero")) return "Back to Xero"
-  return "Back to Members"
-}
-
-function formatAdminName(admin: AdminActor | null | undefined) {
-  return admin ? `${admin.firstName} ${admin.lastName}` : "Unknown admin"
-}
-
-export function parseInviteAuditDetails(details: string | null): InviteAuditDetails | null {
-  if (!details) return null
-
-  try {
-    const parsed = JSON.parse(details) as InviteAuditDetails
-    if (typeof parsed !== "object" || parsed === null) return null
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-export function getAuditActorDisplayName(actor: AuditActor | null | undefined) {
-  if (!actor) return "System"
-
-  const fullName = `${actor.firstName} ${actor.lastName}`.trim()
-  return fullName || actor.email || "System"
-}
-
-export function formatMemberAuditLogSummary(
-  log: AuditLogEntry,
-  formattedTimestamp: string
-) {
-  const parsedDetails = parseInviteAuditDetails(log.details)
-  const actorName = getAuditActorDisplayName(log.actor)
-
-  if (log.action === "member.setup-invite-sent" && parsedDetails?.recipientEmail) {
-    return `Invited via email to ${parsedDetails.recipientEmail} on ${formattedTimestamp} by ${actorName}`
-  }
-
-  if (log.action === "member.password-reset-sent" && parsedDetails?.recipientEmail) {
-    return `Password reset sent to ${parsedDetails.recipientEmail} on ${formattedTimestamp} by ${actorName}`
-  }
-
-  return log.action
-}
-
-interface DependentForm extends MemberAddressValues {
-  firstName: string
-  lastName: string
-  email: string
-  dateOfBirth: string
-  phoneCountryCode: string
-  phoneAreaCode: string
-  phoneNumber: string
-}
-
-type DependentDialogMode = "create" | "link"
-
-interface LinkDependentSearchResult {
-  id: string
-  firstName: string
-  lastName: string
-  email: string
-  ageTier: string
-  active: boolean
-  canLogin: boolean
-  dateOfBirth: string | null
-  parentLinks: ParentLinkSummary[]
-}
-
-interface LinkParentSearchResult extends ParentMemberSummary {
-  dateOfBirth: string | null
-  familyGroups: { id: string; name: string | null }[]
-}
-
-function shouldDefaultLinkSideEffects(ageTier: string) {
-  return ageTier !== "ADULT"
-}
-
-function parentLinkTypeLabel(type?: "PRIMARY" | "SECONDARY") {
-  return type === "SECONDARY" ? "Second parent" : "Primary parent"
-}
-
-function dedupeParentOptions(parents: ParentLinkSummary[]) {
-  const seen = new Set<string>()
-  return parents.filter((parent) => {
-    if (seen.has(parent.id)) return false
-    seen.add(parent.id)
-    return true
-  })
-}
-
-function formatPromoBenefit(promo: MemberDetail["promoCodes"][number]) {
-  if (promo.type === "PERCENTAGE") {
-    return promo.percentOff !== null ? `${promo.percentOff}% off` : "Percentage discount"
-  }
-  if (promo.type === "FIXED_AMOUNT") {
-    return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off`
-      : "Fixed discount"
-  }
-  if (promo.freeNights !== null) {
-    return `${promo.freeNights} free night${promo.freeNights === 1 ? "" : "s"}`
-  }
-  return "Free nights"
-}
-
-function memberUsesSamePostalAddress(member: Pick<MemberDetail, keyof MemberAddressValues>) {
-  const postalHasValues = [
-    member.postalAddressLine1,
-    member.postalAddressLine2,
-    member.postalCity,
-    member.postalRegion,
-    member.postalPostalCode,
-    member.postalCountry,
-  ].some((value) => value?.trim())
-
-  if (!postalHasValues) {
-    return Boolean(
-      member.streetAddressLine1?.trim() ||
-      member.streetCity?.trim() ||
-      member.streetPostalCode?.trim(),
-    )
-  }
-
-  return postalMatchesPhysical({
-    streetAddressLine1: member.streetAddressLine1,
-    streetAddressLine2: member.streetAddressLine2,
-    streetCity: member.streetCity,
-    streetRegion: member.streetRegion,
-    streetPostalCode: member.streetPostalCode,
-    streetCountry: withDefaultNzCountry(member.streetCountry),
-    postalAddressLine1: member.postalAddressLine1,
-    postalAddressLine2: member.postalAddressLine2,
-    postalCity: member.postalCity,
-    postalRegion: member.postalRegion,
-    postalPostalCode: member.postalPostalCode,
-    postalCountry: withDefaultNzCountry(member.postalCountry),
-  })
-}
-
-function getMissingFieldsForXeroCreate(form: EditForm): string[] {
-  const missing: string[] = []
-
-  if (!form.firstName.trim()) missing.push("First Name")
-  if (!form.lastName.trim()) missing.push("Last Name")
-  if (!form.email.trim()) missing.push("Email")
-  if (!form.phoneCountryCode.trim() || !form.phoneAreaCode.trim() || !form.phoneNumber.trim()) missing.push("Phone")
-  if (!form.dateOfBirth) missing.push("Date of Birth")
-  if (!form.joinedDate) missing.push("Joined Date")
-  if (!form.streetAddressLine1.trim() || !form.streetCity.trim() || !form.streetRegion.trim() || !form.streetPostalCode.trim() || !form.streetCountry.trim()) missing.push("Physical Address")
-  if (!form.postalAddressLine1.trim() || !form.postalCity.trim() || !form.postalRegion.trim() || !form.postalPostalCode.trim() || !form.postalCountry.trim()) missing.push("Postal Address")
-
-  return missing
+const defaultDependentForm: DependentForm = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  dateOfBirth: "",
+  phoneCountryCode: "",
+  phoneAreaCode: "",
+  phoneNumber: "",
+  streetAddressLine1: "",
+  streetAddressLine2: "",
+  streetCity: "",
+  streetRegion: "",
+  streetPostalCode: "",
+  streetCountry: NZ_COUNTRY_NAME,
+  postalAddressLine1: "",
+  postalAddressLine2: "",
+  postalCity: "",
+  postalRegion: "",
+  postalPostalCode: "",
+  postalCountry: NZ_COUNTRY_NAME,
 }
 
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -423,14 +124,17 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const router = useRouter()
   const searchParams = useSearchParams()
   const { data: session } = useSession()
+
   const [member, setMember] = useState<MemberDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [pageError, setPageError] = useState("")
   const [success, setSuccess] = useState("")
   const [relationshipError, setRelationshipError] = useState("")
   const [xeroError, setXeroError] = useState("")
+
+  // Edit dialog state
   const [editOpen, setEditOpen] = useState(false)
-  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", joinedDate: "", role: "MEMBER", ageTier: "ADULT", financeAccessLevel: "NONE", active: true, canLogin: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
+  const [form, setForm] = useState<EditForm>(defaultEditForm)
   const [editPostalSameAsPhysical, setEditPostalSameAsPhysical] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
@@ -440,8 +144,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [inheritEmailSearchError, setInheritEmailSearchError] = useState("")
   const [inheritEmailSearching, setInheritEmailSearching] = useState(false)
   const [selectedInheritEmailSource, setSelectedInheritEmailSource] = useState<EmailInheritanceSearchResult | null>(null)
+
+  // Dependent dialog state
   const [dependentOpen, setDependentOpen] = useState(false)
-  const [dependentForm, setDependentForm] = useState<DependentForm>({ firstName: "", lastName: "", email: "", dateOfBirth: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: NZ_COUNTRY_NAME, postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: NZ_COUNTRY_NAME })
+  const [dependentForm, setDependentForm] = useState<DependentForm>(defaultDependentForm)
   const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] = useState(false)
   const [dependentSaving, setDependentSaving] = useState(false)
   const [dependentFormError, setDependentFormError] = useState("")
@@ -454,6 +160,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [linkDependentNotificationParentId, setLinkDependentNotificationParentId] = useState("")
   const [linkDependentDisableLogin, setLinkDependentDisableLogin] = useState(false)
   const [linkDependentFamilyGroupIds, setLinkDependentFamilyGroupIds] = useState<string[]>([])
+
+  // Parent link dialog state
   const [parentLinkOpen, setParentLinkOpen] = useState(false)
   const [parentLinkSearch, setParentLinkSearch] = useState("")
   const [parentLinkSearchResults, setParentLinkSearchResults] = useState<LinkParentSearchResult[]>([])
@@ -467,6 +175,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [parentLinkError, setParentLinkError] = useState("")
   const [unlinkingDependentId, setUnlinkingDependentId] = useState<string | null>(null)
   const [familyGroupEditorId, setFamilyGroupEditorId] = useState<string | null>(null)
+
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
   const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([])
@@ -480,6 +189,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [adjustmentSaving, setAdjustmentSaving] = useState(false)
   const [adjustmentError, setAdjustmentError] = useState("")
   const [reviewingAdjustmentId, setReviewingAdjustmentId] = useState<string | null>(null)
+
+  // Lifecycle state
   const [archiveReason, setArchiveReason] = useState("")
   const [archiveReviewNotes, setArchiveReviewNotes] = useState<Record<string, string>>({})
   const [archiveActionLoading, setArchiveActionLoading] = useState<string | null>(null)
@@ -515,6 +226,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroCreateDecisionResults, setXeroCreateDecisionResults] = useState<XeroSearchResult[]>([])
   const [xeroDecisionContactId, setXeroDecisionContactId] = useState("")
   const [xeroDecisionError, setXeroDecisionError] = useState("")
+
+  // Delete state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleteReason, setDeleteReason] = useState("")
   const [deleteError, setDeleteError] = useState("")
@@ -526,7 +239,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [deleteReviewNote, setDeleteReviewNote] = useState("")
   const [deleteReviewError, setDeleteReviewError] = useState("")
   const [deleteReviewSubmitting, setDeleteReviewSubmitting] = useState(false)
-  const [openMemberSections, setOpenMemberSections] = useState<CollapsibleMemberSection[]>([])
+
+  const { openSections, onValueChange: onSectionsChange } = useCollapsibleMemberSections()
+
   const isAdultMember = member?.ageTier === "ADULT"
   const memberIsArchived = Boolean(member?.archivedAt)
   const memberLifecycleLocked = Boolean(member?.cancelledAt || member?.archivedAt)
@@ -539,54 +254,59 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     ? `/admin/members/${id}?${currentMemberQuery}`
     : `/admin/members/${id}`
 
-const handleMemberSectionChange = (value: string[]) => {
-    const nextSections = value.filter(isCollapsibleMemberSection)
-    setOpenMemberSections(nextSections)
-
-    try {
-      collapsibleMemberSections.forEach((section) => {
-        window.localStorage.setItem(
-          memberSectionStorageKeys[section],
-          String(nextSections.includes(section))
-        )
-      })
-    } catch {
-      // Ignore storage failures; the accordion still works for this visit.
-    }
-  }
-
   const fetchMember = async () => {
     try {
       const res = await fetch(`/api/admin/members/${id}`)
-      if (!res.ok) { setPageError(res.status === 404 ? "Member not found" : "Failed to load member"); setLoading(false); return }
+      if (!res.ok) {
+        setPageError(res.status === 404 ? "Member not found" : "Failed to load member")
+        setLoading(false)
+        return
+      }
       setMember(await res.json())
       setPageError("")
-    } catch { setPageError("Failed to load member") }
-    finally { setLoading(false) }
+    } catch {
+      setPageError("Failed to load member")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const fetchCredits = async () => {
-    setCreditLoading(true); setCreditError("")
+    setCreditLoading(true)
+    setCreditError("")
     try {
       const res = await fetch(`/api/admin/members/${id}/credits`)
-      if (!res.ok) { setCreditError("Failed to load credits"); return }
+      if (!res.ok) {
+        setCreditError("Failed to load credits")
+        return
+      }
       const data = await res.json()
       setCreditBalance(data.balanceCents)
       setCreditHistory(data.history)
       setPendingAdjustmentRequests(data.pendingRequests ?? [])
-    } catch { setCreditError("Failed to load credits") }
-    finally { setCreditLoading(false) }
+    } catch {
+      setCreditError("Failed to load credits")
+    } finally {
+      setCreditLoading(false)
+    }
   }
 
   const handleAdjustmentSubmit = async () => {
     const cents = Math.round(parseFloat(adjustmentAmount) * 100)
-    if (isNaN(cents) || cents === 0) { setAdjustmentError("Enter a non-zero amount"); return }
-    if (!adjustmentDescription.trim()) { setAdjustmentError("Description is required"); return }
+    if (isNaN(cents) || cents === 0) {
+      setAdjustmentError("Enter a non-zero amount")
+      return
+    }
+    if (!adjustmentDescription.trim()) {
+      setAdjustmentError("Description is required")
+      return
+    }
     const idempotencyKey = adjustmentIdempotencyKey ?? crypto.randomUUID()
     if (!adjustmentIdempotencyKey) {
       setAdjustmentIdempotencyKey(idempotencyKey)
     }
-    setAdjustmentSaving(true); setAdjustmentError("")
+    setAdjustmentSaving(true)
+    setAdjustmentError("")
     try {
       const res = await fetch(`/api/admin/members/${id}/credits`, {
         method: "POST",
@@ -598,7 +318,9 @@ const handleMemberSectionChange = (value: string[]) => {
         }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) { throw new Error(data.error || "Failed to save adjustment") }
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save adjustment")
+      }
       setShowAdjustmentForm(false)
       setAdjustmentAmount("")
       setAdjustmentDescription("")
@@ -606,22 +328,20 @@ const handleMemberSectionChange = (value: string[]) => {
       setSuccess(data.message || "Credit adjustment submitted for approval")
       setTimeout(() => setSuccess(""), 3000)
       await fetchCredits()
-    } catch (err) { setAdjustmentError(err instanceof Error ? err.message : "Failed to save adjustment") }
-    finally { setAdjustmentSaving(false) }
+    } catch (err) {
+      setAdjustmentError(err instanceof Error ? err.message : "Failed to save adjustment")
+    } finally {
+      setAdjustmentSaving(false)
+    }
   }
 
   const toggleAdjustmentForm = () => {
     setAdjustmentError("")
-    setAdjustmentIdempotencyKey(
-      showAdjustmentForm ? null : crypto.randomUUID()
-    )
+    setAdjustmentIdempotencyKey(showAdjustmentForm ? null : crypto.randomUUID())
     setShowAdjustmentForm((current) => !current)
   }
 
-  const handleReviewAdjustmentRequest = async (
-    requestId: string,
-    decision: "APPROVE" | "REJECT"
-  ) => {
+  const handleReviewAdjustmentRequest = async (requestId: string, decision: "APPROVE" | "REJECT") => {
     setReviewingAdjustmentId(requestId)
     setAdjustmentError("")
     try {
@@ -640,9 +360,7 @@ const handleMemberSectionChange = (value: string[]) => {
       setTimeout(() => setSuccess(""), 3000)
       await fetchCredits()
     } catch (err) {
-      setAdjustmentError(
-        err instanceof Error ? err.message : "Failed to review adjustment"
-      )
+      setAdjustmentError(err instanceof Error ? err.message : "Failed to review adjustment")
     } finally {
       setReviewingAdjustmentId(null)
     }
@@ -680,10 +398,7 @@ const handleMemberSectionChange = (value: string[]) => {
     }
   }
 
-  const handleReviewArchiveRequest = async (
-    requestId: string,
-    action: "approve" | "reject"
-  ) => {
+  const handleReviewArchiveRequest = async (requestId: string, action: "approve" | "reject") => {
     setArchiveActionLoading(`${action}:${requestId}`)
     setArchiveError("")
     try {
@@ -748,22 +463,10 @@ const handleMemberSectionChange = (value: string[]) => {
     }
   }
 
-  useEffect(() => { fetchMember(); fetchCredits() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
-    try {
-      setOpenMemberSections(
-        collapsibleMemberSections.filter((section) => {
-          const storedValue = window.localStorage.getItem(
-            memberSectionStorageKeys[section]
-          )
-          return storedValue === "true" || storedValue === "open"
-        })
-      )
-    } catch {
-      // Default to collapsed sections when localStorage is unavailable.
-    }
-  }, [])
+    fetchMember()
+    fetchCredits()
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setHasHandledInitialEditParam(false)
@@ -1005,12 +708,16 @@ const handleMemberSectionChange = (value: string[]) => {
       postalPostalCode: member.postalPostalCode || "",
       postalCountry: withDefaultNzCountry(member.postalCountry),
     })
-    setSelectedInheritEmailSource(member.inheritEmailFrom ? {
-      id: member.inheritEmailFrom.id,
-      firstName: member.inheritEmailFrom.firstName,
-      lastName: member.inheritEmailFrom.lastName,
-      email: member.inheritEmailFrom.email,
-    } : null)
+    setSelectedInheritEmailSource(
+      member.inheritEmailFrom
+        ? {
+            id: member.inheritEmailFrom.id,
+            firstName: member.inheritEmailFrom.firstName,
+            lastName: member.inheritEmailFrom.lastName,
+            email: member.inheritEmailFrom.email,
+          }
+        : null
+    )
     setInheritEmailSearch("")
     setInheritEmailSearchResults([])
     setInheritEmailSearchError("")
@@ -1020,31 +727,28 @@ const handleMemberSectionChange = (value: string[]) => {
     setXeroSearchResults([])
     setXeroCreateEntranceFeeInvoice(false)
     setXeroError("")
-    setEditPostalSameAsPhysical(memberUsesSamePostalAddress({
-      streetAddressLine1: member.streetAddressLine1,
-      streetAddressLine2: member.streetAddressLine2,
-      streetCity: member.streetCity,
-      streetRegion: member.streetRegion,
-      streetPostalCode: member.streetPostalCode,
-      streetCountry: member.streetCountry,
-      postalAddressLine1: member.postalAddressLine1,
-      postalAddressLine2: member.postalAddressLine2,
-      postalCity: member.postalCity,
-      postalRegion: member.postalRegion,
-      postalPostalCode: member.postalPostalCode,
-      postalCountry: member.postalCountry,
-    } as Pick<MemberDetail, keyof MemberAddressValues>))
+    setEditPostalSameAsPhysical(
+      memberUsesSamePostalAddress({
+        streetAddressLine1: member.streetAddressLine1,
+        streetAddressLine2: member.streetAddressLine2,
+        streetCity: member.streetCity,
+        streetRegion: member.streetRegion,
+        streetPostalCode: member.streetPostalCode,
+        streetCountry: member.streetCountry,
+        postalAddressLine1: member.postalAddressLine1,
+        postalAddressLine2: member.postalAddressLine2,
+        postalCity: member.postalCity,
+        postalRegion: member.postalRegion,
+        postalPostalCode: member.postalPostalCode,
+        postalCountry: member.postalCountry,
+      })
+    )
     setFormError("")
     setEditOpen(true)
   }, [member, setXeroCreateEntranceFeeInvoice])
 
   useEffect(() => {
-    if (
-      hasHandledInitialEditParam ||
-      !shouldAutoOpenEdit ||
-      loading ||
-      !member
-    ) {
+    if (hasHandledInitialEditParam || !shouldAutoOpenEdit || loading || !member) {
       return
     }
 
@@ -1078,20 +782,22 @@ const handleMemberSectionChange = (value: string[]) => {
       postalPostalCode: member.postalPostalCode || "",
       postalCountry: withDefaultNzCountry(member.postalCountry),
     })
-    setDependentPostalSameAsPhysical(memberUsesSamePostalAddress({
-      streetAddressLine1: member.streetAddressLine1,
-      streetAddressLine2: member.streetAddressLine2,
-      streetCity: member.streetCity,
-      streetRegion: member.streetRegion,
-      streetPostalCode: member.streetPostalCode,
-      streetCountry: member.streetCountry,
-      postalAddressLine1: member.postalAddressLine1,
-      postalAddressLine2: member.postalAddressLine2,
-      postalCity: member.postalCity,
-      postalRegion: member.postalRegion,
-      postalPostalCode: member.postalPostalCode,
-      postalCountry: member.postalCountry,
-    } as Pick<MemberDetail, keyof MemberAddressValues>))
+    setDependentPostalSameAsPhysical(
+      memberUsesSamePostalAddress({
+        streetAddressLine1: member.streetAddressLine1,
+        streetAddressLine2: member.streetAddressLine2,
+        streetCity: member.streetCity,
+        streetRegion: member.streetRegion,
+        streetPostalCode: member.streetPostalCode,
+        streetCountry: member.streetCountry,
+        postalAddressLine1: member.postalAddressLine1,
+        postalAddressLine2: member.postalAddressLine2,
+        postalCity: member.postalCity,
+        postalRegion: member.postalRegion,
+        postalPostalCode: member.postalPostalCode,
+        postalCountry: member.postalCountry,
+      })
+    )
     setDependentFormError("")
     setDependentMode("create")
     setLinkDependentSearch("")
@@ -1106,7 +812,8 @@ const handleMemberSectionChange = (value: string[]) => {
   }
 
   const handleSave = async () => {
-    setSaving(true); setFormError("")
+    setSaving(true)
+    setFormError("")
     try {
       const res = await fetch(`/api/admin/members/${id}`, {
         method: "PUT",
@@ -1142,14 +849,20 @@ const handleMemberSectionChange = (value: string[]) => {
           postalSameAsPhysical: editPostalSameAsPhysical,
         }),
       })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Save failed") }
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Save failed")
+      }
       setEditOpen(false)
       setSuccess("Member updated successfully")
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
       await fetchMember()
-    } catch (err) { setFormError(err instanceof Error ? err.message : "Save failed") }
-    finally { setSaving(false) }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Save failed")
+    } finally {
+      setSaving(false)
+    }
   }
 
   const updateEditAddressFields = (patch: Partial<MemberAddressValues>) => {
@@ -1259,7 +972,7 @@ const handleMemberSectionChange = (value: string[]) => {
     setLinkDependentFamilyGroupIds((current) =>
       checked
         ? Array.from(new Set([...current, familyGroupId]))
-        : current.filter((id) => id !== familyGroupId)
+        : current.filter((idValue) => idValue !== familyGroupId)
     )
   }
 
@@ -1307,7 +1020,7 @@ const handleMemberSectionChange = (value: string[]) => {
     setParentLinkSearching(false)
     setSelectedLinkParent(null)
     setParentLinkInheritEmail(defaultSideEffects)
-    setParentLinkNotificationParentId(defaultSideEffects ? "" : "")
+    setParentLinkNotificationParentId("")
     setParentLinkDisableLogin(defaultSideEffects)
     setParentLinkFamilyGroupIds([])
     setParentLinkError("")
@@ -1332,7 +1045,7 @@ const handleMemberSectionChange = (value: string[]) => {
     const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier)
     setSelectedLinkParent(null)
     setParentLinkInheritEmail(defaultSideEffects)
-    setParentLinkNotificationParentId(defaultSideEffects ? "" : "")
+    setParentLinkNotificationParentId("")
     setParentLinkDisableLogin(defaultSideEffects)
     setParentLinkFamilyGroupIds([])
     setParentLinkSearch("")
@@ -1344,7 +1057,7 @@ const handleMemberSectionChange = (value: string[]) => {
     setParentLinkFamilyGroupIds((current) =>
       checked
         ? Array.from(new Set([...current, familyGroupId]))
-        : current.filter((id) => id !== familyGroupId)
+        : current.filter((idValue) => idValue !== familyGroupId)
     )
   }
 
@@ -1430,12 +1143,14 @@ const handleMemberSectionChange = (value: string[]) => {
     } catch (err) {
       setXeroSearchResults([])
       setXeroError(err instanceof Error ? err.message : "Search failed")
+    } finally {
+      setXeroSearching(false)
     }
-    finally { setXeroSearching(false) }
   }
 
   const handleXeroLink = async (xeroContactId: string) => {
-    setXeroLinking(true); setXeroError("")
+    setXeroLinking(true)
+    setXeroError("")
     try {
       await linkMemberXeroContact(id, xeroContactId)
       setXeroChoice("")
@@ -1447,12 +1162,16 @@ const handleMemberSectionChange = (value: string[]) => {
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
       await fetchMember()
-    } catch (err) { setXeroError(err instanceof Error ? err.message : "Link failed") }
-    finally { setXeroLinking(false) }
+    } catch (err) {
+      setXeroError(err instanceof Error ? err.message : "Link failed")
+    } finally {
+      setXeroLinking(false)
+    }
   }
 
   const handleXeroUnlink = async () => {
-    setXeroUnlinking(true); setXeroError("")
+    setXeroUnlinking(true)
+    setXeroError("")
     try {
       await unlinkMemberXeroContact(id)
       setXeroChoice("")
@@ -1464,17 +1183,14 @@ const handleMemberSectionChange = (value: string[]) => {
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
       await fetchMember()
-    } catch (err) { setXeroError(err instanceof Error ? err.message : "Unlink failed") }
-    finally { setXeroUnlinking(false) }
+    } catch (err) {
+      setXeroError(err instanceof Error ? err.message : "Unlink failed")
+    } finally {
+      setXeroUnlinking(false)
+    }
   }
 
-  const requestXeroPush = (options: Parameters<typeof pushMemberToXero>[1]) =>
-    pushMemberToXero(id, options)
-
-  const applyXeroPushSuccess = async (
-    data: XeroPushResponse,
-    createEntranceFeeInvoice: boolean
-  ) => {
+  const applyXeroPushSuccess = async (data: XeroPushResponse, createEntranceFeeInvoice: boolean) => {
     setXeroChoice("")
     setSelectedXeroContactId("")
     setXeroSearchQuery("")
@@ -1516,7 +1232,7 @@ const handleMemberSectionChange = (value: string[]) => {
     }
     try {
       const entranceFeeInvoiceOptions = buildXeroEntranceFeeInvoiceOptions()
-      const result = await requestXeroPush({
+      const result = await pushMemberToXero(id, {
         ...entranceFeeInvoiceOptions,
         forceCreate,
       })
@@ -1618,9 +1334,7 @@ const handleMemberSectionChange = (value: string[]) => {
       setDeleteReviewDialog(null)
       setDeleteReviewNote("")
       setSuccess(
-        deleteReviewDialog.action === "approve"
-          ? "Member deleted and snapshot retained"
-          : "Delete request rejected",
+        deleteReviewDialog.action === "approve" ? "Member deleted and snapshot retained" : "Delete request rejected"
       )
       setTimeout(() => setSuccess(""), 3000)
       if (deleteReviewDialog.action === "approve") {
@@ -1638,815 +1352,192 @@ const handleMemberSectionChange = (value: string[]) => {
 
   const isSelf = session?.user?.id === id
 
-  if (loading) return <div className="py-12 text-center"><p className="text-sm text-slate-500">Loading member details...</p></div>
-  if (pageError || !member) return (
-    <div className="space-y-4">
-      <Button variant="outline" onClick={() => router.push(backHref)}><ArrowLeft className="h-4 w-4 mr-2" />{backLabel}</Button>
-      <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{pageError || "Member not found"}</div>
-    </div>
-  )
+  if (loading) {
+    return (
+      <div className="py-12 text-center">
+        <p className="text-sm text-slate-500">Loading member details...</p>
+      </div>
+    )
+  }
+  if (pageError || !member) {
+    return (
+      <div className="space-y-4">
+        <Button variant="outline" onClick={() => router.push(backHref)}>
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          {backLabel}
+        </Button>
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+          {pageError || "Member not found"}
+        </div>
+      </div>
+    )
+  }
 
-  const fmt = formatCents
-  const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })
-  const memberExactAge = member.dateOfBirth ? formatAgeYearsMonths(member.dateOfBirth) : null
   const lifecycleRequests = member.lifecycleActionRequests ?? []
   const deleteRequests = lifecycleRequests.filter((request) => request.action === "DELETE")
   const pendingDeleteRequest = deleteRequests.find((request) => request.status === "REQUESTED")
   const deleteBlockers = member.deleteEligibility.blockers
   const approvalBlockers = deleteBlockers.filter((blocker) => blocker.code !== "pending_delete_request")
   const canReviewPendingDeleteRequest =
-    Boolean(pendingDeleteRequest) &&
-    pendingDeleteRequest?.requestedBy?.id !== session?.user?.id
-  const deleteStatusLabel: Record<MemberLifecycleActionRequest["status"], string> = {
-    REQUESTED: "Pending review",
-    APPROVED: "Approved",
-    REJECTED: "Rejected",
-  }
+    Boolean(pendingDeleteRequest) && pendingDeleteRequest?.requestedBy?.id !== session?.user?.id
   const archiveRequests = lifecycleRequests.filter((request) => request.action === "ARCHIVE")
   const pendingArchiveRequest = archiveRequests.find((request) => request.status === "REQUESTED") ?? null
   const reviewedArchiveRequests = archiveRequests.filter((request) => request.status !== "REQUESTED").slice(0, 3)
   const isArchiveRequester = pendingArchiveRequest?.requestedBy?.id === session?.user?.id
-  const canRequestArchive = Boolean(member.cancelledAt && !member.archivedAt && !pendingArchiveRequest)
+  const canRequestArchive = Boolean(
+    member.cancelledAt && !member.archivedAt && !pendingArchiveRequest
+  )
   const openCancellationRequest = member.openCancellationRequest
   const canRequestCancellation = Boolean(
     member.role === "MEMBER" &&
       member.active &&
       !member.cancelledAt &&
       !member.archivedAt &&
-      !openCancellationRequest,
+      !openCancellationRequest
   )
+
+  const openLinkXero = () => {
+    setXeroSearchOpen(true)
+    setXeroSearchQuery("")
+    setXeroSearchResults([])
+    setXeroError("")
+  }
+
+  const openCreateXero = () => {
+    resetXeroEntranceFeeDecision()
+    setXeroCreateOpen(true)
+    setXeroError("")
+  }
+
+  // Suppress unused-variable warnings for state that is still wired into other
+  // computations via the closure (inherit flags participate in the inheritEmail
+  // request body construction even though they're read inline above).
+  void linkDependentInheritEmail
+  void parentLinkInheritEmail
 
   return (
     <div className="space-y-6">
-      <div>
-        <Button variant="ghost" size="sm" className="mb-2 -ml-2" onClick={() => router.push(backHref)}><ArrowLeft className="h-4 w-4 mr-1" /> {backLabel}</Button>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{member.firstName} {member.lastName}</h1>
-            <p className="mt-1 text-sm text-slate-500">{member.email}</p>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <Badge variant={member.role === "ADMIN" ? "default" : "secondary"} className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}>{member.role}</Badge>
-              <Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge>
-              <Badge variant={member.active ? "default" : "destructive"} className={member.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}>{member.active ? "Active" : "Inactive"}</Badge>
-              {member.cancelledAt && <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">Cancelled</Badge>}
-              {member.archivedAt && <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">Archived</Badge>}
-              {member.forcePasswordChange && <Badge variant="destructive" className="text-xs">PW Reset Required</Badge>}
-              {pendingDeleteRequest && <Badge variant="destructive" className="text-xs">Delete Pending</Badge>}
-            </div>
-          </div>
-          <div className="flex gap-2 shrink-0 flex-wrap">
-            {isAdultMember && !memberIsArchived && (
-              <Button variant="outline" size="sm" onClick={openDependentDialog}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Dependent
-              </Button>
-            )}
-            {member.xeroContactId ? (
-              <>
-                <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer">
-                  <Button variant="outline" size="sm"><ExternalLink className="h-4 w-4 mr-1" />View in Xero</Button>
-                </a>
-                <Button variant="outline" size="sm" onClick={() => { setXeroSearchOpen(true); setXeroSearchQuery(""); setXeroSearchResults([]); setXeroError(""); }}>
-                  <Link2 className="h-4 w-4 mr-1" />Change Link
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleXeroUnlink} disabled={xeroUnlinking}>
-                  {xeroUnlinking ? "Unlinking..." : "Unlink"}
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button variant="outline" size="sm" onClick={() => { setXeroSearchOpen(true); setXeroSearchQuery(""); setXeroSearchResults([]); setXeroError(""); }}><Link2 className="h-4 w-4 mr-1" />Link to Xero</Button>
-                <Button variant="outline" size="sm" onClick={() => { resetXeroEntranceFeeDecision(); setXeroCreateOpen(true); setXeroError(""); }} disabled={xeroPushing}><Plus className="h-4 w-4 mr-1" />{xeroPushing ? "Creating..." : "Create in Xero"}</Button>
-              </>
-            )}
-            <Button size="sm" onClick={openEditDialog}><Pencil className="h-4 w-4 mr-1" />Edit Member</Button>
-          </div>
-        </div>
-      </div>
+      <MemberDetailHeader
+        member={member}
+        backHref={backHref}
+        backLabel={backLabel}
+        isAdultMember={isAdultMember}
+        memberIsArchived={memberIsArchived}
+        pendingDeleteRequest={pendingDeleteRequest}
+        xeroPushing={xeroPushing}
+        xeroUnlinking={xeroUnlinking}
+        onOpenDependentDialog={openDependentDialog}
+        onOpenLinkXero={openLinkXero}
+        onOpenCreateXero={openCreateXero}
+        onUnlinkXero={handleXeroUnlink}
+        onOpenEditDialog={openEditDialog}
+      />
 
-      {success && <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>}
-      {relationshipError && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{relationshipError}</div>}
+      {success && (
+        <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>
+      )}
+      {relationshipError && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{relationshipError}</div>
+      )}
       {xeroError && !xeroSearchOpen && !editOpen && !xeroCreateOpen && !xeroCreateDecisionOpen && (
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{xeroError}</div>
       )}
 
-      <Card className="border-red-200">
-        <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle className="text-base font-medium">Member Deletion</CardTitle>
-            <p className="mt-1 text-sm text-slate-500">
-              Hard deletion is only available for records added in error with no meaningful history.
-            </p>
-          </div>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              setDeleteDialogOpen(true)
-              setDeleteReason("")
-              setDeleteError("")
-            }}
-            disabled={!member.deleteEligibility.eligible || Boolean(pendingDeleteRequest)}
-          >
-            <Trash2 className="h-4 w-4 mr-1" />
-            Request Delete
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {pendingDeleteRequest ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              <div className="font-medium">Delete request pending second-admin review</div>
-              <div className="mt-1">
-                Requested {fmtDate(pendingDeleteRequest.requestedAt)} by {pendingDeleteRequest.requestedBy?.name ?? "Unknown admin"}
-              </div>
-              <div className="mt-2 text-amber-800">{pendingDeleteRequest.reason}</div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => {
-                    setDeleteReviewDialog({ request: pendingDeleteRequest, action: "approve" })
-                    setDeleteReviewNote("")
-                    setDeleteReviewError("")
-                  }}
-                  disabled={!canReviewPendingDeleteRequest || approvalBlockers.length > 0}
-                >
-                  Approve Delete
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setDeleteReviewDialog({ request: pendingDeleteRequest, action: "reject" })
-                    setDeleteReviewNote("")
-                    setDeleteReviewError("")
-                  }}
-                  disabled={!canReviewPendingDeleteRequest}
-                >
-                  Reject
-                </Button>
-                {!canReviewPendingDeleteRequest && (
-                  <span className="self-center text-xs text-amber-800">
-                    Requester cannot approve or reject their own delete request.
-                  </span>
-                )}
-              </div>
-            </div>
-          ) : member.deleteEligibility.eligible ? (
-            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-              This member has no delete blockers. A reason and second-admin approval are still required.
-            </div>
-          ) : (
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-              <div className="font-medium text-slate-900">Deletion is blocked</div>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {deleteBlockers.map((blocker) => (
-                  <li key={blocker.code}>
-                    {blocker.label}
-                    {typeof blocker.count === "number" ? ` (${blocker.count})` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+      <MemberDeletionCard
+        deleteEligibility={member.deleteEligibility}
+        deleteRequests={deleteRequests}
+        pendingDeleteRequest={pendingDeleteRequest}
+        approvalBlockerCount={approvalBlockers.length}
+        canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
+        onOpenRequestDialog={() => {
+          setDeleteDialogOpen(true)
+          setDeleteReason("")
+          setDeleteError("")
+        }}
+        onOpenReviewDialog={(request, action) => {
+          setDeleteReviewDialog({ request, action })
+          setDeleteReviewNote("")
+          setDeleteReviewError("")
+        }}
+      />
 
-          {deleteRequests.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recent delete requests</div>
-              <div className="divide-y divide-slate-200 rounded-md border border-slate-200">
-                {deleteRequests.map((request) => (
-                  <div key={request.id} className="p-3 text-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="font-medium text-slate-900">{deleteStatusLabel[request.status]}</div>
-                      <div className="text-xs text-slate-500">{fmtDate(request.requestedAt)}</div>
-                    </div>
-                    <div className="mt-1 text-slate-600">{request.reason}</div>
-                    {request.reviewNote && (
-                      <div className="mt-1 text-xs text-slate-500">Review note: {request.reviewNote}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <MemberStatsCards member={member} />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><User className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Age Tier</p><p className="text-lg font-semibold">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</p>{member.dateOfBirth && <p className="text-xs text-slate-400">DOB: {fmtDate(member.dateOfBirth)}{memberExactAge ? ` (${memberExactAge})` : ""}</p>}</div></div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><Calendar className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Total Bookings</p><p className="text-lg font-semibold">{member.stats.totalBookings}</p></div></div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><CreditCard className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Total Spend</p><p className="text-lg font-semibold">{fmt(member.stats.totalSpendCents)}</p></div></div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><Clock className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Last Stay</p><p className="text-lg font-semibold">{member.stats.lastStay ? fmtDate(member.stats.lastStay) : "Never"}</p></div></div></CardContent></Card>
-      </div>
+      <MemberInfoCard member={member} onEditFamilyGroup={setFamilyGroupEditorId} />
 
-      <Card><CardHeader><CardTitle className="text-base font-medium">Member Information</CardTitle></CardHeader><CardContent><dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-        <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phoneNumber ? [member.phoneCountryCode ? `+${member.phoneCountryCode}` : null, member.phoneAreaCode, member.phoneNumber].filter(Boolean).join(" ") : "Not provided"}</dd></div>
-        <div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.joinedDate || member.createdAt)}{member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}</dd></div>
-        <div><dt className="text-slate-500">Finance Access</dt><dd className="font-medium"><Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge></dd></div>
-        <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{(() => { const badge = getLoginBadge(member.canLogin); return <Badge variant="secondary" className={badge.className}>{badge.label}</Badge> })()}</dd></div>
-        <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
-        <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Button key={fg.id} type="button" variant="outline" size="sm" className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800" onClick={() => setFamilyGroupEditorId(fg.id)}>{fg.name || "Unnamed"}</Button>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
-        <div>
-          <dt className="text-slate-500">Xero Contact</dt>
-          <dd className="font-medium space-y-2">
-            <div>
-              {member.xeroContactId ? (
-                <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">
-                  {member.xeroContactId}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              ) : (
-                "Not linked"
-              )}
-            </div>
-            {!member.xeroContactId && (
-              <p className="text-xs text-amber-700">
-                Membership refresh skips unlinked members. Link or create a Xero
-                contact before expecting subscription status to update
-                automatically.
-              </p>
-            )}
-            {member.xeroContactGroups.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {member.xeroContactGroups.map((group) => (
-                  <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                    {group.name}
-                  </Badge>
-                ))}
-              </div>
-            )}
-            {member.xeroContactId && !member.xeroContactGroupsLoaded && (
-              <p className="text-xs text-slate-500">
-                Cached contact groups have not been refreshed yet.
-              </p>
-            )}
-          </dd>
-        </div>
-      </dl></CardContent></Card>
+      <MemberLifecycleCard
+        member={member}
+        pendingArchiveRequest={pendingArchiveRequest}
+        reviewedArchiveRequests={reviewedArchiveRequests}
+        isArchiveRequester={isArchiveRequester}
+        canRequestArchive={canRequestArchive}
+        canRequestCancellation={canRequestCancellation}
+        openCancellationRequest={openCancellationRequest}
+        archiveError={archiveError}
+        archiveReason={archiveReason}
+        archiveReviewNotes={archiveReviewNotes}
+        archiveActionLoading={archiveActionLoading}
+        cancellationError={cancellationError}
+        cancellationReason={cancellationReason}
+        cancellationSubmitting={cancellationSubmitting}
+        onChangeArchiveReason={setArchiveReason}
+        onChangeArchiveReviewNote={(requestId, value) =>
+          setArchiveReviewNotes((current) => ({ ...current, [requestId]: value }))
+        }
+        onChangeCancellationReason={setCancellationReason}
+        onSubmitArchive={handleSubmitArchiveRequest}
+        onSubmitCancellation={handleSubmitCancellationRequest}
+        onReviewArchive={handleReviewArchiveRequest}
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base font-medium">
-            <Archive className="h-4 w-4 text-slate-500" />
-            Lifecycle
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {archiveError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{archiveError}</div>}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-md border border-slate-200 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Cancellation</p>
-              {member.cancelledAt ? (
-                <div className="mt-2 space-y-1 text-sm">
-                  <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">Cancelled {fmtDate(member.cancelledAt)}</Badge>
-                  {member.cancelledReason && <p className="text-slate-600">{member.cancelledReason}</p>}
-                </div>
-              ) : openCancellationRequest ? (
-                <p className="mt-2 text-sm text-amber-700">Cancellation request pending review.</p>
-              ) : (
-                <p className="mt-2 text-sm text-slate-600">This member has not been cancelled.</p>
-              )}
-            </div>
-            <div className="rounded-md border border-slate-200 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500">Archive</p>
-              {member.archivedAt ? (
-                <div className="mt-2 space-y-1 text-sm">
-                  <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">Archived {fmtDate(member.archivedAt)}</Badge>
-                  {member.archivedReason && <p className="text-slate-600">{member.archivedReason}</p>}
-                </div>
-              ) : pendingArchiveRequest ? (
-                <p className="mt-2 text-sm text-amber-700">Archive request pending review.</p>
-              ) : (
-                <p className="mt-2 text-sm text-slate-600">
-                  {member.cancelledAt ? "Ready to request archive." : "Archive is available after cancellation."}
-                </p>
-              )}
-            </div>
-          </div>
+      <MemberParentLinksCard
+        member={member}
+        memberIsArchived={memberIsArchived}
+        currentMemberPath={currentMemberPath}
+        unlinkingDependentId={unlinkingDependentId}
+        onOpenParentLinkDialog={openParentLinkDialog}
+        onUnlinkParent={handleUnlinkDependent}
+      />
 
-          {cancellationError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{cancellationError}</div>}
+      <MemberPromoCodesCard promoCodes={member.promoCodes} />
 
-          {openCancellationRequest && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-amber-950">Pending cancellation request</p>
-                {openCancellationRequest.reason && (
-                  <p className="text-sm text-amber-900">{openCancellationRequest.reason}</p>
-                )}
-                <p className="text-xs text-amber-800">
-                  Requested by {openCancellationRequest.requestedBy?.name ?? "Unknown"} on {fmtDate(openCancellationRequest.submittedAt)} ({openCancellationRequest.participantStatus.replace(/_/g, " ").toLowerCase()})
-                </p>
-                <p className="text-xs text-amber-800">
-                  Review in the <a href="/admin/membership-cancellations" className="underline">cancellation review queue</a>.
-                </p>
-              </div>
-            </div>
-          )}
+      <MemberDependentsCard
+        member={member}
+        isAdultMember={isAdultMember}
+        memberIsArchived={memberIsArchived}
+        currentMemberPath={currentMemberPath}
+        unlinkingDependentId={unlinkingDependentId}
+        onOpenDependentDialog={openDependentDialog}
+        onUnlinkDependent={handleUnlinkDependent}
+      />
 
-          {canRequestCancellation && (
-            <div className="rounded-md border border-slate-200 p-4">
-              <div className="space-y-2">
-                <Label htmlFor="cancellation-reason">Cancellation reason *</Label>
-                <textarea
-                  id="cancellation-reason"
-                  value={cancellationReason}
-                  onChange={(event) => setCancellationReason(event.target.value)}
-                  rows={3}
-                  maxLength={1000}
-                  className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-                <p className="text-xs text-slate-500">Admin-initiated cancellation requests go directly to the review queue without requiring the member to confirm by email.</p>
-              </div>
-              <Button className="mt-3" size="sm" onClick={handleSubmitCancellationRequest} disabled={cancellationSubmitting}>
-                {cancellationSubmitting ? "Submitting..." : "Request Cancellation"}
-              </Button>
-            </div>
-          )}
-
-          {pendingArchiveRequest && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-amber-950">Pending archive request</p>
-                  <p className="text-sm text-amber-900">{pendingArchiveRequest.reason}</p>
-                  <p className="text-xs text-amber-800">
-                    Requested by {pendingArchiveRequest.requestedBy?.name ?? "Unknown admin"} on {fmtDate(pendingArchiveRequest.requestedAt)}
-                  </p>
-                </div>
-                {isArchiveRequester ? (
-                  <p className="text-xs text-amber-800">Needs another admin to approve or reject.</p>
-                ) : (
-                  <div className="w-full space-y-2 sm:max-w-sm">
-                    <Label htmlFor={`archive-review-note-${pendingArchiveRequest.id}`}>Optional review note</Label>
-                    <textarea
-                      id={`archive-review-note-${pendingArchiveRequest.id}`}
-                      value={archiveReviewNotes[pendingArchiveRequest.id] ?? ""}
-                      onChange={(event) => setArchiveReviewNotes((current) => ({ ...current, [pendingArchiveRequest.id]: event.target.value }))}
-                      rows={2}
-                      maxLength={1000}
-                      className="min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-                    />
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={Boolean(archiveActionLoading)}
-                        onClick={() => handleReviewArchiveRequest(pendingArchiveRequest.id, "reject")}
-                      >
-                        {archiveActionLoading === `reject:${pendingArchiveRequest.id}` ? "Rejecting..." : "Reject"}
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={Boolean(archiveActionLoading)}
-                        onClick={() => handleReviewArchiveRequest(pendingArchiveRequest.id, "approve")}
-                      >
-                        {archiveActionLoading === `approve:${pendingArchiveRequest.id}` ? "Archiving..." : "Approve Archive"}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {canRequestArchive && (
-            <div className="rounded-md border border-slate-200 p-4">
-              <div className="space-y-2">
-                <Label htmlFor="archive-reason">Archive reason *</Label>
-                <textarea
-                  id="archive-reason"
-                  value={archiveReason}
-                  onChange={(event) => setArchiveReason(event.target.value)}
-                  rows={3}
-                  maxLength={1000}
-                  className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-                <p className="text-xs text-slate-500">A different admin must approve this request before the member is archived.</p>
-              </div>
-              <Button className="mt-3" size="sm" onClick={handleSubmitArchiveRequest} disabled={archiveActionLoading === "request"}>
-                <Archive className="h-4 w-4 mr-1" />
-                {archiveActionLoading === "request" ? "Submitting..." : "Request Archive"}
-              </Button>
-            </div>
-          )}
-
-          {reviewedArchiveRequests.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-slate-900">Recent archive decisions</p>
-              <div className="space-y-2">
-                {reviewedArchiveRequests.map((request) => (
-                  <div key={request.id} className="rounded-md border border-slate-200 p-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary" className={request.status === "APPROVED" ? "bg-slate-200 text-slate-800 border-slate-300" : "bg-red-50 text-red-700 border-red-200"}>
-                        {request.status === "APPROVED" ? "Approved" : "Rejected"}
-                      </Badge>
-                      <span className="text-slate-600">
-                        {request.reviewedAt ? fmtDate(request.reviewedAt) : "Not dated"} by {request.reviewedBy?.name ?? "Unknown admin"}
-                      </span>
-                    </div>
-                    {request.reviewNote && <p className="mt-1 text-slate-600">{request.reviewNote}</p>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-base font-medium">Parent Links</CardTitle>
-          {memberIsArchived ? (
-            <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">
-              Archived
-            </Badge>
-          ) : (member.parentLinks?.length ?? 0) < 2 ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={openParentLinkDialog}
-              disabled={member.dependents.length > 0}
-              title={member.dependents.length > 0 ? "Members with dependants cannot be linked under another parent." : undefined}
-            >
-              <Link2 className="h-4 w-4 mr-1" />
-              {(member.parentLinks?.length ?? 0) === 0 ? "Add Parent" : "Add Second Parent"}
-            </Button>
-          ) : (
-            <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
-              Two parents linked
-            </Badge>
-          )}
-        </CardHeader>
-        <CardContent>
-          {(member.parentLinks?.length ?? 0) > 0 ? (
-            <div className="space-y-3">
-              {member.parentLinks.map((parent) => (
-                <div key={parent.id} className="flex flex-col gap-3 rounded-md border border-slate-200 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-slate-900">
-                        {parent.firstName} {parent.lastName}
-                      </p>
-                      <Badge variant="secondary">{parentLinkTypeLabel(parent.parentLinkType)}</Badge>
-                      <Badge variant="secondary">{parent.ageTier}</Badge>
-                      <Badge
-                        variant={parent.active ? "default" : "destructive"}
-                        className={parent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}
-                      >
-                        {parent.active ? "Active" : "Inactive"}
-                      </Badge>
-                      {member.inheritEmailFromId === parent.id || member.inheritEmailFromId === parent.inheritEmailFromId ? (
-                        <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
-                          Notification email
-                        </Badge>
-                      ) : null}
-                      {parent.canLogin ? (
-                        <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
-                          Can Login
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
-                          Non-Login
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="mt-1 text-sm text-slate-500">{parent.email}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => router.push(buildHrefWithReturnTo(`/admin/members/${parent.id}`, currentMemberPath))}
-                    >
-                      View Parent
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        handleUnlinkDependent(
-                          parent.id,
-                          member.id,
-                          `${member.firstName} ${member.lastName}`
-                        )
-                      }
-                      disabled={unlinkingDependentId === member.id}
-                    >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      {unlinkingDependentId === member.id ? "Removing..." : "Remove"}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-sm text-slate-500">No parent member linked.</p>
-              {member.dependents.length > 0 && (
-                <p className="text-xs text-slate-500">
-                  This member already has dependants, so they cannot be linked under another parent.
-                </p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-medium">Promo Codes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {member.promoCodes.length === 0 ? (
-            <p className="text-sm text-slate-500">No promo codes assigned to this member.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Benefit</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Validity</TableHead>
-                  <TableHead>Usage</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {member.promoCodes.map((promo) => (
-                  <TableRow key={promo.id || promo.code}>
-                    <TableCell>
-                      <div className="space-y-1">
-                        <Badge variant="secondary" className="font-mono">{promo.code}</Badge>
-                        {promo.description && <p className="max-w-xs text-xs text-slate-500">{promo.description}</p>}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm font-medium">{formatPromoBenefit(promo)}</TableCell>
-                    <TableCell>
-                      <div className="space-y-1">
-                        <Badge
-                          variant="secondary"
-                          className={promo.visibleToMember ? "bg-green-100 text-green-800 border-green-200" : "bg-amber-100 text-amber-800 border-amber-200"}
-                        >
-                          {promo.visibleToMember ? "Visible to member" : "Not currently usable"}
-                        </Badge>
-                        <p className="text-xs text-slate-500">{promo.statusReason}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-slate-600">
-                      <div className="space-y-1">
-                        <p>Assigned {promo.assignedAt ? fmtDate(promo.assignedAt) : "unknown"}</p>
-                        <p>
-                          Valid {promo.validFrom ? fmtDate(promo.validFrom) : "now"} - {promo.validUntil ? fmtDate(promo.validUntil) : "no end"}
-                        </p>
-                        {(promo.bookingStartFrom || promo.bookingStartUntil) && (
-                          <p>
-                            Stay dates {promo.bookingStartFrom ? fmtDate(promo.bookingStartFrom) : "any"} - {promo.bookingStartUntil ? fmtDate(promo.bookingStartUntil) : "any"}
-                          </p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-slate-600">
-                      <div className="space-y-1">
-                        <p>{promo.currentRedemptions}{promo.maxRedemptions !== null ? `/${promo.maxRedemptions}` : ""} total redemptions</p>
-                        <p>{promo.redemptionCount} by this member</p>
-                        {promo.type === "FREE_NIGHTS" && promo.freeNights !== null && (
-                          <p>{promo.freeNightsUsed}/{promo.freeNights} free nights used</p>
-                        )}
-                        {promo.singleUse && <p>Single use</p>}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-base font-medium">Dependents</CardTitle>
-          {isAdultMember && !memberIsArchived && (
-            <Button variant="outline" size="sm" onClick={openDependentDialog}>
-              <Plus className="h-4 w-4 mr-1" />
-              Add Dependent
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent>
-          {member.dependents.length === 0 ? (
-            <p className="text-sm text-slate-500">
-              {isAdultMember
-                ? "No dependents linked to this member yet."
-                : "Only adult members can manage dependents."}
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Link</TableHead>
-                  <TableHead>Age Tier</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Date of Birth</TableHead>
-                  <TableHead>Login</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {member.dependents.map((dependent) => (
-                  <TableRow key={dependent.id}>
-                    <TableCell className="font-medium">
-                      {dependent.firstName} {dependent.lastName}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{parentLinkTypeLabel(dependent.parentLinkType)}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {dependent.ageTier.charAt(0) + dependent.ageTier.slice(1).toLowerCase()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={dependent.active ? "default" : "destructive"}
-                        className={dependent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}
-                      >
-                        {dependent.active ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{dependent.dateOfBirth ? fmtDate(dependent.dateOfBirth) : "-"}</TableCell>
-                    <TableCell>
-                      {dependent.canLogin ? (
-                        <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
-                          Can Login
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
-                          Non-Login
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => router.push(buildHrefWithReturnTo(`/admin/members/${dependent.id}`, currentMemberPath))}
-                        >
-                          View
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            handleUnlinkDependent(
-                              member.id,
-                              dependent.id,
-                              `${dependent.firstName} ${dependent.lastName}`
-                            )
-                          }
-                          disabled={unlinkingDependentId === dependent.id}
-                        >
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          {unlinkingDependentId === dependent.id ? "Removing..." : "Remove"}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Accordion
-        type="multiple"
-        value={openMemberSections}
-        onValueChange={handleMemberSectionChange}
-        className="space-y-6"
-      >
-        <AccordionItem value="subs" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
-          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
-            Subscription History
-          </AccordionTrigger>
-          <AccordionContent className="px-6 pb-6">
-            {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (
-              <Table><TableHeader><TableRow><TableHead>Season Year</TableHead><TableHead>Status</TableHead><TableHead>Paid At</TableHead><TableHead>Xero Invoice</TableHead></TableRow></TableHeader><TableBody>{member.subscriptions.map((sub) => (
-                <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subscriptionStatusClass(sub.status)}>{subscriptionStatusLabel(sub.status)}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
-              ))}</TableBody></Table>)}
-          </AccordionContent>
-        </AccordionItem>
-
-        <AccordionItem value="bookings" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
-          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
-            Booking History
-          </AccordionTrigger>
-          <AccordionContent className="px-6 pb-6">
-            {member.bookings.length === 0 ? <p className="text-sm text-slate-500">No bookings yet</p> : (
-              <Table><TableHeader><TableRow><TableHead>Check In</TableHead><TableHead>Check Out</TableHead><TableHead>Status</TableHead><TableHead>Guests</TableHead><TableHead>Amount</TableHead></TableRow></TableHeader><TableBody>{member.bookings.map((booking) => (
-                <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bookingStatusClass(booking.status)}>{bookingStatusLabel(booking.status)}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
-              ))}</TableBody></Table>)}
-          </AccordionContent>
-        </AccordionItem>
-
-        <Card id="account-credit"><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>
-          {adjustmentError && <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
-          {showAdjustmentForm && (
-            <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="adj-amount">Amount ($)</Label>
-                  <Input id="adj-amount" type="number" step="0.01" placeholder="e.g. 25.00 or -10.00" value={adjustmentAmount} onChange={e => setAdjustmentAmount(e.target.value)} />
-                  <p className="text-xs text-slate-500">Positive = add credit, negative = deduct</p>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="adj-desc">Description *</Label>
-                  <Input id="adj-desc" placeholder="Reason for adjustment" value={adjustmentDescription} onChange={e => setAdjustmentDescription(e.target.value)} maxLength={500} />
-                </div>
-              </div>
-              <p className="text-xs text-slate-500">A different admin must approve this request before the member&apos;s credit balance changes.</p>
-              <Button size="sm" onClick={handleAdjustmentSubmit} disabled={adjustmentSaving}>{adjustmentSaving ? "Saving..." : "Submit for Approval"}</Button>
-            </div>
-          )}
-          {creditLoading ? <p className="text-sm text-slate-500">Loading credit history...</p> : creditError ? <p className="text-sm text-red-600">{creditError}</p> : (
-            <>
-              {pendingAdjustmentRequests.length > 0 && (
-                <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4">
-                  <div className="mb-3">
-                    <p className="text-sm font-medium text-amber-900">Pending manual adjustments</p>
-                    <p className="text-xs text-amber-800">Each request needs approval from a different admin before it becomes account credit.</p>
-                  </div>
-                  <Table><TableHeader><TableRow><TableHead>Requested</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Requested By</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>{pendingAdjustmentRequests.map((item) => {
-                    const isOwnRequest = session?.user?.id === item.requestedBy.id
-                    const isReviewing = reviewingAdjustmentId === item.id
-                    return (
-                      <TableRow key={item.id}>
-                        <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
-                        <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
-                        <TableCell className="text-sm text-slate-600 max-w-[260px] truncate">{item.description}</TableCell>
-                        <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
-                        <TableCell className="text-right">
-                          {isOwnRequest ? (
-                            <span className="text-xs text-amber-700">Needs another admin</span>
-                          ) : (
-                            <div className="flex items-center justify-end gap-2">
-                              <Button size="sm" variant="outline" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "APPROVE")}>{isReviewing ? "Working..." : "Approve"}</Button>
-                              <Button size="sm" variant="ghost" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "REJECT")}>Reject</Button>
-                            </div>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}</TableBody></Table>
-                </div>
-              )}
-              {creditHistory.length === 0 ? <p className="text-sm text-slate-500">No credit transactions</p> : (
-            <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Approval</TableHead><TableHead>Booking Ref</TableHead></TableRow></TableHeader><TableBody>{creditHistory.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
-                <TableCell><Badge variant="secondary" className={item.type === "CANCELLATION_REFUND" ? "bg-orange-100 text-orange-800 border-orange-200" : item.type === "ADMIN_ADJUSTMENT" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-purple-100 text-purple-800 border-purple-200"}>{item.type.replace(/_/g, " ")}</Badge></TableCell>
-                <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
-                <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{item.description}</TableCell>
-                <TableCell className="text-xs text-slate-600">
-                  {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (
-                    <div className="space-y-1">
-                      {item.requestedBy && <p>Requested by {formatAdminName(item.requestedBy)}</p>}
-                      {item.approvedBy && <p>Approved by {formatAdminName(item.approvedBy)}{item.approvalRequest?.reviewedAt ? ` on ${fmtDate(item.approvalRequest.reviewedAt)}` : ""}</p>}
-                    </div>
-                  ) : (
-                    <span className="text-slate-400">-</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">{item.sourceBooking ? <span className="text-blue-600">{fmtDate(item.sourceBooking.checkIn)} - {fmtDate(item.sourceBooking.checkOut)}</span> : item.appliedToBooking ? <span className="text-purple-600">{fmtDate(item.appliedToBooking.checkIn)} - {fmtDate(item.appliedToBooking.checkOut)}</span> : "-"}</TableCell>
-              </TableRow>
-            ))}</TableBody></Table>
-              )}
-            </>
-          )}
-        </CardContent></Card>
-
-        <AccordionItem value="xero" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
-          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
-            Xero Activity
-          </AccordionTrigger>
-          <AccordionContent className="px-6 pb-6">
-            <XeroRecordActivityPanel localModel="Member" localId={id} compact className="border-0 shadow-none" />
-          </AccordionContent>
-        </AccordionItem>
-
-        <AccordionItem value="audit" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
-          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
-            Audit Log
-          </AccordionTrigger>
-          <AccordionContent className="px-6 pb-6">
-            <AuditTimeline
-              endpoint={`/api/admin/members/${id}/audit-log`}
-              showMetadata
-              showAdminEntityLinks
-            />
-          </AccordionContent>
-        </AccordionItem>
-      </Accordion>
+      <MemberHistoryAccordion
+        memberId={id}
+        subscriptions={member.subscriptions}
+        bookings={member.bookings}
+        openSections={openSections}
+        onValueChange={onSectionsChange}
+        creditCard={
+          <MemberCreditCard
+            creditBalance={creditBalance}
+            creditHistory={creditHistory}
+            creditLoading={creditLoading}
+            creditError={creditError}
+            pendingAdjustmentRequests={pendingAdjustmentRequests}
+            reviewingAdjustmentId={reviewingAdjustmentId}
+            showAdjustmentForm={showAdjustmentForm}
+            adjustmentError={adjustmentError}
+            adjustmentAmount={adjustmentAmount}
+            adjustmentDescription={adjustmentDescription}
+            adjustmentSaving={adjustmentSaving}
+            onToggleAdjustmentForm={toggleAdjustmentForm}
+            onChangeAdjustmentAmount={setAdjustmentAmount}
+            onChangeAdjustmentDescription={setAdjustmentDescription}
+            onSubmitAdjustment={handleAdjustmentSubmit}
+            onReviewAdjustment={handleReviewAdjustmentRequest}
+          />
+        }
+      />
 
       <FamilyGroupEditorDialog
         groupId={familyGroupEditorId}
@@ -2462,126 +1553,39 @@ const handleMemberSectionChange = (value: string[]) => {
         }}
       />
 
-      <Dialog open={xeroSearchOpen} onOpenChange={setXeroSearchOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{member.xeroContactId ? "Change Xero Contact Link" : "Link to Xero Contact"}</DialogTitle>
-            <DialogDescription>
-              {member.xeroContactId
-                ? `Search for a different Xero contact to relink ${member.firstName} ${member.lastName}.`
-                : `Search for an existing Xero contact to link to ${member.firstName} ${member.lastName}.`}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex gap-2">
-            <Input
-              placeholder="Search by name or email..."
-              value={xeroSearchQuery}
-              onChange={e => { setXeroSearchQuery(e.target.value); if (xeroError) setXeroError("") }}
-              onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
-            />
-            <Button onClick={handleXeroSearch} disabled={xeroSearching || xeroSearchQuery.length < 2}>
-              <Search className="h-4 w-4 mr-1" />{xeroSearching ? "..." : "Search"}
-            </Button>
-          </div>
-          {xeroError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{xeroError}</div>}
-          <div className="max-h-64 overflow-y-auto space-y-2">
-            {xeroSearchResults.length === 0 && !xeroSearching && xeroSearchQuery.length >= 2 && (
-              <p className="text-sm text-slate-500 text-center py-4">No contacts found</p>
-            )}
-            {xeroSearchResults.map(c => (
-              <div key={c.contactId} className="flex items-center justify-between p-2 border rounded hover:bg-slate-50">
-                <div>
-                  <p className="text-sm font-medium">{c.name}</p>
-                  {c.email && <p className="text-xs text-slate-500">{c.email}</p>}
-                  {c.isLinked && <p className="text-xs text-amber-600">Already linked to {c.linkedMemberName}</p>}
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={c.isLinked || xeroLinking}
-                  onClick={() => handleXeroLink(c.contactId)}
-                >
-                  {xeroLinking ? "..." : "Link"}
-                </Button>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <MemberXeroLinkDialog
+        open={xeroSearchOpen}
+        onOpenChange={setXeroSearchOpen}
+        member={member}
+        query={xeroSearchQuery}
+        results={xeroSearchResults}
+        searching={xeroSearching}
+        linking={xeroLinking}
+        error={xeroError}
+        onChangeQuery={setXeroSearchQuery}
+        onClearError={() => setXeroError("")}
+        onSearch={handleXeroSearch}
+        onLink={handleXeroLink}
+      />
 
-      <Dialog open={xeroCreateOpen} onOpenChange={setXeroCreateOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Create Xero Contact</DialogTitle>
-            <DialogDescription>
-              Create a brand-new Xero contact for {member.firstName} {member.lastName}. We&apos;ll check for similar existing contacts before the new contact is created.
-            </DialogDescription>
-          </DialogHeader>
-          {xeroError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{xeroError}</div>}
-          <div className="space-y-4">
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              Use this only when you&apos;re confident the member should not be linked to an existing Xero contact.
-            </div>
-            <div className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                id="member-detail-xero-create-invoice"
-                checked={xeroCreateEntranceFeeInvoice}
-                onChange={e => setXeroCreateEntranceFeeInvoice(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300"
-              />
-              <div>
-                <Label htmlFor="member-detail-xero-create-invoice">Create membership entrance fee invoice after contact creation</Label>
-                <p className="text-xs text-muted-foreground">If this is not raised, record why for the audit trail.</p>
-              </div>
-            </div>
-            {xeroCreateEntranceFeeInvoice ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="member-detail-xero-entrance-amount">Amount override ($)</Label>
-                  <Input
-                    id="member-detail-xero-entrance-amount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputMode="decimal"
-                    placeholder="Use configured amount"
-                    value={xeroEntranceFeeAmount}
-                    onChange={e => setXeroEntranceFeeAmount(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="member-detail-xero-entrance-narration">Narration override</Label>
-                  <Input
-                    id="member-detail-xero-entrance-narration"
-                    placeholder="Use default narration"
-                    value={xeroEntranceFeeNarration}
-                    onChange={e => setXeroEntranceFeeNarration(e.target.value)}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <Label htmlFor="member-detail-xero-entrance-skip-reason">Reason for not raising invoice</Label>
-                <textarea
-                  id="member-detail-xero-entrance-skip-reason"
-                  className="min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={xeroEntranceFeeSkipReason}
-                  onChange={e => setXeroEntranceFeeSkipReason(e.target.value)}
-                />
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setXeroCreateOpen(false)} disabled={xeroPushing}>Cancel</Button>
-            <Button onClick={() => handleXeroPush(false)} disabled={xeroPushing}>
-              {xeroPushing ? "Checking..." : "Continue"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MemberXeroCreateDialog
+        open={xeroCreateOpen}
+        onOpenChange={setXeroCreateOpen}
+        member={member}
+        pushing={xeroPushing}
+        error={xeroError}
+        createEntranceFeeInvoice={xeroCreateEntranceFeeInvoice}
+        entranceFeeSkipReason={xeroEntranceFeeSkipReason}
+        entranceFeeAmount={xeroEntranceFeeAmount}
+        entranceFeeNarration={xeroEntranceFeeNarration}
+        onChangeCreateEntranceFeeInvoice={setXeroCreateEntranceFeeInvoice}
+        onChangeEntranceFeeSkipReason={setXeroEntranceFeeSkipReason}
+        onChangeEntranceFeeAmount={setXeroEntranceFeeAmount}
+        onChangeEntranceFeeNarration={setXeroEntranceFeeNarration}
+        onSubmit={() => handleXeroPush(false)}
+      />
 
-      <Dialog
+      <MemberXeroDecisionDialog
         open={xeroCreateDecisionOpen}
         onOpenChange={(open) => {
           setXeroCreateDecisionOpen(open)
@@ -2591,900 +1595,153 @@ const handleMemberSectionChange = (value: string[]) => {
             setXeroDecisionError("")
           }
         }}
-      >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Review Similar Xero Contacts</DialogTitle>
-            <DialogDescription>
-              We found existing Xero contacts that may already belong to {member.firstName} {member.lastName}. Link one of these if appropriate, or create a new contact anyway.
-            </DialogDescription>
-          </DialogHeader>
-          {xeroDecisionError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{xeroDecisionError}</div>}
-          <div className="space-y-3">
-            <div className="max-h-[360px] overflow-y-auto space-y-2">
-              {xeroCreateDecisionResults.map((contact) => (
-                <XeroSuggestedContactCard
-                  key={contact.contactId}
-                  contact={contact}
-                  radioName="member-detail-potential-xero-contact"
-                  checked={xeroDecisionContactId === contact.contactId}
-                  onSelect={() => setXeroDecisionContactId(contact.contactId)}
-                />
-              ))}
-            </div>
-            {xeroCreateEntranceFeeInvoice && (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                If you choose <span className="font-medium">Create New Contact Anyway</span>, the membership entrance fee invoice will also be queued.
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setXeroCreateDecisionOpen(false)} disabled={xeroLinking || xeroPushing}>Do This Later</Button>
-            <Button variant="outline" onClick={handleXeroDecisionLink} disabled={xeroLinking || xeroPushing || !xeroDecisionContactId}>
-              {xeroLinking ? "Linking..." : "Link Selected Contact"}
-            </Button>
-            <Button onClick={() => handleXeroPush(true)} disabled={xeroLinking || xeroPushing}>
-              {xeroPushing ? "Creating..." : "Create New Contact Anyway"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        member={member}
+        results={xeroCreateDecisionResults}
+        selectedContactId={xeroDecisionContactId}
+        createEntranceFeeInvoice={xeroCreateEntranceFeeInvoice}
+        linking={xeroLinking}
+        pushing={xeroPushing}
+        error={xeroDecisionError}
+        onSelectContact={setXeroDecisionContactId}
+        onConfirmLink={handleXeroDecisionLink}
+        onCreateAnyway={() => handleXeroPush(true)}
+      />
 
-      <Dialog open={parentLinkOpen} onOpenChange={setParentLinkOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Link Parent</DialogTitle>
-            <DialogDescription>
-              Link {member.firstName} {member.lastName} under an active adult member.
-            </DialogDescription>
-          </DialogHeader>
-          {parentLinkError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{parentLinkError}</div>}
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="link-parent-search">Parent search</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <Input
-                  id="link-parent-search"
-                  value={parentLinkSearch}
-                  onChange={(e) => {
-                    setParentLinkSearch(e.target.value)
-                    setSelectedLinkParent(null)
-                    setParentLinkError("")
-                  }}
-                  placeholder="Search by name, email, or member ID"
-                  className="pl-9"
-                />
-                {parentLinkSearching && (
-                  <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div>
-                )}
-              </div>
-            </div>
-
-            {selectedLinkParent ? (
-              <div className="rounded-md border border-slate-200 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium text-slate-900">
-                        {selectedLinkParent.firstName} {selectedLinkParent.lastName}
-                      </p>
-                      <Badge variant="secondary">{selectedLinkParent.ageTier}</Badge>
-                      {!selectedLinkParent.active && (
-                        <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-slate-200">Inactive</Badge>
-                      )}
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500">{selectedLinkParent.email}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {selectedLinkParent.canLogin ? "Can login" : "Non-login"}
-                      {selectedLinkParent.dateOfBirth ? ` · DOB ${fmtDate(selectedLinkParent.dateOfBirth)}` : ""}
-                    </p>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={clearLinkParent} disabled={parentLinkSaving}>
-                    Change
-                  </Button>
-                </div>
-              </div>
-            ) : parentLinkSearch.trim().length >= 2 && parentLinkSearchResults.length > 0 ? (
-              <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200">
-                {parentLinkSearchResults.map((candidate) => (
-                  <button
-                    key={candidate.id}
-                    type="button"
-                    onClick={() => selectLinkParent(candidate)}
-                    className="w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
-                  >
-                    <span className="font-medium">{candidate.firstName} {candidate.lastName}</span>
-                    <span className="ml-2 text-slate-500">{candidate.email}</span>
-                    <span className="ml-2 text-xs text-slate-400">{candidate.ageTier}</span>
-                  </button>
-                ))}
-              </div>
-            ) : parentLinkSearch.trim().length >= 2 && !parentLinkSearching ? (
-              <p className="text-sm text-slate-500">No eligible active adult members found.</p>
-            ) : (
-              <p className="text-sm text-slate-500">Start typing at least 2 characters to search.</p>
-            )}
-
-            {selectedLinkParent && (
-              <div className="space-y-4">
-                <div className="space-y-3 rounded-md border border-slate-200 p-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="link-parent-notification-source">Notification email recipient</Label>
-                    <select
-                      id="link-parent-notification-source"
-                      value={parentLinkNotificationParentId}
-                      onChange={(event) => {
-                        setParentLinkNotificationParentId(event.target.value)
-                        setParentLinkInheritEmail(Boolean(event.target.value))
-                      }}
-                      disabled={parentLinkSaving}
-                      className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    >
-                      <option value="">Use {member.firstName}&apos;s own email</option>
-                      {dedupeParentOptions([
-                        ...(member.parentLinks ?? []),
-                        {
-                          ...selectedLinkParent,
-                          parentLinkType: ((member.parentLinks?.length ?? 0) === 0 ? "PRIMARY" : "SECONDARY") as "PRIMARY" | "SECONDARY",
-                        },
-                      ]).map((parent) => (
-                        <option key={parent.id} value={parent.id}>
-                          {parent.firstName} {parent.lastName} ({parentLinkTypeLabel(parent.parentLinkType)})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Checkbox
-                      id="link-parent-disable-login"
-                      checked={parentLinkDisableLogin}
-                      onCheckedChange={(checked) => setParentLinkDisableLogin(checked === true)}
-                      disabled={parentLinkSaving}
-                    />
-                    <Label htmlFor="link-parent-disable-login" className="text-sm font-normal">
-                      Disable login
-                    </Label>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Add to parent family groups</Label>
-                  {selectedLinkParent.familyGroups.length > 0 ? (
-                    <div className="space-y-2 rounded-md border border-slate-200 p-3">
-                      {selectedLinkParent.familyGroups.map((group) => (
-                        <div key={group.id} className="flex items-center gap-2">
-                          <Checkbox
-                            id={`link-parent-family-group-${group.id}`}
-                            checked={parentLinkFamilyGroupIds.includes(group.id)}
-                            onCheckedChange={(checked) => toggleParentLinkFamilyGroup(group.id, checked === true)}
-                            disabled={parentLinkSaving}
-                          />
-                          <Label htmlFor={`link-parent-family-group-${group.id}`} className="text-sm font-normal">
-                            {group.name || "Unnamed group"}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-slate-500">This parent is not in any family groups.</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setParentLinkOpen(false)} disabled={parentLinkSaving}>Cancel</Button>
-            <Button onClick={handleLinkParent} disabled={parentLinkSaving || !selectedLinkParent}>
-              {parentLinkSaving ? "Linking..." : "Link Parent"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={dependentOpen} onOpenChange={setDependentOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add Dependent</DialogTitle>
-            <DialogDescription>
-              Create a new dependent or link an existing member under {member.firstName} {member.lastName}.
-            </DialogDescription>
-          </DialogHeader>
-          {dependentFormError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{dependentFormError}</div>}
-          <Tabs
-            value={dependentMode}
-            onValueChange={(value) => {
-              setDependentMode(value as DependentDialogMode)
-              setDependentFormError("")
-            }}
-          >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="create">Create new</TabsTrigger>
-              <TabsTrigger value="link">Link existing</TabsTrigger>
-            </TabsList>
-            <TabsContent value="create" className="mt-4">
-              <div className="grid gap-4 py-2">
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                  This dependent will be created as a non-login member and inherit notifications from the parent email.
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="dependent-firstName">First Name *</Label>
-                    <Input
-                      id="dependent-firstName"
-                      value={dependentForm.firstName}
-                      onChange={e => setDependentForm(f => ({ ...f, firstName: e.target.value }))}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="dependent-lastName">Last Name *</Label>
-                    <Input
-                      id="dependent-lastName"
-                      value={dependentForm.lastName}
-                      onChange={e => setDependentForm(f => ({ ...f, lastName: e.target.value }))}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="dependent-email">Email *</Label>
-                  <Input
-                    id="dependent-email"
-                    type="email"
-                    value={dependentForm.email}
-                    onChange={e => setDependentForm(f => ({ ...f, email: e.target.value }))}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    This can match the parent email. Delivery will still be controlled by the inherited-email settings.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="dependent-dateOfBirth">Date of Birth *</Label>
-                  <Input
-                    id="dependent-dateOfBirth"
-                    type="date"
-                    value={dependentForm.dateOfBirth}
-                    onChange={e => setDependentForm(f => ({ ...f, dateOfBirth: e.target.value }))}
-                  />
-                  <p className="text-xs text-muted-foreground">Age tier will be calculated from date of birth.</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Phone</Label>
-                  <div className="flex gap-2">
-                    <Input className="w-20" placeholder="64" value={dependentForm.phoneCountryCode} onChange={e => setDependentForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
-                    <Input className="w-20" placeholder="27" value={dependentForm.phoneAreaCode} onChange={e => setDependentForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
-                    <Input className="flex-1" placeholder="123 4567" value={dependentForm.phoneNumber} onChange={e => setDependentForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
-                  </div>
-                </div>
-
-                <MemberAddressFields
-                  idPrefix="dependent"
-                  onSameAsPhysicalChange={setDependentPostalSameAsPhysical}
-                  onValuesChange={updateDependentAddressFields}
-                  sameAsPhysical={dependentPostalSameAsPhysical}
-                  values={dependentForm}
-                />
-              </div>
-            </TabsContent>
-            <TabsContent value="link" className="mt-4">
-              <div className="space-y-4 py-2">
-                <div className="space-y-2">
-                  <Label htmlFor="link-dependent-search">Member search</Label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    <Input
-                      id="link-dependent-search"
-                      value={linkDependentSearch}
-                      onChange={(e) => {
-                        setLinkDependentSearch(e.target.value)
-                        setSelectedLinkDependent(null)
-                        setDependentFormError("")
-                      }}
-                      placeholder="Search by name, email, or member ID"
-                      className="pl-9"
-                    />
-                    {linkDependentSearching && (
-                      <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div>
-                    )}
-                  </div>
-                </div>
-
-                {selectedLinkDependent ? (
-                  <div className="rounded-md border border-slate-200 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-medium text-slate-900">
-                            {selectedLinkDependent.firstName} {selectedLinkDependent.lastName}
-                          </p>
-                          <Badge variant="secondary">{selectedLinkDependent.ageTier}</Badge>
-                          {!selectedLinkDependent.active && (
-                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-slate-200">Inactive</Badge>
-                          )}
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">{selectedLinkDependent.email}</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {selectedLinkDependent.canLogin ? "Can login" : "Non-login"}
-                          {selectedLinkDependent.dateOfBirth ? ` · DOB ${fmtDate(selectedLinkDependent.dateOfBirth)}` : ""}
-                        </p>
-                      </div>
-                      <Button type="button" variant="outline" size="sm" onClick={clearLinkDependent} disabled={dependentSaving}>
-                        Change
-                      </Button>
-                    </div>
-                  </div>
-                ) : linkDependentSearch.trim().length >= 2 && linkDependentSearchResults.length > 0 ? (
-                  <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200">
-                    {linkDependentSearchResults.map((candidate) => (
-                      <button
-                        key={candidate.id}
-                        type="button"
-                        onClick={() => selectLinkDependent(candidate)}
-                        className="w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
-                      >
-                        <span className="font-medium">{candidate.firstName} {candidate.lastName}</span>
-                        <span className="ml-2 text-slate-500">{candidate.email}</span>
-                        <span className="ml-2 text-xs text-slate-400">{candidate.ageTier}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : linkDependentSearch.trim().length >= 2 && !linkDependentSearching ? (
-                  <p className="text-sm text-slate-500">No eligible members found.</p>
-                ) : (
-                  <p className="text-sm text-slate-500">Start typing at least 2 characters to search.</p>
-                )}
-
-                {selectedLinkDependent && (
-                  <div className="space-y-4">
-                    <div className="space-y-3 rounded-md border border-slate-200 p-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="link-dependent-notification-source">Notification email recipient</Label>
-                        <select
-                          id="link-dependent-notification-source"
-                          value={linkDependentNotificationParentId}
-                          onChange={(event) => {
-                            setLinkDependentNotificationParentId(event.target.value)
-                            setLinkDependentInheritEmail(Boolean(event.target.value))
-                          }}
-                          disabled={dependentSaving}
-                          className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                        >
-                          <option value="">Use {selectedLinkDependent.firstName}&apos;s own email</option>
-                          {dedupeParentOptions([
-                            ...(selectedLinkDependent.parentLinks ?? []),
-                            {
-                              id: member.id,
-                              firstName: member.firstName,
-                              lastName: member.lastName,
-                              email: member.email,
-                              ageTier: member.ageTier,
-                              active: member.active,
-                              canLogin: member.canLogin,
-                              inheritEmailFromId: member.inheritEmailFromId,
-                              parentLinkType: ((selectedLinkDependent.parentLinks?.length ?? 0) === 0 ? "PRIMARY" : "SECONDARY") as "PRIMARY" | "SECONDARY",
-                            },
-                          ]).map((parent) => (
-                            <option key={parent.id} value={parent.id}>
-                              {parent.firstName} {parent.lastName} ({parentLinkTypeLabel(parent.parentLinkType)})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <Checkbox
-                          id="link-dependent-disable-login"
-                          checked={linkDependentDisableLogin}
-                          onCheckedChange={(checked) => setLinkDependentDisableLogin(checked === true)}
-                          disabled={dependentSaving}
-                        />
-                        <Label htmlFor="link-dependent-disable-login" className="text-sm font-normal">
-                          Disable login
-                        </Label>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Add to family groups</Label>
-                      {member.familyGroups.length > 0 ? (
-                        <div className="space-y-2 rounded-md border border-slate-200 p-3">
-                          {member.familyGroups.map((group) => (
-                            <div key={group.id} className="flex items-center gap-2">
-                              <Checkbox
-                                id={`link-dependent-family-group-${group.id}`}
-                                checked={linkDependentFamilyGroupIds.includes(group.id)}
-                                onCheckedChange={(checked) => toggleLinkFamilyGroup(group.id, checked === true)}
-                                disabled={dependentSaving}
-                              />
-                              <Label htmlFor={`link-dependent-family-group-${group.id}`} className="text-sm font-normal">
-                                {group.name || "Unnamed group"}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-slate-500">This parent is not in any family groups.</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDependentOpen(false)} disabled={dependentSaving}>Cancel</Button>
-            <Button
-              onClick={dependentMode === "create" ? handleCreateDependent : handleLinkDependent}
-              disabled={dependentSaving || (dependentMode === "link" && !selectedLinkDependent)}
-            >
-              {dependentSaving
-                ? dependentMode === "create" ? "Creating..." : "Linking..."
-                : dependentMode === "create" ? "Create Dependent" : "Link Dependent"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Request Member Delete</DialogTitle>
-            <DialogDescription>
-              Submit this member for second-admin approval before hard deletion.
-            </DialogDescription>
-          </DialogHeader>
-          {deleteError && <div className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{deleteError}</div>}
-          <div className="space-y-2">
-            <Label htmlFor="delete-reason">Reason</Label>
-            <Textarea
-              id="delete-reason"
-              value={deleteReason}
-              onChange={(event) => setDeleteReason(event.target.value)}
-              placeholder="Record was created in error"
-              rows={4}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={deleteSubmitting}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleCreateDeleteRequest}
-              disabled={deleteSubmitting || !deleteReason.trim()}
-            >
-              {deleteSubmitting ? "Submitting..." : "Submit Delete Request"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(deleteReviewDialog)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeleteReviewDialog(null)
-            setDeleteReviewNote("")
-            setDeleteReviewError("")
-          }
+      <MemberParentLinkDialog
+        open={parentLinkOpen}
+        onOpenChange={setParentLinkOpen}
+        member={member}
+        search={parentLinkSearch}
+        searching={parentLinkSearching}
+        searchResults={parentLinkSearchResults}
+        selected={selectedLinkParent}
+        notificationParentId={parentLinkNotificationParentId}
+        disableLogin={parentLinkDisableLogin}
+        familyGroupIds={parentLinkFamilyGroupIds}
+        saving={parentLinkSaving}
+        error={parentLinkError}
+        onChangeSearch={(value) => {
+          setParentLinkSearch(value)
+          setSelectedLinkParent(null)
+          setParentLinkError("")
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {deleteReviewDialog?.action === "approve" ? "Approve Member Delete" : "Reject Member Delete"}
-            </DialogTitle>
-            <DialogDescription>
-              {deleteReviewDialog?.action === "approve"
-                ? "Approval permanently deletes the member record after storing the snapshot on the request."
-                : "Rejecting keeps the member record unchanged."}
-            </DialogDescription>
-          </DialogHeader>
-          {deleteReviewError && <div className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{deleteReviewError}</div>}
-          {deleteReviewDialog?.action === "approve" && approvalBlockers.length > 0 && (
-            <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              Approval is blocked until these dependencies are cleared:
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {approvalBlockers.map((blocker) => (
-                  <li key={blocker.code}>
-                    {blocker.label}
-                    {typeof blocker.count === "number" ? ` (${blocker.count})` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="delete-review-note">Review note</Label>
-            <Textarea
-              id="delete-review-note"
-              value={deleteReviewNote}
-              onChange={(event) => setDeleteReviewNote(event.target.value)}
-              placeholder={deleteReviewDialog?.action === "approve" ? "Approved after eligibility check" : "Reason for rejection"}
-              rows={4}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDeleteReviewDialog(null)
-                setDeleteReviewNote("")
-                setDeleteReviewError("")
-              }}
-              disabled={deleteReviewSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant={deleteReviewDialog?.action === "approve" ? "destructive" : "default"}
-              onClick={handleReviewDeleteRequest}
-              disabled={
-                deleteReviewSubmitting ||
-                (deleteReviewDialog?.action === "approve" && approvalBlockers.length > 0)
-              }
-            >
-              {deleteReviewSubmitting
-                ? "Processing..."
-                : deleteReviewDialog?.action === "approve"
-                  ? "Approve Delete"
-                  : "Reject Request"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onSelectCandidate={selectLinkParent}
+        onClearSelection={clearLinkParent}
+        onChangeNotificationParentId={(value) => {
+          setParentLinkNotificationParentId(value)
+          setParentLinkInheritEmail(Boolean(value))
+        }}
+        onChangeDisableLogin={setParentLinkDisableLogin}
+        onToggleFamilyGroup={toggleParentLinkFamilyGroup}
+        onSubmit={handleLinkParent}
+      />
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Member</DialogTitle>
-            <DialogDescription>Update details for {member.firstName} {member.lastName}.</DialogDescription>
-          </DialogHeader>
-          {formError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{formError}</div>}
-          <div className="grid gap-4 py-2">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="edit-canLogin"
-                checked={form.canLogin}
-                onChange={e => setForm(f => ({
-                  ...f,
-                  canLogin: e.target.checked,
-                  financeAccessLevel: e.target.checked ? f.financeAccessLevel : "NONE",
-                }))}
-                className="h-4 w-4 rounded border-gray-300"
-                disabled={isSelf || memberLifecycleLocked}
-              />
-              <Label htmlFor="edit-canLogin">Can Login</Label>
-              <p className="text-xs text-muted-foreground ml-2">
-                Adults who can sign in and make bookings. Uncheck for infants, children, or youth managed by family group.
-                {isSelf ? " You cannot disable login for your own admin account." : ""}
-                {memberLifecycleLocked ? " Cancelled and archived members stay non-login." : ""}
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-firstName">First Name *</Label>
-                <Input id="edit-firstName" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-lastName">Last Name *</Label>
-                <Input id="edit-lastName" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-email">Email *</Label>
-              <Input id="edit-email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Phone</Label>
-              <div className="flex gap-2">
-                <Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={e => setForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
-                <Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={e => setForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
-                <Input className="flex-1" placeholder="123 4567" value={form.phoneNumber} onChange={e => setForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-dateOfBirth">Date of Birth</Label>
-              <Input id="edit-dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} />
-              <p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-joinedDate">Joined Date</Label>
-              <Input id="edit-joinedDate" type="date" value={form.joinedDate} onChange={e => setForm(f => ({ ...f, joinedDate: e.target.value }))} />
-              <p className="text-xs text-muted-foreground">Used for finance and Xero-linked member history.</p>
-            </div>
-            <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
-              <legend className="px-1 text-sm font-medium">Xero</legend>
-              <p className="text-sm text-slate-600">
-                Manage this member&apos;s linked Xero contact from the same editor.
-              </p>
-              {xeroError && (
-                <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
-                  {xeroError}
-                </div>
-              )}
-              {member.xeroContactId ? (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
-                      Linked
-                    </Badge>
-                    <a
-                      href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:underline inline-flex items-center gap-1"
-                    >
-                      View in Xero
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-                  {member.xeroContactGroups.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {member.xeroContactGroups.map((group) => (
-                        <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                          {group.name}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  {member.xeroContactId && !member.xeroContactGroupsLoaded && (
-                    <p className="text-xs text-slate-500">
-                      Cached contact groups have not been refreshed yet.
-                    </p>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setXeroChoice(xeroChoice === "change" ? "" : "change")
-                        setSelectedXeroContactId("")
-                        setXeroSearchQuery("")
-                        setXeroSearchResults([])
-                        setXeroError("")
-                      }}
-                    >
-                      <Link2 className="h-4 w-4 mr-1" />
-                      {xeroChoice === "change" ? "Cancel Change" : "Change Link"}
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={handleXeroUnlink} disabled={xeroUnlinking}>
-                      {xeroUnlinking ? "Unlinking..." : "Unlink"}
-                    </Button>
-                  </div>
-                  {xeroChoice === "change" && (
-                    <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50 p-3">
-                      <p className="text-sm text-blue-800">
-                        Search for a different Xero contact to link to this member. The current link will be replaced.
-                      </p>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="Search Xero by name or email"
-                          value={xeroSearchQuery}
-                          onChange={e => setXeroSearchQuery(e.target.value)}
-                          onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleXeroSearch}
-                          disabled={xeroSearching || xeroSearchQuery.trim().length < 2}
-                        >
-                          {xeroSearching ? "Searching..." : "Search"}
-                        </Button>
-                      </div>
-                      {xeroSearchResults.filter((contact) => !contact.isLinked).length > 0 && (
-                        <div className="space-y-2">
-                          <Label>Available Xero contacts</Label>
-                          <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select a Xero contact" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {xeroSearchResults
-                                .filter((contact) => !contact.isLinked)
-                                .map((contact) => (
-                                  <SelectItem key={contact.contactId} value={contact.contactId}>
-                                    {contact.name}{contact.email ? ` (${contact.email})` : ""}
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-                      {selectedXeroContactId && (
-                        <Button type="button" size="sm" onClick={() => handleXeroLink(selectedXeroContactId)} disabled={xeroLinking}>
-                          {xeroLinking ? "Linking..." : "Link to Selected Contact"}
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-slate-600">This member is not linked to a Xero contact.</p>
-                  <p className="text-xs text-amber-700">
-                    Membership refresh skips unlinked members. Link or create a Xero contact before expecting subscription status to update automatically.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setXeroSearchOpen(true)
-                        setXeroSearchQuery("")
-                        setXeroSearchResults([])
-                        setXeroError("")
-                      }}
-                    >
-                      <Link2 className="h-4 w-4 mr-1" />
-                      Link to Xero
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        resetXeroEntranceFeeDecision()
-                        setXeroCreateOpen(true)
-                        setXeroError("")
-                      }}
-                      disabled={xeroPushing}
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      {xeroPushing ? "Creating..." : "Create in Xero"}
-                    </Button>
-                  </div>
-                  {getMissingFieldsForXeroCreate(form).length > 0 && (
-                    <p className="text-xs text-slate-500">
-                      Missing for Xero creation: {getMissingFieldsForXeroCreate(form).join(", ")}
-                    </p>
-                  )}
-                </div>
-              )}
-            </fieldset>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Role</Label>
-                <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))} disabled={isSelf}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="MEMBER">Member</SelectItem>
-                    <SelectItem value="ADMIN">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
-                {isSelf && <p className="text-xs text-muted-foreground">You cannot change your own role.</p>}
-              </div>
-              <div className="space-y-2">
-                <Label>Finance Access</Label>
-                <Select
-                  value={form.financeAccessLevel}
-                  onValueChange={v => setForm(f => ({ ...f, financeAccessLevel: v as FinanceAccessLevel }))}
-                  disabled={!form.canLogin}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NONE">No Finance Access</SelectItem>
-                    <SelectItem value="VIEWER">Finance Viewer</SelectItem>
-                    <SelectItem value="MANAGER">Finance Manager</SelectItem>
-                  </SelectContent>
-                </Select>
-                {!form.canLogin && <p className="text-xs text-muted-foreground">Finance access only applies to login-enabled members.</p>}
-              </div>
-              <div className="space-y-2">
-                <Label>Age Tier</Label>
-                <Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="INFANT">Infant</SelectItem>
-                    <SelectItem value="CHILD">Child</SelectItem>
-                    <SelectItem value="YOUTH">Youth</SelectItem>
-                    <SelectItem value="ADULT">Adult</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="edit-active" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" disabled={isSelf || memberLifecycleLocked} />
-              <Label htmlFor="edit-active">Active</Label>
-              {isSelf && <span className="text-xs text-muted-foreground ml-1">(cannot deactivate own account)</span>}
-              {memberLifecycleLocked && <span className="text-xs text-muted-foreground ml-1">(locked by lifecycle state)</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="edit-forcePasswordChange" checked={form.forcePasswordChange} onChange={e => setForm(f => ({ ...f, forcePasswordChange: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
-              <Label htmlFor="edit-forcePasswordChange">Force Password Change on Next Login</Label>
-            </div>
-            {!form.canLogin && (
-              <div className="space-y-2">
-                <Label htmlFor="edit-inheritEmailSearch">Notification Email Recipient (optional)</Label>
-                <p className="text-xs text-muted-foreground">
-                  Search for a primary adult member who should receive this member&apos;s notifications.
-                  Leave it blank to use this member&apos;s own email address instead.
-                </p>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                  {selectedInheritEmailSource ? (
-                    <div className="space-y-2">
-                      <div className="font-medium text-slate-900">
-                        Sending notifications to {selectedInheritEmailSource.firstName} {selectedInheritEmailSource.lastName}
-                      </div>
-                      <div className="text-xs text-slate-600">
-                        {selectedInheritEmailSource.email} · Member ID {selectedInheritEmailSource.id}
-                        {selectedInheritEmailSource.active === false ? " · Inactive" : ""}
-                      </div>
-                      <Button type="button" variant="outline" size="sm" onClick={clearInheritEmailSource}>
-                        Use this member&apos;s own email instead
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="font-medium text-slate-900">Using this member&apos;s own email</div>
-                      <div className="text-xs text-slate-600">{form.email || "No email set on this member"}</div>
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Input
-                    id="edit-inheritEmailSearch"
-                    value={inheritEmailSearch}
-                    onChange={e => setInheritEmailSearch(e.target.value)}
-                    placeholder={selectedInheritEmailSource ? "Search to replace the selected adult" : "Search adult members by name or email"}
-                  />
-                  {inheritEmailSearching ? (
-                    <p className="text-xs text-muted-foreground">Searching eligible adult members...</p>
-                  ) : inheritEmailSearchError ? (
-                    <p className="text-xs text-red-600">{inheritEmailSearchError}</p>
-                  ) : inheritEmailSearch.trim().length >= 2 ? (
-                    inheritEmailSearchResults.length > 0 ? (
-                      <div className="max-h-48 space-y-2 overflow-auto rounded-md border border-slate-200 bg-white p-2">
-                        {inheritEmailSearchResults.map((candidate) => (
-                          <button
-                            key={candidate.id}
-                            type="button"
-                            className="w-full rounded-md border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
-                            onClick={() => selectInheritEmailSource(candidate)}
-                          >
-                            <div className="font-medium text-slate-900">
-                              {candidate.firstName} {candidate.lastName}
-                            </div>
-                            <div className="text-xs text-slate-600">
-                              {candidate.email} · Member ID {candidate.id}
-                              {candidate.active === false ? " · Inactive" : ""}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        No eligible primary adult members matched &quot;{inheritEmailSearch.trim()}&quot;.
-                      </p>
-                    )
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Only primary adult members can be selected. Start typing at least 2 characters to search.
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-            <MemberAddressFields
-              idPrefix="edit-member"
-              onSameAsPhysicalChange={setEditPostalSameAsPhysical}
-              onValuesChange={updateEditAddressFields}
-              sameAsPhysical={editPostalSameAsPhysical}
-              values={form}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? "Saving..." : "Save Changes"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MemberDependentDialog
+        open={dependentOpen}
+        onOpenChange={setDependentOpen}
+        member={member}
+        mode={dependentMode}
+        onChangeMode={(value) => {
+          setDependentMode(value)
+          setDependentFormError("")
+        }}
+        error={dependentFormError}
+        saving={dependentSaving}
+        createForm={dependentForm}
+        createPostalSameAsPhysical={dependentPostalSameAsPhysical}
+        onChangeCreateForm={setDependentForm}
+        onChangeCreatePostalSameAsPhysical={setDependentPostalSameAsPhysical}
+        onChangeCreateAddressFields={updateDependentAddressFields}
+        onSubmitCreate={handleCreateDependent}
+        linkSearch={linkDependentSearch}
+        linkSearching={linkDependentSearching}
+        linkSearchResults={linkDependentSearchResults}
+        linkSelected={selectedLinkDependent}
+        linkNotificationParentId={linkDependentNotificationParentId}
+        linkDisableLogin={linkDependentDisableLogin}
+        linkFamilyGroupIds={linkDependentFamilyGroupIds}
+        onChangeLinkSearch={(value) => {
+          setLinkDependentSearch(value)
+          setSelectedLinkDependent(null)
+          setDependentFormError("")
+        }}
+        onSelectLinkCandidate={selectLinkDependent}
+        onClearLinkSelection={clearLinkDependent}
+        onChangeLinkNotificationParentId={(value) => {
+          setLinkDependentNotificationParentId(value)
+          setLinkDependentInheritEmail(Boolean(value))
+        }}
+        onChangeLinkDisableLogin={setLinkDependentDisableLogin}
+        onToggleLinkFamilyGroup={toggleLinkFamilyGroup}
+        onSubmitLink={handleLinkDependent}
+      />
+
+      <MemberDeleteRequestDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        reason={deleteReason}
+        error={deleteError}
+        submitting={deleteSubmitting}
+        onChangeReason={setDeleteReason}
+        onSubmit={handleCreateDeleteRequest}
+      />
+
+      <MemberDeleteReviewDialog
+        dialog={deleteReviewDialog}
+        approvalBlockers={approvalBlockers}
+        reviewNote={deleteReviewNote}
+        error={deleteReviewError}
+        submitting={deleteReviewSubmitting}
+        onClose={() => {
+          setDeleteReviewDialog(null)
+          setDeleteReviewNote("")
+          setDeleteReviewError("")
+        }}
+        onChangeReviewNote={setDeleteReviewNote}
+        onSubmit={handleReviewDeleteRequest}
+      />
+
+      <MemberEditDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        member={member}
+        form={form}
+        formError={formError}
+        saving={saving}
+        isSelf={isSelf}
+        memberLifecycleLocked={memberLifecycleLocked}
+        postalSameAsPhysical={editPostalSameAsPhysical}
+        selectedInheritEmailSource={selectedInheritEmailSource}
+        inheritEmailSearch={inheritEmailSearch}
+        inheritEmailSearching={inheritEmailSearching}
+        inheritEmailSearchError={inheritEmailSearchError}
+        inheritEmailSearchResults={inheritEmailSearchResults}
+        xeroError={xeroError}
+        xeroChoice={xeroChoice}
+        xeroSearchQuery={xeroSearchQuery}
+        xeroSearchResults={xeroSearchResults}
+        xeroSearching={xeroSearching}
+        xeroLinking={xeroLinking}
+        xeroUnlinking={xeroUnlinking}
+        xeroPushing={xeroPushing}
+        selectedXeroContactId={selectedXeroContactId}
+        onChangeForm={setForm}
+        onChangeAddressFields={updateEditAddressFields}
+        onChangePostalSameAsPhysical={setEditPostalSameAsPhysical}
+        onChangeInheritEmailSearch={setInheritEmailSearch}
+        onSelectInheritEmailSource={selectInheritEmailSource}
+        onClearInheritEmailSource={clearInheritEmailSource}
+        onChangeXeroSearchQuery={setXeroSearchQuery}
+        onChangeSelectedXeroContactId={setSelectedXeroContactId}
+        onChangeXeroChoice={setXeroChoice}
+        onClearXeroError={() => setXeroError("")}
+        onOpenLinkXero={openLinkXero}
+        onOpenCreateXero={openCreateXero}
+        onXeroSearch={handleXeroSearch}
+        onXeroLink={handleXeroLink}
+        onXeroUnlink={handleXeroUnlink}
+        onSubmit={handleSave}
+      />
     </div>
   )
 }

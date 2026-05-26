@@ -1,0 +1,65 @@
+"use client"
+
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+
+interface MemberDeleteRequestDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  reason: string
+  error: string
+  submitting: boolean
+  onChangeReason: (value: string) => void
+  onSubmit: () => void
+}
+
+export function MemberDeleteRequestDialog({
+  open,
+  onOpenChange,
+  reason,
+  error,
+  submitting,
+  onChangeReason,
+  onSubmit,
+}: MemberDeleteRequestDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Request Member Delete</DialogTitle>
+          <DialogDescription>
+            Submit this member for second-admin approval before hard deletion.
+          </DialogDescription>
+        </DialogHeader>
+        {error && <div className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</div>}
+        <div className="space-y-2">
+          <Label htmlFor="delete-reason">Reason</Label>
+          <Textarea
+            id="delete-reason"
+            value={reason}
+            onChange={(event) => onChangeReason(event.target.value)}
+            placeholder="Record was created in error"
+            rows={4}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={onSubmit} disabled={submitting || !reason.trim()}>
+            {submitting ? "Submitting..." : "Submit Delete Request"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

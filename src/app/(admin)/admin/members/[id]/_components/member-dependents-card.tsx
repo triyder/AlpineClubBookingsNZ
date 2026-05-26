@@ -1,0 +1,138 @@
+"use client"
+
+import { useRouter } from "next/navigation"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Plus, Trash2 } from "lucide-react"
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
+import {
+  formatMemberDateNz,
+  parentLinkTypeLabel,
+} from "@/lib/admin-member-detail-helpers"
+import type { MemberDetail } from "../_types"
+
+interface MemberDependentsCardProps {
+  member: MemberDetail
+  isAdultMember: boolean
+  memberIsArchived: boolean
+  currentMemberPath: string
+  unlinkingDependentId: string | null
+  onOpenDependentDialog: () => void
+  onUnlinkDependent: (parentId: string, dependentId: string, dependentName: string) => void
+}
+
+export function MemberDependentsCard({
+  member,
+  isAdultMember,
+  memberIsArchived,
+  currentMemberPath,
+  unlinkingDependentId,
+  onOpenDependentDialog,
+  onUnlinkDependent,
+}: MemberDependentsCardProps) {
+  const router = useRouter()
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base font-medium">Dependents</CardTitle>
+        {isAdultMember && !memberIsArchived && (
+          <Button variant="outline" size="sm" onClick={onOpenDependentDialog}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add Dependent
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent>
+        {member.dependents.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            {isAdultMember
+              ? "No dependents linked to this member yet."
+              : "Only adult members can manage dependents."}
+          </p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Link</TableHead>
+                <TableHead>Age Tier</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Date of Birth</TableHead>
+                <TableHead>Login</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {member.dependents.map((dependent) => (
+                <TableRow key={dependent.id}>
+                  <TableCell className="font-medium">
+                    {dependent.firstName} {dependent.lastName}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{parentLinkTypeLabel(dependent.parentLinkType)}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    {dependent.ageTier.charAt(0) + dependent.ageTier.slice(1).toLowerCase()}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={dependent.active ? "default" : "destructive"}
+                      className={
+                        dependent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""
+                      }
+                    >
+                      {dependent.active ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{dependent.dateOfBirth ? formatMemberDateNz(dependent.dateOfBirth) : "-"}</TableCell>
+                  <TableCell>
+                    {dependent.canLogin ? (
+                      <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+                        Can Login
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
+                        Non-Login
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          router.push(buildHrefWithReturnTo(`/admin/members/${dependent.id}`, currentMemberPath))
+                        }
+                      >
+                        View
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          onUnlinkDependent(
+                            member.id,
+                            dependent.id,
+                            `${dependent.firstName} ${dependent.lastName}`
+                          )
+                        }
+                        disabled={unlinkingDependentId === dependent.id}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        {unlinkingDependentId === dependent.id ? "Removing..." : "Remove"}
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
