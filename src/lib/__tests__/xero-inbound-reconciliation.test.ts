@@ -294,6 +294,47 @@ describe("processStoredXeroInboundEvents", () => {
     });
   });
 
+  it("redacts sensitive error text when a stored inbound event fails", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_1",
+        source: "webhook",
+        eventCategory: "CONTACT",
+        eventType: "UPDATE",
+        resourceId: "contact_1",
+        correlationKey: "corr_1",
+        payload: {},
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_1" });
+    mocks.startXeroSyncOperation.mockRejectedValue(
+      new Error("Xero failed with client_secret=pi_123_secret_liveSecret")
+    );
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+    });
+
+    expect(mocks.inboundUpdate).toHaveBeenCalledWith({
+      where: { id: "evt_1" },
+      data: {
+        status: "FAILED",
+        errorMessage: "Xero failed with client_secret=[REDACTED]",
+        processedAt: null,
+      },
+    });
+    expect(mocks.processedDeleteMany).toHaveBeenCalledWith({
+      where: {
+        eventId: "corr_1",
+        source: "xero",
+      },
+    });
+  });
+
   it("reconciles linked contact events and backfills missing member fields", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {

@@ -147,6 +147,29 @@ describe("recordXeroInboundEvent", () => {
       }),
     });
   });
+
+  it("redacts sensitive error text before storing inbound event failures", async () => {
+    mocks.inboundFindUnique.mockResolvedValue(null);
+    mocks.inboundCreate.mockResolvedValue({ id: "evt_1" });
+
+    await recordXeroInboundEvent({
+      correlationKey: "contact:update:abc",
+      eventType: "UPDATE",
+      eventCategory: "CONTACT",
+      payload: { contactID: "abc" },
+      status: "FAILED",
+      errorMessage:
+        "Xero failed with Authorization: Bearer live-token and pi_123_secret_liveSecret",
+    });
+
+    expect(mocks.inboundCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "FAILED",
+        errorMessage:
+          "Xero failed with Authorization: Bearer [REDACTED] and [REDACTED]",
+      }),
+    });
+  });
 });
 
 describe("findCanonicalPaymentRefundCreditNote", () => {

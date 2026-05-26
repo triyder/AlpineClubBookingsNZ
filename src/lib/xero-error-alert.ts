@@ -1,6 +1,7 @@
 import { sendAdminXeroSyncErrorAlert } from "./email";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
 /**
  * N-05: Xero sync error alert with deduplication.
@@ -29,6 +30,7 @@ export async function notifyXeroSyncError(data: {
 
     await sendAdminXeroSyncErrorAlert({
       ...data,
+      errorMessage: redactSensitiveText(data.errorMessage),
       timestamp: new Date(),
     });
   } catch (err) {

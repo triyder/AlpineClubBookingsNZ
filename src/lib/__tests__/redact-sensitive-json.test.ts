@@ -144,4 +144,20 @@ describe("redact-sensitive-json", () => {
       )
     ).toBe("/membership-cancellation/[REDACTED]/extra/path?keep=true");
   });
+
+  it("redacts token query parameters and Stripe client secrets in plain text", () => {
+    expect(
+      redactSensitiveText(
+        "GET /reset-password?token=live-reset-token&next=/profile"
+      )
+    ).toBe("GET /reset-password?token=[REDACTED]&next=/profile");
+
+    expect(
+      redactSensitiveText(
+        "Stripe returned client_secret=pi_123_secret_liveSecret and whsec_liveWebhookSecret"
+      )
+    ).toBe(
+      "Stripe returned client_secret=[REDACTED] and [REDACTED]"
+    );
+  });
 });
