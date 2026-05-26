@@ -31,6 +31,12 @@ const SENSITIVE_STRING_VALUE_PATTERNS = [
   /[^\s@]+@[^\s@]+\.[^\s@]+/,
   /\+?[0-9]{8,15}/,
 ];
+const STRIPE_SECRET_VALUE_PATTERN =
+  /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|whsec_[A-Za-z0-9]+|(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+)\b/g;
+const TOKEN_QUERY_VALUE_PATTERN =
+  /([?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|payment[_-]?intent[_-]?client[_-]?secret|setup[_-]?intent[_-]?client[_-]?secret|token)=)[^&#\s]+/gi;
+const TOKEN_KEY_VALUE_PATTERN =
+  /\b(access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password|stripe[_-]?token|token)\s*([:=])\s*("[^"]*"|'[^']*'|[^,\s;&]+)/gi;
 
 function normalizeJsonKey(key: string) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -93,6 +99,9 @@ export function redactSensitiveText(value: string): string {
       /("?(?:authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password|stripe[_-]?token|email|phone|phone[_-]?number|mobile[_-]?phone|payment[_-]?method(?:[_-]?id)?|charge(?:[_-]?id)?|client[_-]?reference[_-]?id)"?\s*:\s*")([^"]*)"/gi,
       `$1${REDACTED_SECRET}"`
     )
+    .replace(TOKEN_QUERY_VALUE_PATTERN, `$1${REDACTED_SECRET}`)
+    .replace(TOKEN_KEY_VALUE_PATTERN, `$1$2${REDACTED_SECRET}`)
+    .replace(STRIPE_SECRET_VALUE_PATTERN, REDACTED_SECRET)
     .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b/gi, `Bearer ${REDACTED_SECRET}`);
 
   return isSensitiveStringValue(redactedValue) ? REDACTED_SECRET : redactedValue;

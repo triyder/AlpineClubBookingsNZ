@@ -626,7 +626,9 @@ export async function recordXeroInboundEvent(input: {
     correlationKey: input.correlationKey,
     payload,
     status: nextStatus,
-    errorMessage: input.errorMessage ?? null,
+    errorMessage: input.errorMessage
+      ? redactSensitiveText(input.errorMessage)
+      : null,
     processedAt: nextProcessedAt,
   };
 

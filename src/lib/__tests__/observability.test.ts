@@ -169,6 +169,35 @@ describe("OBS-08: Webhook logging", () => {
       });
     });
 
+    it("redacts sensitive text before persisting webhook errors", async () => {
+      vi.mocked(prisma.webhookLog.create).mockResolvedValue({
+        id: "3",
+        source: "stripe",
+        eventType: "payment_intent.failed",
+        eventId: "evt_secret",
+        status: "failure",
+        durationMs: 100,
+        error: "client_secret=[REDACTED]",
+        createdAt: new Date(),
+      });
+
+      const { recordWebhookLog } = await import("@/lib/webhook-log");
+      await recordWebhookLog({
+        source: "stripe",
+        eventType: "payment_intent.failed",
+        eventId: "evt_secret",
+        status: "failure",
+        durationMs: 100,
+        error: "Stripe failure for pi_123_secret_liveSecret",
+      });
+
+      expect(prisma.webhookLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          error: "Stripe failure for [REDACTED]",
+        }),
+      });
+    });
+
     it("does not throw when create fails", async () => {
       vi.mocked(prisma.webhookLog.create).mockRejectedValue(new Error("DB down"));
 

@@ -91,12 +91,20 @@ const MAX_METADATA_STRING_LENGTH = 1000;
 const MAX_METADATA_JSON_LENGTH = 24000;
 
 const SECRET_VALUE_PATTERN =
-  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|\b(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/;
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|\bwhsec_[A-Za-z0-9]+|\b(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b|\/membership-cancellation\/[A-Za-z0-9_-]+/;
 const SENSITIVE_TEXT_KEY_VALUE_PATTERN =
-  /\b(password|passcode|token|secret|authorization|cookie|card(?:number)?|cvc|cvv)\s*[:=]\s*("[^"]*"|'[^']*'|[^,\s;]+)/gi;
+  /\b(password|passcode|token|secret|authorization|cookie|card(?:number)?|cvc|cvv)\s*[:=]\s*("[^"]*"|'[^']*'|(?:\d[ -]?){12,18}\d|[^,\s;]+)/gi;
 const PAYMENT_CARD_NUMBER_PATTERN = /\b(?:\d[ -]?){13,19}\b/g;
 
 type SanitizedMetadataValue = Prisma.InputJsonValue | null;
+
+function sanitizeAuditDetails(value?: string | null): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return sanitizeAuditArchiveText(value) ?? undefined;
+}
 
 function isSensitiveMetadataKey(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -375,7 +383,7 @@ function buildAuditLogCreateData(
     action: params.action,
     memberId: params.memberId ?? undefined,
     targetId: params.targetId ?? undefined,
-    details: params.details ?? undefined,
+    details: sanitizeAuditDetails(params.details),
     ipAddress: params.ipAddress ?? undefined,
     actorMemberId: params.actorMemberId ?? params.memberId ?? undefined,
     subjectMemberId: params.subjectMemberId ?? undefined,
@@ -417,7 +425,7 @@ function buildStructuredAuditLogCreateData(
     action: event.action,
     memberId: actorMemberId,
     targetId: subjectMemberId ?? entityId,
-    details: event.details ?? undefined,
+    details: sanitizeAuditDetails(event.details),
     ipAddress: event.request?.ipAddress ?? undefined,
     actorMemberId,
     subjectMemberId,

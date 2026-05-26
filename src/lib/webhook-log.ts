@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import logger from "./logger";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
 /**
  * OBS-08: Record a webhook invocation for monitoring.
@@ -13,7 +14,11 @@ export async function recordWebhookLog(data: {
   error?: string;
 }) {
   try {
-    await prisma.webhookLog.create({ data });
+    const createData = {
+      ...data,
+      ...(data.error ? { error: redactSensitiveText(data.error) } : {}),
+    };
+    await prisma.webhookLog.create({ data: createData });
   } catch (err) {
     logger.error({ err, ...data }, "Failed to record webhook log");
   }

@@ -49,6 +49,26 @@ describe("finance-xero-api-usage", () => {
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it("redacts sensitive values before persisting failure messages", async () => {
+    mockPrisma.financeXeroApiUsageEvent.create.mockReturnValue({ kind: "event-create" });
+    mockPrisma.financeXeroApiUsageDaily.upsert.mockReturnValue({ kind: "daily-upsert" });
+
+    await recordFinanceXeroApiUsage({
+      operation: "getReports",
+      resourceType: "REPORT",
+      success: false,
+      errorMessage:
+        "Finance Xero failed with access_token=live-access and seti_123_secret_liveSecret",
+    });
+
+    expect(mockPrisma.financeXeroApiUsageEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        errorMessage:
+          "Finance Xero failed with access_token=[REDACTED] and [REDACTED]",
+      }),
+    });
+  });
+
   it("builds a finance summary with top operations, workflows, and failures", async () => {
     mockPrisma.financeXeroApiUsageDaily.findUnique.mockResolvedValue({
       totalCalls: 12,

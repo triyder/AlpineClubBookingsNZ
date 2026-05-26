@@ -46,6 +46,26 @@ describe("xero-api-usage", () => {
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
   })
 
+  it("redacts sensitive values before persisting failure messages", async () => {
+    mockPrisma.xeroApiUsageEvent.create.mockReturnValue({ kind: "event-create" })
+    mockPrisma.xeroApiUsageDaily.upsert.mockReturnValue({ kind: "daily-upsert" })
+
+    await recordXeroApiUsage({
+      operation: "getInvoices",
+      resourceType: "INVOICE",
+      success: false,
+      errorMessage:
+        "Xero failed with refresh_token=live-refresh and pi_123_secret_liveSecret",
+    })
+
+    expect(mockPrisma.xeroApiUsageEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        errorMessage:
+          "Xero failed with refresh_token=[REDACTED] and [REDACTED]",
+      }),
+    })
+  })
+
   it("builds a summary with top operations, workflows, and failures", async () => {
     mockPrisma.xeroApiUsageDaily.findUnique.mockResolvedValue({
       totalCalls: 12,

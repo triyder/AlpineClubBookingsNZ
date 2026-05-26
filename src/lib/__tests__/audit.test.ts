@@ -72,6 +72,26 @@ describe("audit helper", () => {
     });
   });
 
+  it("sanitizes legacy audit detail strings before persistence", async () => {
+    const db = auditDb();
+
+    await createAuditLog(
+      {
+        action: "legacy.secret",
+        details:
+          "Retry failed for cardNumber=4242 4242 4242 4242 and token=live-token",
+      },
+      db as never
+    );
+
+    expect(db.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        details:
+          "Retry failed for cardNumber=[REDACTED] and token=[REDACTED]",
+      }),
+    });
+  });
+
   it("maps structured audit events onto actor, subject, entity, and retention fields", async () => {
     const db = auditDb();
 

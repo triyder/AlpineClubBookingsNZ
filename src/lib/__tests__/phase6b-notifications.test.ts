@@ -243,6 +243,23 @@ describe("N-05: notifyXeroSyncError", () => {
     });
   });
 
+  it("redacts sensitive values in Xero error alert emails", async () => {
+    const { notifyXeroSyncError } = await import("../xero-error-alert");
+    await notifyXeroSyncError({
+      errorType: "API Error",
+      operation: "createInvoice",
+      errorMessage:
+        "Xero failed with access_token=live-access and pi_123_secret_liveSecret",
+    });
+    await flushAsyncEmailSends();
+
+    const htmlBody = String(mockPrisma.emailLog.create.mock.calls[0][0].data.htmlBody);
+    expect(htmlBody).toContain("access_token=[REDACTED]");
+    expect(htmlBody).toContain("[REDACTED]");
+    expect(htmlBody).not.toContain("live-access");
+    expect(htmlBody).not.toContain("pi_123_secret_liveSecret");
+  });
+
   it("suppresses duplicate alerts within 1 hour", async () => {
     mockPrisma.emailLog.findFirst.mockResolvedValue({
       id: "existing-alert",

@@ -32,6 +32,7 @@ import {
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import { createAuditLog } from "@/lib/audit";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
 interface StoredXeroInboundEvent {
   id: string;
@@ -2611,13 +2612,14 @@ async function markStoredInboundEventProcessed(eventId: string) {
 }
 
 async function markStoredInboundEventFailed(eventId: string, error: unknown) {
+  const rawErrorMessage = error instanceof Error ? error.message : String(error);
   await prisma.xeroInboundEvent.update({
     where: {
       id: eventId,
     },
     data: {
       status: "FAILED",
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: redactSensitiveText(rawErrorMessage),
       processedAt: null,
     },
   });
