@@ -1,18 +1,22 @@
 /**
  * Xero Integration Library
  *
- * Handles OAuth2 flow, token management, invoice creation, credit notes,
- * contact sync, and membership subscription verification.
+ * Coordinates Xero contact sync, membership subscription verification, booking
+ * invoices, credit notes, refunds, and diagnostics.
+ *
+ * Lower-level infrastructure (OAuth, token storage, metered API calls + retry,
+ * reference mappings) lives in focused modules and is re-exported below so
+ * existing callers can continue importing from "@/lib/xero".
  */
 
 import { XeroClient, Contact, ContactGroup, Invoice, Invoices, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone, Address } from "xero-node";
 import type { Contacts } from "xero-node";
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
-import { AgeTier, CreditType, EntranceFeeCategory, Prisma } from "@prisma/client";
+import { AgeTier, CreditType, Prisma } from "@prisma/client";
 import {
   buildAgeTierXeroContactGroupConfigMap,
   getAgeTierXeroContactGroupMappings,
@@ -20,16 +24,6 @@ import {
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
-import { recordXeroApiUsage, type XeroRateLimitCategory } from "@/lib/xero-api-usage";
-import {
-  getXeroErrorBodyMessage,
-  getXeroErrorHeader,
-  getXeroErrorStatusCode,
-} from "@/lib/xero-error-shape";
-import {
-  getOperationalXeroConfig,
-  getOperationalXeroEncryptionKey,
-} from "@/lib/xero-config";
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -49,33 +43,88 @@ import {
 } from "@/lib/xero-contact-link-mismatches";
 import { createAuditLog } from "@/lib/audit";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import {
+  callXeroApi,
+  getAuthenticatedXeroClient,
+  getXeroErrorSearchText,
+  isRetryableXeroContactReferenceError,
+  resetXeroRateLimitStateForTests,
+  withXeroRetry,
+  XeroDailyLimitError,
+  XeroTransientOutageError,
+  type MeteredXeroCallOptions,
+} from "./xero-api-client";
+import {
+  buildEntranceFeeInvoiceIdempotencyKey,
+  determineEntranceFeeCategory,
+  getAccountMapping,
+  getEntranceFeeContext,
+  getEntranceFeeMapping,
+  getHutFeeItemCodeMap,
+  getItemCodeMapping,
+  getResolvedAccountMapping,
+  type EntranceFeeContext,
+  type ResolvedAccountMapping,
+} from "./xero-mappings";
+import {
+  createXeroClient,
+  disconnectXero,
+  getXeroConsentUrl,
+  handleXeroCallback,
+} from "./xero-oauth";
+import {
+  decryptToken,
+  encryptToken,
+  getXeroConnectionStatus,
+  isXeroConnected,
+} from "./xero-token-store";
 
 // ---------------------------------------------------------------------------
-// Rate limit error
+// Re-export the public surface that used to live in this file. Existing
+// callers import from "@/lib/xero"; keep that contract while the underlying
+// infrastructure lives in dedicated modules.
 // ---------------------------------------------------------------------------
 
-export class XeroDailyLimitError extends Error {
-  retryAfterSec: number;
-  constructor(retryAfterSec: number) {
-    super(
-      `Xero daily API limit reached. Retry after ${retryAfterSec} seconds (~${Math.round(retryAfterSec / 3600)} hours). Please try again tomorrow.`
-    );
-    this.name = "XeroDailyLimitError";
-    this.retryAfterSec = retryAfterSec;
-  }
-}
+export {
+  callXeroApi,
+  getAuthenticatedXeroClient,
+  isRetryableXeroContactReferenceError,
+  resetXeroRateLimitStateForTests,
+  withXeroRetry,
+  XeroDailyLimitError,
+  XeroTransientOutageError,
+};
+export type { MeteredXeroCallOptions };
 
-export class XeroTransientOutageError extends Error {
-  retryAfterSec: number;
+export {
+  buildEntranceFeeInvoiceIdempotencyKey,
+  determineEntranceFeeCategory,
+  getAccountMapping,
+  getEntranceFeeContext,
+  getEntranceFeeMapping,
+  getHutFeeItemCodeMap,
+  getItemCodeMapping,
+  getResolvedAccountMapping,
+};
+export type { EntranceFeeContext, ResolvedAccountMapping };
 
-  constructor(retryAfterSec: number) {
-    super(
-      `Xero is temporarily unavailable. Suppressing further Xero calls for ${retryAfterSec} seconds to protect API quota.`
-    );
-    this.name = "XeroTransientOutageError";
-    this.retryAfterSec = retryAfterSec;
-  }
-}
+export {
+  createXeroClient,
+  disconnectXero,
+  getXeroConsentUrl,
+  handleXeroCallback,
+};
+
+export {
+  decryptToken,
+  encryptToken,
+  getXeroConnectionStatus,
+  isXeroConnected,
+};
+
+// ---------------------------------------------------------------------------
+// Contact validation error (raised when a member lacks required Xero fields)
+// ---------------------------------------------------------------------------
 
 export class XeroContactValidationError extends Error {
   missingFields: string[];
@@ -92,15 +141,6 @@ export class XeroContactValidationError extends Error {
 export interface FindOrCreateXeroContactOptions {
   createdByMemberId?: string;
   repairExistingLink?: boolean;
-}
-
-export interface EntranceFeeContext {
-  category: EntranceFeeCategory;
-  feeMapping: {
-    itemCode: string | null;
-    amountCents: number | null;
-  };
-  description?: string | null;
 }
 
 export interface CreateXeroEntranceFeeInvoiceOptions
@@ -150,12 +190,9 @@ export interface PotentialXeroContactMatch {
 }
 
 // ---------------------------------------------------------------------------
-// Constants
+// Constants (contact / membership sync coordination)
 // ---------------------------------------------------------------------------
 
-const ENCRYPTION_ALGORITHM = "aes-256-gcm";
-const IV_LENGTH = 16;
-const AUTH_TAG_LENGTH = 16;
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
 const CONTACT_GROUP_CACHE_CURSOR_RESOURCE = "CONTACT_GROUP_CACHE";
@@ -165,15 +202,11 @@ const MEMBERSHIP_CURSOR_OVERLAP_MS = 2 * 60 * 1000;
 const MEMBERSHIP_SYNC_THROTTLE_MS = 1200;
 const XERO_PAGE_SIZE = 100;
 const XERO_CONTACT_ID_BATCH_SIZE = 50;
-const DEFAULT_XERO_TRANSIENT_MAX_RETRIES = 1;
-const XERO_TRANSIENT_FAILURE_COOLDOWN_SEC = 120;
 
-// Xero tokens expire after 30 minutes; refresh 10 minutes early
-const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
-
-// Cache the daily-limit cooldown in-process so we stop hammering Xero until Retry-After expires.
-let xeroDailyLimitUntilMs = 0;
-let xeroTransientOutageUntilMs = 0;
+/** Pause for `ms` milliseconds. Used to pace bulk-sync loops. */
+function throttle(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface XeroSyncCursorMetadata {
   retryMemberIds?: string[];
@@ -361,489 +394,6 @@ function toPrismaJson(
   value: XeroSyncCursorMetadata | undefined
 ): Prisma.InputJsonValue | undefined {
   return value as Prisma.InputJsonValue | undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Encryption helpers (for token storage at rest)
-// ---------------------------------------------------------------------------
-
-function getEncryptionKey(): Buffer {
-  const key = getOperationalXeroEncryptionKey();
-  if (!key) {
-    throw new Error("XERO_ENCRYPTION_KEY environment variable is required (32-byte hex string)");
-  }
-  const buf = Buffer.from(key, "hex");
-  if (buf.length !== 32) {
-    throw new Error("XERO_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)");
-  }
-  return buf;
-}
-
-export function encryptToken(plaintext: string): string {
-  const key = getEncryptionKey();
-  const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv, {
-    authTagLength: AUTH_TAG_LENGTH,
-  });
-  let encrypted = cipher.update(plaintext, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  const authTag = cipher.getAuthTag();
-  // Format: iv:authTag:ciphertext
-  return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
-}
-
-export function decryptToken(encrypted: string): string {
-  const key = getEncryptionKey();
-  const parts = encrypted.split(":");
-  if (parts.length !== 3) {
-    throw new Error("Invalid encrypted token format");
-  }
-  const iv = Buffer.from(parts[0], "hex");
-  const authTag = Buffer.from(parts[1], "hex");
-  const ciphertext = parts[2];
-  if (authTag.length !== AUTH_TAG_LENGTH) {
-    throw new Error("Invalid encrypted token authentication tag length");
-  }
-  const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv, {
-    authTagLength: AUTH_TAG_LENGTH,
-  });
-  decipher.setAuthTag(authTag);
-  let decrypted = decipher.update(ciphertext, "hex", "utf8");
-  decrypted += decipher.final("utf8");
-  return decrypted;
-}
-
-// ---------------------------------------------------------------------------
-// Xero Client setup
-// ---------------------------------------------------------------------------
-
-export function createXeroClient(state?: string): XeroClient {
-  return new XeroClient({
-    ...getOperationalXeroConfig(),
-    ...(state ? { state } : {}),
-  });
-}
-
-/**
- * Build the Xero OAuth2 consent URL for admin to connect.
- */
-export async function getXeroConsentUrl(state?: string): Promise<string> {
-  const xero = createXeroClient(state);
-  await xero.initialize();
-  return xero.buildConsentUrl();
-}
-
-/**
- * Handle the OAuth2 callback from Xero.
- * Exchanges the authorization code for tokens and stores them encrypted.
- */
-export async function handleXeroCallback(url: string, state?: string): Promise<void> {
-  const xero = createXeroClient(state);
-  await xero.initialize();
-  const tokenSet = await xero.apiCallback(url);
-  await xero.updateTenants();
-
-  const tenants = xero.tenants;
-  const tenantId = tenants.length > 0 ? tenants[0].tenantId : null;
-
-  await saveXeroTokens({
-    accessToken: tokenSet.access_token!,
-    refreshToken: tokenSet.refresh_token!,
-    expiresAt: new Date(Date.now() + (tokenSet.expires_in ?? 1800) * 1000),
-    tenantId: tenantId ?? undefined,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Token persistence (encrypted at rest)
-// ---------------------------------------------------------------------------
-
-interface TokenData {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: Date;
-  tenantId?: string;
-}
-
-async function saveXeroTokens(tokens: TokenData): Promise<void> {
-  const encryptedAccess = encryptToken(tokens.accessToken);
-  const encryptedRefresh = encryptToken(tokens.refreshToken);
-
-  // Atomic upsert via transaction to prevent concurrent token refresh race conditions.
-  // Two concurrent refreshes could both read the same row and overwrite each other.
-  await prisma.$transaction(async (tx) => {
-    const existing = await tx.xeroToken.findFirst();
-    if (existing) {
-      await tx.xeroToken.update({
-        where: { id: existing.id },
-        data: {
-          accessToken: encryptedAccess,
-          refreshToken: encryptedRefresh,
-          expiresAt: tokens.expiresAt,
-          tenantId: tokens.tenantId ?? existing.tenantId,
-        },
-      });
-    } else {
-      await tx.xeroToken.create({
-        data: {
-          accessToken: encryptedAccess,
-          refreshToken: encryptedRefresh,
-          expiresAt: tokens.expiresAt,
-          tenantId: tokens.tenantId ?? null,
-        },
-      });
-    }
-  });
-}
-
-async function loadXeroTokens(): Promise<(TokenData & { id: string }) | null> {
-  const record = await prisma.xeroToken.findFirst();
-  if (!record) return null;
-
-  return {
-    id: record.id,
-    accessToken: decryptToken(record.accessToken),
-    refreshToken: decryptToken(record.refreshToken),
-    expiresAt: record.expiresAt,
-    tenantId: record.tenantId ?? undefined,
-  };
-}
-
-/**
- * Check if Xero is currently connected (tokens exist and tenant is set).
- */
-export async function isXeroConnected(): Promise<boolean> {
-  const record = await prisma.xeroToken.findFirst();
-  return record !== null && record.tenantId !== null;
-}
-
-// ---------------------------------------------------------------------------
-// Account Mapping (XAM-05)
-// ---------------------------------------------------------------------------
-
-/** Default fallbacks if no DB record exists or code is null */
-const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
-  hutFeesIncome: "200",
-  hutFeeRefunds: "200",
-  stripeBankAccount: "606",
-  stripeFees: null,
-  subscriptionIncome: "203",
-  membershipCancellationCredit: "203",
-};
-
-type ResolvedAccountMapping = {
-  code: string | null;
-  itemCode: string | null;
-  codeExplicitlyConfigured: boolean;
-};
-
-export async function getResolvedAccountMapping(key: string): Promise<ResolvedAccountMapping> {
-  try {
-    const mapping = await prisma.xeroAccountMapping.findUnique({
-      where: { key },
-      select: { code: true, itemCode: true },
-    });
-    return {
-      code: mapping?.code ?? ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
-      itemCode: mapping?.itemCode ?? null,
-      codeExplicitlyConfigured: mapping?.code != null,
-    };
-  } catch {
-    return {
-      code: ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
-      itemCode: null,
-      codeExplicitlyConfigured: false,
-    };
-  }
-}
-
-/**
- * Read a Xero account code from the DB, falling back to the hard-coded default.
- * Returns null for unconfigured optional mappings (e.g. stripeFees).
- */
-export async function getAccountMapping(key: string): Promise<string | null> {
-  const mapping = await getResolvedAccountMapping(key);
-  return mapping.code;
-}
-
-/**
- * Get the Xero Item Code for a given mapping key.
- * Returns null if not configured.
- */
-export async function getItemCodeMapping(key: string): Promise<string | null> {
-  const mapping = await getResolvedAccountMapping(key);
-  return mapping.itemCode;
-}
-
-// ---------------------------------------------------------------------------
-// Granular Item Code Mappings (per age tier / season / member status)
-// ---------------------------------------------------------------------------
-
-/**
- * Build a lookup map for hut fee item codes keyed by "${ageTier}_${seasonType}_${isMember}".
- * Falls back to the legacy flat `hutFeeItem` from XeroAccountMapping if the new table is empty.
- */
-export async function getHutFeeItemCodeMap(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-
-  const rows = await prisma.xeroItemCodeMapping.findMany({
-    where: { category: "HUT_FEE" },
-  });
-
-  for (const row of rows) {
-    if (row.ageTier && row.seasonType && row.isMember !== null && row.itemCode) {
-      map.set(`${row.ageTier}_${row.seasonType}_${row.isMember}`, row.itemCode);
-    }
-  }
-
-  if (map.size === 0) {
-    // Fallback: use legacy flat hutFeeItem for all combinations
-    const legacyItemCode = await getItemCodeMapping("hutFeeItem");
-    if (legacyItemCode) {
-      for (const tier of ["INFANT", "CHILD", "YOUTH", "ADULT"]) {
-        for (const season of ["WINTER", "SUMMER"]) {
-          for (const member of [true, false]) {
-            map.set(`${tier}_${season}_${member}`, legacyItemCode);
-          }
-        }
-      }
-    }
-  }
-
-  return map;
-}
-
-/**
- * Get the entrance fee item code and amount for a specific category.
- * Falls back to the legacy flat entranceFeeItem/entranceFeeAmountCents if the new table is empty.
- */
-export async function getEntranceFeeMapping(
-  category: EntranceFeeCategory
-): Promise<{ itemCode: string | null; amountCents: number | null }> {
-  const row = await prisma.xeroItemCodeMapping.findFirst({
-    where: { category: "ENTRANCE_FEE", entranceFeeCategory: category },
-  });
-
-  if (row) {
-    return { itemCode: row.itemCode, amountCents: row.amountCents };
-  }
-
-  // Fallback to legacy flat mappings
-  const [legacyItemCode, legacyAmount] = await Promise.all([
-    getItemCodeMapping("entranceFeeItem"),
-    prisma.xeroAccountMapping.findUnique({
-      where: { key: "entranceFeeAmountCents" },
-      select: { code: true },
-    }),
-  ]);
-
-  const amountCents = legacyAmount?.code ? parseInt(legacyAmount.code, 10) : null;
-  return {
-    itemCode: legacyItemCode,
-    amountCents: isNaN(amountCents as number) ? null : amountCents,
-  };
-}
-
-/**
- * Determine the entrance fee category for a member based on their age tier
- * and family group membership.
- *
- * - FAMILY: adult in a family group that has ≥2 adults AND ≥1 child/youth/infant
- * - ADULT: adult member (standalone or no qualifying family group)
- * - YOUTH: youth-tier member
- * - CHILD: child or infant-tier member
- */
-export async function determineEntranceFeeCategory(
-  memberId: string
-): Promise<EntranceFeeCategory> {
-  const member = await prisma.member.findUnique({
-    where: { id: memberId },
-    select: { ageTier: true },
-  });
-
-  if (!member) return "ADULT";
-
-  if (member.ageTier === "YOUTH") return "YOUTH";
-  if (member.ageTier === "CHILD" || member.ageTier === "INFANT") return "CHILD";
-
-  // ADULT tier — check if they qualify for FAMILY rate
-  const familyMemberships = await prisma.familyGroupMember.findMany({
-    where: { memberId },
-    select: { familyGroupId: true },
-  });
-
-  for (const fm of familyMemberships) {
-    const groupMembers = await prisma.familyGroupMember.findMany({
-      where: { familyGroupId: fm.familyGroupId },
-      include: { member: { select: { ageTier: true } } },
-    });
-
-    const adults = groupMembers.filter((gm) =>
-      gm.member.ageTier === "ADULT"
-    );
-    const dependents = groupMembers.filter((gm) =>
-      gm.member.ageTier === "CHILD" || gm.member.ageTier === "YOUTH" || gm.member.ageTier === "INFANT"
-    );
-
-    if (adults.length >= 2 && dependents.length >= 1) {
-      return "FAMILY";
-    }
-  }
-
-  return "ADULT";
-}
-
-export async function getEntranceFeeContext(
-  memberId: string
-): Promise<EntranceFeeContext> {
-  const category = await determineEntranceFeeCategory(memberId);
-  const feeMapping = await getEntranceFeeMapping(category);
-
-  return { category, feeMapping };
-}
-
-export function buildEntranceFeeInvoiceIdempotencyKey(
-  memberId: string,
-  category: EntranceFeeCategory,
-  amountCents: number
-) {
-  return buildXeroIdempotencyKey(
-    "member",
-    memberId,
-    "entrance-fee-invoice",
-    category,
-    amountCents,
-    "v1"
-  );
-}
-
-/**
- * Get connection status details for the admin page.
- */
-export async function getXeroConnectionStatus(): Promise<{
-  connected: boolean;
-  tenantId: string | null;
-  tokenExpiresAt: Date | null;
-}> {
-  const record = await prisma.xeroToken.findFirst();
-  if (!record) {
-    return { connected: false, tenantId: null, tokenExpiresAt: null };
-  }
-  return {
-    connected: true,
-    tenantId: record.tenantId,
-    tokenExpiresAt: record.expiresAt,
-  };
-}
-
-/**
- * Disconnect Xero by removing stored tokens.
- */
-export async function disconnectXero(): Promise<void> {
-  const tokens = await loadXeroTokens();
-  if (tokens) {
-    try {
-      const xero = createXeroClient();
-      await xero.initialize();
-      xero.setTokenSet({
-        access_token: tokens.accessToken,
-        refresh_token: tokens.refreshToken,
-        token_type: "Bearer",
-      });
-      await xero.revokeToken();
-    } catch {
-      // Best-effort revocation; continue with local cleanup
-    }
-  }
-  await prisma.xeroToken.deleteMany();
-}
-
-// ---------------------------------------------------------------------------
-// Authenticated Xero client (with auto-refresh)
-// ---------------------------------------------------------------------------
-
-// Simple mutex to prevent concurrent token refreshes from using the same refresh token
-let _tokenRefreshPromise: Promise<{ xero: XeroClient; tenantId: string }> | null = null;
-
-/**
- * Get an authenticated XeroClient with valid tokens.
- * Automatically refreshes if token is about to expire.
- */
-export async function getAuthenticatedXeroClient(): Promise<{
-  xero: XeroClient;
-  tenantId: string;
-}> {
-  throwIfXeroDailyLimitActive();
-
-  const tokens = await loadXeroTokens();
-  if (!tokens) {
-    throw new Error("Xero is not connected. Please connect via admin panel.");
-  }
-  if (!tokens.tenantId) {
-    throw new Error("Xero tenant ID not found. Please reconnect Xero.");
-  }
-
-  const xero = createXeroClient();
-  await xero.initialize();
-
-  // Check if token needs refresh
-  const now = Date.now();
-  const expiresAt = tokens.expiresAt.getTime();
-
-  if (now >= expiresAt - TOKEN_REFRESH_BUFFER_MS) {
-    // Mutex: if a refresh is already in progress, wait for it instead of double-refreshing
-    if (_tokenRefreshPromise) {
-      return _tokenRefreshPromise;
-    }
-    // Token expired or about to expire - refresh it (wrapped in mutex)
-    const refreshWork = (async () => {
-      xero.setTokenSet({
-        access_token: tokens.accessToken,
-        refresh_token: tokens.refreshToken,
-        token_type: "Bearer",
-      });
-      const config = getOperationalXeroConfig();
-      try {
-        const newTokenSet = await xero.refreshWithRefreshToken(
-          config.clientId,
-          config.clientSecret,
-          tokens.refreshToken
-        );
-
-        await saveXeroTokens({
-          accessToken: newTokenSet.access_token!,
-          refreshToken: newTokenSet.refresh_token!,
-          expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
-          tenantId: tokens.tenantId,
-        });
-
-        return { xero, tenantId: tokens.tenantId! };
-      } catch (err) {
-        logger.error({ err }, "Xero token refresh failed");
-        import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
-          notifyXeroSyncError({
-            errorType: "Token Refresh Failure",
-            operation: "getAuthenticatedXeroClient",
-            errorMessage: err instanceof Error ? err.message : String(err),
-          })
-        ).catch(() => {});
-        throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
-      } finally {
-        _tokenRefreshPromise = null;
-      }
-    })();
-    _tokenRefreshPromise = refreshWork;
-    return refreshWork;
-  }
-
-  // Token still valid
-  xero.setTokenSet({
-    access_token: tokens.accessToken,
-    refresh_token: tokens.refreshToken,
-    token_type: "Bearer",
-  });
-
-  return { xero, tenantId: tokens.tenantId };
 }
 
 // ---------------------------------------------------------------------------
@@ -1340,237 +890,6 @@ async function getContactFirstInvoiceDate(
   }
 }
 
-/** Throttle helper: wait ms milliseconds */
-function throttle(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getRemainingXeroDailyLimitSeconds(): number {
-  const remainingMs = xeroDailyLimitUntilMs - Date.now();
-  if (remainingMs <= 0) {
-    xeroDailyLimitUntilMs = 0;
-    return 0;
-  }
-  return Math.ceil(remainingMs / 1000);
-}
-
-function throwIfXeroDailyLimitActive(): void {
-  const remainingSec = getRemainingXeroDailyLimitSeconds();
-  if (remainingSec > 0) {
-    throw new XeroDailyLimitError(remainingSec);
-  }
-}
-
-function getRemainingXeroTransientOutageSeconds(): number {
-  const remainingMs = xeroTransientOutageUntilMs - Date.now();
-  if (remainingMs <= 0) {
-    xeroTransientOutageUntilMs = 0;
-    return 0;
-  }
-  return Math.ceil(remainingMs / 1000);
-}
-
-function throwIfXeroTransientOutageActive(): void {
-  const remainingSec = getRemainingXeroTransientOutageSeconds();
-  if (remainingSec > 0) {
-    throw new XeroTransientOutageError(remainingSec);
-  }
-}
-
-function rememberXeroDailyLimit(retryAfterSec: number): void {
-  const clampedRetryAfterSec = Math.max(0, retryAfterSec);
-  const nextLimitUntilMs = Date.now() + clampedRetryAfterSec * 1000;
-
-  if (nextLimitUntilMs > xeroDailyLimitUntilMs) {
-    xeroDailyLimitUntilMs = nextLimitUntilMs;
-    logger.warn(
-      {
-        retryAfterSec: clampedRetryAfterSec,
-        availableAt: new Date(nextLimitUntilMs).toISOString(),
-      },
-      "Xero daily API limit reached, suppressing further Xero calls until cooldown expires"
-    );
-  }
-}
-
-function rememberXeroTransientOutage(retryAfterSec: number): void {
-  const clampedRetryAfterSec = Math.max(0, retryAfterSec);
-  const nextLimitUntilMs = Date.now() + clampedRetryAfterSec * 1000;
-
-  if (nextLimitUntilMs > xeroTransientOutageUntilMs) {
-    xeroTransientOutageUntilMs = nextLimitUntilMs;
-    logger.warn(
-      {
-        retryAfterSec: clampedRetryAfterSec,
-        availableAt: new Date(nextLimitUntilMs).toISOString(),
-      },
-      "Xero transient API failures exceeded retry budget, suppressing further Xero calls until cooldown expires"
-    );
-  }
-}
-
-export function resetXeroRateLimitStateForTests(): void {
-  xeroDailyLimitUntilMs = 0;
-  xeroTransientOutageUntilMs = 0;
-}
-
-interface XeroRetryRateLimitEvent {
-  attempt: number;
-  retryAfterSec: number;
-  rateLimitCategory: XeroRateLimitCategory;
-}
-
-interface XeroRetryOptions {
-  maxRetries?: number;
-  maxTransientRetries?: number;
-  maxWaitSec?: number;
-  context?: string;
-  onRateLimit?: (event: XeroRetryRateLimitEvent) => void;
-}
-
-export interface MeteredXeroCallOptions extends XeroRetryOptions {
-  operation: string;
-  resourceType: string;
-  workflow?: string;
-}
-
-function getObservedXeroRateLimitCategory(err: unknown): XeroRateLimitCategory {
-  if (err instanceof XeroDailyLimitError) {
-    return "day";
-  }
-
-  if (getXeroErrorStatusCode(err) !== 429) {
-    return null;
-  }
-
-  const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
-  if (rateLimitProblem === "day" || rateLimitProblem === "minute") {
-    return rateLimitProblem;
-  }
-
-  return "unknown";
-}
-
-function parseXeroRetryAfterSeconds(value: string | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const numericValue = Number.parseInt(value, 10);
-  if (Number.isFinite(numericValue) && numericValue >= 0) {
-    return numericValue;
-  }
-
-  const retryAtMs = Date.parse(value);
-  if (Number.isFinite(retryAtMs)) {
-    return Math.max(0, Math.ceil((retryAtMs - Date.now()) / 1000));
-  }
-
-  return null;
-}
-
-function isRetryableXeroTransientStatus(statusCode: number | undefined): boolean {
-  return (
-    statusCode === 408 ||
-    (statusCode !== undefined && statusCode >= 500 && statusCode <= 599)
-  );
-}
-
-function getXeroTransientRetryDelaySeconds(
-  err: unknown,
-  attempt: number,
-  maxWaitSec: number
-): number {
-  const retryAfterSec = parseXeroRetryAfterSeconds(
-    getXeroErrorHeader(err, "retry-after")
-  );
-  const backoffSec = Math.min(2 ** attempt, maxWaitSec);
-
-  return Math.min(retryAfterSec ?? backoffSec, maxWaitSec);
-}
-
-function getXeroTransientCooldownSeconds(err: unknown): number {
-  return (
-    parseXeroRetryAfterSeconds(getXeroErrorHeader(err, "retry-after")) ??
-    XERO_TRANSIENT_FAILURE_COOLDOWN_SEC
-  );
-}
-
-function getXeroUsageErrorMessage(err: unknown): string | null {
-  const statusCode = getXeroErrorStatusCode(err);
-  const bodyMessage = getXeroErrorBodyMessage(err);
-  if (bodyMessage) {
-    const correlationId = getXeroErrorHeader(err, "xero-correlation-id");
-    const prefix = statusCode ? `HTTP ${statusCode}: ` : "";
-    const suffix = correlationId ? ` (Xero correlation ID: ${correlationId})` : "";
-    return `${prefix}${bodyMessage}${suffix}`;
-  }
-
-  if (err instanceof Error) {
-    return err.message;
-  }
-
-  if (err && typeof err === "object" && "message" in err && typeof err.message === "string") {
-    return err.message;
-  }
-
-  return err ? String(err) : null;
-}
-
-async function persistMeteredXeroApiUsage(
-  options: MeteredXeroCallOptions,
-  success: boolean,
-  durationMs: number,
-  err?: unknown,
-  observedRateLimitCategory?: XeroRateLimitCategory
-): Promise<void> {
-  await recordXeroApiUsage({
-    operation: options.operation,
-    resourceType: options.resourceType,
-    workflow: options.workflow ?? options.context,
-    success,
-    rateLimitCategory: observedRateLimitCategory ?? getObservedXeroRateLimitCategory(err),
-    statusCode: err ? getXeroErrorStatusCode(err) ?? null : null,
-    durationMs,
-    errorMessage: getXeroUsageErrorMessage(err),
-  });
-}
-
-export async function callXeroApi<T>(
-  fn: () => Promise<T>,
-  options: MeteredXeroCallOptions
-): Promise<T> {
-  const startedAt = Date.now();
-  let observedRateLimitCategory: XeroRateLimitCategory = null;
-
-  try {
-    const result = await withXeroRetry(fn, {
-      ...options,
-      onRateLimit: (event) => {
-        observedRateLimitCategory = event.rateLimitCategory;
-        options.onRateLimit?.(event);
-      },
-    });
-    await persistMeteredXeroApiUsage(
-      options,
-      true,
-      Date.now() - startedAt,
-      undefined,
-      observedRateLimitCategory
-    );
-    return result;
-  } catch (err) {
-    await persistMeteredXeroApiUsage(
-      options,
-      false,
-      Date.now() - startedAt,
-      err,
-      observedRateLimitCategory
-    );
-    throw err;
-  }
-}
-
 interface XeroContactRepairOperationKeys {
   idempotencyKey?: string | null;
   correlationKey?: string | null;
@@ -1598,66 +917,6 @@ interface RetryXeroWriteWithContactRepairOptions<T> {
     requestPayload: unknown;
     keys?: XeroContactRepairOperationKeys;
   }) => Promise<void>;
-}
-
-function getXeroErrorSearchText(error: unknown): string {
-  const values = new Set<string>();
-
-  const addValue = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) {
-      values.add(value.toLowerCase());
-    }
-  };
-
-  if (error instanceof Error) {
-    addValue(error.message);
-  }
-
-  if (typeof error === "string") {
-    addValue(error);
-  }
-
-  if (error && typeof error === "object") {
-    const candidate = error as {
-      body?: { Detail?: unknown; Message?: unknown; Title?: unknown };
-      message?: unknown;
-    };
-
-    addValue(candidate.message);
-    addValue(candidate.body?.Detail);
-    addValue(candidate.body?.Message);
-    addValue(candidate.body?.Title);
-
-    try {
-      addValue(JSON.stringify(error));
-    } catch {
-      // Ignore non-serializable values.
-    }
-  }
-
-  return Array.from(values).join("\n");
-}
-
-export function isRetryableXeroContactReferenceError(error: unknown): boolean {
-  const statusCode = getXeroErrorStatusCode(error);
-  if (statusCode !== undefined && statusCode !== 400 && statusCode !== 404) {
-    return false;
-  }
-
-  const text = getXeroErrorSearchText(error);
-  if (!text.includes("contact")) {
-    return false;
-  }
-
-  return [
-    "not found",
-    "does not exist",
-    "invalid reference",
-    "invalid_reference",
-    "invalid contact",
-    "not a valid contact",
-    "could not be found",
-  ].some((fragment) => text.includes(fragment));
 }
 
 async function persistUpdatedXeroOperationRequest(input: {
@@ -1727,94 +986,6 @@ export async function retryXeroWriteWithContactRepair<T>(
       idempotencyKey: repairedKeys?.idempotencyKey ?? null,
     });
   }
-}
-
-/**
- * Retry wrapper for Xero API calls with rate-limit and transient failure handling.
- * - On daily limit: throws XeroDailyLimitError immediately (no point waiting hours).
- * - On minute/app limit: waits Retry-After seconds (capped at maxWaitSec) and retries.
- * - On transient Xero/server failures: retries with a short capped exponential backoff.
- */
-export async function withXeroRetry<T>(
-  fn: () => Promise<T>,
-  options?: XeroRetryOptions
-): Promise<T> {
-  throwIfXeroDailyLimitActive();
-  throwIfXeroTransientOutageActive();
-
-  const maxRateLimitRetries = options?.maxRetries ?? 3;
-  const maxTransientRetries =
-    options?.maxTransientRetries ??
-    Math.min(maxRateLimitRetries, DEFAULT_XERO_TRANSIENT_MAX_RETRIES);
-  const maxWaitSec = options?.maxWaitSec ?? 120;
-  const context = options?.context ?? "Xero API call";
-  const maxAttempts = Math.max(maxRateLimitRetries, maxTransientRetries);
-
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      lastError = err;
-      const statusCode = getXeroErrorStatusCode(err);
-
-      if (statusCode === 429) {
-        const retryAfter = getXeroErrorHeader(err, "retry-after");
-        const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
-        const parsedRetryAfterSec =
-          parseXeroRetryAfterSeconds(retryAfter) ??
-          (rateLimitProblem === "day" ? 86400 : 30);
-        const rateLimitCategory =
-          rateLimitProblem === "day" || rateLimitProblem === "minute"
-            ? rateLimitProblem
-            : "unknown";
-
-        options?.onRateLimit?.({
-          attempt: attempt + 1,
-          retryAfterSec: parsedRetryAfterSec,
-          rateLimitCategory,
-        });
-
-        // Daily limit — abort immediately, no point retrying for hours
-        if (rateLimitProblem === "day") {
-          const retryAfterSec = parsedRetryAfterSec;
-          rememberXeroDailyLimit(retryAfterSec);
-          throw new XeroDailyLimitError(retryAfterSec);
-        }
-
-        // Minute/app limit — retry if we have attempts left
-        if (attempt < maxRateLimitRetries) {
-          const waitSec = Math.min(parsedRetryAfterSec, maxWaitSec);
-          logger.warn(
-            { context, attempt: attempt + 1, maxRetries: maxRateLimitRetries, waitSec, rateLimitProblem },
-            "Xero 429 rate limit hit, retrying after backoff"
-          );
-          await throttle(waitSec * 1000);
-          continue;
-        }
-
-        throw err;
-      }
-
-      if (isRetryableXeroTransientStatus(statusCode)) {
-        if (attempt < maxTransientRetries) {
-          const waitSec = getXeroTransientRetryDelaySeconds(err, attempt, maxWaitSec);
-          logger.warn(
-            { context, attempt: attempt + 1, maxRetries: maxTransientRetries, waitSec, statusCode },
-            "Xero transient API failure, retrying after backoff"
-          );
-          await throttle(waitSec * 1000);
-          continue;
-        }
-
-        rememberXeroTransientOutage(getXeroTransientCooldownSeconds(err));
-        throw err;
-      }
-
-      throw err;
-    }
-  }
-  throw lastError;
 }
 
 /**
