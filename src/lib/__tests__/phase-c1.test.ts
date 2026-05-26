@@ -386,11 +386,11 @@ describe("#32: Booking wizard shows subscription payment link", () => {
 // ---------------------------------------------------------------------------
 
 describe("#26: Xero invoice number stored during creation", () => {
-  it("xero.ts saves invoiceNumber when creating booking invoice", async () => {
+  it("xero-booking-invoices.ts saves invoiceNumber when creating booking invoice", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/lib/xero.ts"),
+      path.resolve("src/lib/xero-booking-invoices.ts"),
       "utf-8"
     );
     // Should save xeroInvoiceNumber in payment update
