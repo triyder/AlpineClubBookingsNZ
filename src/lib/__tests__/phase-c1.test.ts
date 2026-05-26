@@ -385,11 +385,11 @@ describe("#26: Xero invoice number stored during creation", () => {
 // ---------------------------------------------------------------------------
 
 describe("#32: Xero subscription sync stores invoice number and online URL", () => {
-  it("xero.ts saves invoiceNumber and onlineInvoiceUrl for subscriptions", async () => {
+  it("xero-membership-sync.ts saves invoiceNumber and onlineInvoiceUrl for subscriptions", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
-      path.resolve("src/lib/xero.ts"),
+      path.resolve("src/lib/xero-membership-sync.ts"),
       "utf-8"
     );
     // Should save xeroInvoiceNumber in subscription upsert (via matchedInvoiceNumber intermediate var)
