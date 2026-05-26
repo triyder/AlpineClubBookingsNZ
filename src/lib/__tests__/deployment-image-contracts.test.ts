@@ -34,27 +34,28 @@ describe("deployment image contracts", () => {
     expect(workflow).toContain("target: builder");
   });
 
-  it("deploys the resolved commit SHA image references from the production wrapper", () => {
-    const wrapper = readRepoFile("scripts/run-production-blue-green-deploy.sh");
+  it("deploys the resolved commit SHA image references from the production script", () => {
+    const deployScript = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 
-    expect(wrapper).toContain(
+    expect(deployScript).toContain(
       'GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-app}"',
     );
-    expect(wrapper).toContain(
+    expect(deployScript).toContain(
       'GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"',
     );
-    expect(wrapper).toContain(
+    expect(deployScript).toContain(
       'APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"',
     );
-    expect(wrapper).toContain(
+    expect(deployScript).toContain(
       'MIGRATE_IMAGE="${GHCR_MIGRATE_IMAGE_REPOSITORY}:${RESOLVED_REF}"',
     );
-    expect(wrapper).toContain('APP_IMAGE="$APP_IMAGE"');
-    expect(wrapper).toContain('MIGRATE_IMAGE="$MIGRATE_IMAGE"');
+    expect(deployScript).toContain('APP_IMAGE="$APP_IMAGE"');
+    expect(deployScript).toContain('MIGRATE_IMAGE="$MIGRATE_IMAGE"');
+    expect(deployScript).toContain("--internal-blue-green-deploy");
   });
 
   it("pulls supplied app and migration images instead of building locally", () => {
-    const deploy = readRepoFile("scripts/blue-green-deploy.sh");
+    const deploy = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 
     expect(deploy).toContain('APP_IMAGE="${APP_IMAGE:-}"');
     expect(deploy).toContain('MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"');

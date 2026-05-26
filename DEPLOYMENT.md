@@ -141,15 +141,16 @@ The supported AlpineClubBookingsNZ deploy path is:
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
-The wrapper snapshots the resolved `origin/main` commit into a clean deployment
+The script snapshots the resolved `origin/main` commit into a clean deployment
 workspace, selects the matching GHCR image tags, copies the environment file,
-preserves Caddy upstream state, runs the blue/green deployment, then
+preserves Caddy upstream state, then re-enters itself with
+`--internal-blue-green-deploy` to run the blue/green deployment engine before it
 fast-forwards the clean checkout after success.
 
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
 `GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults.
 
-The low-level deployment runner:
+The internal deployment engine in the same script:
 
 - pulls the app and migration images for the resolved commit SHA
 - skips local Docker builds when `APP_IMAGE` and `MIGRATE_IMAGE` are supplied
@@ -163,7 +164,7 @@ The low-level deployment runner:
   as the `x-cron-secret` header
 - drains the previous slot
 
-If `APP_IMAGE` and `MIGRATE_IMAGE` are not supplied, the low-level runner keeps
+If `APP_IMAGE` and `MIGRATE_IMAGE` are not supplied, the internal engine keeps
 the old local-build path for bootstrap, staging, and recovery work.
 
 ## Migration Safety

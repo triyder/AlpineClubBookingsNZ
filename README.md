@@ -197,16 +197,17 @@ Lighthouse workflow.
 ## Deployment
 
 Production deployment is documented as a reference in `DEPLOYMENT.md`.
-The supported AlpineClubBookingsNZ deployment path uses the blue/green wrapper:
+The supported AlpineClubBookingsNZ deployment path uses the single blue/green
+production deploy script:
 
 ```bash
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
 On `main`, GitHub Actions builds and publishes the app and migration images to
-GHCR with commit-SHA tags. The production wrapper resolves `origin/main`, pulls
-those exact images, runs migrations, and switches Caddy after health checks
-pass.
+GHCR with commit-SHA tags. The production deploy script resolves `origin/main`,
+pulls those exact images, re-enters its internal deploy-engine mode, runs
+migrations, and switches Caddy after health checks pass.
 
 The public image packages are `alpineclubbookingsnz-app` for the runnable web
 application and `alpineclubbookingsnz-migrate` for Prisma migration runs.

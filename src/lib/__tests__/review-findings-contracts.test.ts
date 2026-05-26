@@ -308,7 +308,7 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("keeps the active Caddy upstream file consistent if reload fails", () => {
-    const source = readRepoFile("scripts/blue-green-deploy.sh");
+    const source = readRepoFile("scripts/run-production-blue-green-deploy.sh");
     const cutoverBlock = sliceFrom(source, 'step "16/19"', 'step "17/19"');
     const writeIndex = cutoverBlock.indexOf("write_active_upstream_file");
     const reloadIndex = cutoverBlock.indexOf("reload_caddy");
@@ -321,7 +321,7 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("gates blue/green migrations with an explicit safety ledger", () => {
-    const source = readRepoFile("scripts/blue-green-deploy.sh");
+    const source = readRepoFile("scripts/run-production-blue-green-deploy.sh");
     const validator = readRepoFile("scripts/validate-blue-green-migrations.sh");
     const ledger = readRepoFile("docs/BLUE_GREEN_MIGRATION_SAFETY.tsv");
 

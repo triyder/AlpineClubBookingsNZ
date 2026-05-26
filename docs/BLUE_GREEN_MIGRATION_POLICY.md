@@ -12,7 +12,7 @@ Destructive contract migrations must name the previous expand/runtime release in
 
 ## Deploy Gate
 
-`scripts/blue-green-deploy.sh` calls `scripts/validate-blue-green-migrations.sh` before `prisma migrate deploy`. The validator checks pending migration SQL for:
+`scripts/run-production-blue-green-deploy.sh --internal-blue-green-deploy` calls `scripts/validate-blue-green-migrations.sh` before `prisma migrate deploy`. The validator checks pending migration SQL for:
 
 - destructive schema removals, renames, type changes, `SET NOT NULL`, and constraint drops
 - operations touching hot tables: `Member`, `Booking`, `Payment`, membership tables, finance token tables, and auth/action-token tables
