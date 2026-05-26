@@ -243,6 +243,7 @@ export async function modifyBookingDates({
     const newTotalPriceCents = priceBreakdown.totalPriceCents;
     const guestNightRates = guestsForPricing.map((guest, index) => ({
       memberId: guest.memberId ?? null,
+      isMember: guest.isMember,
       perNightRates: priceBreakdown.guests[index].perNightCents,
     }));
 
@@ -252,18 +253,17 @@ export async function modifyBookingDates({
     if (booking.promoRedemption?.promoCode) {
       const promo = booking.promoRedemption.promoCode;
       const memberFreeNightsUsed =
-        promo.type === "FREE_NIGHTS" && promo.freeNights
+        promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
           ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
           : 0;
       const validationError = validatePromoCodeRules(
         promo,
         { memberId: booking.memberId },
         new Date(),
-        0,
+        { memberFreeNightsUsed },
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
           : null,
-        memberFreeNightsUsed,
       );
 
       if (validationError) {
@@ -277,15 +277,18 @@ export async function modifyBookingDates({
         });
       } else {
         const remainingFreeNights =
-          promo.type === "FREE_NIGHTS" && promo.freeNights
-            ? promo.freeNights - memberFreeNightsUsed
+          promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
+            ? promo.freeNightsPerIndividual - memberFreeNightsUsed
             : undefined;
         const promoResult = calculatePromoDiscountForGuestRates(
           {
             type: promo.type,
             valueCents: promo.valueCents,
             percentOff: promo.percentOff,
-            freeNights: promo.freeNights,
+            freeNightsPerIndividual: promo.freeNightsPerIndividual,
+            maxGuestsPerBooking: promo.maxGuestsPerBooking,
+            maxNightlyValueCents: promo.maxNightlyValueCents,
+            memberGuestsOnly: promo.memberGuestsOnly,
           },
           newTotalPriceCents,
           booking.memberId,
@@ -293,7 +296,6 @@ export async function modifyBookingDates({
           promo.assignments.length > 0
             ? promo.assignments.map((assignment) => assignment.memberId)
             : null,
-          undefined,
           remainingFreeNights,
         );
         newDiscountCents = promoResult.discountCents;
@@ -303,6 +305,7 @@ export async function modifyBookingDates({
           data: {
             discountCents: newDiscountCents,
             freeNightsUsed: promoResult.freeNightsUsed || null,
+            eligibleGuestCount: promoResult.eligibleGuestCount || null,
           },
         });
       }

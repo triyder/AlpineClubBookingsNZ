@@ -40,7 +40,25 @@ export interface PromoCodeInput {
   type: PromoCodeType;
   valueCents?: number | null;
   percentOff?: number | null;
-  freeNights?: number | null;
+  freeNightsPerIndividual?: number | null;
+  maxGuestsPerBooking?: number | null;
+  maxNightlyValueCents?: number | null;
+  memberGuestsOnly?: boolean | null;
+}
+
+export interface PromoDiscountGuest {
+  memberId: string | null;
+  isMember: boolean;
+  perNightRates: number[];
+}
+
+export interface CalculatePromoDiscountOptions {
+  totalPriceCents: number;
+  guests: PromoDiscountGuest[];
+  // For FREE_NIGHTS: how many free nights remain in the booker's lifetime
+  // budget for this code (already-consumed nights subtracted). When undefined,
+  // no cap is applied beyond freeNightsPerIndividual.
+  remainingFreeNights?: number;
 }
 
 function getDateOnlyStringForTimeZone(date: Date, timeZone = APP_TIME_ZONE): string {
@@ -245,84 +263,131 @@ export function calculateBookingPrice(
 export interface PromoDiscountResult {
   discountCents: number;
   freeNightsUsed: number;
+  eligibleGuestCount: number;
 }
 
 /**
- * Apply a promo code discount to a booking total.
- * Returns the discount amount in cents and the number of free nights used.
- * For FREE_NIGHTS promos, remainingFreeNights caps how many nights can be
- * discounted (supports cumulative tracking across multiple bookings).
+ * Apply a promo code discount to a booking. All promo types are applied
+ * per eligible guest.
+ *
+ * Eligibility:
+ *   - If promo.memberGuestsOnly is true, only guests with isMember=true count.
+ *   - Eligible guests are then sorted by total stay cost descending.
+ *   - If promo.maxGuestsPerBooking is set, only the top N count.
+ *
+ * Per-type behaviour applied to each selected guest:
+ *   - PERCENTAGE: percentOff% off each of the guest's nights. If
+ *     maxNightlyValueCents is set, the discount per night is capped at it.
+ *   - FIXED_AMOUNT: valueCents off each selected guest, capped at the
+ *     guest's stay total.
+ *   - FREE_NIGHTS: discount the guest's most expensive freeNightsPerIndividual
+ *     nights. The lifetime cap (remainingFreeNights) is a single pool the
+ *     booker draws on across selected guests, applied to the most expensive
+ *     nights first. maxNightlyValueCents (if set) caps each freed night,
+ *     turning full coverage into a partial subsidy.
  */
 export function calculatePromoDiscount(
   promo: PromoCodeInput,
-  totalPriceCents: number,
-  perNightRates?: number[],
-  remainingFreeNights?: number
+  opts: CalculatePromoDiscountOptions,
 ): PromoDiscountResult {
+  const { totalPriceCents, guests, remainingFreeNights } = opts;
+  const empty: PromoDiscountResult = { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0 };
+
+  // Filter guests by member status if the promo restricts to member guests.
+  const eligibleAll = promo.memberGuestsOnly
+    ? guests.filter((g) => g.isMember)
+    : guests;
+  if (eligibleAll.length === 0) return empty;
+
+  // Most expensive guests first (max benefit to booker), then cap by maxGuestsPerBooking.
+  const withTotals = eligibleAll.map((g, idx) => ({
+    guest: g,
+    idx,
+    total: g.perNightRates.reduce((sum, r) => sum + r, 0),
+  }));
+  withTotals.sort((a, b) => b.total - a.total);
+  const guestCap = promo.maxGuestsPerBooking ?? withTotals.length;
+  const selected = withTotals.slice(0, Math.max(0, guestCap));
+  if (selected.length === 0) return empty;
+
   switch (promo.type) {
     case "PERCENTAGE": {
-      if (!promo.percentOff) return { discountCents: 0, freeNightsUsed: 0 };
-      return { discountCents: Math.round((totalPriceCents * promo.percentOff) / 100), freeNightsUsed: 0 };
+      const pct = promo.percentOff ?? 0;
+      if (pct <= 0) return empty;
+      let discount = 0;
+      for (const { guest } of selected) {
+        for (const rate of guest.perNightRates) {
+          const raw = Math.round((rate * pct) / 100);
+          const capped = promo.maxNightlyValueCents != null
+            ? Math.min(raw, promo.maxNightlyValueCents)
+            : raw;
+          discount += capped;
+        }
+      }
+      // Cap at total booking price as a safety rail.
+      return {
+        discountCents: Math.min(discount, totalPriceCents),
+        freeNightsUsed: 0,
+        eligibleGuestCount: selected.length,
+      };
     }
 
     case "FIXED_AMOUNT": {
-      if (!promo.valueCents) return { discountCents: 0, freeNightsUsed: 0 };
-      return { discountCents: Math.min(promo.valueCents, totalPriceCents), freeNightsUsed: 0 };
+      const perGuest = promo.valueCents ?? 0;
+      if (perGuest <= 0) return empty;
+      let discount = 0;
+      for (const { guest } of selected) {
+        const guestTotal = guest.perNightRates.reduce((s, r) => s + r, 0);
+        discount += Math.min(perGuest, guestTotal);
+      }
+      return {
+        discountCents: Math.min(discount, totalPriceCents),
+        freeNightsUsed: 0,
+        eligibleGuestCount: selected.length,
+      };
     }
 
     case "FREE_NIGHTS": {
-      if (!promo.freeNights || promo.freeNights <= 0) return { discountCents: 0, freeNightsUsed: 0 };
-      if (!perNightRates) return { discountCents: 0, freeNightsUsed: 0 };
+      const perIndividual = promo.freeNightsPerIndividual ?? 0;
+      if (perIndividual <= 0) return empty;
 
-      // Cap by remaining allowance if provided (cumulative tracking)
-      const effectiveFreeNights = remainingFreeNights !== undefined
-        ? Math.min(promo.freeNights, remainingFreeNights)
-        : promo.freeNights;
+      // Apply the lifetime cap as a single pool the booker draws on across
+      // selected guests, allocated to the most expensive remaining nights.
+      const lifetimeCap = remainingFreeNights !== undefined
+        ? Math.max(0, remainingFreeNights)
+        : Number.POSITIVE_INFINITY;
+      if (lifetimeCap <= 0) return empty;
 
-      if (effectiveFreeNights <= 0) return { discountCents: 0, freeNightsUsed: 0 };
+      // Collect candidate nights from each selected guest: each guest contributes
+      // up to perIndividual of their most expensive nights.
+      const candidates: { rate: number }[] = [];
+      for (const { guest } of selected) {
+        const sortedDesc = [...guest.perNightRates].sort((a, b) => b - a);
+        for (const rate of sortedDesc.slice(0, perIndividual)) {
+          candidates.push({ rate });
+        }
+      }
+      if (candidates.length === 0) return empty;
 
-      // Sort ascending to find cheapest nights
-      const sorted = [...perNightRates].sort((a, b) => a - b);
-      const freeCount = Math.min(effectiveFreeNights, sorted.length);
-      const discountCents = sorted.slice(0, freeCount).reduce((sum, r) => sum + r, 0);
-      return { discountCents, freeNightsUsed: freeCount };
+      // Of those candidates, pick the most expensive up to the lifetime cap.
+      candidates.sort((a, b) => b.rate - a.rate);
+      const usedCount = Math.min(candidates.length, Math.floor(Math.min(lifetimeCap, candidates.length)));
+      let discount = 0;
+      for (let i = 0; i < usedCount; i++) {
+        const rate = candidates[i].rate;
+        const capped = promo.maxNightlyValueCents != null
+          ? Math.min(rate, promo.maxNightlyValueCents)
+          : rate;
+        discount += capped;
+      }
+      return {
+        discountCents: Math.min(discount, totalPriceCents),
+        freeNightsUsed: usedCount,
+        eligibleGuestCount: selected.length,
+      };
     }
 
     default:
-      return { discountCents: 0, freeNightsUsed: 0 };
-  }
-}
-
-/**
- * Apply a promo code discount (simplified interface used by Phase 3 booking code).
- */
-export function applyPromoDiscount(
-  totalPriceCents: number,
-  promoType: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS",
-  promoValue: { percentOff?: number; valueCents?: number; freeNights?: number },
-  perNightRates?: number[],
-  remainingFreeNights?: number
-): number {
-  switch (promoType) {
-    case "PERCENTAGE": {
-      const percent = promoValue.percentOff ?? 0;
-      return Math.round(totalPriceCents * (percent / 100));
-    }
-    case "FIXED_AMOUNT": {
-      const fixed = promoValue.valueCents ?? 0;
-      return Math.min(fixed, totalPriceCents);
-    }
-    case "FREE_NIGHTS": {
-      if (!perNightRates || !promoValue.freeNights) return 0;
-      const effectiveFreeNights = remainingFreeNights !== undefined
-        ? Math.min(promoValue.freeNights, remainingFreeNights)
-        : promoValue.freeNights;
-      if (effectiveFreeNights <= 0) return 0;
-      const sorted = [...perNightRates].sort((a, b) => a - b);
-      const freeCount = Math.min(effectiveFreeNights, sorted.length);
-      return sorted.slice(0, freeCount).reduce((sum, r) => sum + r, 0);
-    }
-    default:
-      return 0;
+      return empty;
   }
 }

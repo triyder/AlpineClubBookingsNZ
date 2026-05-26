@@ -4,11 +4,15 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingPrice,
-  calculatePromoDiscount,
   type GroupDiscountConfig,
   type SeasonRateData,
 } from "@/lib/pricing";
-import { getMemberFreeNightsUsed, validatePromoCodeRules } from "@/lib/promo";
+import {
+  calculatePromoDiscountForGuestRates,
+  getMemberFreeNightsUsed,
+  getUniqueMemberRedemptionCount,
+  validatePromoCodeRules,
+} from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
@@ -65,37 +69,48 @@ export async function POST(req: NextRequest) {
     include: { assignments: { select: { memberId: true } } },
   });
 
-  // Check single-use against effective member
-  let memberRedemptionCount = 0;
-  if (promoCode?.singleUse) {
-    memberRedemptionCount = await prisma.promoRedemption.count({
-      where: {
-        promoCodeId: promoCode.id,
-        memberId: effectiveMemberId,
-      },
-    });
-  }
+  const needsMemberCount = Boolean(
+    promoCode &&
+      ((promoCode.maxUsesPerMember !== null && promoCode.maxUsesPerMember !== undefined) ||
+        (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined)),
+  );
+  const memberRedemptionCount = needsMemberCount && promoCode
+    ? await prisma.promoRedemption.count({
+        where: {
+          promoCodeId: promoCode.id,
+          memberId: effectiveMemberId,
+        },
+      })
+    : 0;
 
   const assignedMemberIds = promoCode?.assignments?.length
     ? promoCode.assignments.map((a) => a.memberId)
     : null;
 
-  // For FREE_NIGHTS, get cumulative free nights used by this member
   let memberFreeNightsUsed = 0;
-  if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+  if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual) {
     memberFreeNightsUsed = await getMemberFreeNightsUsed(
       promoCode.id,
       effectiveMemberId
     );
   }
 
+  let uniqueMembersUsed = 0;
+  if (promoCode?.maxUniqueMembersTotal !== null && promoCode?.maxUniqueMembersTotal !== undefined) {
+    uniqueMembersUsed = await getUniqueMemberRedemptionCount(promoCode.id);
+  }
+
   const validationError = validatePromoCodeRules(
     promoCode,
     { memberId: effectiveMemberId, bookingCheckIn: checkIn },
     new Date(),
-    memberRedemptionCount,
-    assignedMemberIds,
-    memberFreeNightsUsed
+    {
+      memberRedemptionCount,
+      memberFreeNightsUsed,
+      uniqueMembersUsed,
+      memberHasRedeemedBefore: memberRedemptionCount > 0,
+    },
+    assignedMemberIds
   );
 
   if (validationError) {
@@ -145,23 +160,34 @@ export async function POST(req: NextRequest) {
       groupDiscount
     );
 
-    // Collect all per-night rates across all guests for FREE_NIGHTS
-    const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
-
-    // Calculate remaining free nights for this member
-    const remainingFreeNights = promoCode!.type === "FREE_NIGHTS" && promoCode!.freeNights
-      ? promoCode!.freeNights - memberFreeNightsUsed
+    const remainingFreeNights = promoCode!.type === "FREE_NIGHTS" && promoCode!.freeNightsPerIndividual
+      ? promoCode!.freeNightsPerIndividual - memberFreeNightsUsed
       : undefined;
 
-    const promoResult = calculatePromoDiscount(
+    // Per-guest input for the promo. Guest memberId is not available in this
+    // validate endpoint (callers don't pass it), so member-assigned scoping
+    // skips the same-member filter here; the booking-create transaction does
+    // the strict filter using the real BookingGuest.memberId values.
+    const promoGuests = price.guests.map((g) => ({
+      memberId: null as string | null,
+      isMember: g.isMember,
+      perNightRates: g.perNightCents,
+    }));
+
+    const promoResult = calculatePromoDiscountForGuestRates(
       {
         type: promoCode!.type,
         valueCents: promoCode!.valueCents,
         percentOff: promoCode!.percentOff,
-        freeNights: promoCode!.freeNights,
+        freeNightsPerIndividual: promoCode!.freeNightsPerIndividual,
+        maxGuestsPerBooking: promoCode!.maxGuestsPerBooking,
+        maxNightlyValueCents: promoCode!.maxNightlyValueCents,
+        memberGuestsOnly: promoCode!.memberGuestsOnly,
       },
       price.totalPriceCents,
-      allPerNightRates,
+      effectiveMemberId,
+      promoGuests,
+      assignedMemberIds,
       remainingFreeNights
     );
 
@@ -172,6 +198,7 @@ export async function POST(req: NextRequest) {
       type: promoCode!.type,
       discountCents: promoResult.discountCents,
       freeNightsUsed: promoResult.freeNightsUsed,
+      eligibleGuestCount: promoResult.eligibleGuestCount,
       remainingFreeNights,
       totalPriceCents: price.totalPriceCents,
       finalPriceCents: price.totalPriceCents - promoResult.discountCents,

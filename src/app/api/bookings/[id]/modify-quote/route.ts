@@ -538,11 +538,13 @@ export async function POST(
         );
         return {
           memberId: guest.memberId ?? null,
+          isMember: guest.isMember,
           perNightRates: breakdown.guests[0].perNightCents,
         };
       } catch {
         return {
           memberId: guest.memberId ?? null,
+          isMember: guest.isMember,
           perNightRates: [],
         };
       }
@@ -559,21 +561,8 @@ export async function POST(
     // User wants to apply a new promo code
     const validation = await validatePromoCodeFull(newPromoCode, {
       totalPriceCents: newTotalPriceCents,
-      perNightRates: guestsForPricing.flatMap((guest) => {
-        try {
-          const breakdown = calculateBookingPrice(
-            newCheckIn,
-            newCheckOut,
-            [guest],
-            seasonRateData
-          );
-          return breakdown.guests[0].perNightCents;
-        } catch {
-          return [];
-        }
-      }),
       memberId: booking.memberId,
-      guestNightRates: getGuestNightRates(),
+      guests: getGuestNightRates(),
     }, bookingId);
 
     if (validation.valid) {
@@ -593,32 +582,34 @@ export async function POST(
   } else if (booking.promoRedemption?.promoCode) {
     // Keep existing promo, recalculate with new price
     const promo = booking.promoRedemption.promoCode;
-    const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNights
+    const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
       ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
       : 0;
     const validationError = validatePromoCodeRules(
       promo,
       { memberId: booking.memberId },
       new Date(),
-      0,
+      { memberFreeNightsUsed },
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      memberFreeNightsUsed
     );
 
     if (validationError) {
       promoStillValid = false;
     } else {
-      const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNights
-        ? promo.freeNights - memberFreeNightsUsed
+      const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
+        ? promo.freeNightsPerIndividual - memberFreeNightsUsed
         : undefined;
       const promoResult = calculatePromoDiscountForGuestRates(
         {
           type: promo.type,
           valueCents: promo.valueCents,
           percentOff: promo.percentOff,
-          freeNights: promo.freeNights,
+          freeNightsPerIndividual: promo.freeNightsPerIndividual,
+          maxGuestsPerBooking: promo.maxGuestsPerBooking,
+          maxNightlyValueCents: promo.maxNightlyValueCents,
+          memberGuestsOnly: promo.memberGuestsOnly,
         },
         newTotalPriceCents,
         booking.memberId,
@@ -626,7 +617,6 @@ export async function POST(
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
           : null,
-        undefined,
         remainingFreeNights
       );
       newDiscountCents = promoResult.discountCents;

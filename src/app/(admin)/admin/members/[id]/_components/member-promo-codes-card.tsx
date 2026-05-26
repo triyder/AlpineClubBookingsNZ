@@ -77,15 +77,18 @@ export function MemberPromoCodesCard({ promoCodes }: { promoCodes: MemberPromoCo
                     <div className="space-y-1">
                       <p>
                         {promo.currentRedemptions}
-                        {promo.maxRedemptions !== null ? `/${promo.maxRedemptions}` : ""} total redemptions
+                        {promo.maxRedemptionsTotal !== null ? `/${promo.maxRedemptionsTotal}` : ""} total redemptions
                       </p>
-                      <p>{promo.redemptionCount} by this member</p>
-                      {promo.type === "FREE_NIGHTS" && promo.freeNights !== null && (
+                      <p>
+                        {promo.redemptionCount}
+                        {promo.maxUsesPerMember !== null ? `/${promo.maxUsesPerMember}` : ""} by this member
+                      </p>
+                      {promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual !== null && (
                         <p>
-                          {promo.freeNightsUsed}/{promo.freeNights} free nights used
+                          {promo.freeNightsUsed}/{promo.freeNightsPerIndividual} free nights used
                         </p>
                       )}
-                      {promo.singleUse && <p>Single use</p>}
+                      {promo.maxUsesPerMember === 1 && <p>Single use per member</p>}
                     </div>
                   </TableCell>
                 </TableRow>

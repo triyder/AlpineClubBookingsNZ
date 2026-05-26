@@ -11,14 +11,18 @@ const updatePromoCodeSchema = z.object({
   type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS"]).optional(),
   valueCents: z.number().int().min(0).optional().nullable(),
   percentOff: z.number().int().min(0).max(100).optional().nullable(),
-  freeNights: z.number().int().min(0).optional().nullable(),
-  maxRedemptions: z.number().int().min(1).optional().nullable(),
+  freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
+  maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
+  maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
+  maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
+  maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
+  maxUsesPerMember: z.number().int().min(1).optional().nullable(),
   validFrom: z.string().optional().nullable(),
   validUntil: z.string().optional().nullable(),
   bookingStartFrom: z.string().optional().nullable(),
   bookingStartUntil: z.string().optional().nullable(),
   membersOnly: z.boolean().optional(),
-  singleUse: z.boolean().optional(),
+  memberGuestsOnly: z.boolean().optional(),
   active: z.boolean().optional(),
   assignedMemberIds: z.array(z.string()).optional(),
 });
@@ -92,7 +96,6 @@ export async function PUT(
 
   const data = parsed.data;
 
-  // If code is being changed, check for duplicates
   if (data.code && data.code !== existing.code) {
     const duplicate = await prisma.promoCode.findUnique({
       where: { code: data.code },
@@ -107,10 +110,12 @@ export async function PUT(
 
   const type = data.type || existing.type;
 
-  // Validate type-specific fields (using effective type after potential update)
   const effectivePercentOff = data.percentOff !== undefined ? data.percentOff : existing.percentOff;
   const effectiveValueCents = data.valueCents !== undefined ? data.valueCents : existing.valueCents;
-  const effectiveFreeNights = data.freeNights !== undefined ? data.freeNights : existing.freeNights;
+  const effectiveFreeNights =
+    data.freeNightsPerIndividual !== undefined
+      ? data.freeNightsPerIndividual
+      : existing.freeNightsPerIndividual;
 
   if (type === "PERCENTAGE" && (effectivePercentOff == null || effectivePercentOff <= 0)) {
     return NextResponse.json(
@@ -126,7 +131,7 @@ export async function PUT(
   }
   if (type === "FREE_NIGHTS" && (effectiveFreeNights == null || effectiveFreeNights <= 0)) {
     return NextResponse.json(
-      { error: "Free nights discount requires a freeNights value greater than 0" },
+      { error: "Free nights discount requires a freeNightsPerIndividual value greater than 0" },
       { status: 400 }
     );
   }
@@ -171,10 +176,24 @@ export async function PUT(
         ...(data.type !== undefined || data.percentOff !== undefined
           ? { percentOff: type === "PERCENTAGE" ? (data.percentOff ?? existing.percentOff) : null }
           : {}),
-        ...(data.type !== undefined || data.freeNights !== undefined
-          ? { freeNights: type === "FREE_NIGHTS" ? (data.freeNights ?? existing.freeNights) : null }
+        ...(data.type !== undefined || data.freeNightsPerIndividual !== undefined
+          ? {
+              freeNightsPerIndividual:
+                type === "FREE_NIGHTS"
+                  ? (data.freeNightsPerIndividual ?? existing.freeNightsPerIndividual)
+                  : null,
+            }
           : {}),
-        ...(data.maxRedemptions !== undefined && { maxRedemptions: data.maxRedemptions }),
+        ...(data.maxNightlyValueCents !== undefined && {
+          // Nightly cap is meaningless for FIXED_AMOUNT; clear it when the
+          // effective type is FIXED_AMOUNT.
+          maxNightlyValueCents:
+            type === "FIXED_AMOUNT" ? null : data.maxNightlyValueCents,
+        }),
+        ...(data.maxGuestsPerBooking !== undefined && { maxGuestsPerBooking: data.maxGuestsPerBooking }),
+        ...(data.maxRedemptionsTotal !== undefined && { maxRedemptionsTotal: data.maxRedemptionsTotal }),
+        ...(data.maxUniqueMembersTotal !== undefined && { maxUniqueMembersTotal: data.maxUniqueMembersTotal }),
+        ...(data.maxUsesPerMember !== undefined && { maxUsesPerMember: data.maxUsesPerMember }),
         ...(data.validFrom !== undefined && {
           validFrom: data.validFrom ? new Date(data.validFrom) : null,
         }),
@@ -188,7 +207,7 @@ export async function PUT(
           bookingStartUntil: data.bookingStartUntil ? new Date(data.bookingStartUntil) : null,
         }),
         ...(data.membersOnly !== undefined && { membersOnly: data.membersOnly }),
-        ...(data.singleUse !== undefined && { singleUse: data.singleUse }),
+        ...(data.memberGuestsOnly !== undefined && { memberGuestsOnly: data.memberGuestsOnly }),
         ...(data.active !== undefined && { active: data.active }),
       },
     });
@@ -251,7 +270,6 @@ export async function DELETE(
   }
 
   if (existing.redemptions.length > 0) {
-    // Archive instead of delete when code has been used
     await prisma.promoCode.update({
       where: { id },
       data: { archivedAt: new Date(), active: false },

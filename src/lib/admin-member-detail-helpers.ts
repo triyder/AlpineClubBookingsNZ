@@ -48,7 +48,7 @@ export interface PromoCodeBenefitSource {
   type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS"
   percentOff: number | null
   valueCents: number | null
-  freeNights: number | null
+  freeNightsPerIndividual: number | null
 }
 
 export interface XeroCreateFormFields {
@@ -179,16 +179,16 @@ export function dedupeParentOptions<T extends { id: string }>(parents: T[]) {
 export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
-      ? `${promo.percentOff}% off`
+      ? `${promo.percentOff}% off per individual`
       : "Percentage discount"
   }
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `$${(promo.valueCents / 100).toFixed(2)} off`
+      ? `$${(promo.valueCents / 100).toFixed(2)} off per individual`
       : "Fixed discount"
   }
-  if (promo.freeNights !== null) {
-    return `${promo.freeNights} free night${promo.freeNights === 1 ? "" : "s"}`
+  if (promo.freeNightsPerIndividual !== null) {
+    return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per individual`
   }
   return "Free nights"
 }

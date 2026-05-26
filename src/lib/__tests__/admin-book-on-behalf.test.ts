@@ -601,17 +601,29 @@ describe("Promo Validate API - forMemberId", () => {
     vi.clearAllMocks();
   });
 
-  it("checks single-use against target member for admin on-behalf", async () => {
+  it("checks usage caps against target member for admin on-behalf", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
     (mockedPrisma.promoCode.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "pc1",
       code: "TEST10",
-      singleUse: true,
+      maxUsesPerMember: 1,
       active: true,
       type: "PERCENTAGE",
       percentOff: 10,
       valueCents: null,
-      freeNights: null,
+      freeNightsPerIndividual: null,
+      maxRedemptionsTotal: null,
+      maxUniqueMembersTotal: null,
+      maxGuestsPerBooking: null,
+      maxNightlyValueCents: null,
+      memberGuestsOnly: false,
+      membersOnly: false,
+      currentRedemptions: 0,
+      validFrom: null,
+      validUntil: null,
+      bookingStartFrom: null,
+      bookingStartUntil: null,
+      assignments: [],
     });
     (mockedPrisma.promoRedemption.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);

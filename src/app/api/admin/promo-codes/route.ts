@@ -11,14 +11,18 @@ const promoCodeSchema = z.object({
   type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS"]),
   valueCents: z.number().int().min(0).optional().nullable(),
   percentOff: z.number().int().min(0).max(100).optional().nullable(),
-  freeNights: z.number().int().min(0).optional().nullable(),
-  maxRedemptions: z.number().int().min(1).optional().nullable(),
+  freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
+  maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
+  maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
+  maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
+  maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
+  maxUsesPerMember: z.number().int().min(1).optional().nullable(),
   validFrom: z.string().optional().nullable(),
   validUntil: z.string().optional().nullable(),
   bookingStartFrom: z.string().optional().nullable(),
   bookingStartUntil: z.string().optional().nullable(),
   membersOnly: z.boolean().default(false),
-  singleUse: z.boolean().default(false),
+  memberGuestsOnly: z.boolean().default(false),
   active: z.boolean().default(true),
   assignedMemberIds: z.array(z.string()).optional(),
 });
@@ -40,7 +44,7 @@ export async function GET(req: NextRequest) {
     where: showArchived ? { archivedAt: { not: null } } : { archivedAt: null },
     include: {
       redemptions: {
-        select: { id: true, discountCents: true, createdAt: true },
+        select: { id: true, discountCents: true, memberId: true, createdAt: true },
       },
       assignments: {
         include: {
@@ -76,7 +80,6 @@ export async function POST(req: NextRequest) {
 
   const data = parsed.data;
 
-  // Validate type-specific fields
   if (data.type === "PERCENTAGE" && (data.percentOff == null || data.percentOff <= 0)) {
     return NextResponse.json(
       { error: "Percentage discount requires a percentOff value greater than 0" },
@@ -89,9 +92,9 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  if (data.type === "FREE_NIGHTS" && (data.freeNights == null || data.freeNights <= 0)) {
+  if (data.type === "FREE_NIGHTS" && (data.freeNightsPerIndividual == null || data.freeNightsPerIndividual <= 0)) {
     return NextResponse.json(
-      { error: "Free nights discount requires a freeNights value greater than 0" },
+      { error: "Free nights discount requires a freeNightsPerIndividual value greater than 0" },
       { status: 400 }
     );
   }
@@ -114,7 +117,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Check for duplicate code
   const existing = await prisma.promoCode.findUnique({
     where: { code: data.code },
   });
@@ -133,14 +135,20 @@ export async function POST(req: NextRequest) {
         type: data.type,
         valueCents: data.type === "FIXED_AMOUNT" ? data.valueCents : null,
         percentOff: data.type === "PERCENTAGE" ? data.percentOff : null,
-        freeNights: data.type === "FREE_NIGHTS" ? data.freeNights : null,
-        maxRedemptions: data.maxRedemptions || null,
+        freeNightsPerIndividual: data.type === "FREE_NIGHTS" ? data.freeNightsPerIndividual : null,
+        // Nightly value cap only meaningful for PERCENTAGE and FREE_NIGHTS.
+        maxNightlyValueCents:
+          data.type === "FIXED_AMOUNT" ? null : (data.maxNightlyValueCents ?? null),
+        maxGuestsPerBooking: data.maxGuestsPerBooking ?? null,
+        maxRedemptionsTotal: data.maxRedemptionsTotal ?? null,
+        maxUniqueMembersTotal: data.maxUniqueMembersTotal ?? null,
+        maxUsesPerMember: data.maxUsesPerMember ?? null,
         validFrom: data.validFrom ? new Date(data.validFrom) : null,
         validUntil: data.validUntil ? new Date(data.validUntil) : null,
         bookingStartFrom: data.bookingStartFrom ? new Date(data.bookingStartFrom) : null,
         bookingStartUntil: data.bookingStartUntil ? new Date(data.bookingStartUntil) : null,
         membersOnly: data.membersOnly,
-        singleUse: data.singleUse,
+        memberGuestsOnly: data.memberGuestsOnly,
         active: data.active,
       },
     });

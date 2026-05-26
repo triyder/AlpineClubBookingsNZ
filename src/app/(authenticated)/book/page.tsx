@@ -127,7 +127,7 @@ export default function BookPage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
-  const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNights: number | null }[]>([]);
+  const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null }[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
   const [guestProfileBlocks, setGuestProfileBlocks] = useState<GuestProfileRequiredMember[]>([]);
 

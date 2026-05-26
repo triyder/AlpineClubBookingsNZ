@@ -341,6 +341,7 @@ export type PricingResult = {
   };
   guestNightRates: Array<{
     memberId: string | null;
+    isMember: boolean;
     perNightRates: number[];
   }>;
 };
@@ -449,6 +450,7 @@ export async function calculateModifiedPricing(
         );
         return {
           memberId: guest.memberId ?? null,
+          isMember: guest.isMember,
           perNightRates: breakdown.guests[0].perNightCents,
         };
       });
@@ -484,6 +486,7 @@ export async function applyPromoCodeChanges(
     newTotalPriceCents: number;
     guestNightRates: Array<{
       memberId: string | null;
+      isMember: boolean;
       perNightRates: number[];
     }>;
   },
@@ -530,24 +533,36 @@ export async function applyPromoCodeChanges(
 
     if (!promoCode) throw new ApiError("Promo code not found", 400);
 
-    let memberRedemptionCount = 0;
-    if (promoCode.singleUse) {
-      memberRedemptionCount = await tx.promoRedemption.count({
-        where: {
-          promoCodeId: promoCode.id,
-          memberId: booking.memberId,
-          bookingId: { not: bookingId },
-        },
-      });
-    }
+    const needsMemberCount =
+      (promoCode.maxUsesPerMember !== null && promoCode.maxUsesPerMember !== undefined) ||
+      (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined);
+    const memberRedemptionCount = needsMemberCount
+      ? await tx.promoRedemption.count({
+          where: {
+            promoCodeId: promoCode.id,
+            memberId: booking.memberId,
+            bookingId: { not: bookingId },
+          },
+        })
+      : 0;
 
     let memberFreeNightsUsed = 0;
-    if (promoCode.type === "FREE_NIGHTS" && promoCode.freeNights) {
+    if (promoCode.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual) {
       memberFreeNightsUsed = await getMemberFreeNightsUsed(
         promoCode.id,
         booking.memberId,
         bookingId,
       );
+    }
+
+    let uniqueMembersUsed = 0;
+    if (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined) {
+      const rows = await tx.promoRedemption.findMany({
+        where: { promoCodeId: promoCode.id, bookingId: { not: bookingId } },
+        select: { memberId: true },
+        distinct: ["memberId"],
+      });
+      uniqueMembersUsed = rows.length;
     }
 
     const assignedMemberIds = promoCode.assignments.length
@@ -557,28 +572,34 @@ export async function applyPromoCodeChanges(
       promoCode,
       { memberId: booking.memberId },
       new Date(),
-      memberRedemptionCount,
+      {
+        memberRedemptionCount,
+        memberFreeNightsUsed,
+        uniqueMembersUsed,
+        memberHasRedeemedBefore: memberRedemptionCount > 0,
+      },
       assignedMemberIds,
-      memberFreeNightsUsed,
     );
     if (validationError) throw new ApiError(validationError, 400);
 
     const remainingFreeNights =
-      promoCode.type === "FREE_NIGHTS" && promoCode.freeNights
-        ? promoCode.freeNights - memberFreeNightsUsed
+      promoCode.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual
+        ? promoCode.freeNightsPerIndividual - memberFreeNightsUsed
         : undefined;
     const promoResult = calculatePromoDiscountForGuestRates(
       {
         type: promoCode.type,
         valueCents: promoCode.valueCents,
         percentOff: promoCode.percentOff,
-        freeNights: promoCode.freeNights,
+        freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
+        maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
+        maxNightlyValueCents: promoCode.maxNightlyValueCents,
+        memberGuestsOnly: promoCode.memberGuestsOnly,
       },
       newTotalPriceCents,
       booking.memberId,
       guestNightRates,
       assignedMemberIds,
-      undefined,
       remainingFreeNights,
     );
     newDiscountCents = promoResult.discountCents;
@@ -590,6 +611,7 @@ export async function applyPromoCodeChanges(
       booking.memberId,
       newDiscountCents,
       promoResult.freeNightsUsed,
+      promoResult.eligibleGuestCount,
     );
     promoChanged = true;
   } else if (
@@ -599,18 +621,17 @@ export async function applyPromoCodeChanges(
   ) {
     const promo = booking.promoRedemption.promoCode;
     const memberFreeNightsUsed =
-      promo.type === "FREE_NIGHTS" && promo.freeNights
+      promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
         ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
         : 0;
     const validationError = validatePromoCodeRules(
       promo,
       { memberId: booking.memberId },
       new Date(),
-      0,
+      { memberFreeNightsUsed },
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      memberFreeNightsUsed,
     );
 
     if (validationError) {
@@ -624,15 +645,18 @@ export async function applyPromoCodeChanges(
       promoRemoved = true;
     } else {
       const remainingFreeNights =
-        promo.type === "FREE_NIGHTS" && promo.freeNights
-          ? promo.freeNights - memberFreeNightsUsed
+        promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
+          ? promo.freeNightsPerIndividual - memberFreeNightsUsed
           : undefined;
       const promoResult = calculatePromoDiscountForGuestRates(
         {
           type: promo.type,
           valueCents: promo.valueCents,
           percentOff: promo.percentOff,
-          freeNights: promo.freeNights,
+          freeNightsPerIndividual: promo.freeNightsPerIndividual,
+          maxGuestsPerBooking: promo.maxGuestsPerBooking,
+          maxNightlyValueCents: promo.maxNightlyValueCents,
+          memberGuestsOnly: promo.memberGuestsOnly,
         },
         newTotalPriceCents,
         booking.memberId,
@@ -640,7 +664,6 @@ export async function applyPromoCodeChanges(
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
           : null,
-        undefined,
         remainingFreeNights,
       );
       newDiscountCents = promoResult.discountCents;
@@ -650,6 +673,7 @@ export async function applyPromoCodeChanges(
         data: {
           discountCents: newDiscountCents,
           freeNightsUsed: promoResult.freeNightsUsed || null,
+          eligibleGuestCount: promoResult.eligibleGuestCount || null,
         },
       });
     }

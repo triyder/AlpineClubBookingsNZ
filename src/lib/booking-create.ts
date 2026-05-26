@@ -40,6 +40,7 @@ import {
   redeemPromoCode,
   calculatePromoDiscountForGuestRates,
   getMemberFreeNightsUsed,
+  getUniqueMemberRedemptionCount,
 } from "@/lib/promo";
 import {
   bumpPendingBookings,
@@ -123,13 +124,17 @@ export class BookingPromoError extends Error {
 interface ResolvedPromo {
   discountCents: number;
   promoFreeNightsUsed: number;
+  promoEligibleGuestCount: number;
   promoCodeRecord:
     | {
         id: string;
         type: PromoCodeType;
         valueCents: number | null;
         percentOff: number | null;
-        freeNights: number | null;
+        freeNightsPerIndividual: number | null;
+        maxGuestsPerBooking: number | null;
+        maxNightlyValueCents: number | null;
+        memberGuestsOnly: boolean;
       }
     | null;
 }
@@ -139,14 +144,20 @@ type LockedPromoRow = {
   active: boolean;
   validFrom: Date | null;
   validUntil: Date | null;
-  maxRedemptions: number | null;
+  bookingStartFrom: Date | null;
+  bookingStartUntil: Date | null;
+  maxRedemptionsTotal: number | null;
+  maxUniqueMembersTotal: number | null;
+  maxUsesPerMember: number | null;
   currentRedemptions: number;
   membersOnly: boolean;
-  singleUse: boolean;
+  memberGuestsOnly: boolean;
   type: PromoCodeType;
   valueCents: number | null;
   percentOff: number | null;
-  freeNights: number | null;
+  freeNightsPerIndividual: number | null;
+  maxGuestsPerBooking: number | null;
+  maxNightlyValueCents: number | null;
   code: string;
 };
 
@@ -174,20 +185,34 @@ async function resolvePromoInTransaction(
   `;
   const promoCode = lockedRows.length > 0 ? lockedRows[0] : null;
 
-  let memberRedemptionCount = 0;
-  if (promoCode?.singleUse) {
-    memberRedemptionCount = await tx.promoRedemption.count({
-      where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
-    });
-  }
+  const needsMemberCount = Boolean(
+    promoCode &&
+      ((promoCode.maxUsesPerMember !== null && promoCode.maxUsesPerMember !== undefined) ||
+        (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined)),
+  );
+  const memberRedemptionCount = needsMemberCount && promoCode
+    ? await tx.promoRedemption.count({
+        where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+      })
+    : 0;
 
   let memberFreeNightsUsed = 0;
-  if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+  if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual) {
     const result = await tx.promoRedemption.aggregate({
       where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
       _sum: { freeNightsUsed: true },
     });
     memberFreeNightsUsed = result._sum.freeNightsUsed ?? 0;
+  }
+
+  let uniqueMembersUsed = 0;
+  if (promoCode?.maxUniqueMembersTotal !== null && promoCode?.maxUniqueMembersTotal !== undefined) {
+    const rows = await tx.promoRedemption.findMany({
+      where: { promoCodeId: promoCode.id },
+      select: { memberId: true },
+      distinct: ["memberId"],
+    });
+    uniqueMembersUsed = rows.length;
   }
 
   let assignedMemberIds: string[] | null = null;
@@ -205,20 +230,25 @@ async function resolvePromoInTransaction(
     promoCode,
     { memberId: effectiveMemberId, bookingCheckIn: checkIn },
     new Date(),
-    memberRedemptionCount,
+    {
+      memberRedemptionCount,
+      memberFreeNightsUsed,
+      uniqueMembersUsed,
+      memberHasRedeemedBefore: memberRedemptionCount > 0,
+    },
     assignedMemberIds,
-    memberFreeNightsUsed,
   );
   if (validationError) {
     throw new BookingPromoError(validationError);
   }
 
   const remainingFreeNights =
-    promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
-      ? promoCode.freeNights - memberFreeNightsUsed
+    promoCode?.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual
+      ? promoCode.freeNightsPerIndividual - memberFreeNightsUsed
       : undefined;
   const guestNightRates = guests.map((guest, index) => ({
     memberId: guest.memberId ?? null,
+    isMember: guest.isMember,
     perNightRates: perNightCentsByGuest[index],
   }));
   const promoResult = calculatePromoDiscountForGuestRates(
@@ -226,19 +256,22 @@ async function resolvePromoInTransaction(
       type: promoCode!.type,
       valueCents: promoCode!.valueCents,
       percentOff: promoCode!.percentOff,
-      freeNights: promoCode!.freeNights,
+      freeNightsPerIndividual: promoCode!.freeNightsPerIndividual,
+      maxGuestsPerBooking: promoCode!.maxGuestsPerBooking,
+      maxNightlyValueCents: promoCode!.maxNightlyValueCents,
+      memberGuestsOnly: promoCode!.memberGuestsOnly,
     },
     totalPriceCents,
     effectiveMemberId,
     guestNightRates,
     assignedMemberIds,
-    undefined,
     remainingFreeNights,
   );
 
   return {
     discountCents: promoResult.discountCents,
     promoFreeNightsUsed: promoResult.freeNightsUsed,
+    promoEligibleGuestCount: promoResult.eligibleGuestCount,
     promoCodeRecord: promoCode,
   };
 }
@@ -293,6 +326,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
 
     let discountCents = 0;
     let promoFreeNightsUsed = 0;
+    let promoEligibleGuestCount = 0;
     let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
     if (promoCodeStr) {
       const resolved = await resolvePromoInTransaction(tx, {
@@ -305,6 +339,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       });
       discountCents = resolved.discountCents;
       promoFreeNightsUsed = resolved.promoFreeNightsUsed;
+      promoEligibleGuestCount = resolved.promoEligibleGuestCount;
       promoCodeRecord = resolved.promoCodeRecord;
     }
 
@@ -341,6 +376,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         effectiveMemberId,
         discountCents,
         promoFreeNightsUsed || undefined,
+        promoEligibleGuestCount || undefined,
       );
     }
 
@@ -469,6 +505,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
 
       let discountCents = 0;
       let promoFreeNightsUsed = 0;
+      let promoEligibleGuestCount = 0;
       let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
       if (promoCodeStr) {
         const resolved = await resolvePromoInTransaction(tx, {
@@ -481,6 +518,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         });
         discountCents = resolved.discountCents;
         promoFreeNightsUsed = resolved.promoFreeNightsUsed;
+        promoEligibleGuestCount = resolved.promoEligibleGuestCount;
         promoCodeRecord = resolved.promoCodeRecord;
       }
 
@@ -536,6 +574,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           effectiveMemberId,
           discountCents,
           promoFreeNightsUsed || undefined,
+          promoEligibleGuestCount || undefined,
         );
       }
 
@@ -742,6 +781,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
 
   let discountCents = 0;
   let promoFreeNightsUsed = 0;
+  let promoEligibleGuestCount = 0;
   let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
 
   if (promoCodeStr) {
@@ -750,15 +790,23 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       where: { code: normalizedCode },
       include: { assignments: { select: { memberId: true } } },
     });
-    let memberRedemptionCount = 0;
-    if (promoCode?.singleUse) {
-      memberRedemptionCount = await prisma.promoRedemption.count({
-        where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
-      });
-    }
+    const needsMemberCount = Boolean(
+      promoCode &&
+        ((promoCode.maxUsesPerMember !== null && promoCode.maxUsesPerMember !== undefined) ||
+          (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined)),
+    );
+    const memberRedemptionCount = needsMemberCount && promoCode
+      ? await prisma.promoRedemption.count({
+          where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+        })
+      : 0;
     let memberFreeNightsUsed = 0;
-    if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+    if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual) {
       memberFreeNightsUsed = await getMemberFreeNightsUsed(promoCode.id, effectiveMemberId);
+    }
+    let uniqueMembersUsed = 0;
+    if (promoCode?.maxUniqueMembersTotal !== null && promoCode?.maxUniqueMembersTotal !== undefined) {
+      uniqueMembersUsed = await getUniqueMemberRedemptionCount(promoCode.id);
     }
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)
@@ -767,19 +815,24 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       promoCode,
       { memberId: effectiveMemberId, bookingCheckIn: checkIn },
       new Date(),
-      memberRedemptionCount,
+      {
+        memberRedemptionCount,
+        memberFreeNightsUsed,
+        uniqueMembersUsed,
+        memberHasRedeemedBefore: memberRedemptionCount > 0,
+      },
       assignedMemberIds,
-      memberFreeNightsUsed,
     );
     if (validationError) {
       throw new BookingPromoError(validationError);
     }
     const remainingFreeNights =
-      promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
-        ? promoCode.freeNights - memberFreeNightsUsed
+      promoCode?.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual
+        ? promoCode.freeNightsPerIndividual - memberFreeNightsUsed
         : undefined;
     const guestNightRates = guests.map((guest, index) => ({
       memberId: guest.memberId ?? null,
+      isMember: guest.isMember,
       perNightRates: price.guests[index].perNightCents,
     }));
     const promoResult = calculatePromoDiscountForGuestRates(
@@ -787,17 +840,20 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         type: promoCode!.type,
         valueCents: promoCode!.valueCents,
         percentOff: promoCode!.percentOff,
-        freeNights: promoCode!.freeNights,
+        freeNightsPerIndividual: promoCode!.freeNightsPerIndividual,
+        maxGuestsPerBooking: promoCode!.maxGuestsPerBooking,
+        maxNightlyValueCents: promoCode!.maxNightlyValueCents,
+        memberGuestsOnly: promoCode!.memberGuestsOnly,
       },
       price.totalPriceCents,
       effectiveMemberId,
       guestNightRates,
       assignedMemberIds,
-      undefined,
       remainingFreeNights,
     );
     discountCents = promoResult.discountCents;
     promoFreeNightsUsed = promoResult.freeNightsUsed;
+    promoEligibleGuestCount = promoResult.eligibleGuestCount;
     promoCodeRecord = promoCode;
   }
 
@@ -838,6 +894,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         effectiveMemberId,
         discountCents,
         promoFreeNightsUsed || undefined,
+        promoEligibleGuestCount || undefined,
       );
     }
 

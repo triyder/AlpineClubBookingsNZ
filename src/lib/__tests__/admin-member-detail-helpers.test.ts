@@ -161,31 +161,31 @@ describe("admin-member-detail-helpers", () => {
   describe("formatPromoBenefit", () => {
     it("formats percentage", () => {
       expect(
-        formatPromoBenefit({ type: "PERCENTAGE", percentOff: 15, valueCents: null, freeNights: null })
-      ).toBe("15% off")
+        formatPromoBenefit({ type: "PERCENTAGE", percentOff: 15, valueCents: null, freeNightsPerIndividual: null })
+      ).toBe("15% off per individual")
       expect(
-        formatPromoBenefit({ type: "PERCENTAGE", percentOff: null, valueCents: null, freeNights: null })
+        formatPromoBenefit({ type: "PERCENTAGE", percentOff: null, valueCents: null, freeNightsPerIndividual: null })
       ).toBe("Percentage discount")
     })
 
     it("formats fixed amount as dollars", () => {
       expect(
-        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: 2550, freeNights: null })
-      ).toBe("$25.50 off")
+        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: 2550, freeNightsPerIndividual: null })
+      ).toBe("$25.50 off per individual")
       expect(
-        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: null, freeNights: null })
+        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: null, freeNightsPerIndividual: null })
       ).toBe("Fixed discount")
     })
 
     it("formats free nights with correct singular and plural", () => {
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNights: 1 })
-      ).toBe("1 free night")
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1 })
+      ).toBe("1 free night per individual")
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNights: 3 })
-      ).toBe("3 free nights")
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 3 })
+      ).toBe("3 free nights per individual")
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNights: null })
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: null })
       ).toBe("Free nights")
     })
   })

@@ -76,7 +76,7 @@ export interface MemberPromoCode {
   type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS"
   percentOff: number | null
   valueCents: number | null
-  freeNights: number | null
+  freeNightsPerIndividual: number | null
   assignedAt: string | null
   active: boolean
   archivedAt: string | null
@@ -84,9 +84,9 @@ export interface MemberPromoCode {
   validUntil: string | null
   bookingStartFrom: string | null
   bookingStartUntil: string | null
-  maxRedemptions: number | null
+  maxRedemptionsTotal: number | null
   currentRedemptions: number
-  singleUse: boolean
+  maxUsesPerMember: number | null
   redemptionCount: number
   freeNightsUsed: number
   visibleToMember: boolean

@@ -37,29 +37,29 @@ function singleSearchParam(value?: string | string[]) {
 }
 
 function formatPromoBenefit(promo: {
-  freeNights: number | null;
+  freeNightsPerIndividual: number | null;
   percentOff: number | null;
   type: string;
   valueCents: number | null;
 }) {
   if (promo.type === "PERCENTAGE") {
     return promo.percentOff !== null
-      ? `${promo.percentOff}% off`
+      ? `${promo.percentOff}% off per individual`
       : "Percentage discount";
   }
 
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? `${formatCents(promo.valueCents)} off`
+      ? `${formatCents(promo.valueCents)} off per individual`
       : "Fixed discount";
   }
 
   if (promo.type === "FREE_NIGHTS") {
-    if (promo.freeNights === null) {
+    if (promo.freeNightsPerIndividual === null) {
       return "Free nights";
     }
 
-    return `${promo.freeNights} free night${promo.freeNights === 1 ? "" : "s"}`;
+    return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per individual`;
   }
 
   return promo.type.replaceAll("_", " ").toLowerCase();

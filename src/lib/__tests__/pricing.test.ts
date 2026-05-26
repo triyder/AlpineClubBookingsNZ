@@ -241,52 +241,57 @@ describe("calculateBookingPrice - multiple guests", () => {
 })
 
 describe("calculatePromoDiscount", () => {
-  // 2 nights: adult $45/night = $90, child $15/night = $30 = $120 total
-  const totalPrice = 12000
+  // 1 guest, 2 nights at varied rates
+  const singleAdultMember = {
+    memberId: null,
+    isMember: true,
+    perNightRates: [4500, 4500],
+  }
+  const totalPrice = 9000
 
-  it("applies percentage discount", () => {
+  it("applies percentage discount per guest", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: 20 }
-    const result = calculatePromoDiscount(promo, totalPrice)
-    expect(result.discountCents).toBe(2400) // 20% of $120 = $24
+    const result = calculatePromoDiscount(promo, { totalPriceCents: totalPrice, guests: [singleAdultMember] })
+    // 20% × 4500 × 2 = 1800
+    expect(result.discountCents).toBe(1800)
   })
 
-  it("applies fixed amount discount", () => {
+  it("applies fixed amount per guest", () => {
     const promo: PromoCodeInput = { type: "FIXED_AMOUNT", valueCents: 5000 }
-    const result = calculatePromoDiscount(promo, totalPrice)
-    expect(result.discountCents).toBe(5000) // $50 off
+    const result = calculatePromoDiscount(promo, { totalPriceCents: totalPrice, guests: [singleAdultMember] })
+    expect(result.discountCents).toBe(5000)
   })
 
-  it("caps fixed amount at total price", () => {
+  it("caps fixed amount per guest at guest's stay total", () => {
     const promo: PromoCodeInput = { type: "FIXED_AMOUNT", valueCents: 99999 }
-    const result = calculatePromoDiscount(promo, totalPrice)
-    expect(result.discountCents).toBe(12000) // capped at total
+    const result = calculatePromoDiscount(promo, { totalPriceCents: totalPrice, guests: [singleAdultMember] })
+    expect(result.discountCents).toBe(totalPrice)
   })
 
-  it("applies free nights discount - cheapest nights first", () => {
-    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 2 }
-    const perNightRates = [1500, 1500, 4500, 4500]
-    const result = calculatePromoDiscount(promo, totalPrice, perNightRates)
-    // 2 cheapest = 1500 + 1500 = 3000
-    expect(result.discountCents).toBe(3000)
+  it("applies free nights to most expensive nights per guest", () => {
+    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNightsPerIndividual: 2 }
+    const guests = [{ memberId: null, isMember: true, perNightRates: [1500, 1500, 4500, 4500] }]
+    const result = calculatePromoDiscount(promo, { totalPriceCents: 12000, guests })
+    // 2 most expensive = 4500 + 4500 = 9000
+    expect(result.discountCents).toBe(9000)
   })
 
-  it("handles free nights exceeding total nights", () => {
-    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 100 }
-    const perNightRates = [1500, 1500, 4500, 4500]
-    const result = calculatePromoDiscount(promo, totalPrice, perNightRates)
-    // All 4 guest-nights free = 1500+1500+4500+4500 = 12000
+  it("handles free nights exceeding guest's nights", () => {
+    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNightsPerIndividual: 100 }
+    const guests = [{ memberId: null, isMember: true, perNightRates: [1500, 1500, 4500, 4500] }]
+    const result = calculatePromoDiscount(promo, { totalPriceCents: 12000, guests })
     expect(result.discountCents).toBe(12000)
   })
 
   it("returns 0 for zero percentage", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: 0 }
-    const result = calculatePromoDiscount(promo, totalPrice)
+    const result = calculatePromoDiscount(promo, { totalPriceCents: totalPrice, guests: [singleAdultMember] })
     expect(result.discountCents).toBe(0)
   })
 
   it("returns 0 for null values", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: null }
-    const result = calculatePromoDiscount(promo, totalPrice)
+    const result = calculatePromoDiscount(promo, { totalPriceCents: totalPrice, guests: [singleAdultMember] })
     expect(result.discountCents).toBe(0)
   })
 })

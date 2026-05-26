@@ -771,25 +771,33 @@ model PaymentRecoveryOperation {
 // ---------------------------------------------------------------------------
 
 model PromoCode {
-  id                 String        @id @default(cuid())
-  code               String        @unique
-  description        String?
-  type               PromoCodeType
-  valueCents         Int?
-  percentOff         Int?
-  freeNights         Int?
-  maxRedemptions     Int?
-  currentRedemptions Int           @default(0)
-  validFrom          DateTime?
-  validUntil         DateTime?
-  bookingStartFrom   DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  bookingStartUntil  DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  membersOnly        Boolean       @default(false)
-  singleUse          Boolean       @default(false)
-  active             Boolean       @default(true)
-  archivedAt         DateTime?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  id                      String        @id @default(cuid())
+  code                    String        @unique
+  description             String?
+  type                    PromoCodeType
+  // Per-individual benefit amounts (apply to each eligible guest on the booking)
+  valueCents              Int? // Fixed amount off, per eligible guest
+  percentOff              Int? // Percentage off, applied per eligible guest
+  freeNightsPerIndividual Int? // Free nights per eligible guest; also lifetime cap per booker (sum of freeNightsUsed across their redemptions of this code)
+  // Optional per-night value cap (FREE_NIGHTS and PERCENTAGE only): caps the discount applied to any single night
+  maxNightlyValueCents    Int?
+  // Per-booking limit: how many guests on a single booking the promo applies to (null = unlimited / all eligible guests)
+  maxGuestsPerBooking     Int?
+  // Overall usage caps
+  maxRedemptionsTotal     Int? // Hard cap on redemptions across all members (null = unlimited)
+  maxUniqueMembersTotal   Int? // Hard cap on distinct members who can ever redeem (null = unlimited)
+  maxUsesPerMember        Int? // Cap on how many bookings one member can apply this code to (null = unlimited, 1 = single-use)
+  currentRedemptions      Int           @default(0)
+  validFrom               DateTime?
+  validUntil              DateTime?
+  bookingStartFrom        DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  bookingStartUntil       DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  membersOnly             Boolean       @default(false) // Booker must be a member
+  memberGuestsOnly        Boolean       @default(false) // Promo only applies to guest rows flagged as members
+  active                  Boolean       @default(true)
+  archivedAt              DateTime?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
 
   // Relations
   redemptions PromoRedemption[]
@@ -801,13 +809,14 @@ model PromoCode {
 }
 
 model PromoRedemption {
-  id             String   @id @default(cuid())
-  promoCodeId    String
-  bookingId      String   @unique
-  memberId       String
-  discountCents  Int
-  freeNightsUsed Int? // Number of free nights actually consumed (for FREE_NIGHTS promos)
-  createdAt      DateTime @default(now())
+  id                 String   @id @default(cuid())
+  promoCodeId        String
+  bookingId          String   @unique
+  memberId           String
+  discountCents      Int
+  freeNightsUsed     Int? // Number of guest-nights subsidised (full or partial) for FREE_NIGHTS promos
+  eligibleGuestCount Int? // Number of guests the promo applied to on this booking (for reporting)
+  createdAt          DateTime @default(now())
 
   // Relations
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)

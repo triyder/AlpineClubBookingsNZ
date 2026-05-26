@@ -28,6 +28,13 @@ interface PromoAssignment {
   member: MemberOption;
 }
 
+interface PromoRedemptionRow {
+  id: string;
+  discountCents: number;
+  memberId: string;
+  createdAt: string;
+}
+
 interface PromoCode {
   id: string;
   code: string;
@@ -35,19 +42,23 @@ interface PromoCode {
   type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS";
   valueCents: number | null;
   percentOff: number | null;
-  freeNights: number | null;
-  maxRedemptions: number | null;
+  freeNightsPerIndividual: number | null;
+  maxNightlyValueCents: number | null;
+  maxGuestsPerBooking: number | null;
+  maxRedemptionsTotal: number | null;
+  maxUniqueMembersTotal: number | null;
+  maxUsesPerMember: number | null;
   currentRedemptions: number;
   validFrom: string | null;
   validUntil: string | null;
   bookingStartFrom: string | null;
   bookingStartUntil: string | null;
   membersOnly: boolean;
-  singleUse: boolean;
+  memberGuestsOnly: boolean;
   active: boolean;
   archivedAt: string | null;
   createdAt: string;
-  redemptions: { id: string; discountCents: number; createdAt: string }[];
+  redemptions: PromoRedemptionRow[];
   assignments: PromoAssignment[];
 }
 
@@ -67,7 +78,6 @@ export default function PromoCodesPage() {
   const [saving, setSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
-  // Form state
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<"PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS">(
@@ -75,17 +85,20 @@ export default function PromoCodesPage() {
   );
   const [percentOff, setPercentOff] = useState("");
   const [valueDollars, setValueDollars] = useState("");
-  const [freeNights, setFreeNights] = useState("");
-  const [maxRedemptions, setMaxRedemptions] = useState("");
+  const [freeNightsPerIndividual, setFreeNightsPerIndividual] = useState("");
+  const [maxNightlyValueDollars, setMaxNightlyValueDollars] = useState("");
+  const [maxGuestsPerBooking, setMaxGuestsPerBooking] = useState("");
+  const [maxRedemptionsTotal, setMaxRedemptionsTotal] = useState("");
+  const [maxUniqueMembersTotal, setMaxUniqueMembersTotal] = useState("");
+  const [maxUsesPerMember, setMaxUsesPerMember] = useState("");
   const [validFrom, setValidFrom] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [bookingStartFrom, setBookingStartFrom] = useState("");
   const [bookingStartUntil, setBookingStartUntil] = useState("");
   const [membersOnly, setMembersOnly] = useState(false);
-  const [singleUse, setSingleUse] = useState(false);
+  const [memberGuestsOnly, setMemberGuestsOnly] = useState(false);
   const [active, setActive] = useState(true);
 
-  // Member assignment state
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
   const [assignedMembers, setAssignedMembers] = useState<MemberOption[]>([]);
   const [memberSearch, setMemberSearch] = useState("");
@@ -145,7 +158,6 @@ export default function PromoCodesPage() {
         lastName: m.lastName,
         email: m.email,
       }));
-      // Filter out already assigned members
       setMemberResults(
         members.filter((m: MemberOption) => !assignedMemberIds.includes(m.id))
       );
@@ -176,14 +188,18 @@ export default function PromoCodesPage() {
     setType("PERCENTAGE");
     setPercentOff("");
     setValueDollars("");
-    setFreeNights("");
-    setMaxRedemptions("");
+    setFreeNightsPerIndividual("");
+    setMaxNightlyValueDollars("");
+    setMaxGuestsPerBooking("");
+    setMaxRedemptionsTotal("");
+    setMaxUniqueMembersTotal("");
+    setMaxUsesPerMember("");
     setValidFrom("");
     setValidUntil("");
     setBookingStartFrom("");
     setBookingStartUntil("");
     setMembersOnly(false);
-    setSingleUse(false);
+    setMemberGuestsOnly(false);
     setActive(true);
     setEditingId(null);
     setShowForm(false);
@@ -203,16 +219,32 @@ export default function PromoCodesPage() {
     setValueDollars(
       promo.valueCents != null ? (promo.valueCents / 100).toFixed(2) : ""
     );
-    setFreeNights(promo.freeNights != null ? String(promo.freeNights) : "");
-    setMaxRedemptions(
-      promo.maxRedemptions != null ? String(promo.maxRedemptions) : ""
+    setFreeNightsPerIndividual(
+      promo.freeNightsPerIndividual != null ? String(promo.freeNightsPerIndividual) : ""
+    );
+    setMaxNightlyValueDollars(
+      promo.maxNightlyValueCents != null
+        ? (promo.maxNightlyValueCents / 100).toFixed(2)
+        : ""
+    );
+    setMaxGuestsPerBooking(
+      promo.maxGuestsPerBooking != null ? String(promo.maxGuestsPerBooking) : ""
+    );
+    setMaxRedemptionsTotal(
+      promo.maxRedemptionsTotal != null ? String(promo.maxRedemptionsTotal) : ""
+    );
+    setMaxUniqueMembersTotal(
+      promo.maxUniqueMembersTotal != null ? String(promo.maxUniqueMembersTotal) : ""
+    );
+    setMaxUsesPerMember(
+      promo.maxUsesPerMember != null ? String(promo.maxUsesPerMember) : ""
     );
     setValidFrom(promo.validFrom ? promo.validFrom.split("T")[0] : "");
     setValidUntil(promo.validUntil ? promo.validUntil.split("T")[0] : "");
     setBookingStartFrom(promo.bookingStartFrom ? promo.bookingStartFrom.split("T")[0] : "");
     setBookingStartUntil(promo.bookingStartUntil ? promo.bookingStartUntil.split("T")[0] : "");
     setMembersOnly(promo.membersOnly);
-    setSingleUse(promo.singleUse);
+    setMemberGuestsOnly(promo.memberGuestsOnly);
     setActive(promo.active);
     setAssignedMemberIds(promo.assignments?.map((a) => a.member.id) || []);
     setAssignedMembers(promo.assignments?.map((a) => a.member) || []);
@@ -229,13 +261,16 @@ export default function PromoCodesPage() {
       description: description || null,
       type,
       membersOnly,
-      singleUse,
+      memberGuestsOnly,
       active,
       validFrom: validFrom || null,
       validUntil: validUntil || null,
       bookingStartFrom: bookingStartFrom || null,
       bookingStartUntil: bookingStartUntil || null,
-      maxRedemptions: maxRedemptions ? parseInt(maxRedemptions) : null,
+      maxGuestsPerBooking: maxGuestsPerBooking ? parseInt(maxGuestsPerBooking) : null,
+      maxRedemptionsTotal: maxRedemptionsTotal ? parseInt(maxRedemptionsTotal) : null,
+      maxUniqueMembersTotal: maxUniqueMembersTotal ? parseInt(maxUniqueMembersTotal) : null,
+      maxUsesPerMember: maxUsesPerMember ? parseInt(maxUsesPerMember) : null,
       assignedMemberIds,
     };
 
@@ -246,7 +281,15 @@ export default function PromoCodesPage() {
         ? Math.round(parseFloat(valueDollars) * 100)
         : null;
     } else if (type === "FREE_NIGHTS") {
-      payload.freeNights = freeNights ? parseInt(freeNights) : null;
+      payload.freeNightsPerIndividual = freeNightsPerIndividual
+        ? parseInt(freeNightsPerIndividual)
+        : null;
+    }
+
+    if (type !== "FIXED_AMOUNT") {
+      payload.maxNightlyValueCents = maxNightlyValueDollars
+        ? Math.round(parseFloat(maxNightlyValueDollars) * 100)
+        : null;
     }
 
     try {
@@ -334,17 +377,22 @@ export default function PromoCodesPage() {
   function formatPromoValue(promo: PromoCode): string {
     switch (promo.type) {
       case "PERCENTAGE":
-        return `${promo.percentOff}% off`;
+        return `${promo.percentOff}% off per individual`;
       case "FIXED_AMOUNT":
-        return `${formatCents(promo.valueCents || 0)} off`;
+        return `${formatCents(promo.valueCents || 0)} off per individual`;
       case "FREE_NIGHTS":
-        return `${promo.freeNights} free night${promo.freeNights !== 1 ? "s" : ""}`;
+        return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual !== 1 ? "s" : ""} per individual`;
       default:
         return "";
     }
   }
 
+  function uniqueMemberCount(redemptions: PromoRedemptionRow[]): number {
+    return new Set(redemptions.map((r) => r.memberId)).size;
+  }
+
   function renderPromoCard(promo: PromoCode, isArchived: boolean) {
+    const uniqueMembers = uniqueMemberCount(promo.redemptions);
     return (
       <Card key={promo.id}>
         <CardHeader>
@@ -417,15 +465,24 @@ export default function PromoCodesPage() {
         <CardContent>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             <div>
-              <span className="text-muted-foreground">Value:</span>{" "}
+              <span className="text-muted-foreground">Benefit:</span>{" "}
               <span className="font-medium">{formatPromoValue(promo)}</span>
             </div>
             <div>
               <span className="text-muted-foreground">Redemptions:</span>{" "}
               <span className="font-medium">
                 {promo.currentRedemptions}
-                {promo.maxRedemptions != null
-                  ? ` / ${promo.maxRedemptions}`
+                {promo.maxRedemptionsTotal != null
+                  ? ` / ${promo.maxRedemptionsTotal}`
+                  : " (unlimited)"}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Unique members:</span>{" "}
+              <span className="font-medium">
+                {uniqueMembers}
+                {promo.maxUniqueMembersTotal != null
+                  ? ` / ${promo.maxUniqueMembersTotal}`
                   : " (unlimited)"}
               </span>
             </div>
@@ -441,14 +498,29 @@ export default function PromoCodesPage() {
                   : "No expiry"}
               </span>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {promo.membersOnly && (
-                <Badge variant="outline">Members Only</Badge>
-              )}
-              {promo.singleUse && (
-                <Badge variant="outline">Single Use</Badge>
-              )}
-            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {promo.maxGuestsPerBooking != null && (
+              <Badge variant="outline">
+                Up to {promo.maxGuestsPerBooking} guest{promo.maxGuestsPerBooking === 1 ? "" : "s"} per booking
+              </Badge>
+            )}
+            {promo.maxUsesPerMember != null && (
+              <Badge variant="outline">
+                Max {promo.maxUsesPerMember} use{promo.maxUsesPerMember === 1 ? "" : "s"} per member
+              </Badge>
+            )}
+            {promo.maxNightlyValueCents != null && (
+              <Badge variant="outline">
+                Up to {formatCents(promo.maxNightlyValueCents)}/night
+              </Badge>
+            )}
+            {promo.membersOnly && (
+              <Badge variant="outline">Members only</Badge>
+            )}
+            {promo.memberGuestsOnly && (
+              <Badge variant="outline">Member guests only</Badge>
+            )}
           </div>
           {promo.assignments && promo.assignments.length > 0 && (
             <div className="mt-3 pt-3 border-t">
@@ -498,7 +570,7 @@ export default function PromoCodesPage() {
               {editingId ? "Edit Promo Code" : "New Promo Code"}
             </CardTitle>
             <CardDescription>
-              Configure discount type, value, and usage restrictions
+              Configure discount type, per-individual value, usage caps, and member restrictions
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -549,7 +621,7 @@ export default function PromoCodesPage() {
 
                 {type === "PERCENTAGE" && (
                   <div className="space-y-2">
-                    <Label htmlFor="percentOff">Percentage Off (%)</Label>
+                    <Label htmlFor="percentOff">Percentage off per individual (%)</Label>
                     <Input
                       id="percentOff"
                       type="number"
@@ -560,12 +632,15 @@ export default function PromoCodesPage() {
                       placeholder="e.g. 20"
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Applied to each eligible guest&apos;s stay total.
+                    </p>
                   </div>
                 )}
 
                 {type === "FIXED_AMOUNT" && (
                   <div className="space-y-2">
-                    <Label htmlFor="valueDollars">Amount Off ({APP_CURRENCY})</Label>
+                    <Label htmlFor="valueDollars">Amount off per individual ({APP_CURRENCY})</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                         $
@@ -582,23 +657,133 @@ export default function PromoCodesPage() {
                         required
                       />
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      Each eligible guest receives this amount off, capped at their stay total.
+                    </p>
                   </div>
                 )}
 
                 {type === "FREE_NIGHTS" && (
                   <div className="space-y-2">
-                    <Label htmlFor="freeNights">Number of Free Nights</Label>
+                    <Label htmlFor="freeNightsPerIndividual">
+                      Free nights per individual (lifetime cap)
+                    </Label>
                     <Input
-                      id="freeNights"
+                      id="freeNightsPerIndividual"
                       type="number"
                       min="1"
-                      value={freeNights}
-                      onChange={(e) => setFreeNights(e.target.value)}
-                      placeholder="e.g. 1"
+                      value={freeNightsPerIndividual}
+                      onChange={(e) => setFreeNightsPerIndividual(e.target.value)}
+                      placeholder="e.g. 2"
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Each eligible guest receives up to this many free nights on a booking. Also caps the
+                      booker&apos;s lifetime total free nights from this code across all their bookings.
+                    </p>
                   </div>
                 )}
+              </div>
+
+              {type !== "FIXED_AMOUNT" && (
+                <div className="space-y-2 max-w-md">
+                  <Label htmlFor="maxNightlyValue">
+                    Maximum nightly value covered (optional, {APP_CURRENCY})
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                      $
+                    </span>
+                    <Input
+                      id="maxNightlyValue"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="pl-7"
+                      value={maxNightlyValueDollars}
+                      onChange={(e) => setMaxNightlyValueDollars(e.target.value)}
+                      placeholder="Unlimited"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Caps the discount applied to any single night. Guest pays any excess.
+                  </p>
+                </div>
+              )}
+
+              <div className="border rounded-md p-4 space-y-4">
+                <div>
+                  <h3 className="text-sm font-medium">Usage limits</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Leave any field blank for no limit.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="maxGuestsPerBooking">
+                      How many individuals can use this per booking?
+                    </Label>
+                    <Input
+                      id="maxGuestsPerBooking"
+                      type="number"
+                      min="1"
+                      value={maxGuestsPerBooking}
+                      onChange={(e) => setMaxGuestsPerBooking(e.target.value)}
+                      placeholder="Unlimited"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Max guests on a single booking the promo applies to (most expensive first).
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="maxUniqueMembersTotal">
+                      How many individuals can use this overall?
+                    </Label>
+                    <Input
+                      id="maxUniqueMembersTotal"
+                      type="number"
+                      min="1"
+                      value={maxUniqueMembersTotal}
+                      onChange={(e) => setMaxUniqueMembersTotal(e.target.value)}
+                      placeholder="Unlimited"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Cap on distinct members who can ever redeem this code.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="maxUsesPerMember">
+                      How many times can the same individual use this?
+                    </Label>
+                    <Input
+                      id="maxUsesPerMember"
+                      type="number"
+                      min="1"
+                      value={maxUsesPerMember}
+                      onChange={(e) => setMaxUsesPerMember(e.target.value)}
+                      placeholder="Unlimited"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Set to 1 for single-use per member.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="maxRedemptionsTotal">
+                      Total redemptions allowed
+                    </Label>
+                    <Input
+                      id="maxRedemptionsTotal"
+                      type="number"
+                      min="1"
+                      value={maxRedemptionsTotal}
+                      onChange={(e) => setMaxRedemptionsTotal(e.target.value)}
+                      placeholder="Unlimited"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Hard cap on uses across everyone. Reaching either this or the unique-members cap closes the promo.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -649,20 +834,6 @@ export default function PromoCodesPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="maxRedemptions">
-                  Max Redemptions (optional, leave blank for unlimited)
-                </Label>
-                <Input
-                  id="maxRedemptions"
-                  type="number"
-                  min="1"
-                  value={maxRedemptions}
-                  onChange={(e) => setMaxRedemptions(e.target.value)}
-                  placeholder="Unlimited"
-                />
-              </div>
-
               <div className="flex flex-wrap gap-6">
                 <div className="flex items-center space-x-2">
                   <input
@@ -672,17 +843,19 @@ export default function PromoCodesPage() {
                     onChange={(e) => setMembersOnly(e.target.checked)}
                     className="rounded border-input"
                   />
-                  <Label htmlFor="membersOnly">Members Only</Label>
+                  <Label htmlFor="membersOnly">Members only (booker must be a member)</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
-                    id="singleUse"
-                    checked={singleUse}
-                    onChange={(e) => setSingleUse(e.target.checked)}
+                    id="memberGuestsOnly"
+                    checked={memberGuestsOnly}
+                    onChange={(e) => setMemberGuestsOnly(e.target.checked)}
                     className="rounded border-input"
                   />
-                  <Label htmlFor="singleUse">Single Use (per member)</Label>
+                  <Label htmlFor="memberGuestsOnly">
+                    Member guests only (promo applies only to member guest rows)
+                  </Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <input
@@ -696,7 +869,6 @@ export default function PromoCodesPage() {
                 </div>
               </div>
 
-              {/* Member Assignment Section */}
               <div className="space-y-3 border rounded-md p-4">
                 <div>
                   <Label>Assign to Specific Members (optional)</Label>
@@ -770,7 +942,6 @@ export default function PromoCodesPage() {
         </Card>
       )}
 
-      {/* Active Promo Codes List */}
       {promoCodes.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
@@ -783,13 +954,12 @@ export default function PromoCodesPage() {
         </div>
       )}
 
-      {/* Archived Promo Codes Section */}
       <div className="border-t pt-6">
         <button
           onClick={() => setShowArchived(!showArchived)}
           className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm font-medium"
         >
-          <span>{showArchived ? "\u25BC" : "\u25B6"}</span>
+          <span>{showArchived ? "▼" : "▶"}</span>
           Archived Promo Codes
           {archivedCodes.length > 0 && showArchived && (
             <Badge variant="outline">{archivedCodes.length}</Badge>
