@@ -19,6 +19,12 @@ const mockPrisma = vi.hoisted(() => ({
   promoCode: {
     update: vi.fn(),
   },
+  promoRedemption: {
+    delete: vi.fn(),
+  },
+  promoRedemptionAllocation: {
+    count: vi.fn(),
+  },
   webhookLog: {
     create: vi.fn(),
     groupBy: vi.fn(),
@@ -448,11 +454,16 @@ describe("OBS-03: cron job run recording", () => {
         },
       },
     ] as any);
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(1);
+    vi.mocked(prisma.promoRedemption.delete).mockResolvedValue({} as any);
     vi.mocked(prisma.promoCode.update).mockResolvedValue({} as any);
     vi.mocked(prisma.booking.deleteMany).mockResolvedValue({ count: 1 } as any);
 
     await draftCleanup.callback();
 
+    expect(prisma.promoRedemption.delete).toHaveBeenCalledWith({
+      where: { id: "redemption-1" },
+    });
     expect(prisma.promoCode.update).toHaveBeenCalledWith({
       where: { id: "promo-1" },
       data: { currentRedemptions: { decrement: 1 } },

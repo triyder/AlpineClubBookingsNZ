@@ -298,6 +298,7 @@ model Member {
   bookingChangeRequestsRequested             BookingChangeRequest[]                     @relation("BookingChangeRequestsRequested")
   bookingChangeRequestsReviewed              BookingChangeRequest[]                     @relation("BookingChangeRequestsReviewed")
   promoRedemptions                           PromoRedemption[]
+  promoRedemptionAllocations                 PromoRedemptionAllocation[]
   promoCodeAssignments                       PromoCodeAssignment[]
   notificationPreference                     NotificationPreference?
   hutLeaderAssignments                       HutLeaderAssignment[]
@@ -601,18 +602,19 @@ model Booking {
   updatedAt              DateTime      @updatedAt
 
   // Relations
-  member                    Member                     @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  createdBy                 Member?                    @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  guests                    BookingGuest[]
-  payment                   Payment?
-  choreAssignments          ChoreAssignment[]
-  promoRedemption           PromoRedemption?
-  modifications             BookingModification[]
-  changeRequests            BookingChangeRequest[]
-  creditsFromCancellation   MemberCredit[]             @relation("CreditSource")
-  creditsApplied            MemberCredit[]             @relation("CreditApplied")
-  refundRequests            RefundRequest[]
-  paymentRecoveryOperations PaymentRecoveryOperation[]
+  member                     Member                      @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy                  Member?                     @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  guests                     BookingGuest[]
+  payment                    Payment?
+  choreAssignments           ChoreAssignment[]
+  promoRedemption            PromoRedemption?
+  promoRedemptionAllocations PromoRedemptionAllocation[]
+  modifications              BookingModification[]
+  changeRequests             BookingChangeRequest[]
+  creditsFromCancellation    MemberCredit[]              @relation("CreditSource")
+  creditsApplied             MemberCredit[]              @relation("CreditApplied")
+  refundRequests             RefundRequest[]
+  paymentRecoveryOperations  PaymentRecoveryOperation[]
 
   @@index([memberId])
   @@index([createdById])
@@ -778,7 +780,7 @@ model PromoCode {
   // Per-individual benefit amounts (apply to each eligible guest on the booking)
   valueCents              Int? // Fixed amount off, per eligible guest
   percentOff              Int? // Percentage off, applied per eligible guest
-  freeNightsPerIndividual Int? // Free nights per eligible guest; also lifetime cap per booker (sum of freeNightsUsed across their redemptions of this code)
+  freeNightsPerIndividual Int? // Free nights per eligible guest; also lifetime cap per beneficiary (sum of allocation freeNightsUsed for this code)
   // Optional per-night value cap (FREE_NIGHTS and PERCENTAGE only): caps the discount applied to any single night
   maxNightlyValueCents    Int?
   // Per-booking limit: how many guests on a single booking the promo applies to (null = unlimited / all eligible guests)
@@ -801,6 +803,7 @@ model PromoCode {
 
   // Relations
   redemptions PromoRedemption[]
+  allocations PromoRedemptionAllocation[]
   assignments PromoCodeAssignment[]
 
   @@index([code])
@@ -819,12 +822,36 @@ model PromoRedemption {
   createdAt          DateTime @default(now())
 
   // Relations
-  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
-  booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  promoCode   PromoCode                   @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  booking     Booking                     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member      Member                      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  allocations PromoRedemptionAllocation[]
 
   @@index([promoCodeId])
   @@index([memberId])
+}
+
+model PromoRedemptionAllocation {
+  id                String   @id @default(cuid())
+  promoRedemptionId String
+  promoCodeId       String
+  bookingId         String
+  memberId          String
+  discountCents     Int
+  freeNightsUsed    Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  // Relations
+  promoRedemption PromoRedemption @relation(fields: [promoRedemptionId], references: [id], onDelete: Cascade)
+  promoCode       PromoCode       @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  booking         Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member          Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([promoRedemptionId, memberId])
+  @@unique([promoCodeId, bookingId, memberId])
+  @@index([promoCodeId])
+  @@index([memberId])
+  @@index([bookingId])
 }
 
 model PromoCodeAssignment {
@@ -1493,8 +1520,8 @@ model BookingModification {
   changeFeeCents   Int      @default(0) // late-notice fee charged
   createdAt        DateTime @default(now())
 
-  booking                Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  linkedChangeRequests   BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
+  booking              Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  linkedChangeRequests BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
 
   @@index([bookingId])
   @@index([memberId])
@@ -1502,18 +1529,18 @@ model BookingModification {
 
 // Booking Change Requests (locked same-day/past-night edits needing admin review)
 model BookingChangeRequest {
-  id                    String                     @id @default(cuid())
-  bookingId             String
-  requestedByMemberId   String
-  status                BookingChangeRequestStatus @default(REQUESTED)
-  requestedChanges      Json
-  reason                String?                    @db.VarChar(2000)
-  adminNotes            String?                    @db.VarChar(2000)
-  reviewedByMemberId    String?
-  reviewedAt            DateTime?
-  linkedModificationId  String?
-  createdAt             DateTime                   @default(now())
-  updatedAt             DateTime                   @updatedAt
+  id                   String                     @id @default(cuid())
+  bookingId            String
+  requestedByMemberId  String
+  status               BookingChangeRequestStatus @default(REQUESTED)
+  requestedChanges     Json
+  reason               String?                    @db.VarChar(2000)
+  adminNotes           String?                    @db.VarChar(2000)
+  reviewedByMemberId   String?
+  reviewedAt           DateTime?
+  linkedModificationId String?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
 
   booking            Booking              @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   requestedBy        Member               @relation("BookingChangeRequestsRequested", fields: [requestedByMemberId], references: [id], onDelete: Restrict)
@@ -1758,29 +1785,29 @@ model FamilyGroupJoinRequest {
 // ---------------------------------------------------------------------------
 
 model NotificationPreference {
-  id                      String   @id @default(cuid())
-  memberId                String   @unique
-  bookingConfirmation     Boolean  @default(true)
-  bookingReminder         Boolean  @default(true)
-  bookingBumped           Boolean  @default(true)
-  bookingCancelled        Boolean  @default(true)
-  bookingWaitlist         Boolean  @default(true)
-  choreRoster             Boolean  @default(true)
-  marketingEmails         Boolean  @default(false)
-  adminNewBooking         Boolean  @default(true)
-  adminPaymentFailure     Boolean  @default(true)
-  adminPendingDeadline    Boolean  @default(true)
-  adminBookingBumped      Boolean  @default(true)
-  adminXeroSyncError      Boolean  @default(true)
-  adminCapacityWarning    Boolean  @default(true)
-  adminDailyDigest        Boolean  @default(true)
-  adminWaitlistOffer      Boolean  @default(true)
-  adminFamilyGroupRequest Boolean  @default(true)
-  adminBookingChangeRequest Boolean @default(true)
-  adminRefundRequest      Boolean  @default(true)
-  adminIssueReport        Boolean  @default(true)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  id                        String   @id @default(cuid())
+  memberId                  String   @unique
+  bookingConfirmation       Boolean  @default(true)
+  bookingReminder           Boolean  @default(true)
+  bookingBumped             Boolean  @default(true)
+  bookingCancelled          Boolean  @default(true)
+  bookingWaitlist           Boolean  @default(true)
+  choreRoster               Boolean  @default(true)
+  marketingEmails           Boolean  @default(false)
+  adminNewBooking           Boolean  @default(true)
+  adminPaymentFailure       Boolean  @default(true)
+  adminPendingDeadline      Boolean  @default(true)
+  adminBookingBumped        Boolean  @default(true)
+  adminXeroSyncError        Boolean  @default(true)
+  adminCapacityWarning      Boolean  @default(true)
+  adminDailyDigest          Boolean  @default(true)
+  adminWaitlistOffer        Boolean  @default(true)
+  adminFamilyGroupRequest   Boolean  @default(true)
+  adminBookingChangeRequest Boolean  @default(true)
+  adminRefundRequest        Boolean  @default(true)
+  adminIssueReport          Boolean  @default(true)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }

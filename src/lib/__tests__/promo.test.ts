@@ -1,10 +1,21 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   calculatePromoDiscountForGuestRates,
+  validateAndCalculatePromoDiscount,
   validatePromoCodeRules,
   type PromoRuleSubject,
 } from "../promo";
 import { calculatePromoDiscount, type PromoCodeInput } from "../pricing";
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    promoRedemptionAllocation: {
+      aggregate: vi.fn(),
+      count: vi.fn(),
+      findMany: vi.fn(),
+    },
+  },
+}));
 
 // --- Test helpers ---
 
@@ -107,6 +118,17 @@ describe("validatePromoCodeRules", () => {
     ).toBeNull();
   });
 
+  it("rejects when requested beneficiary allocations would exceed total redemption cap", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ maxRedemptionsTotal: 10, currentRedemptions: 9 }),
+        defaultBookingDetails,
+        now,
+        { requestedRedemptionCount: 2 }
+      )
+    ).toBe("This promo code has reached its maximum number of uses");
+  });
+
   it("allows unlimited redemptions when cap is null", () => {
     expect(
       validatePromoCodeRules(
@@ -168,6 +190,17 @@ describe("validatePromoCodeRules", () => {
         { memberRedemptionCount: 2 }
       )
     ).toBeNull();
+  });
+
+  it("rejects when any requested beneficiary has exhausted their member use cap", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ maxUsesPerMember: 1 }),
+        defaultBookingDetails,
+        now,
+        { memberRedemptionCounts: { "member-1": 0, "member-2": 1 } }
+      )
+    ).toBe("A linked member guest has already used this promo code");
   });
 
   it("checks expired before total cap", () => {
@@ -236,6 +269,20 @@ describe("validatePromoCodeRules - maxUniqueMembersTotal", () => {
     ).toBeNull();
   });
 
+  it("rejects when requested new beneficiaries would exceed unique-member cap", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ maxUniqueMembersTotal: 5 }),
+        defaultBookingDetails,
+        now,
+        {
+          uniqueMembersUsed: 4,
+          requestedNewUniqueMemberCount: 2,
+        }
+      )
+    ).toBe("This promo code has reached its maximum number of unique members");
+  });
+
   it("ignores unique-members cap when null", () => {
     expect(
       validatePromoCodeRules(
@@ -271,6 +318,17 @@ describe("validatePromoCodeRules - cumulative free nights", () => {
         { memberFreeNightsUsed: 5 }
       )
     ).toBe("You have used all your free nights for this promo code");
+  });
+
+  it("rejects when any requested beneficiary has exhausted their free-night cap", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ type: "FREE_NIGHTS", freeNightsPerIndividual: 3 }),
+        defaultBookingDetails,
+        now,
+        { memberFreeNightsUsedByMemberId: { "member-1": 0, "member-2": 3 } }
+      )
+    ).toBe("A linked member guest has used all free nights for this promo code");
   });
 
   it("allows when some free nights remain", () => {
@@ -561,6 +619,31 @@ describe("calculatePromoDiscountForGuestRates", () => {
     expect(result.discountCents).toBe(5000);
   });
 
+  it("discounts each assigned linked member guest and reports beneficiary allocations", () => {
+    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNightsPerIndividual: 3 };
+    const result = calculatePromoDiscountForGuestRates(
+      promo,
+      12000,
+      "member-1",
+      [
+        { memberId: "member-1", isMember: true, perNightRates: [2000, 2000, 2000] },
+        { memberId: "member-2", isMember: true, perNightRates: [2000, 2000, 2000] },
+        { memberId: "member-3", isMember: true, perNightRates: [2000, 2000, 2000] },
+      ],
+      ["member-1", "member-2"],
+      undefined,
+      { "member-1": 3, "member-2": 3 }
+    );
+
+    expect(result.discountCents).toBe(12000);
+    expect(result.freeNightsUsed).toBe(6);
+    expect(result.eligibleGuestCount).toBe(2);
+    expect(result.allocations).toEqual([
+      { memberId: "member-1", discountCents: 6000, freeNightsUsed: 3 },
+      { memberId: "member-2", discountCents: 6000, freeNightsUsed: 3 },
+    ]);
+  });
+
   it("includes all guests for unassigned free-night promos", () => {
     const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNightsPerIndividual: 1 };
     const result = calculatePromoDiscountForGuestRates(
@@ -601,6 +684,71 @@ describe("calculatePromoDiscountForGuestRates", () => {
     );
     expect(result.discountCents).toBe(10000);
     expect(result.freeNightsUsed).toBe(2);
+  });
+});
+
+describe("validateAndCalculatePromoDiscount", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses allocation-backed counts and excludes the current booking during recalculation", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    } as any);
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 3,
+          maxRedemptionsTotal: 10,
+          maxUniqueMembersTotal: 10,
+          maxUsesPerMember: 1,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 3,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+      },
+      {
+        memberId: "member-1",
+        bookingCheckIn: new Date("2026-08-01T00:00:00Z"),
+        totalPriceCents: 12000,
+        guests: [
+          { memberId: "member-1", isMember: true, perNightRates: [2000, 2000, 2000] },
+          { memberId: "member-2", isMember: true, perNightRates: [2000, 2000, 2000] },
+        ],
+      },
+      ["member-1", "member-2"],
+      { excludeBookingId: "booking-1" }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.discount?.discountCents).toBe(12000);
+    expect(prisma.promoRedemptionAllocation.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          promoCodeId: "promo-1",
+          memberId: "member-1",
+          bookingId: { not: "booking-1" },
+        }),
+      })
+    );
+    expect(prisma.promoRedemptionAllocation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          promoCodeId: "promo-1",
+          bookingId: { not: "booking-1" },
+        }),
+      })
+    );
   });
 });
 

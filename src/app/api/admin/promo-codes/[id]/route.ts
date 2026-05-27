@@ -44,7 +44,7 @@ export async function GET(
   const promoCode = await prisma.promoCode.findUnique({
     where: { id },
     include: {
-      redemptions: {
+      allocations: {
         include: {
           booking: { select: { id: true, checkIn: true, checkOut: true } },
           member: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -62,7 +62,11 @@ export async function GET(
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
-  return NextResponse.json(promoCode);
+  const { allocations, ...promoCodeResponse } = promoCode;
+  return NextResponse.json({
+    ...promoCodeResponse,
+    redemptions: allocations,
+  });
 }
 
 export async function PUT(
@@ -262,14 +266,14 @@ export async function DELETE(
 
   const existing = await prisma.promoCode.findUnique({
     where: { id },
-    include: { redemptions: { select: { id: true } } },
+    include: { allocations: { select: { id: true } } },
   });
 
   if (!existing) {
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
-  if (existing.redemptions.length > 0) {
+  if (existing.allocations.length > 0) {
     await prisma.promoCode.update({
       where: { id },
       data: { archivedAt: new Date(), active: false },
@@ -279,7 +283,7 @@ export async function DELETE(
       action: "promo.archive",
       memberId: session.user.id,
       targetId: id,
-      details: `Archived promo code: ${existing.code} (${existing.redemptions.length} redemption(s))`,
+      details: `Archived promo code: ${existing.code} (${existing.allocations.length} redemption(s))`,
     });
 
     return NextResponse.json({ success: true, archived: true });

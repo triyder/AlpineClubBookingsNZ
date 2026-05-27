@@ -33,9 +33,9 @@ import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
-  calculatePromoDiscountForGuestRates,
-  getMemberFreeNightsUsed,
-  validatePromoCodeRules,
+  deletePromoRedemptionAndAdjustCount,
+  replacePromoRedemptionAllocations,
+  validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import { prisma } from "@/lib/prisma";
 import {
@@ -252,62 +252,35 @@ export async function modifyBookingDates({
 
     if (booking.promoRedemption?.promoCode) {
       const promo = booking.promoRedemption.promoCode;
-      const memberFreeNightsUsed =
-        promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
-          ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
-          : 0;
-      const validationError = validatePromoCodeRules(
+      const application = await validateAndCalculatePromoDiscount(
         promo,
-        { memberId: booking.memberId },
-        new Date(),
-        { memberFreeNightsUsed },
+        {
+          memberId: booking.memberId,
+          bookingCheckIn: newCheckIn,
+          totalPriceCents: newTotalPriceCents,
+          guests: guestNightRates,
+        },
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
           : null,
+        { excludeBookingId: bookingId, db: tx },
       );
 
-      if (validationError) {
+      if (application.error || !application.discount) {
         promoRemoved = true;
-        await tx.promoRedemption.delete({
-          where: { id: booking.promoRedemption.id },
-        });
-        await tx.promoCode.update({
-          where: { id: promo.id },
-          data: { currentRedemptions: { decrement: 1 } },
-        });
+        await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
       } else {
-        const remainingFreeNights =
-          promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
-            ? promo.freeNightsPerIndividual - memberFreeNightsUsed
-            : undefined;
-        const promoResult = calculatePromoDiscountForGuestRates(
-          {
-            type: promo.type,
-            valueCents: promo.valueCents,
-            percentOff: promo.percentOff,
-            freeNightsPerIndividual: promo.freeNightsPerIndividual,
-            maxGuestsPerBooking: promo.maxGuestsPerBooking,
-            maxNightlyValueCents: promo.maxNightlyValueCents,
-            memberGuestsOnly: promo.memberGuestsOnly,
-          },
-          newTotalPriceCents,
-          booking.memberId,
-          guestNightRates,
-          promo.assignments.length > 0
-            ? promo.assignments.map((assignment) => assignment.memberId)
-            : null,
-          remainingFreeNights,
-        );
+        const promoResult = application.discount;
         newDiscountCents = promoResult.discountCents;
 
-        await tx.promoRedemption.update({
-          where: { id: booking.promoRedemption.id },
-          data: {
-            discountCents: newDiscountCents,
-            freeNightsUsed: promoResult.freeNightsUsed || null,
-            eligibleGuestCount: promoResult.eligibleGuestCount || null,
-          },
-        });
+        await replacePromoRedemptionAllocations(
+          tx,
+          booking.promoRedemption,
+          newDiscountCents,
+          promoResult.freeNightsUsed,
+          promoResult.eligibleGuestCount,
+          promoResult.allocations,
+        );
       }
     }
 

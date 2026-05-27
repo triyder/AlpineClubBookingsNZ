@@ -31,7 +31,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptionsTotal: null,
           currentRedemptions: 0,
           maxUsesPerMember: null,
-          redemptions: [],
+          allocations: [],
         },
       },
       {
@@ -49,7 +49,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptionsTotal: null,
           currentRedemptions: 1,
           maxUsesPerMember: 1,
-          redemptions: [{ id: "redemption-1", freeNightsUsed: 1 }],
+          allocations: [{ id: "allocation-1", freeNightsUsed: 1 }],
         },
       },
       {
@@ -67,7 +67,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptionsTotal: null,
           currentRedemptions: 0,
           maxUsesPerMember: null,
-          redemptions: [],
+          allocations: [],
         },
       },
       {
@@ -85,7 +85,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptionsTotal: 1,
           currentRedemptions: 1,
           maxUsesPerMember: null,
-          redemptions: [],
+          allocations: [],
         },
       },
     ] as any);
@@ -111,7 +111,7 @@ describe("getAvailablePromoCodesForMember", () => {
       include: {
         promoCode: {
           include: {
-            redemptions: {
+            allocations: {
               where: { memberId: "member-1" },
               select: { id: true, freeNightsUsed: true },
             },
@@ -143,7 +143,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptionsTotal: null,
           currentRedemptions: 0,
           maxUsesPerMember: null,
-          redemptions: [],
+          allocations: [],
         },
       },
       {
@@ -165,7 +165,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptionsTotal: null,
           currentRedemptions: 0,
           maxUsesPerMember: null,
-          redemptions: [],
+          allocations: [],
         },
       },
     ];

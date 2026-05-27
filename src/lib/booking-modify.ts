@@ -42,10 +42,10 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
-  calculatePromoDiscountForGuestRates,
-  getMemberFreeNightsUsed,
+  deletePromoRedemptionAndAdjustCount,
   redeemPromoCode,
-  validatePromoCodeRules,
+  replacePromoRedemptionAllocations,
+  validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import {
@@ -504,25 +504,13 @@ export async function applyPromoCodeChanges(
   let promoChanged = false;
 
   if (input.removePromoCode && booking.promoRedemption) {
-    await tx.promoRedemption.delete({
-      where: { id: booking.promoRedemption.id },
-    });
-    await tx.promoCode.update({
-      where: { id: booking.promoRedemption.promoCodeId },
-      data: { currentRedemptions: { decrement: 1 } },
-    });
+    await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
     promoRemoved = true;
   }
 
   if (input.promoCode && !input.removePromoCode) {
     if (booking.promoRedemption && !promoRemoved) {
-      await tx.promoRedemption.delete({
-        where: { id: booking.promoRedemption.id },
-      });
-      await tx.promoCode.update({
-        where: { id: booking.promoRedemption.promoCodeId },
-        data: { currentRedemptions: { decrement: 1 } },
-      });
+      await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
       promoRemoved = true;
     }
 
@@ -533,86 +521,39 @@ export async function applyPromoCodeChanges(
 
     if (!promoCode) throw new ApiError("Promo code not found", 400);
 
-    const needsMemberCount =
-      (promoCode.maxUsesPerMember !== null && promoCode.maxUsesPerMember !== undefined) ||
-      (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined);
-    const memberRedemptionCount = needsMemberCount
-      ? await tx.promoRedemption.count({
-          where: {
-            promoCodeId: promoCode.id,
-            memberId: booking.memberId,
-            bookingId: { not: bookingId },
-          },
-        })
-      : 0;
-
-    let memberFreeNightsUsed = 0;
-    if (promoCode.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual) {
-      memberFreeNightsUsed = await getMemberFreeNightsUsed(
-        promoCode.id,
-        booking.memberId,
-        bookingId,
-      );
-    }
-
-    let uniqueMembersUsed = 0;
-    if (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined) {
-      const rows = await tx.promoRedemption.findMany({
-        where: { promoCodeId: promoCode.id, bookingId: { not: bookingId } },
-        select: { memberId: true },
-        distinct: ["memberId"],
-      });
-      uniqueMembersUsed = rows.length;
-    }
-
     const assignedMemberIds = promoCode.assignments.length
       ? promoCode.assignments.map((assignment) => assignment.memberId)
       : null;
-    const validationError = validatePromoCodeRules(
+    const application = await validateAndCalculatePromoDiscount(
       promoCode,
-      { memberId: booking.memberId },
-      new Date(),
       {
-        memberRedemptionCount,
-        memberFreeNightsUsed,
-        uniqueMembersUsed,
-        memberHasRedeemedBefore: memberRedemptionCount > 0,
+        memberId: booking.memberId,
+        bookingCheckIn: input.checkIn ? parseDateOnly(input.checkIn) : booking.checkIn,
+        totalPriceCents: newTotalPriceCents,
+        guests: guestNightRates,
       },
       assignedMemberIds,
+      { excludeBookingId: bookingId, db: tx },
     );
-    if (validationError) throw new ApiError(validationError, 400);
+    if (application.error || !application.discount) {
+      throw new ApiError(application.error ?? "Promo code could not be applied", 400);
+    }
 
-    const remainingFreeNights =
-      promoCode.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual
-        ? promoCode.freeNightsPerIndividual - memberFreeNightsUsed
-        : undefined;
-    const promoResult = calculatePromoDiscountForGuestRates(
-      {
-        type: promoCode.type,
-        valueCents: promoCode.valueCents,
-        percentOff: promoCode.percentOff,
-        freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
-        maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
-        maxNightlyValueCents: promoCode.maxNightlyValueCents,
-        memberGuestsOnly: promoCode.memberGuestsOnly,
-      },
-      newTotalPriceCents,
-      booking.memberId,
-      guestNightRates,
-      assignedMemberIds,
-      remainingFreeNights,
-    );
+    const promoResult = application.discount;
     newDiscountCents = promoResult.discountCents;
 
-    await redeemPromoCode(
-      tx,
-      promoCode.id,
-      bookingId,
-      booking.memberId,
-      newDiscountCents,
-      promoResult.freeNightsUsed,
-      promoResult.eligibleGuestCount,
-    );
+    if (newDiscountCents > 0) {
+      await redeemPromoCode(
+        tx,
+        promoCode.id,
+        bookingId,
+        booking.memberId,
+        newDiscountCents,
+        promoResult.freeNightsUsed,
+        promoResult.eligibleGuestCount,
+        promoResult.allocations,
+      );
+    }
     promoChanged = true;
   } else if (
     !input.removePromoCode &&
@@ -620,62 +561,35 @@ export async function applyPromoCodeChanges(
     booking.promoRedemption?.promoCode
   ) {
     const promo = booking.promoRedemption.promoCode;
-    const memberFreeNightsUsed =
-      promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
-        ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
-        : 0;
-    const validationError = validatePromoCodeRules(
+    const application = await validateAndCalculatePromoDiscount(
       promo,
-      { memberId: booking.memberId },
-      new Date(),
-      { memberFreeNightsUsed },
+      {
+        memberId: booking.memberId,
+        bookingCheckIn: input.checkIn ? parseDateOnly(input.checkIn) : booking.checkIn,
+        totalPriceCents: newTotalPriceCents,
+        guests: guestNightRates,
+      },
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
+      { excludeBookingId: bookingId, db: tx },
     );
 
-    if (validationError) {
-      await tx.promoRedemption.delete({
-        where: { id: booking.promoRedemption.id },
-      });
-      await tx.promoCode.update({
-        where: { id: promo.id },
-        data: { currentRedemptions: { decrement: 1 } },
-      });
+    if (application.error || !application.discount) {
+      await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
       promoRemoved = true;
     } else {
-      const remainingFreeNights =
-        promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
-          ? promo.freeNightsPerIndividual - memberFreeNightsUsed
-          : undefined;
-      const promoResult = calculatePromoDiscountForGuestRates(
-        {
-          type: promo.type,
-          valueCents: promo.valueCents,
-          percentOff: promo.percentOff,
-          freeNightsPerIndividual: promo.freeNightsPerIndividual,
-          maxGuestsPerBooking: promo.maxGuestsPerBooking,
-          maxNightlyValueCents: promo.maxNightlyValueCents,
-          memberGuestsOnly: promo.memberGuestsOnly,
-        },
-        newTotalPriceCents,
-        booking.memberId,
-        guestNightRates,
-        promo.assignments.length > 0
-          ? promo.assignments.map((assignment) => assignment.memberId)
-          : null,
-        remainingFreeNights,
-      );
+      const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
 
-      await tx.promoRedemption.update({
-        where: { id: booking.promoRedemption.id },
-        data: {
-          discountCents: newDiscountCents,
-          freeNightsUsed: promoResult.freeNightsUsed || null,
-          eligibleGuestCount: promoResult.eligibleGuestCount || null,
-        },
-      });
+      await replacePromoRedemptionAllocations(
+        tx,
+        booking.promoRedemption,
+        newDiscountCents,
+        promoResult.freeNightsUsed,
+        promoResult.eligibleGuestCount,
+        promoResult.allocations,
+      );
     }
   }
 

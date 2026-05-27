@@ -104,8 +104,14 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
-  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
+  validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
+    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    beneficiaryMemberIds: [],
+  }),
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
   redeemPromoCode: vi.fn(),
+  replacePromoRedemptionAllocations: vi.fn(),
+  deletePromoRedemptionAndAdjustCount: vi.fn(),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({

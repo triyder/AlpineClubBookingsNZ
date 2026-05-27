@@ -6,6 +6,7 @@ import { sendBookingBumpedEmail, sendAdminBookingBumpedAlert } from "./email";
 import logger from "@/lib/logger";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
+import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 
 export interface BumpResult {
   bumpedBookingIds: string[];
@@ -171,13 +172,7 @@ export async function bumpPendingBookings(
       where: { bookingId: candidate.id },
     });
     if (promoRedemption) {
-      await tx.promoRedemption.delete({
-        where: { id: promoRedemption.id },
-      });
-      await tx.promoCode.update({
-        where: { id: promoRedemption.promoCodeId },
-        data: { currentRedemptions: { decrement: 1 } },
-      });
+      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
     }
 
     bumpedBookingIds.push(candidate.id);
