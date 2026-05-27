@@ -1,0 +1,359 @@
+import { Check, Search, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  dedupeParentOptions,
+  formatFamilyGroupDate,
+  getFamilyGroupRequestBadgeClass,
+  getFamilyGroupRequestSubjectName,
+  getFamilyGroupRequestSummary,
+  getFamilyGroupRequestTypeLabel,
+  getMemberName,
+  mergeFamilyGroupRequestCandidates,
+  type FamilyGroupRequest,
+  type ParentLinkSummary,
+  type RequestMemberMatch,
+} from "@/lib/admin-family-group-ui-helpers";
+import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
+
+export interface FamilyGroupRequestReviewCardProps {
+  request: FamilyGroupRequest;
+  idPrefix?: string;
+  requestSelection?: string;
+  requestSearchTerm?: string;
+  searchedMembers: RequestMemberMatch[];
+  requestSearchMessage?: string;
+  requestNote?: string;
+  requestNotificationParentId?: string;
+  requestError?: string;
+  searching: boolean;
+  submitting: boolean;
+  showSearchGuidance?: boolean;
+  showRemovalDetails?: boolean;
+  onSelectMember: (memberId: string) => void;
+  onSearchTermChange: (value: string) => void;
+  onSearchMembers: () => void;
+  onNotificationParentChange: (memberId: string) => void;
+  onNoteChange: (value: string) => void;
+  onApprove: () => void;
+  onReject: () => void;
+  onClearRequestFeedback: () => void;
+}
+
+export function FamilyGroupRequestReviewCard({
+  request,
+  idPrefix = "",
+  requestSelection,
+  requestSearchTerm = "",
+  searchedMembers,
+  requestSearchMessage,
+  requestNote = "",
+  requestNotificationParentId,
+  requestError,
+  searching,
+  submitting,
+  showSearchGuidance = false,
+  showRemovalDetails = false,
+  onSelectMember,
+  onSearchTermChange,
+  onSearchMembers,
+  onNotificationParentChange,
+  onNoteChange,
+  onApprove,
+  onReject,
+  onClearRequestFeedback,
+}: FamilyGroupRequestReviewCardProps) {
+  const candidateMembers = mergeFamilyGroupRequestCandidates(request, searchedMembers);
+  const selectedCandidate = candidateMembers.find(
+    (candidate) => candidate.id === requestSelection
+  );
+  const requiresMemberChoice =
+    request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+  const selectedCreateNew = requestSelection === "__create__";
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={getFamilyGroupRequestBadgeClass(request)}>
+              {getFamilyGroupRequestTypeLabel(request)}
+            </Badge>
+            <span className="text-xs text-slate-500">
+              Requested {formatFamilyGroupDate(request.createdAt)}
+            </span>
+          </div>
+          <p className="text-sm font-semibold text-slate-900">
+            {getFamilyGroupRequestSummary(request)}
+          </p>
+        </div>
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+          <p className="font-medium text-slate-900">Requester</p>
+          <p className="text-slate-700">{getMemberName(request.requester)}</p>
+          <p className="text-xs text-slate-500">{request.requester.email}</p>
+        </div>
+      </div>
+
+      {requiresMemberChoice ? (
+        <div className="mt-4 space-y-3">
+          <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+            <p>
+              Requested {request.type === "ADULT_REQUEST" ? "adult" : "member"}:{" "}
+              <span className="font-medium text-slate-800">
+                {getFamilyGroupRequestSubjectName(request)}
+              </span>
+            </p>
+            <p>
+              Date of birth:{" "}
+              {formatFamilyGroupDate(
+                request.type === "ADULT_REQUEST"
+                  ? request.requestedDateOfBirth
+                  : request.childDateOfBirth
+              )}
+            </p>
+            {request.type === "ADULT_REQUEST" && (
+              <p>Shared email: {request.requestedEmail || request.requester.email}</p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor={`${idPrefix}request-member-${request.id}`}>
+              {request.type === "ADULT_REQUEST" ? "Adult member record" : "Suggested matches"}
+            </Label>
+            <select
+              id={`${idPrefix}request-member-${request.id}`}
+              value={requestSelection ?? ""}
+              onChange={(event) => {
+                onClearRequestFeedback();
+                onSelectMember(event.target.value);
+              }}
+              className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="">Select a member record</option>
+              {request.type === "ADULT_REQUEST" && (
+                <option value="__create__">Create new non-login adult from request</option>
+              )}
+              {candidateMembers.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {getMemberName(candidate)}
+                  {" - "}
+                  {candidate.ageTier}
+                  {candidate.canLogin ? " - has login" : " - no login"}
+                  {candidate.alreadyInGroup ? " - already in group" : ""}
+                  {!candidate.active ? " - inactive" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={requestSearchTerm}
+              onChange={(event) => {
+                onClearRequestFeedback();
+                onSearchTermChange(event.target.value);
+              }}
+              placeholder="Search members by name or email..."
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onSearchMembers}
+              disabled={searching}
+            >
+              <Search className="mr-2 h-4 w-4" />
+              {searching ? "Searching..." : "Search"}
+            </Button>
+          </div>
+
+          {showSearchGuidance && (
+            <p className="text-xs text-slate-500">
+              {request.type === "ADULT_REQUEST"
+                ? "Same-email adult approvals can link an existing non-login adult or create a new non-login adult."
+                : "Suggested matches are based on the requested infant, child, or youth name and date of birth. Search if the correct member record is not listed."}
+            </p>
+          )}
+
+          {requestSearchMessage && (
+            <p className="text-xs font-medium text-slate-700">{requestSearchMessage}</p>
+          )}
+
+          {searchedMembers.length > 0 && (
+            <div className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
+              {searchedMembers.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  onClick={() => {
+                    onClearRequestFeedback();
+                    onSelectMember(candidate.id);
+                  }}
+                  className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
+                    requestSelection === candidate.id
+                      ? "border-amber-300 bg-amber-50"
+                      : "border-slate-200 bg-white hover:bg-slate-50"
+                  }`}
+                >
+                  <span className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
+                    {getMemberName(candidate)}
+                    <AgeTierBadge tier={candidate.ageTier} />
+                    {requestSelection === candidate.id && (
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+                        Selected
+                      </Badge>
+                    )}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {candidate.email}
+                    {candidate.dateOfBirth ? ` - DOB ${formatFamilyGroupDate(candidate.dateOfBirth)}` : ""}
+                    {candidate.canLogin ? " - has login" : " - no login"}
+                    {candidate.alreadyInGroup ? " - already in this group" : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-slate-600">
+          {request.type === "REMOVAL_REQUEST"
+            ? "Approving removes the selected member from this family group only. Rejection leaves membership unchanged."
+            : "Rejecting leaves the family group unchanged. Approving adds the requester to this group immediately."}
+        </p>
+      )}
+
+      {showRemovalDetails && request.type === "REMOVAL_REQUEST" && (
+        <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+          <p>
+            Remove member:{" "}
+            <span className="font-medium text-slate-800">
+              {request.subjectMember ? getMemberName(request.subjectMember) : "Unknown member"}
+            </span>
+          </p>
+          {request.subjectMember && (
+            <p>
+              {request.subjectMember.email} - {request.subjectMember.ageTier}
+            </p>
+          )}
+          {request.requestNotes && <p>Notes: {request.requestNotes}</p>}
+        </div>
+      )}
+
+      {requiresMemberChoice && selectedCandidate && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+          <p className="text-sm font-medium text-slate-900">Selected member record</p>
+          <p className="mt-1 text-sm text-slate-700">
+            {getMemberName(selectedCandidate)}
+          </p>
+          <p className="text-xs text-slate-500">
+            {selectedCandidate.email}
+            {" - "}
+            {selectedCandidate.ageTier}
+            {selectedCandidate.canLogin ? " - has login" : " - no login"}
+            {selectedCandidate.dateOfBirth ? ` - DOB ${formatFamilyGroupDate(selectedCandidate.dateOfBirth)}` : ""}
+            {selectedCandidate.alreadyInGroup ? " - already in this group" : ""}
+            {!selectedCandidate.active ? " - inactive" : ""}
+          </p>
+          {request.type === "CHILD_REQUEST" && (
+            <div className="mt-3 space-y-2">
+              <Label htmlFor={`${idPrefix}request-notification-${request.id}`}>
+                Notification email recipient
+              </Label>
+              <select
+                id={`${idPrefix}request-notification-${request.id}`}
+                value={requestNotificationParentId ?? request.requester.id}
+                onChange={(event) => onNotificationParentChange(event.target.value)}
+                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+              >
+                <option value="">Use child&apos;s own email</option>
+                {dedupeParentOptions([
+                  ...(selectedCandidate.parentLinks ?? []),
+                  buildFallbackParentOption(
+                    request,
+                    (selectedCandidate.parentLinks?.length ?? 0) === 0
+                  ),
+                ]).map((parent) => (
+                  <option key={parent.id} value={parent.id}>
+                    {getMemberName(parent)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
+
+      {request.type === "ADULT_REQUEST" && selectedCreateNew && (
+        <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+          <p className="text-sm font-medium text-slate-900">
+            New non-login adult will be created
+          </p>
+          <p className="mt-1 text-sm text-slate-700">
+            {getFamilyGroupRequestSubjectName(request)}
+          </p>
+          <p className="text-xs text-slate-500">
+            {request.requestedEmail || request.requester.email}
+            {request.requestedDateOfBirth
+              ? ` - DOB ${formatFamilyGroupDate(request.requestedDateOfBirth)}`
+              : ""}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-4">
+        <Label htmlFor={`${idPrefix}request-note-${request.id}`}>Optional rejection note</Label>
+        <Input
+          id={`${idPrefix}request-note-${request.id}`}
+          value={requestNote}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="Why should this request be rejected?"
+          className="mt-2"
+        />
+      </div>
+
+      {requestError && <p className="mt-4 text-sm text-red-600">{requestError}</p>}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          onClick={onApprove}
+          disabled={submitting || (requiresMemberChoice && !requestSelection)}
+        >
+          <Check className="mr-2 h-4 w-4" />
+          {submitting
+            ? "Saving..."
+            : request.type === "CHILD_REQUEST"
+              ? "Approve and Link Member"
+              : request.type === "ADULT_REQUEST"
+                ? selectedCreateNew
+                  ? "Approve and Create Adult"
+                  : "Approve and Link Adult"
+                : request.type === "REMOVAL_REQUEST"
+                  ? "Approve Removal"
+                  : "Approve Request"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onReject}
+          disabled={submitting}
+        >
+          <X className="mr-2 h-4 w-4" />
+          {submitting ? "Saving..." : "Reject Request"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function buildFallbackParentOption(
+  request: FamilyGroupRequest,
+  usePrimaryLink: boolean
+): ParentLinkSummary {
+  return {
+    ...request.requester,
+    parentLinkType: usePrimaryLink ? "PRIMARY" : "SECONDARY",
+  };
+}

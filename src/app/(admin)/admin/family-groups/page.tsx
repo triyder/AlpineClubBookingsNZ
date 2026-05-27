@@ -7,114 +7,29 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Users, Check, X, Edit2, Search } from "lucide-react";
+import { Trash2, Plus, Users, X, Edit2, Search } from "lucide-react";
 import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
-
-interface FamilyGroupMemberRow {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  ageTier: string;
-  active: boolean;
-  role?: string;
-}
-
-interface FamilyGroup {
-  id: string;
-  name: string | null;
-  createdAt: string;
-  members: FamilyGroupMemberRow[];
-  memberCount: number;
-  inactiveCount: number;
-  pendingRequests: number;
-}
-
-interface RequestMemberMatch extends MemberOption {
-  ageTier: string;
-  active: boolean;
-  canLogin?: boolean;
-  dateOfBirth: string | null;
-  alreadyInGroup: boolean;
-  parentLinks?: ParentLinkSummary[];
-}
-
-interface ParentLinkSummary extends MemberOption {
-  parentLinkType: "PRIMARY" | "SECONDARY";
-}
-
-interface FamilyGroupRequest {
-  id: string;
-  type: "JOIN_REQUEST" | "CHILD_REQUEST" | "ADULT_REQUEST" | "REMOVAL_REQUEST";
-  createdAt: string;
-  requester: { id: string; firstName: string; lastName: string; email: string };
-  familyGroup: {
-    id: string;
-    name: string | null;
-    members: { id: string; firstName: string; lastName: string; email?: string; ageTier?: string }[];
-  };
-  childFirstName?: string | null;
-  childLastName?: string | null;
-  childDateOfBirth?: string | null;
-  requestedFirstName?: string | null;
-  requestedLastName?: string | null;
-  requestedDateOfBirth?: string | null;
-  requestedEmail?: string | null;
-  requestNotes?: string | null;
-  subjectMemberId?: string | null;
-  subjectMember?: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    ageTier: string;
-    active: boolean;
-  } | null;
-  matchingMembers: RequestMemberMatch[];
-}
-
-interface MemberOption {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-}
-
-const AGE_TIER_COLORS: Record<string, string> = {
-  INFANT: "bg-pink-100 text-pink-700 border-pink-200",
-  CHILD: "bg-blue-100 text-blue-700 border-blue-200",
-  YOUTH: "bg-purple-100 text-purple-700 border-purple-200",
-  ADULT: "bg-slate-100 text-slate-700 border-slate-200",
-};
-
-const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
-
-function AgeTierBadge({ tier }: { tier: string }) {
-  const colors = AGE_TIER_COLORS[tier] || "bg-gray-100 text-gray-700 border-gray-200";
-  return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border ${colors}`}>
-      {tier}
-    </span>
-  );
-}
-
-function dedupeParentOptions(parents: ParentLinkSummary[]) {
-  const seen = new Set<string>();
-  return parents.filter((parent) => {
-    if (seen.has(parent.id)) return false;
-    seen.add(parent.id);
-    return true;
-  });
-}
+import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
+import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
+import {
+  buildInitialRequestNotificationParents,
+  buildInitialRequestSelections,
+  getFamilyGroupRequestSubjectName,
+  mapFamilyGroupRequestSearchResults,
+  type FamilyGroupRequest,
+  type FamilyGroupSummary,
+  type MemberOption,
+  type RequestMemberMatch,
+} from "@/lib/admin-family-group-ui-helpers";
 
 export default function FamilyGroupsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [groups, setGroups] = useState<FamilyGroup[]>([]);
+  const [groups, setGroups] = useState<FamilyGroupSummary[]>([]);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<FamilyGroup | null>(null);
+  const [editingGroup, setEditingGroup] = useState<FamilyGroupSummary | null>(null);
   const [formName, setFormName] = useState("");
   const [memberSearch, setMemberSearch] = useState("");
   const [searchResults, setSearchResults] = useState<MemberOption[]>([]);
@@ -144,62 +59,29 @@ export default function FamilyGroupsPage() {
         fetch("/api/admin/family-groups"),
         fetch("/api/admin/family-groups/requests"),
       ]);
-      let fetchedGroups: FamilyGroup[] = [];
+      let fetchedGroups: FamilyGroupSummary[] = [];
 
       if (groupsRes.ok) {
         const data = await groupsRes.json();
         setGroups(data.familyGroups);
-        fetchedGroups = data.familyGroups as FamilyGroup[];
+        fetchedGroups = data.familyGroups as FamilyGroupSummary[];
       }
       if (requestsRes.ok) {
         const data = await requestsRes.json();
         const fetchedRequests = data.requests as FamilyGroupRequest[];
         setRequests(fetchedRequests);
-        setRequestSelections((current) => {
-          const nextSelections: Record<string, string> = {};
-
-          for (const request of fetchedRequests) {
-            if (current[request.id]) {
-              nextSelections[request.id] = current[request.id];
-              continue;
-            }
-            if (request.type === "CHILD_REQUEST" && request.matchingMembers.length === 1) {
-              nextSelections[request.id] = request.matchingMembers[0].id;
-            }
-            if (request.type === "ADULT_REQUEST" && request.matchingMembers.length === 0) {
-              nextSelections[request.id] = "__create__";
-            }
-          }
-
-          return nextSelections;
-        });
-        setRequestNotificationParents((current) => {
-          const nextSelections: Record<string, string> = {};
-          for (const request of fetchedRequests) {
-            if (request.type === "CHILD_REQUEST") {
-              nextSelections[request.id] = current[request.id] ?? request.requester.id;
-            }
-          }
-          return nextSelections;
-        });
+        setRequestSelections((current) =>
+          buildInitialRequestSelections(fetchedRequests, current)
+        );
+        setRequestNotificationParents((current) =>
+          buildInitialRequestNotificationParents(fetchedRequests, current)
+        );
       }
       return fetchedGroups;
     } finally {
       setLoading(false);
     }
-    return [] as FamilyGroup[];
-  }, []);
-
-  // On mount: fetch data, then auto-open edit dialog if ?edit=GROUP_ID is set
-  useEffect(() => {
-    const editId = searchParams.get("edit");
-    fetchData().then((fetchedGroups) => {
-      if (editId && fetchedGroups) {
-        const target = fetchedGroups.find((g: FamilyGroup) => g.id === editId);
-        if (target) openEditForm(target);
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return [] as FamilyGroupSummary[];
   }, []);
 
   // Debounced member search
@@ -302,7 +184,7 @@ export default function FamilyGroupsPage() {
     setShowForm(true);
   }
 
-  function openEditForm(group: FamilyGroup) {
+  const openEditForm = useCallback((group: FamilyGroupSummary) => {
     setEditingGroup(group);
     setFormName(group.name || "");
     setSelectedMembers(
@@ -313,7 +195,18 @@ export default function FamilyGroupsPage() {
     setSearchResults([]);
     setError("");
     setShowForm(true);
-  }
+  }, []);
+
+  // On mount: fetch data, then auto-open edit dialog if ?edit=GROUP_ID is set.
+  useEffect(() => {
+    const editId = searchParams.get("edit");
+    fetchData().then((fetchedGroups) => {
+      if (editId && fetchedGroups) {
+        const target = fetchedGroups.find((g: FamilyGroupSummary) => g.id === editId);
+        if (target) openEditForm(target);
+      }
+    });
+  }, [fetchData, openEditForm, searchParams]);
 
   function addMember(member: MemberOption) {
     setSelectedMembers((prev) => [...prev, member]);
@@ -334,11 +227,6 @@ export default function FamilyGroupsPage() {
     router.replace(newSearch ? `/admin/family-groups?${newSearch}` : "/admin/family-groups", {
       scroll: false,
     });
-  }
-
-  function formatDate(value: string | null | undefined) {
-    if (!value) return "Not provided";
-    return new Date(value).toLocaleDateString();
   }
 
   function clearRequestError(requestId: string) {
@@ -363,60 +251,9 @@ export default function FamilyGroupsPage() {
     });
   }
 
-  function getRequestTypeLabel(request: FamilyGroupRequest) {
-    if (request.type === "CHILD_REQUEST") return "Infant/Child/Youth Request";
-    if (request.type === "ADULT_REQUEST") return "Same-email Adult Request";
-    if (request.type === "REMOVAL_REQUEST") return "Removal Request";
-    return "Join Request";
-  }
-
-  function getRequestSummary(request: FamilyGroupRequest) {
-    if (request.type === "CHILD_REQUEST") {
-      const childName = [request.childFirstName, request.childLastName].filter(Boolean).join(" ");
-      return `${request.requester.firstName} ${request.requester.lastName} wants to add ${childName || "an infant/child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
-    }
-    if (request.type === "ADULT_REQUEST") {
-      const adultName = [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ");
-      return `${request.requester.firstName} ${request.requester.lastName} wants to add ${adultName || "a same-email adult"} to ${request.familyGroup.name || "this family group"}.`;
-    }
-    if (request.type === "REMOVAL_REQUEST") {
-      const subjectName = request.subjectMember
-        ? `${request.subjectMember.firstName} ${request.subjectMember.lastName}`
-        : "a member";
-      return `${request.requester.firstName} ${request.requester.lastName} wants to remove ${subjectName} from ${request.familyGroup.name || "this family group"}.`;
-    }
-    return `${request.requester.firstName} ${request.requester.lastName} wants to join ${request.familyGroup.name || "this family group"}.`;
-  }
-
-  function getRequestSubjectName(request: FamilyGroupRequest) {
-    if (request.type === "CHILD_REQUEST") {
-      return [request.childFirstName, request.childLastName].filter(Boolean).join(" ");
-    }
-    if (request.type === "ADULT_REQUEST") {
-      return [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ");
-    }
-    if (request.type === "REMOVAL_REQUEST" && request.subjectMember) {
-      return `${request.subjectMember.firstName} ${request.subjectMember.lastName}`;
-    }
-    return "";
-  }
-
-  function getRequestCandidates(request: FamilyGroupRequest) {
-    const merged = new Map<string, RequestMemberMatch>();
-
-    for (const candidate of request.matchingMembers) {
-      merged.set(candidate.id, candidate);
-    }
-    for (const candidate of requestSearchResults[request.id] ?? []) {
-      merged.set(candidate.id, candidate);
-    }
-
-    return Array.from(merged.values());
-  }
-
   async function searchRequestMembers(request: FamilyGroupRequest) {
     const query = requestSearchTerms[request.id]?.trim()
-      || getRequestSubjectName(request);
+      || getFamilyGroupRequestSubjectName(request);
 
     if (query.length < 2) {
       setRequestErrors((current) => ({
@@ -446,34 +283,10 @@ export default function FamilyGroupsPage() {
         return;
       }
 
-      const foundMembers = ((data.members ?? []) as {
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string;
-        ageTier: string;
-        active: boolean;
-        canLogin?: boolean;
-        dateOfBirth?: string | null;
-        parentLinks?: ParentLinkSummary[];
-      }[])
-        .filter((member) =>
-          request.type !== "CHILD_REQUEST" || CHILD_REQUEST_AGE_TIERS.has(member.ageTier)
-        )
-        .map((member) => ({
-          id: member.id,
-          firstName: member.firstName,
-          lastName: member.lastName,
-          email: member.email,
-          ageTier: member.ageTier,
-          active: member.active,
-          canLogin: member.canLogin,
-          dateOfBirth: member.dateOfBirth ?? null,
-          parentLinks: member.parentLinks ?? [],
-          alreadyInGroup: request.familyGroup.members.some(
-            (groupMember) => groupMember.id === member.id
-          ),
-        }));
+      const foundMembers = mapFamilyGroupRequestSearchResults(
+        request,
+        data.members ?? []
+      );
 
       setRequestSearchResults((current) => ({
         ...current,
@@ -723,393 +536,54 @@ export default function FamilyGroupsPage() {
               No family group changes are awaiting review.
             </div>
           ) : (
-            requests.map((request) => {
-              const candidateMembers = getRequestCandidates(request);
-              const searchedMembers = requestSearchResults[request.id] ?? [];
-              const requestSearchMessage = requestSearchFeedback[request.id];
-              const selectedCandidate = candidateMembers.find(
-                (candidate) => candidate.id === requestSelections[request.id]
-              );
-              const requiresMemberChoice =
-                request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
-              const selectedCreateNew = requestSelections[request.id] === "__create__";
-
-              return (
-                <div key={request.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge
-                          className={
-                            request.type === "CHILD_REQUEST"
-                              ? "bg-blue-100 text-blue-800 border-blue-200"
-                              : request.type === "ADULT_REQUEST"
-                                ? "bg-violet-100 text-violet-800 border-violet-200"
-                                : request.type === "REMOVAL_REQUEST"
-                                  ? "bg-rose-100 text-rose-800 border-rose-200"
-                              : "bg-emerald-100 text-emerald-800 border-emerald-200"
-                          }
-                        >
-                          {getRequestTypeLabel(request)}
-                        </Badge>
-                        <span className="text-xs text-slate-500">
-                          Requested {formatDate(request.createdAt)}
-                        </span>
-                      </div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {getRequestSummary(request)}
-                      </p>
-                      <p className="text-sm text-slate-600">
-                        Family group:{" "}
-                        <span className="font-medium text-slate-800">
-                          {request.familyGroup.name || "Unnamed Group"}
-                        </span>
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                      <p className="font-medium text-slate-900">Requester</p>
-                      <p className="text-slate-700">
-                        {request.requester.firstName} {request.requester.lastName}
-                      </p>
-                      <p className="text-xs text-slate-500">{request.requester.email}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                    <div className="rounded-lg bg-slate-50 p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Step 1
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-slate-900">
-                        Review what was requested
-                      </p>
-                      {request.type === "CHILD_REQUEST" ? (
-                        <div className="mt-2 space-y-1 text-sm text-slate-600">
-                          <p>
-                            Requested member:{" "}
-                            <span className="font-medium text-slate-800">
-                              {[request.childFirstName, request.childLastName].filter(Boolean).join(" ")}
-                            </span>
-                          </p>
-                          <p>Date of birth: {formatDate(request.childDateOfBirth)}</p>
-                        </div>
-                      ) : request.type === "ADULT_REQUEST" ? (
-                        <div className="mt-2 space-y-1 text-sm text-slate-600">
-                          <p>
-                            Requested adult:{" "}
-                            <span className="font-medium text-slate-800">
-                              {[request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ")}
-                            </span>
-                          </p>
-                          <p>Date of birth: {formatDate(request.requestedDateOfBirth)}</p>
-                          <p>Shared email: {request.requestedEmail || request.requester.email}</p>
-                          {request.requestNotes && <p>Notes: {request.requestNotes}</p>}
-                        </div>
-                      ) : request.type === "REMOVAL_REQUEST" ? (
-                        <div className="mt-2 space-y-1 text-sm text-slate-600">
-                          <p>
-                            Remove member:{" "}
-                            <span className="font-medium text-slate-800">
-                              {request.subjectMember
-                                ? `${request.subjectMember.firstName} ${request.subjectMember.lastName}`
-                                : "Unknown member"}
-                            </span>
-                          </p>
-                          {request.subjectMember && (
-                            <p>
-                              {request.subjectMember.email} • {request.subjectMember.ageTier}
-                            </p>
-                          )}
-                          {request.requestNotes && <p>Notes: {request.requestNotes}</p>}
-                        </div>
-                      ) : (
-                        <p className="mt-2 text-sm text-slate-600">
-                          Approving this request adds{" "}
-                          <span className="font-medium text-slate-800">
-                            {request.requester.firstName} {request.requester.lastName}
-                          </span>{" "}
-                          to the selected family group.
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="rounded-lg bg-slate-50 p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {request.type === "CHILD_REQUEST" ? "Step 2" : "Current Group"}
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-slate-900">
-                        {request.type === "CHILD_REQUEST"
-                          ? "Check who is already in the group"
-                          : "Review existing members"}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {request.familyGroup.members.length > 0 ? (
-                          request.familyGroup.members.map((member) => (
-                            <Badge key={member.id} variant="secondary" className="text-xs">
-                              {member.firstName} {member.lastName}
-                            </Badge>
-                          ))
-                        ) : (
-                          <p className="text-sm text-slate-500">No members currently linked.</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-lg bg-slate-50 p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {requiresMemberChoice ? "Step 3" : "Step 2"}
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-slate-900">
-                        {requiresMemberChoice
-                          ? request.type === "ADULT_REQUEST"
-                            ? "Link or create the adult member"
-                            : "Choose the member record to link"
-                          : "Approve or reject the request"}
-                      </p>
-                      {requiresMemberChoice ? (
-                        <div className="mt-2 space-y-2">
-                          <div>
-                            <Label htmlFor={`request-member-${request.id}`}>
-                              {request.type === "ADULT_REQUEST" ? "Adult member record" : "Suggested matches"}
-                            </Label>
-                            <select
-                              id={`request-member-${request.id}`}
-                              value={requestSelections[request.id] ?? ""}
-                              onChange={(e) => {
-                                clearRequestError(request.id);
-                                clearRequestSearchFeedback(request.id);
-                                setRequestSelections((current) => ({
-                                  ...current,
-                                  [request.id]: e.target.value,
-                                }));
-                              }}
-                              className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                            >
-                              <option value="">Select a member record</option>
-                              {request.type === "ADULT_REQUEST" && (
-                                <option value="__create__">
-                                  Create new non-login adult from request
-                                </option>
-                              )}
-                              {candidateMembers.map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>
-                                  {candidate.firstName} {candidate.lastName}
-                                  {" • "}
-                                  {candidate.ageTier}
-                                  {candidate.canLogin ? " • has login" : " • no login"}
-                                  {candidate.alreadyInGroup ? " • already in group" : ""}
-                                  {!candidate.active ? " • inactive" : ""}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="flex flex-col gap-2 sm:flex-row">
-                            <Input
-                              value={requestSearchTerms[request.id] ?? ""}
-                              onChange={(e) => {
-                                clearRequestError(request.id);
-                                clearRequestSearchFeedback(request.id);
-                                setRequestSearchTerms((current) => ({
-                                  ...current,
-                                  [request.id]: e.target.value,
-                                }));
-                              }}
-                              placeholder="Search members by name or email..."
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => searchRequestMembers(request)}
-                              disabled={requestSearchingId === request.id}
-                            >
-                              <Search className="mr-2 h-4 w-4" />
-                              {requestSearchingId === request.id ? "Searching..." : "Search"}
-                            </Button>
-                          </div>
-
-                          <p className="text-xs text-slate-500">
-                            {request.type === "ADULT_REQUEST"
-                              ? "Same-email adult approvals can link an existing non-login adult or create a new non-login adult."
-                              : "Suggested matches are based on the requested infant, child, or youth name and date of birth. Search if the correct member record is not listed."}
-                          </p>
-
-                          {requestSearchMessage && (
-                            <p className="text-xs font-medium text-slate-700">
-                              {requestSearchMessage}
-                            </p>
-                          )}
-
-                          {searchedMembers.length > 0 && (
-                            <div className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
-                              {searchedMembers.map((candidate) => (
-                                <button
-                                  key={candidate.id}
-                                  type="button"
-                                  onClick={() => {
-                                    clearRequestError(request.id);
-                                    clearRequestSearchFeedback(request.id);
-                                    setRequestSelections((current) => ({
-                                      ...current,
-                                      [request.id]: candidate.id,
-                                    }));
-                                  }}
-                                  className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
-                                    requestSelections[request.id] === candidate.id
-                                      ? "border-amber-300 bg-amber-50"
-                                      : "border-slate-200 bg-white hover:bg-slate-50"
-                                  }`}
-                                >
-                                  <span className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
-                                    {candidate.firstName} {candidate.lastName}
-                                    <AgeTierBadge tier={candidate.ageTier} />
-                                    {requestSelections[request.id] === candidate.id && (
-                                      <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
-                                        Selected
-                                      </Badge>
-                                    )}
-                                  </span>
-                                  <span className="mt-1 block text-xs text-slate-500">
-                                    {candidate.email}
-                                    {candidate.dateOfBirth ? ` • DOB ${formatDate(candidate.dateOfBirth)}` : ""}
-                                    {candidate.canLogin ? " • has login" : " • no login"}
-                                    {candidate.alreadyInGroup ? " • already in this group" : ""}
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <p className="mt-2 text-sm text-slate-600">
-                          {request.type === "REMOVAL_REQUEST"
-                            ? "Approving removes the selected member from this family group only. Rejection leaves membership unchanged."
-                            : "Rejecting leaves the family group unchanged. Approving adds the requester to this group immediately."}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {requiresMemberChoice && selectedCandidate && (
-                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
-                      <p className="text-sm font-medium text-slate-900">
-                        Selected member record
-                      </p>
-                      <p className="mt-1 text-sm text-slate-700">
-                        {selectedCandidate.firstName} {selectedCandidate.lastName}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {selectedCandidate.email}
-                        {" • "}
-                        {selectedCandidate.ageTier}
-                        {selectedCandidate.canLogin ? " • has login" : " • no login"}
-                        {selectedCandidate.dateOfBirth ? ` • DOB ${formatDate(selectedCandidate.dateOfBirth)}` : ""}
-                        {selectedCandidate.alreadyInGroup ? " • already in this group" : ""}
-                        {!selectedCandidate.active ? " • inactive" : ""}
-                      </p>
-                      {request.type === "CHILD_REQUEST" && (
-                        <div className="mt-3 space-y-2">
-                          <Label htmlFor={`request-notification-${request.id}`}>
-                            Notification email recipient
-                          </Label>
-                          <select
-                            id={`request-notification-${request.id}`}
-                            value={requestNotificationParents[request.id] ?? request.requester.id}
-                            onChange={(event) =>
-                              setRequestNotificationParents((current) => ({
-                                ...current,
-                                [request.id]: event.target.value,
-                              }))
-                            }
-                            className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                          >
-                            <option value="">Use child&apos;s own email</option>
-                            {dedupeParentOptions([
-                              ...(selectedCandidate.parentLinks ?? []),
-                              {
-                                ...request.requester,
-                                parentLinkType: ((selectedCandidate.parentLinks?.length ?? 0) === 0 ? "PRIMARY" : "SECONDARY") as "PRIMARY" | "SECONDARY",
-                              },
-                            ]).map((parent) => (
-                              <option key={parent.id} value={parent.id}>
-                                {parent.firstName} {parent.lastName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {request.type === "ADULT_REQUEST" && selectedCreateNew && (
-                    <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
-                      <p className="text-sm font-medium text-slate-900">
-                        New non-login adult will be created
-                      </p>
-                      <p className="mt-1 text-sm text-slate-700">
-                        {[request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ")}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {request.requestedEmail || request.requester.email}
-                        {request.requestedDateOfBirth ? ` • DOB ${formatDate(request.requestedDateOfBirth)}` : ""}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="mt-4">
-                    <Label htmlFor={`request-note-${request.id}`}>Optional rejection note</Label>
-                    <Input
-                      id={`request-note-${request.id}`}
-                      value={requestNotes[request.id] ?? ""}
-                      onChange={(e) => setRequestNotes((current) => ({
-                        ...current,
-                        [request.id]: e.target.value,
-                      }))}
-                      placeholder="Why should this request be rejected?"
-                      className="mt-2"
-                    />
-                  </div>
-
-                  {requestErrors[request.id] && (
-                    <p className="mt-4 text-sm text-red-600">{requestErrors[request.id]}</p>
-                  )}
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      onClick={() => handleRequest(request, "approve")}
-                      disabled={
-                        requestSubmittingId === request.id
-                        || (requiresMemberChoice && !requestSelections[request.id])
-                      }
-                    >
-                      <Check className="mr-2 h-4 w-4" />
-                      {requestSubmittingId === request.id
-                        ? "Saving..."
-                        : request.type === "CHILD_REQUEST"
-                          ? "Approve and Link Member"
-                          : request.type === "ADULT_REQUEST"
-                            ? selectedCreateNew
-                              ? "Approve and Create Adult"
-                              : "Approve and Link Adult"
-                            : request.type === "REMOVAL_REQUEST"
-                              ? "Approve Removal"
-                          : "Approve Request"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => handleRequest(request, "reject")}
-                      disabled={requestSubmittingId === request.id}
-                    >
-                      <X className="mr-2 h-4 w-4" />
-                      {requestSubmittingId === request.id ? "Saving..." : "Reject Request"}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })
+            requests.map((request) => (
+              <FamilyGroupRequestReviewCard
+                key={request.id}
+                request={request}
+                requestSelection={requestSelections[request.id]}
+                requestSearchTerm={requestSearchTerms[request.id]}
+                searchedMembers={requestSearchResults[request.id] ?? []}
+                requestSearchMessage={requestSearchFeedback[request.id]}
+                requestNote={requestNotes[request.id]}
+                requestNotificationParentId={requestNotificationParents[request.id]}
+                requestError={requestErrors[request.id]}
+                searching={requestSearchingId === request.id}
+                submitting={requestSubmittingId === request.id}
+                showSearchGuidance
+                showRemovalDetails
+                onClearRequestFeedback={() => {
+                  clearRequestError(request.id);
+                  clearRequestSearchFeedback(request.id);
+                }}
+                onSearchMembers={() => searchRequestMembers(request)}
+                onSelectMember={(memberId) =>
+                  setRequestSelections((current) => ({
+                    ...current,
+                    [request.id]: memberId,
+                  }))
+                }
+                onSearchTermChange={(value) =>
+                  setRequestSearchTerms((current) => ({
+                    ...current,
+                    [request.id]: value,
+                  }))
+                }
+                onNotificationParentChange={(memberId) =>
+                  setRequestNotificationParents((current) => ({
+                    ...current,
+                    [request.id]: memberId,
+                  }))
+                }
+                onNoteChange={(value) =>
+                  setRequestNotes((current) => ({
+                    ...current,
+                    [request.id]: value,
+                  }))
+                }
+                onApprove={() => handleRequest(request, "approve")}
+                onReject={() => handleRequest(request, "reject")}
+              />
+            ))
           )}
         </CardContent>
       </Card>
