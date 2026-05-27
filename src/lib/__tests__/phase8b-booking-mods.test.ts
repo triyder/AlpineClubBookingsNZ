@@ -11,6 +11,12 @@ const mockDelete = vi.fn();
 const mockDeleteMany = vi.fn();
 const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
+const mockValidateAndCalculatePromoDiscount = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    beneficiaryMemberIds: [],
+  })
+);
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
@@ -72,8 +78,11 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
-  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
+  validateAndCalculatePromoDiscount: mockValidateAndCalculatePromoDiscount,
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
   redeemPromoCode: vi.fn(),
+  replacePromoRedemptionAllocations: vi.fn(),
+  deletePromoRedemptionAndAdjustCount: vi.fn(),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({ processRefund: vi.fn() }));
@@ -101,7 +110,7 @@ import { checkCapacity } from "@/lib/capacity";
 import { calculateBookingPrice } from "@/lib/pricing";
 import { calculateChangeFee } from "@/lib/change-fee";
 import { daysUntilDate, loadCancellationPolicy, getNonMemberHoldDays } from "@/lib/cancellation";
-import { validatePromoCodeRules } from "@/lib/promo";
+import { validateAndCalculatePromoDiscount, validatePromoCodeRules } from "@/lib/promo";
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
@@ -115,6 +124,7 @@ const mockedLoadPolicy = vi.mocked(loadCancellationPolicy);
 const mockedProcessRefund = vi.mocked(processRefund);
 const mockedGetHoldDays = vi.mocked(getNonMemberHoldDays);
 const mockedValidatePromo = vi.mocked(validatePromoCodeRules);
+const mockedValidateAndCalculatePromo = vi.mocked(validateAndCalculatePromoDiscount);
 
 // Helper to make a booking object
 function makeBooking(overrides: Record<string, unknown> = {}) {
@@ -482,6 +492,10 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
     mockedValidatePromo.mockReturnValue("This promo code is no longer active");
+    mockedValidateAndCalculatePromo.mockResolvedValueOnce({
+      error: "This promo code is no longer active",
+      beneficiaryMemberIds: [],
+    });
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {

@@ -115,7 +115,13 @@ vi.mock("@/lib/bumping", () => ({
 
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
+  validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
+    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    beneficiaryMemberIds: [],
+  }),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
+  replacePromoRedemptionAllocations: vi.fn(),
+  deletePromoRedemptionAndAdjustCount: vi.fn(),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 

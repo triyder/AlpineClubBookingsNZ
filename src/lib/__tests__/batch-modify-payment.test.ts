@@ -10,6 +10,18 @@ const mockFindOrCreateCustomer = vi.fn();
 const mockCheckCapacity = vi.fn();
 const mockCalculateBookingPrice = vi.fn();
 const mockCalculatePromoDiscountForGuestRates = vi.fn();
+const mockValidateAndCalculatePromoDiscount = vi.fn(async () => {
+  const discount = mockCalculatePromoDiscountForGuestRates();
+  return {
+    discount: {
+      discountCents: discount?.discountCents ?? 0,
+      freeNightsUsed: discount?.freeNightsUsed ?? 0,
+      eligibleGuestCount: discount?.eligibleGuestCount ?? 0,
+      allocations: discount?.allocations ?? [],
+    },
+    beneficiaryMemberIds: [],
+  };
+});
 const mockAuth = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
@@ -82,8 +94,11 @@ vi.mock("@/lib/cancellation", () => ({
 
 vi.mock("@/lib/promo", () => ({
   calculatePromoDiscountForGuestRates: mockCalculatePromoDiscountForGuestRates,
+  validateAndCalculatePromoDiscount: mockValidateAndCalculatePromoDiscount,
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   redeemPromoCode: vi.fn(),
+  replacePromoRedemptionAllocations: vi.fn(),
+  deletePromoRedemptionAndAdjustCount: vi.fn(),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 

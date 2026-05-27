@@ -59,6 +59,8 @@ export interface CalculatePromoDiscountOptions {
   // budget for this code (already-consumed nights subtracted). When undefined,
   // no cap is applied beyond freeNightsPerIndividual.
   remainingFreeNights?: number;
+  // For beneficiary-scoped FREE_NIGHTS promos: remaining free nights by member.
+  remainingFreeNightsByMemberId?: Record<string, number>;
 }
 
 function getDateOnlyStringForTimeZone(date: Date, timeZone = APP_TIME_ZONE): string {
@@ -264,6 +266,53 @@ export interface PromoDiscountResult {
   discountCents: number;
   freeNightsUsed: number;
   eligibleGuestCount: number;
+  allocations: PromoDiscountAllocation[];
+}
+
+export interface PromoDiscountAllocation {
+  memberId: string;
+  discountCents: number;
+  freeNightsUsed: number;
+}
+
+export function selectPromoDiscountGuests(
+  promo: PromoCodeInput,
+  guests: PromoDiscountGuest[],
+) {
+  const eligibleAll = promo.memberGuestsOnly
+    ? guests.filter((g) => g.isMember)
+    : guests;
+
+  const withTotals = eligibleAll.map((g, idx) => ({
+    guest: g,
+    idx,
+    total: g.perNightRates.reduce((sum, r) => sum + r, 0),
+  }));
+  withTotals.sort((a, b) => b.total - a.total);
+  const guestCap = promo.maxGuestsPerBooking ?? withTotals.length;
+  return withTotals.slice(0, Math.max(0, guestCap));
+}
+
+function addPromoAllocation(
+  allocations: Map<string, PromoDiscountAllocation>,
+  memberId: string | null,
+  discountCents: number,
+  freeNightsUsed: number,
+) {
+  if (!memberId || (discountCents <= 0 && freeNightsUsed <= 0)) return;
+
+  const existing = allocations.get(memberId);
+  if (existing) {
+    existing.discountCents += discountCents;
+    existing.freeNightsUsed += freeNightsUsed;
+    return;
+  }
+
+  allocations.set(memberId, {
+    memberId,
+    discountCents,
+    freeNightsUsed,
+  });
 }
 
 /**
@@ -290,24 +339,20 @@ export function calculatePromoDiscount(
   promo: PromoCodeInput,
   opts: CalculatePromoDiscountOptions,
 ): PromoDiscountResult {
-  const { totalPriceCents, guests, remainingFreeNights } = opts;
-  const empty: PromoDiscountResult = { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0 };
+  const {
+    totalPriceCents,
+    guests,
+    remainingFreeNights,
+    remainingFreeNightsByMemberId,
+  } = opts;
+  const empty: PromoDiscountResult = {
+    discountCents: 0,
+    freeNightsUsed: 0,
+    eligibleGuestCount: 0,
+    allocations: [],
+  };
 
-  // Filter guests by member status if the promo restricts to member guests.
-  const eligibleAll = promo.memberGuestsOnly
-    ? guests.filter((g) => g.isMember)
-    : guests;
-  if (eligibleAll.length === 0) return empty;
-
-  // Most expensive guests first (max benefit to booker), then cap by maxGuestsPerBooking.
-  const withTotals = eligibleAll.map((g, idx) => ({
-    guest: g,
-    idx,
-    total: g.perNightRates.reduce((sum, r) => sum + r, 0),
-  }));
-  withTotals.sort((a, b) => b.total - a.total);
-  const guestCap = promo.maxGuestsPerBooking ?? withTotals.length;
-  const selected = withTotals.slice(0, Math.max(0, guestCap));
+  const selected = selectPromoDiscountGuests(promo, guests);
   if (selected.length === 0) return empty;
 
   switch (promo.type) {
@@ -315,20 +360,25 @@ export function calculatePromoDiscount(
       const pct = promo.percentOff ?? 0;
       if (pct <= 0) return empty;
       let discount = 0;
+      const allocations = new Map<string, PromoDiscountAllocation>();
       for (const { guest } of selected) {
+        let guestDiscount = 0;
         for (const rate of guest.perNightRates) {
           const raw = Math.round((rate * pct) / 100);
           const capped = promo.maxNightlyValueCents != null
             ? Math.min(raw, promo.maxNightlyValueCents)
             : raw;
-          discount += capped;
+          guestDiscount += capped;
         }
+        discount += guestDiscount;
+        addPromoAllocation(allocations, guest.memberId, guestDiscount, 0);
       }
       // Cap at total booking price as a safety rail.
       return {
         discountCents: Math.min(discount, totalPriceCents),
         freeNightsUsed: 0,
         eligibleGuestCount: selected.length,
+        allocations: [...allocations.values()],
       };
     }
 
@@ -336,14 +386,18 @@ export function calculatePromoDiscount(
       const perGuest = promo.valueCents ?? 0;
       if (perGuest <= 0) return empty;
       let discount = 0;
+      const allocations = new Map<string, PromoDiscountAllocation>();
       for (const { guest } of selected) {
         const guestTotal = guest.perNightRates.reduce((s, r) => s + r, 0);
-        discount += Math.min(perGuest, guestTotal);
+        const guestDiscount = Math.min(perGuest, guestTotal);
+        discount += guestDiscount;
+        addPromoAllocation(allocations, guest.memberId, guestDiscount, 0);
       }
       return {
         discountCents: Math.min(discount, totalPriceCents),
         freeNightsUsed: 0,
         eligibleGuestCount: selected.length,
+        allocations: [...allocations.values()],
       };
     }
 
@@ -356,34 +410,54 @@ export function calculatePromoDiscount(
       const lifetimeCap = remainingFreeNights !== undefined
         ? Math.max(0, remainingFreeNights)
         : Number.POSITIVE_INFINITY;
-      if (lifetimeCap <= 0) return empty;
+      if (!remainingFreeNightsByMemberId && lifetimeCap <= 0) return empty;
 
       // Collect candidate nights from each selected guest: each guest contributes
       // up to perIndividual of their most expensive nights.
-      const candidates: { rate: number }[] = [];
+      const candidates: { rate: number; memberId: string | null }[] = [];
       for (const { guest } of selected) {
         const sortedDesc = [...guest.perNightRates].sort((a, b) => b - a);
         for (const rate of sortedDesc.slice(0, perIndividual)) {
-          candidates.push({ rate });
+          candidates.push({ rate, memberId: guest.memberId });
         }
       }
       if (candidates.length === 0) return empty;
 
       // Of those candidates, pick the most expensive up to the lifetime cap.
       candidates.sort((a, b) => b.rate - a.rate);
-      const usedCount = Math.min(candidates.length, Math.floor(Math.min(lifetimeCap, candidates.length)));
+      const usedCount = remainingFreeNightsByMemberId
+        ? candidates.length
+        : Math.min(candidates.length, Math.floor(Math.min(lifetimeCap, candidates.length)));
       let discount = 0;
+      let freeNightsUsed = 0;
+      const usedByMemberId = new Map<string, number>();
+      const allocations = new Map<string, PromoDiscountAllocation>();
       for (let i = 0; i < usedCount; i++) {
-        const rate = candidates[i].rate;
+        const { rate, memberId } = candidates[i];
+
+        if (remainingFreeNightsByMemberId) {
+          if (!memberId) continue;
+          const memberCap = Math.max(
+            0,
+            Math.floor(remainingFreeNightsByMemberId[memberId] ?? perIndividual)
+          );
+          const memberUsed = usedByMemberId.get(memberId) ?? 0;
+          if (memberUsed >= memberCap) continue;
+          usedByMemberId.set(memberId, memberUsed + 1);
+        }
+
         const capped = promo.maxNightlyValueCents != null
           ? Math.min(rate, promo.maxNightlyValueCents)
           : rate;
         discount += capped;
+        freeNightsUsed += 1;
+        addPromoAllocation(allocations, memberId, capped, 1);
       }
       return {
         discountCents: Math.min(discount, totalPriceCents),
-        freeNightsUsed: usedCount,
+        freeNightsUsed,
         eligibleGuestCount: selected.length,
+        allocations: [...allocations.values()],
       };
     }
 

@@ -8,10 +8,7 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import {
-  calculatePromoDiscountForGuestRates,
-  getMemberFreeNightsUsed,
-  getUniqueMemberRedemptionCount,
-  validatePromoCodeRules,
+  validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
@@ -26,6 +23,7 @@ const validateSchema = z.object({
       z.object({
         ageTier: ageTierEnum,
         isMember: z.boolean(),
+        memberId: z.string().min(1).optional(),
       })
     )
     .min(1),
@@ -69,53 +67,9 @@ export async function POST(req: NextRequest) {
     include: { assignments: { select: { memberId: true } } },
   });
 
-  const needsMemberCount = Boolean(
-    promoCode &&
-      ((promoCode.maxUsesPerMember !== null && promoCode.maxUsesPerMember !== undefined) ||
-        (promoCode.maxUniqueMembersTotal !== null && promoCode.maxUniqueMembersTotal !== undefined)),
-  );
-  const memberRedemptionCount = needsMemberCount && promoCode
-    ? await prisma.promoRedemption.count({
-        where: {
-          promoCodeId: promoCode.id,
-          memberId: effectiveMemberId,
-        },
-      })
-    : 0;
-
   const assignedMemberIds = promoCode?.assignments?.length
     ? promoCode.assignments.map((a) => a.memberId)
     : null;
-
-  let memberFreeNightsUsed = 0;
-  if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual) {
-    memberFreeNightsUsed = await getMemberFreeNightsUsed(
-      promoCode.id,
-      effectiveMemberId
-    );
-  }
-
-  let uniqueMembersUsed = 0;
-  if (promoCode?.maxUniqueMembersTotal !== null && promoCode?.maxUniqueMembersTotal !== undefined) {
-    uniqueMembersUsed = await getUniqueMemberRedemptionCount(promoCode.id);
-  }
-
-  const validationError = validatePromoCodeRules(
-    promoCode,
-    { memberId: effectiveMemberId, bookingCheckIn: checkIn },
-    new Date(),
-    {
-      memberRedemptionCount,
-      memberFreeNightsUsed,
-      uniqueMembersUsed,
-      memberHasRedeemedBefore: memberRedemptionCount > 0,
-    },
-    assignedMemberIds
-  );
-
-  if (validationError) {
-    return NextResponse.json({ valid: false, error: validationError }, { status: 400 });
-  }
 
   // Calculate the booking price to determine discount
   const seasons = await prisma.season.findMany({
@@ -160,36 +114,30 @@ export async function POST(req: NextRequest) {
       groupDiscount
     );
 
-    const remainingFreeNights = promoCode!.type === "FREE_NIGHTS" && promoCode!.freeNightsPerIndividual
-      ? promoCode!.freeNightsPerIndividual - memberFreeNightsUsed
-      : undefined;
-
-    // Per-guest input for the promo. Guest memberId is not available in this
-    // validate endpoint (callers don't pass it), so member-assigned scoping
-    // skips the same-member filter here; the booking-create transaction does
-    // the strict filter using the real BookingGuest.memberId values.
-    const promoGuests = price.guests.map((g) => ({
-      memberId: null as string | null,
+    const promoGuests = price.guests.map((g, index) => ({
+      memberId: guests[index].memberId ?? null,
       isMember: g.isMember,
       perNightRates: g.perNightCents,
     }));
 
-    const promoResult = calculatePromoDiscountForGuestRates(
+    const application = await validateAndCalculatePromoDiscount(
+      promoCode,
       {
-        type: promoCode!.type,
-        valueCents: promoCode!.valueCents,
-        percentOff: promoCode!.percentOff,
-        freeNightsPerIndividual: promoCode!.freeNightsPerIndividual,
-        maxGuestsPerBooking: promoCode!.maxGuestsPerBooking,
-        maxNightlyValueCents: promoCode!.maxNightlyValueCents,
-        memberGuestsOnly: promoCode!.memberGuestsOnly,
+        memberId: effectiveMemberId,
+        bookingCheckIn: checkIn,
+        totalPriceCents: price.totalPriceCents,
+        guests: promoGuests,
       },
-      price.totalPriceCents,
-      effectiveMemberId,
-      promoGuests,
       assignedMemberIds,
-      remainingFreeNights
+      { db: prisma }
     );
+    if (application.error || !application.discount) {
+      return NextResponse.json(
+        { valid: false, error: application.error ?? "Promo code could not be applied" },
+        { status: 400 }
+      );
+    }
+    const promoResult = application.discount;
 
     return NextResponse.json({
       valid: true,
@@ -199,7 +147,7 @@ export async function POST(req: NextRequest) {
       discountCents: promoResult.discountCents,
       freeNightsUsed: promoResult.freeNightsUsed,
       eligibleGuestCount: promoResult.eligibleGuestCount,
-      remainingFreeNights,
+      remainingFreeNights: application.remainingFreeNights,
       totalPriceCents: price.totalPriceCents,
       finalPriceCents: price.totalPriceCents - promoResult.discountCents,
     });

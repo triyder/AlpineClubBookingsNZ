@@ -59,10 +59,21 @@ vi.mock("@/lib/bumping", () => ({
 }));
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
+  validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
+    discount: {
+      discountCents: 0,
+      freeNightsUsed: 0,
+      eligibleGuestCount: 0,
+      allocations: [],
+    },
+    beneficiaryMemberIds: [],
+  }),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
   calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({
     discountCents: 0,
     freeNightsUsed: 0,
+    eligibleGuestCount: 0,
+    allocations: [],
   }),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
@@ -625,8 +636,8 @@ describe("Promo Validate API - forMemberId", () => {
       bookingStartUntil: null,
       assignments: [],
     });
-    (mockedPrisma.promoRedemption.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const { validateAndCalculatePromoDiscount } = await import("@/lib/promo");
 
     const req = new NextRequest("http://localhost/api/promo-codes/validate", {
       method: "POST",
@@ -642,11 +653,11 @@ describe("Promo Validate API - forMemberId", () => {
 
     await postPromoValidate(req);
 
-    // promoRedemption.count should check against target member, not admin
-    expect(mockedPrisma.promoRedemption.count).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ memberId: "target-m1" }),
-      })
+    expect(validateAndCalculatePromoDiscount).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ memberId: "target-m1" }),
+      null,
+      expect.objectContaining({ db: mockedPrisma }),
     );
   });
 });

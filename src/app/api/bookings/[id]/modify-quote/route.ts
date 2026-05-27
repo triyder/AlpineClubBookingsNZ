@@ -16,9 +16,7 @@ import {
   loadCancellationPolicy,
 } from "@/lib/cancellation";
 import {
-  calculatePromoDiscountForGuestRates,
-  getMemberFreeNightsUsed,
-  validatePromoCodeRules,
+  validateAndCalculatePromoDiscount,
   validatePromoCodeFull,
 } from "@/lib/promo";
 import { z } from "zod";
@@ -582,43 +580,24 @@ export async function POST(
   } else if (booking.promoRedemption?.promoCode) {
     // Keep existing promo, recalculate with new price
     const promo = booking.promoRedemption.promoCode;
-    const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
-      ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
-      : 0;
-    const validationError = validatePromoCodeRules(
+    const application = await validateAndCalculatePromoDiscount(
       promo,
-      { memberId: booking.memberId },
-      new Date(),
-      { memberFreeNightsUsed },
+      {
+        memberId: booking.memberId,
+        bookingCheckIn: newCheckIn,
+        totalPriceCents: newTotalPriceCents,
+        guests: getGuestNightRates(),
+      },
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
+      { excludeBookingId: bookingId, db: prisma },
     );
 
-    if (validationError) {
+    if (application.error || !application.discount) {
       promoStillValid = false;
     } else {
-      const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual
-        ? promo.freeNightsPerIndividual - memberFreeNightsUsed
-        : undefined;
-      const promoResult = calculatePromoDiscountForGuestRates(
-        {
-          type: promo.type,
-          valueCents: promo.valueCents,
-          percentOff: promo.percentOff,
-          freeNightsPerIndividual: promo.freeNightsPerIndividual,
-          maxGuestsPerBooking: promo.maxGuestsPerBooking,
-          maxNightlyValueCents: promo.maxNightlyValueCents,
-          memberGuestsOnly: promo.memberGuestsOnly,
-        },
-        newTotalPriceCents,
-        booking.memberId,
-        getGuestNightRates(),
-        promo.assignments.length > 0
-          ? promo.assignments.map((assignment) => assignment.memberId)
-          : null,
-        remainingFreeNights
-      );
+      const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
     }
   }

@@ -22,6 +22,7 @@ import {
   markPaymentIntentTransactionFailed,
   refundPaymentTransactions,
 } from "@/lib/payment-transactions";
+import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 
 export interface CancelBookingResult {
   success: boolean;
@@ -716,12 +717,8 @@ async function cleanupPromoRedemption(bookingId: string) {
     where: { bookingId },
   });
   if (redemption) {
-    await prisma.$transaction([
-      prisma.promoRedemption.delete({ where: { id: redemption.id } }),
-      prisma.promoCode.update({
-        where: { id: redemption.promoCodeId },
-        data: { currentRedemptions: { decrement: 1 } },
-      }),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      await deletePromoRedemptionAndAdjustCount(tx, redemption);
+    });
   }
 }

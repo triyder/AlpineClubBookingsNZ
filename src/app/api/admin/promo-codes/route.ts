@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const promoCodes = await prisma.promoCode.findMany({
     where: showArchived ? { archivedAt: { not: null } } : { archivedAt: null },
     include: {
-      redemptions: {
+      allocations: {
         select: { id: true, discountCents: true, memberId: true, createdAt: true },
       },
       assignments: {
@@ -55,7 +55,12 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json(promoCodes);
+  return NextResponse.json(
+    promoCodes.map(({ allocations, ...promoCode }) => ({
+      ...promoCode,
+      redemptions: allocations,
+    }))
+  );
 }
 
 export async function POST(req: NextRequest) {

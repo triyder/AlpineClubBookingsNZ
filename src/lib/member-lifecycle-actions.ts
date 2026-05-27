@@ -295,8 +295,18 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
   {
     code: "promo_redemptions",
     label: "Promo redemptions exist.",
-    query: (db, memberId) =>
-      db.promoRedemption.count({ where: { memberId } }),
+    query: (db, memberId) => {
+      const allocationDelegate = (
+        db as LifecycleActionClient & {
+          promoRedemptionAllocation?: {
+            count: (args: { where: { memberId: string } }) => Promise<number>;
+          };
+        }
+      ).promoRedemptionAllocation;
+      return allocationDelegate
+        ? allocationDelegate.count({ where: { memberId } })
+        : db.promoRedemption.count({ where: { memberId } });
+    },
   },
   {
     code: "promo_assignments",

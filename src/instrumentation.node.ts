@@ -53,6 +53,7 @@ export async function register() {
     const cron = await import("node-cron");
     const Sentry = await import("@sentry/nextjs");
     const { prisma } = await import("./lib/prisma");
+    const { deletePromoRedemptionAndAdjustCount } = await import("./lib/promo");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
     const { isEffectiveModuleEnabled } = await import("./lib/admin-modules");
     const optionalCron = getOptionalCronRegistrationState();
@@ -689,16 +690,10 @@ export async function register() {
         const deletedDrafts = expiredDrafts.length;
         if (expiredDrafts.length > 0) {
           await prisma.$transaction(async (tx) => {
-            const promoDecrements = expiredDrafts
-              .filter((d) => d.promoRedemption)
-              .map((d) =>
-                tx.promoCode.update({
-                  where: { id: d.promoRedemption!.promoCodeId },
-                  data: { currentRedemptions: { decrement: 1 } },
-                })
-              );
-            if (promoDecrements.length > 0) {
-              await Promise.all(promoDecrements);
+            for (const draft of expiredDrafts) {
+              if (draft.promoRedemption) {
+                await deletePromoRedemptionAndAdjustCount(tx, draft.promoRedemption);
+              }
             }
             await tx.booking.deleteMany({
               where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
