@@ -248,11 +248,18 @@ function usePendingMembershipCancellations(): number {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/admin/membership-cancellation-requests?status=REQUESTED&pageSize=1")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
+    Promise.all([
+      fetch("/api/admin/membership-cancellation-requests?status=REQUESTED&pageSize=1")
+        .then((response) => (response.ok ? response.json() : null)),
+      fetch("/api/admin/member-lifecycle-action-requests?action=ARCHIVE&status=REQUESTED&pageSize=1")
+        .then((response) => (response.ok ? response.json() : null)),
+    ])
+      .then(([cancellationData, archiveData]) => {
         if (!cancelled) {
-          setCount(data?.pendingCount ?? 0);
+          setCount(
+            (cancellationData?.pendingCount ?? 0) +
+              (archiveData?.pendingCount ?? 0),
+          );
         }
       })
       .catch(() => {});

@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
+  MemberLifecycleAction,
+  MemberLifecycleActionRequestStatus,
+} from "@prisma/client";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -50,6 +54,7 @@ async function getStats() {
     pendingRefundAppeals,
     pendingCreditApprovals,
     pendingMembershipCancellations,
+    pendingMemberArchives,
   ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
@@ -104,6 +109,12 @@ async function getStats() {
         },
       },
     }),
+    prisma.memberLifecycleActionRequest.count({
+      where: {
+        action: MemberLifecycleAction.ARCHIVE,
+        status: MemberLifecycleActionRequestStatus.REQUESTED,
+      },
+    }),
   ]);
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
@@ -154,6 +165,9 @@ async function getStats() {
     pendingRefundAppeals,
     pendingCreditApprovals,
     pendingMembershipCancellations,
+    pendingMemberArchives,
+    pendingMembershipReviews:
+      pendingMembershipCancellations + pendingMemberArchives,
   };
 }
 
@@ -168,6 +182,18 @@ export default async function AdminDashboardPage() {
       : null,
     stats.pendingCreditApprovals > 0
       ? `${stats.pendingCreditApprovals} manual credit approval${stats.pendingCreditApprovals === 1 ? "" : "s"}`
+      : null,
+  ].filter(Boolean) as string[];
+  const pendingMembershipReviewSummary = [
+    stats.pendingMembershipCancellations > 0
+      ? `${stats.pendingMembershipCancellations} cancellation request${
+          stats.pendingMembershipCancellations === 1 ? "" : "s"
+        }`
+      : null,
+    stats.pendingMemberArchives > 0
+      ? `${stats.pendingMemberArchives} archive request${
+          stats.pendingMemberArchives === 1 ? "" : "s"
+        }`
       : null,
   ].filter(Boolean) as string[];
 
@@ -196,17 +222,17 @@ export default async function AdminDashboardPage() {
         </Link>
       )}
 
-      {stats.pendingMembershipCancellations > 0 && (
+      {stats.pendingMembershipReviews > 0 && (
         <Link href="/admin/membership-cancellations">
           <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <UserX className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-medium text-amber-950">
-                  Membership Cancellation Review
+                  Membership Lifecycle Review
                 </p>
                 <p className="text-sm text-amber-800 mt-1">
-                  {stats.pendingMembershipCancellations} cancellation request{stats.pendingMembershipCancellations === 1 ? "" : "s"} waiting for admin review.
+                  {pendingMembershipReviewSummary.join(" and ")} waiting for admin review.
                 </p>
               </div>
             </CardContent>

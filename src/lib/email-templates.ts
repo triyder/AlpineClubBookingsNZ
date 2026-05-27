@@ -1454,7 +1454,7 @@ export function adminMemberArchiveRequestedTemplate(data: {
       { label: "Requested by", value: escapeHtml(data.requesterName) },
     ])}
     ${multilineBlock(escapeHtml(data.reason))}
-    ${button("Review Member", data.reviewUrl, { sameOrigin: true })}
+    ${button("Review Archive Requests", data.reviewUrl, { sameOrigin: true })}
     ${supportContactMuted()}
   `);
 }

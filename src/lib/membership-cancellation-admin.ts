@@ -372,6 +372,18 @@ function assertParticipantCanBeApproved(participant: {
   }
 }
 
+function assertCancellationApprovalIsIndependent(
+  requestedByMemberId: string | null,
+  adminMemberId: string,
+) {
+  if (requestedByMemberId && requestedByMemberId === adminMemberId) {
+    throw new MembershipCancellationAdminError(
+      "Cancellation requests must be approved by a different admin.",
+      403,
+    );
+  }
+}
+
 function assertParticipantCanBeRejected(participant: {
   status: MembershipCancellationParticipantStatus;
 }) {
@@ -537,6 +549,10 @@ export async function reviewMembershipCancellationParticipant({
   assertRequestCanBeReviewed(participant.request);
 
   if (action === "approve") {
+    assertCancellationApprovalIsIndependent(
+      participant.request.requestedByMemberId,
+      adminMemberId,
+    );
     assertParticipantCanBeApproved(participant);
     const blockersByMemberId = await loadBlockersByMemberId([
       participant.memberId,

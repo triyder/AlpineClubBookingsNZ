@@ -5,6 +5,7 @@ const mockPrisma = vi.hoisted(() => {
   return {
     member: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
       count: vi.fn().mockResolvedValue(0),
       update: vi.fn(),
       updateMany: vi.fn(),
@@ -115,9 +116,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  getAdminMemberArchiveLifecycleRequests,
   createMemberArchiveRequest,
   createMemberDeleteRequest,
   getMemberDeleteEligibility,
+  getPendingMemberArchiveReviewCount,
   MemberLifecycleActionError,
   reviewMemberArchiveRequest,
   reviewMemberDeleteRequest,
@@ -484,6 +487,7 @@ describe("member archive lifecycle actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.findUnique.mockResolvedValue(archiveTarget());
+    mockPrisma.member.findMany.mockResolvedValue([archiveTarget()]);
     mockPrisma.member.update.mockResolvedValue({
       ...archiveTarget(),
       archivedAt: now,
@@ -552,6 +556,51 @@ describe("member archive lifecycle actions", () => {
         }),
       }),
     );
+  });
+
+  it("lists pending archive requests for admin review", async () => {
+    mockPrisma.memberLifecycleActionRequest.findMany.mockResolvedValueOnce([
+      archiveRequest(),
+    ]);
+    mockPrisma.memberLifecycleActionRequest.count
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(3);
+
+    const result = await getAdminMemberArchiveLifecycleRequests({
+      status: "REQUESTED",
+      page: 1,
+      pageSize: 25,
+    });
+
+    expect(mockPrisma.memberLifecycleActionRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { action: "ARCHIVE", status: "REQUESTED" },
+        take: 25,
+      }),
+    );
+    expect(mockPrisma.member.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ["member-1"] } },
+      select: expect.objectContaining({ archivedAt: true }),
+    });
+    expect(result.total).toBe(1);
+    expect(result.pendingCount).toBe(3);
+    expect(result.requests[0]).toMatchObject({
+      id: "archive-request-1",
+      member: {
+        id: "member-1",
+        name: "Former Member",
+        email: "former@example.test",
+      },
+    });
+  });
+
+  it("counts pending archive requests for review badges", async () => {
+    mockPrisma.memberLifecycleActionRequest.count.mockResolvedValueOnce(2);
+
+    await expect(getPendingMemberArchiveReviewCount()).resolves.toBe(2);
+    expect(mockPrisma.memberLifecycleActionRequest.count).toHaveBeenCalledWith({
+      where: { action: "ARCHIVE", status: "REQUESTED" },
+    });
   });
 
   it("requires a different admin to review an archive request", async () => {

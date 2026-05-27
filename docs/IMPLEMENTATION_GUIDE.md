@@ -134,7 +134,9 @@ preserving booking, payment, Xero, and audit history.
 
 Archive and hard delete are separate admin lifecycle policies on the member
 detail page. Archive is for already-cancelled members and keeps the member row
-for historical reporting while hiding it from default operational views. Hard
+for historical reporting while hiding it from default operational views. Archive
+requests are reviewed under `/admin/membership-cancellations` alongside the
+cancellation review queue and require a different admin for approval. Hard
 delete is only for records added in error: it requires a clean dependency check,
 a reason, second-admin approval, and a retained request snapshot before the row
 is removed. If any meaningful history exists, use cancellation and archive

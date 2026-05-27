@@ -90,6 +90,24 @@ export type SerializedMemberLifecycleActionRequest = {
   memberSnapshot: Prisma.JsonValue | null;
 };
 
+export type AdminMemberLifecycleActionStatusFilter =
+  | MemberLifecycleActionRequestStatus
+  | "ALL";
+
+export type SerializedAdminMemberArchiveLifecycleRequest =
+  SerializedMemberLifecycleActionRequest & {
+    member: {
+      id: string;
+      name: string;
+      email: string;
+      active: boolean;
+      canLogin: boolean;
+      cancelledAt: string | null;
+      archivedAt: string | null;
+      archivedReason: string | null;
+    } | null;
+  };
+
 export class MemberLifecycleActionError extends Error {
   constructor(
     message: string,
@@ -166,6 +184,39 @@ export function serializeMemberLifecycleActionRequest(
     requestedBy: serializeMember(request.requestedBy),
     reviewedBy: serializeMember(request.reviewedBy),
     memberSnapshot: request.memberSnapshot,
+  };
+}
+
+function serializeArchiveTargetMember(
+  member:
+    | Prisma.MemberGetPayload<{ select: typeof archiveTargetMemberSelect }>
+    | null
+    | undefined,
+) {
+  if (!member) return null;
+
+  return {
+    id: member.id,
+    name: memberDisplayName(member),
+    email: member.email,
+    active: member.active,
+    canLogin: member.canLogin,
+    cancelledAt: serializeDate(member.cancelledAt),
+    archivedAt: serializeDate(member.archivedAt),
+    archivedReason: member.archivedReason,
+  };
+}
+
+function serializeAdminArchiveLifecycleRequest(
+  request: LifecycleActionRequestRecord,
+  member:
+    | Prisma.MemberGetPayload<{ select: typeof archiveTargetMemberSelect }>
+    | null
+    | undefined,
+): SerializedAdminMemberArchiveLifecycleRequest {
+  return {
+    ...serializeMemberLifecycleActionRequest(request),
+    member: serializeArchiveTargetMember(member),
   };
 }
 
@@ -556,6 +607,69 @@ export async function getMemberArchiveLifecycleRequests(memberId: string) {
   });
 
   return requests.map(serializeMemberLifecycleActionRequest);
+}
+
+export async function getPendingMemberArchiveReviewCount() {
+  return prisma.memberLifecycleActionRequest.count({
+    where: {
+      action: MemberLifecycleAction.ARCHIVE,
+      status: MemberLifecycleActionRequestStatus.REQUESTED,
+    },
+  });
+}
+
+export async function getAdminMemberArchiveLifecycleRequests({
+  status = MemberLifecycleActionRequestStatus.REQUESTED,
+  page = 1,
+  pageSize = 25,
+}: {
+  status?: AdminMemberLifecycleActionStatusFilter;
+  page?: number;
+  pageSize?: number;
+}) {
+  const where =
+    status === "ALL"
+      ? { action: MemberLifecycleAction.ARCHIVE }
+      : {
+          action: MemberLifecycleAction.ARCHIVE,
+          status,
+        };
+
+  const [requests, total, pendingCount] = await Promise.all([
+    prisma.memberLifecycleActionRequest.findMany({
+      where,
+      include: lifecycleActionRequestInclude,
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.memberLifecycleActionRequest.count({ where }),
+    getPendingMemberArchiveReviewCount(),
+  ]);
+
+  const memberIds = [...new Set(requests.map((request) => request.memberId))];
+  const members =
+    memberIds.length > 0
+      ? await prisma.member.findMany({
+          where: { id: { in: memberIds } },
+          select: archiveTargetMemberSelect,
+        })
+      : [];
+  const membersById = new Map(members.map((member) => [member.id, member]));
+
+  return {
+    requests: requests.map((request) =>
+      serializeAdminArchiveLifecycleRequest(
+        request,
+        membersById.get(request.memberId),
+      ),
+    ),
+    pendingCount,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  };
 }
 
 function assertEligibleForDelete(eligibility: MemberDeleteEligibility) {

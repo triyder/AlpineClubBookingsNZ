@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { Archive, AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,6 +79,39 @@ type CancellationRequest = {
 
 type CancellationResponse = {
   requests: CancellationRequest[];
+  pendingCount: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+type ArchiveRequest = {
+  id: string;
+  memberId: string;
+  action: string;
+  status: string;
+  reason: string;
+  reviewNote: string | null;
+  requestedAt: string;
+  reviewedAt: string | null;
+  processedAt: string | null;
+  requestedBy: { id: string; name: string; email: string } | null;
+  reviewedBy: { id: string; name: string; email: string } | null;
+  member: {
+    id: string;
+    name: string;
+    email: string;
+    active: boolean;
+    canLogin: boolean;
+    cancelledAt: string | null;
+    archivedAt: string | null;
+    archivedReason: string | null;
+  } | null;
+};
+
+type ArchiveResponse = {
+  requests: ArchiveRequest[];
   pendingCount: number;
   total: number;
   page: number;
@@ -183,20 +217,42 @@ function canReject(participant: CancellationParticipant) {
 }
 
 export default function MembershipCancellationsPage() {
+  const { data: session } = useSession();
+  const currentAdminId = session?.user?.id;
   const [filter, setFilter] = useState<RequestFilter>("REQUESTED");
   const [data, setData] = useState<CancellationResponse | null>(null);
+  const [archiveData, setArchiveData] = useState<ArchiveResponse | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [archiveNotes, setArchiveNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [archiveLoading, setArchiveLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [archiveSubmittingId, setArchiveSubmittingId] = useState<string | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const pendingSummary = useMemo(() => {
-    if (!data?.pendingCount) return "No cancellation requests awaiting review";
-    return `${data.pendingCount} cancellation request${
-      data.pendingCount === 1 ? "" : "s"
-    } awaiting review`;
-  }, [data?.pendingCount]);
+    const cancellationCount = data?.pendingCount ?? 0;
+    const archiveCount = archiveData?.pendingCount ?? 0;
+    const parts = [
+      cancellationCount > 0
+        ? `${cancellationCount} cancellation request${
+            cancellationCount === 1 ? "" : "s"
+          }`
+        : null,
+      archiveCount > 0
+        ? `${archiveCount} archive request${archiveCount === 1 ? "" : "s"}`
+        : null,
+    ].filter(Boolean);
+
+    if (parts.length === 0) {
+      return "No membership lifecycle requests awaiting review";
+    }
+
+    return `${parts.join(" and ")} awaiting review`;
+  }, [archiveData?.pendingCount, data?.pendingCount]);
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
@@ -223,9 +279,43 @@ export default function MembershipCancellationsPage() {
     }
   }, [filter]);
 
+  const loadArchiveRequests = useCallback(async () => {
+    setArchiveLoading(true);
+    setError("");
+
+    try {
+      const params = new URLSearchParams({
+        action: "ARCHIVE",
+        status: "REQUESTED",
+      });
+      const response = await fetch(
+        `/api/admin/member-lifecycle-action-requests?${params.toString()}`,
+      );
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.error || "Could not load archive requests.");
+      }
+      setArchiveData(body);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not load archive requests.",
+      );
+    } finally {
+      setArchiveLoading(false);
+    }
+  }, []);
+
+  const refreshQueues = useCallback(async () => {
+    await Promise.all([loadRequests(), loadArchiveRequests()]);
+  }, [loadArchiveRequests, loadRequests]);
+
   useEffect(() => {
     loadRequests();
   }, [loadRequests]);
+
+  useEffect(() => {
+    loadArchiveRequests();
+  }, [loadArchiveRequests]);
 
   async function reviewParticipant(
     requestId: string,
@@ -271,6 +361,47 @@ export default function MembershipCancellationsPage() {
     }
   }
 
+  async function reviewArchiveRequest(
+    requestId: string,
+    action: "approve" | "reject",
+  ) {
+    setArchiveSubmittingId(`${requestId}:${action}`);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/member-lifecycle-action-requests/${requestId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            note: archiveNotes[requestId] || undefined,
+          }),
+        },
+      );
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.error || "Could not review archive request.");
+      }
+
+      setArchiveNotes((prev) => ({ ...prev, [requestId]: "" }));
+      setMessage(
+        action === "approve"
+          ? "Member archived."
+          : "Archive request rejected.",
+      );
+      await loadArchiveRequests();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not review archive request.",
+      );
+    } finally {
+      setArchiveSubmittingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -299,11 +430,16 @@ export default function MembershipCancellationsPage() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => loadRequests()}
-            disabled={loading}
-            aria-label="Refresh cancellation requests"
+            onClick={() => refreshQueues()}
+            disabled={loading || archiveLoading}
+            aria-label="Refresh membership lifecycle requests"
           >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+            <RefreshCw
+              className={cn(
+                "h-4 w-4",
+                (loading || archiveLoading) && "animate-spin",
+              )}
+            />
           </Button>
         </div>
       </div>
@@ -321,7 +457,149 @@ export default function MembershipCancellationsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Review Queue</CardTitle>
+          <CardTitle>Archive Review Queue</CardTitle>
+          <CardDescription>
+            {archiveData
+              ? `${archiveData.pendingCount} archive request${
+                  archiveData.pendingCount === 1 ? "" : "s"
+                } awaiting review`
+              : "Loading archive requests"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {archiveLoading && (
+            <p className="py-6 text-sm text-slate-500">
+              Loading archive requests...
+            </p>
+          )}
+
+          {!archiveLoading && archiveData?.requests.length === 0 && (
+            <p className="py-6 text-sm text-slate-500">
+              No archive requests are awaiting review.
+            </p>
+          )}
+
+          {!archiveLoading && archiveData && archiveData.requests.length > 0 && (
+            <div className="divide-y">
+              {archiveData.requests.map((request) => {
+                const requesterIsCurrentAdmin =
+                  Boolean(currentAdminId) &&
+                  request.requestedBy?.id === currentAdminId;
+                const memberHref = `/admin/members/${request.memberId}`;
+                const isSubmitting = archiveSubmittingId?.startsWith(
+                  `${request.id}:`,
+                );
+
+                return (
+                  <section
+                    key={request.id}
+                    className="space-y-4 py-5 first:pt-0"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Archive className="h-4 w-4 text-slate-500" />
+                          <Link
+                            className="font-medium text-slate-900 underline-offset-2 hover:underline"
+                            href={buildHrefWithReturnTo(memberHref, currentPath)}
+                          >
+                            {request.member?.name ||
+                              request.member?.email ||
+                              request.memberId}
+                          </Link>
+                          {statusBadge(request.status)}
+                          {request.member?.archivedAt && (
+                            <Badge variant="outline">Already archived</Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-slate-600">
+                          Requested by{" "}
+                          {request.requestedBy ? (
+                            <Link
+                              className="font-medium text-slate-900 underline-offset-2 hover:underline"
+                              href={buildHrefWithReturnTo(
+                                `/admin/members/${request.requestedBy.id}`,
+                                currentPath,
+                              )}
+                            >
+                              {request.requestedBy.name}
+                            </Link>
+                          ) : (
+                            "Unknown admin"
+                          )}{" "}
+                          on {formatDateTime(request.requestedAt)}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          <span className="font-medium">Reason:</span>{" "}
+                          {request.reason}
+                        </p>
+                        {request.member?.cancelledAt && (
+                          <p className="text-xs text-slate-500">
+                            Cancelled {formatDateTime(request.member.cancelledAt)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {requesterIsCurrentAdmin ? (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        A different admin must approve or reject this archive
+                        request.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor={`archive-note-${request.id}`}>
+                            Review note
+                          </Label>
+                          <Textarea
+                            id={`archive-note-${request.id}`}
+                            value={archiveNotes[request.id] ?? ""}
+                            onChange={(event) =>
+                              setArchiveNotes((prev) => ({
+                                ...prev,
+                                [request.id]: event.target.value,
+                              }))
+                            }
+                            maxLength={1000}
+                            rows={2}
+                            placeholder="Optional note for the member and audit log"
+                          />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            className="border-red-200 text-red-700 hover:bg-red-50"
+                            disabled={Boolean(isSubmitting)}
+                            onClick={() => reviewArchiveRequest(request.id, "reject")}
+                          >
+                            <XCircle className="h-4 w-4" />
+                            Reject
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            disabled={Boolean(isSubmitting)}
+                            onClick={() =>
+                              reviewArchiveRequest(request.id, "approve")
+                            }
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Approve Archive
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cancellation Review Queue</CardTitle>
           <CardDescription>
             {data ? `${data.total} request${data.total === 1 ? "" : "s"}` : "Loading requests"}
           </CardDescription>
@@ -382,8 +660,13 @@ export default function MembershipCancellationsPage() {
 
                   <div className="space-y-3">
                     {request.participants.map((participant) => {
+                      const requesterIsCurrentAdmin =
+                        Boolean(currentAdminId) &&
+                        request.requestedBy?.id === currentAdminId;
                       const approveDisabled =
-                        submittingId !== null || !canApprove(participant);
+                        submittingId !== null ||
+                        !canApprove(participant) ||
+                        requesterIsCurrentAdmin;
                       const rejectDisabled =
                         submittingId !== null || !canReject(participant);
 
@@ -526,6 +809,13 @@ export default function MembershipCancellationsPage() {
                                   <p className="text-xs text-slate-500">
                                     Approval is unavailable until this adult confirms
                                     their own cancellation request.
+                                  </p>
+                                )}
+                              {requesterIsCurrentAdmin &&
+                                canApprove(participant) && (
+                                  <p className="text-xs text-amber-700">
+                                    A different admin must approve cancellation
+                                    requests you initiated.
                                   </p>
                                 )}
                             </div>

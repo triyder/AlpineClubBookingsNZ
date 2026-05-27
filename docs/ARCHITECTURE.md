@@ -210,8 +210,9 @@ queues Xero cancellation operations.
 
 Cancelled members can be archived through `MemberLifecycleActionRequest` with
 the `ARCHIVE` action. Archive requires a reason and approval by a different
-admin. Approval keeps the member record and related history but marks it
-archived, inactive, and non-login so default operational lists exclude it.
+admin through the `/admin/membership-cancellations` review queue. Approval keeps
+the member record and related history but marks it archived, inactive, and
+non-login so default operational lists exclude it.
 
 Member records created in error use `MemberLifecycleActionRequest` with the
 `DELETE` action. A delete request requires a reason, approval by a different

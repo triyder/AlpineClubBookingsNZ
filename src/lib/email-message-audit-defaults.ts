@@ -164,7 +164,7 @@ export const EMAIL_AUDIT_DEFAULTS = {
   },
   "admin-member-archive-requested": {
     "defaultSubject": "Member archive requested: {{memberName}}",
-    "defaultBody": "Member Archive Requested\n\n{{requesterName}} requested archive review for {{memberName}}.\n\nMember: {{memberName}}\nRequested by: {{requesterName}}\n\nReason:\n{{reason}}\n\nReview Member: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+    "defaultBody": "Member Archive Requested\n\n{{requesterName}} requested archive review for {{memberName}}.\n\nMember: {{memberName}}\nRequested by: {{requesterName}}\n\nReason:\n{{reason}}\n\nReview Archive Requests: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
   "member-archive-approved": {
     "defaultSubject": "Membership archive completed — {{CLUB_BOOKINGS_NAME}}",

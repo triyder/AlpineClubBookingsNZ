@@ -1435,7 +1435,7 @@ export async function sendAdminMemberArchiveRequestedAlert(params: {
   reason: string;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/members/${encodeURIComponent(params.memberId)}`;
+  const reviewUrl = `${baseUrl}/admin/membership-cancellations`;
 
   await sendToAdmins({
     subject: `Member archive requested: ${params.memberName}`,

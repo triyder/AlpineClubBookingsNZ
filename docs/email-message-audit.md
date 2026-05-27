@@ -1357,7 +1357,7 @@ Requested by: {{requesterName}}
 Reason:
 {{reason}}
 
-Review Member: {{reviewUrl}}
+Review Archive Requests: {{reviewUrl}}
 
 {{CLUB_NAME}} — {{SUPPORT_EMAIL}}
 ```

@@ -281,6 +281,32 @@ describe("membership cancellation admin review", () => {
     );
   });
 
+  it("prevents an admin from approving a cancellation request they initiated", async () => {
+    mocks.participantFindUnique.mockResolvedValue(
+      participant({
+        request: {
+          id: "request-1",
+          status: "REQUESTED",
+          reason: "Moving away",
+          requestedByMemberId: "admin-1",
+        },
+      }),
+    );
+
+    await expect(
+      reviewMembershipCancellationParticipant({
+        requestId: "request-1",
+        participantId: "participant-1",
+        action: "approve",
+        adminMemberId: "admin-1",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+    } satisfies Partial<MembershipCancellationAdminError>);
+
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it("rejects a pending confirmation participant without cancelling the member", async () => {
     mocks.participantFindUnique.mockResolvedValue(
       participant({
