@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseAdminAuditLogQuery } from "@/lib/audit-admin-query";
 import {
   buildAuditDrilldownLinks,
   buildAuditMemberScopeWhere,
@@ -79,5 +80,81 @@ describe("audit query helpers", () => {
         href: "/admin/communications",
       }),
     ]);
+  });
+
+  it("parses admin audit filters into a Prisma where clause", () => {
+    const result = parseAdminAuditLogQuery(
+      new URLSearchParams({
+        action: "LOGIN",
+        category: "security",
+        memberId: "member-1",
+        memberScope: "subject",
+        from: "2026-04-01",
+        to: "2026-04-30",
+        outcome: "success",
+        severity: "critical",
+        entityType: "Member",
+        q: " req-1 ",
+        page: "2",
+        pageSize: "50",
+      }),
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.data.page).toBe(2);
+    expect(result.data.pageSize).toBe(50);
+    expect(result.data.eventType).toBe("LOGIN");
+    expect(result.data.filters).toEqual({
+      eventType: "LOGIN",
+      category: "security",
+      memberId: "member-1",
+      memberScope: "subject",
+      from: "2026-04-01",
+      to: "2026-04-30",
+      outcome: "success",
+      severity: "critical",
+      entityType: "Member",
+      q: "req-1",
+    });
+    expect(result.data.where.AND).toEqual(
+      expect.arrayContaining([
+        { action: "LOGIN" },
+        expect.objectContaining({
+          OR: expect.arrayContaining([{ category: "security" }]),
+        }),
+        expect.objectContaining({
+          OR: expect.arrayContaining([{ subjectMemberId: "member-1" }]),
+        }),
+        {
+          createdAt: {
+            gte: new Date("2026-04-01T00:00:00"),
+            lte: new Date("2026-04-30T23:59:59"),
+          },
+        },
+        { outcome: "success" },
+        { severity: "critical" },
+        { entityType: "Member" },
+        expect.objectContaining({
+          OR: expect.arrayContaining([
+            { requestId: { contains: "req-1", mode: "insensitive" } },
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("rejects invalid admin audit filter values", () => {
+    expect(
+      parseAdminAuditLogQuery(new URLSearchParams({ category: "unknown" })),
+    ).toEqual({ success: false, details: undefined });
+
+    const oversizedPage = parseAdminAuditLogQuery(
+      new URLSearchParams({ pageSize: "101" }),
+    );
+    expect(oversizedPage.success).toBe(false);
+    if (oversizedPage.success) return;
+    expect(oversizedPage.details?.fieldErrors.pageSize).toBeDefined();
   });
 });
