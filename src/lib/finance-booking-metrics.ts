@@ -6,10 +6,18 @@ import {
   OPERATIONAL_STAY_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
+import {
+  addUtcDays,
+  allocateCentsEvenly,
+  buildIsoDateRange,
+  differenceInUtcDays,
+  getFinanceBookingMetricsWindowDayCount,
+  parseFinanceBookingMetricDate as parseIsoDate,
+  toIsoDate,
+} from "@/lib/finance-booking-metric-calculations";
 
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const MILLISECONDS_PER_DAY = 86_400_000;
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
+export { getFinanceBookingMetricsWindowDayCount };
 
 export const FINANCE_REALIZED_BOOKING_STATUSES = [
   ...OPERATIONAL_STAY_BOOKING_STATUSES,
@@ -299,19 +307,6 @@ function createEmptyDailyMetric(date: string): FinanceBookingDailyMetric {
   };
 }
 
-function parseIsoDate(value: string, fieldName: string): Date {
-  if (!ISO_DATE_PATTERN.test(value)) {
-    throw new Error(`${fieldName} must use YYYY-MM-DD`);
-  }
-
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (parsed.toISOString().slice(0, 10) !== value) {
-    throw new Error(`${fieldName} must be a valid date`);
-  }
-
-  return parsed;
-}
-
 function normalizeDateWindow(
   input: FinanceBookingMetricsDateRangeInput,
   prefix: string
@@ -352,49 +347,6 @@ function minDateFromList(values: Date[]): Date {
 
 function maxDateFromList(values: Date[]): Date {
   return values.reduce((currentMax, value) => maxDate(currentMax, value));
-}
-
-function addUtcDays(date: Date, days: number): Date {
-  return new Date(date.getTime() + days * MILLISECONDS_PER_DAY);
-}
-
-function differenceInUtcDays(start: Date, end: Date): number {
-  return Math.max(
-    Math.round((end.getTime() - start.getTime()) / MILLISECONDS_PER_DAY),
-    0
-  );
-}
-
-export function getFinanceBookingMetricsWindowDayCount(
-  from: string,
-  to: string
-): number {
-  const fromDate = parseIsoDate(from, "from");
-  const toDate = parseIsoDate(to, "to");
-
-  if (fromDate.getTime() > toDate.getTime()) {
-    throw new Error("to must be on or after from");
-  }
-
-  return differenceInUtcDays(fromDate, addUtcDays(toDate, 1));
-}
-
-function toIsoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
-
-function buildIsoDateRange(start: Date, endInclusive: Date): string[] {
-  const dates: string[] = [];
-
-  for (
-    let cursor = start;
-    cursor.getTime() <= endInclusive.getTime();
-    cursor = addUtcDays(cursor, 1)
-  ) {
-    dates.push(toIsoDate(cursor));
-  }
-
-  return dates;
 }
 
 function getCurrentIsoDate(): string {
@@ -561,24 +513,6 @@ function applyDailyMetrics<Status extends string>(
         : 0;
     row.bookedRevenueCents = dailyAccumulator.bookedRevenueCents;
   }
-}
-
-function allocateCentsEvenly(totalCents: number, parts: number): number[] {
-  if (parts <= 0) {
-    return [];
-  }
-
-  const base = Math.floor(totalCents / parts);
-  let remainder = totalCents - base * parts;
-
-  return Array.from({ length: parts }, () => {
-    if (remainder > 0) {
-      remainder -= 1;
-      return base + 1;
-    }
-
-    return base;
-  });
 }
 
 function getPaymentStatusKey(
