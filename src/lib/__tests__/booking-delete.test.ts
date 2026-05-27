@@ -242,6 +242,63 @@ describe("deleteBooking", () => {
     });
   });
 
+  it("soft-deletes a cancelled booking when payment attempts failed before capture", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      makeBooking({
+        status: "CANCELLED",
+        draftExpiresAt: null,
+        payment: {
+          id: "payment-1",
+          status: "FAILED",
+          amountCents: 4000,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+          additionalAmountCents: 0,
+          additionalPaymentStatus: null,
+          creditAppliedCents: 0,
+          stripePaymentIntentId: "pi_failed",
+          additionalPaymentIntentId: null,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          xeroRefundCreditNoteId: null,
+        },
+      })
+    );
+
+    const result = await deleteBooking({
+      bookingId: "booking-1",
+      actor: { memberId: "admin-1", role: "ADMIN", ipAddress: "127.0.0.1" },
+      reason: "Cancelled before payment capture",
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      data: {
+        success: true,
+        mode: "soft-delete",
+        bookingId: "booking-1",
+        message: "Cancelled booking deleted",
+      },
+    });
+    expect(mocks.paymentTransactionCount).toHaveBeenCalledWith({
+      where: {
+        paymentId: "payment-1",
+        OR: [
+          { status: { in: ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"] } },
+          { refundedAmountCents: { gt: 0 } },
+        ],
+      },
+    });
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: {
+        deletedAt: expect.any(Date),
+        deletedById: "admin-1",
+        deletedReason: "Cancelled before payment capture",
+      },
+    });
+  });
+
   it("returns blocker details for cancelled bookings with financial or Xero history", async () => {
     mocks.bookingFindUnique.mockResolvedValue(
       makeBooking({
@@ -288,7 +345,6 @@ describe("deleteBooking", () => {
       error:
         "Cancelled booking cannot be deleted because financial or Xero history exists",
       blockers: expect.arrayContaining([
-        expect.objectContaining({ code: "payment_record" }),
         expect.objectContaining({ code: "captured_payment" }),
         expect.objectContaining({ code: "payment_transaction" }),
         expect.objectContaining({ code: "member_credit" }),

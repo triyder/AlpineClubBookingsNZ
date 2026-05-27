@@ -317,7 +317,7 @@ async function getCancelledBookingDeleteBlockers(
   ];
 
   const [
-    paymentTransactionCount,
+    financialPaymentTransactionCount,
     paymentRefundCount,
     refundRequestCount,
     memberCreditCount,
@@ -326,7 +326,15 @@ async function getCancelledBookingDeleteBlockers(
     xeroSyncOperationCount,
   ] = await Promise.all([
     paymentId
-      ? tx.paymentTransaction.count({ where: { paymentId } })
+      ? tx.paymentTransaction.count({
+          where: {
+            paymentId,
+            OR: [
+              { status: { in: Array.from(CAPTURED_PAYMENT_STATUSES) } },
+              { refundedAmountCents: { gt: 0 } },
+            ],
+          },
+        })
       : Promise.resolve(0),
     paymentId ? tx.paymentRefund.count({ where: { paymentId } }) : Promise.resolve(0),
     tx.refundRequest.count({ where: { bookingId: booking.id } }),
@@ -351,12 +359,6 @@ async function getCancelledBookingDeleteBlockers(
 
   addBlocker(
     blockers,
-    "payment_record",
-    "Payment record exists",
-    booking.payment ? 1 : 0
-  );
-  addBlocker(
-    blockers,
     "captured_payment",
     "Captured, refunded, or credited payment exists",
     hasCapturedOrCreditedPayment(booking.payment) ? 1 : 0
@@ -364,8 +366,8 @@ async function getCancelledBookingDeleteBlockers(
   addBlocker(
     blockers,
     "payment_transaction",
-    "Payment transaction history exists",
-    paymentTransactionCount
+    "Captured or refunded payment transaction history exists",
+    financialPaymentTransactionCount
   );
   addBlocker(
     blockers,
