@@ -281,6 +281,51 @@ describe("membership cancellation admin review", () => {
     );
   });
 
+  it("blocks approval when future guest appearances remain", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([
+      {
+        id: "guest-1",
+        memberId: "member-1",
+        stayStart: new Date("2099-02-01T00:00:00.000Z"),
+        stayEnd: new Date("2099-02-02T00:00:00.000Z"),
+        booking: {
+          id: "booking-2",
+          checkIn: new Date("2099-02-01T00:00:00.000Z"),
+          checkOut: new Date("2099-02-02T00:00:00.000Z"),
+          status: "CONFIRMED",
+        },
+      },
+    ]);
+
+    await expect(
+      reviewMembershipCancellationParticipant({
+        requestId: "request-1",
+        participantId: "participant-1",
+        action: "approve",
+        adminMemberId: "admin-1",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+    } satisfies Partial<MembershipCancellationAdminError>);
+
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "membership_cancellation.approval_blocked",
+        outcome: "blocked",
+        metadata: {
+          blockers: [
+            expect.objectContaining({
+              type: "guest_appearance",
+              bookingId: "booking-2",
+              guestAppearanceId: "guest-1",
+            }),
+          ],
+        },
+      }),
+    );
+  });
+
   it("prevents an admin from approving a cancellation request they initiated", async () => {
     mocks.participantFindUnique.mockResolvedValue(
       participant({

@@ -4,13 +4,16 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
-import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
-import { getTodayDateOnly } from "@/lib/date-only";
 import {
   sendMembershipCancellationApprovedEmail,
   sendMembershipCancellationRejectedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import {
+  emptyMembershipCancellationBlockerMap,
+  loadMembershipCancellationBlockersByMemberId,
+  type MembershipCancellationBlocker,
+} from "@/lib/membership-cancellation-blockers";
 import { loadMembershipCancellationSettings } from "@/lib/membership-cancellation-settings";
 import {
   cleanText,
@@ -29,8 +32,6 @@ const REVIEWABLE_REJECTION_STATUSES: readonly MembershipCancellationParticipantS
   MembershipCancellationParticipantStatus.REQUESTED,
   MembershipCancellationParticipantStatus.PENDING_CONFIRMATION,
 ] as const;
-
-type CancellationReviewClient = Prisma.TransactionClient | typeof prisma;
 
 type AdminCancellationRequestRecord =
   Prisma.MembershipCancellationRequestGetPayload<{
@@ -51,15 +52,6 @@ type AdminCancellationRequestRecord =
 export type AdminCancellationStatusFilter =
   | MembershipCancellationRequestStatus
   | "ALL";
-
-export type MembershipCancellationBlocker = {
-  type: "owned_booking" | "guest_appearance";
-  bookingId: string;
-  bookingStatus: string;
-  checkIn: string;
-  checkOut: string;
-  guestAppearanceId?: string;
-};
 
 export type AdminSerializedMembershipCancellationParticipant = {
   id: string;
@@ -138,94 +130,9 @@ const adminCancellationRequestInclude = {
   },
 } satisfies Prisma.MembershipCancellationRequestInclude;
 
-function emptyBlockerMap(memberIds: string[]) {
-  return new Map(
-    memberIds.map((memberId) => [
-      memberId,
-      [] as MembershipCancellationBlocker[],
-    ]),
-  );
-}
-
-async function loadBlockersByMemberId(
-  memberIds: string[],
-  db: CancellationReviewClient = prisma,
-) {
-  const uniqueMemberIds = [...new Set(memberIds)].filter(Boolean);
-  const blockersByMemberId = emptyBlockerMap(uniqueMemberIds);
-  if (uniqueMemberIds.length === 0) return blockersByMemberId;
-
-  const today = getTodayDateOnly();
-  const [ownedBookings, guestAppearances] = await Promise.all([
-    db.booking.findMany({
-      where: {
-        memberId: { in: uniqueMemberIds },
-        status: { in: [...ACTIVE_BOOKING_STATUSES] },
-        checkOut: { gt: today },
-      },
-      select: {
-        id: true,
-        memberId: true,
-        checkIn: true,
-        checkOut: true,
-        status: true,
-      },
-      orderBy: [{ checkIn: "asc" }, { id: "asc" }],
-    }),
-    db.bookingGuest.findMany({
-      where: {
-        memberId: { in: uniqueMemberIds },
-        stayEnd: { gt: today },
-        booking: {
-          status: { in: [...ACTIVE_BOOKING_STATUSES] },
-        },
-      },
-      select: {
-        id: true,
-        memberId: true,
-        stayStart: true,
-        stayEnd: true,
-        booking: {
-          select: {
-            id: true,
-            status: true,
-            checkIn: true,
-            checkOut: true,
-          },
-        },
-      },
-      orderBy: [{ stayStart: "asc" }, { id: "asc" }],
-    }),
-  ]);
-
-  for (const booking of ownedBookings) {
-    blockersByMemberId.get(booking.memberId)?.push({
-      type: "owned_booking",
-      bookingId: booking.id,
-      bookingStatus: booking.status,
-      checkIn: booking.checkIn.toISOString(),
-      checkOut: booking.checkOut.toISOString(),
-    });
-  }
-
-  for (const guest of guestAppearances) {
-    if (!guest.memberId) continue;
-    blockersByMemberId.get(guest.memberId)?.push({
-      type: "guest_appearance",
-      bookingId: guest.booking.id,
-      bookingStatus: guest.booking.status,
-      checkIn: guest.stayStart.toISOString(),
-      checkOut: guest.stayEnd.toISOString(),
-      guestAppearanceId: guest.id,
-    });
-  }
-
-  return blockersByMemberId;
-}
-
 function serializeRequest(
   request: AdminCancellationRequestRecord,
-  blockersByMemberId = emptyBlockerMap(
+  blockersByMemberId = emptyMembershipCancellationBlockerMap(
     request.participants.map((participant) => participant.memberId),
   ),
 ): AdminSerializedMembershipCancellationRequest {
@@ -515,7 +422,8 @@ export async function getAdminMembershipCancellationRequests({
       )
       .map((participant) => participant.memberId),
   );
-  const blockersByMemberId = await loadBlockersByMemberId(participantMemberIds);
+  const blockersByMemberId =
+    await loadMembershipCancellationBlockersByMemberId(participantMemberIds);
 
   return {
     requests: requests.map((request) =>
@@ -554,9 +462,10 @@ export async function reviewMembershipCancellationParticipant({
       adminMemberId,
     );
     assertParticipantCanBeApproved(participant);
-    const blockersByMemberId = await loadBlockersByMemberId([
-      participant.memberId,
-    ]);
+    const blockersByMemberId =
+      await loadMembershipCancellationBlockersByMemberId([
+        participant.memberId,
+      ]);
     const blockers = blockersByMemberId.get(participant.memberId) ?? [];
     if (blockers.length > 0) {
       await createAuditLog({
@@ -732,14 +641,15 @@ export async function reviewMembershipCancellationParticipant({
     );
   }
 
-  const blockersByMemberId = await loadBlockersByMemberId(
-    updatedRequest.participants
-      .filter(
-        (item) =>
-          item.status === MembershipCancellationParticipantStatus.REQUESTED,
-      )
-      .map((item) => item.memberId),
-  );
+  const blockersByMemberId =
+    await loadMembershipCancellationBlockersByMemberId(
+      updatedRequest.participants
+        .filter(
+          (item) =>
+            item.status === MembershipCancellationParticipantStatus.REQUESTED,
+        )
+        .map((item) => item.memberId),
+    );
 
   return {
     request: serializeRequest(updatedRequest, blockersByMemberId),
