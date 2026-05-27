@@ -16,6 +16,7 @@ export async function GET() {
   const drafts = await prisma.booking.findMany({
     where: {
       memberId: session.user.id,
+      deletedAt: null,
       status: "DRAFT",
       draftExpiresAt: { gt: new Date() },
     },

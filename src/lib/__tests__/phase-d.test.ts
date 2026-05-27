@@ -149,6 +149,22 @@ describe("#33: Admin Bookings Calendar API", () => {
 
     const call = mockPrisma.booking.findMany.mock.calls[0][0];
     expect(call.where.status).toEqual({ not: "DRAFT" });
+    expect(call.where.deletedAt).toBeNull();
+  });
+
+  it("supports admin calendar deleted visibility filters", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+
+    const { GET } = await import("@/app/api/admin/bookings/route");
+    const req = new NextRequest(
+      "http://localhost/api/admin/bookings?calendarMonth=2026-04&deleted=only"
+    );
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    const call = mockPrisma.booking.findMany.mock.calls[0][0];
+    expect(call.where.deletedAt).toEqual({ not: null });
   });
 
   it("queries bookings overlapping month boundaries with an exclusive month end", async () => {

@@ -13,7 +13,7 @@ export default async function MyBookingsPage() {
   if (!session) return null;
 
   const bookings = await prisma.booking.findMany({
-    where: { memberId: session.user.id },
+    where: { memberId: session.user.id, deletedAt: null },
     include: { guests: true },
     orderBy: { checkIn: "desc" },
   });

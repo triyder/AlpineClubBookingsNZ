@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
+import {
+  buildBookingDeletedWhere,
+  parseBookingDeletedVisibility,
+} from "@/lib/booking-delete-visibility";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
@@ -8,6 +12,7 @@ import { z } from "zod";
 const adminBookingSearchQuerySchema = z.object({
   q: z.string().trim().min(2),
   limit: z.coerce.number().int().min(1).max(20).default(8),
+  deleted: z.enum(["hide", "include", "only"]).default("hide"),
 });
 
 const bookingReferencePattern =
@@ -93,6 +98,7 @@ export async function GET(request: NextRequest) {
   const parsed = adminBookingSearchQuerySchema.safeParse({
     q: request.nextUrl.searchParams.get("q"),
     limit: request.nextUrl.searchParams.get("limit") ?? "8",
+    deleted: parseBookingDeletedVisibility(request.nextUrl.searchParams.get("deleted")),
   });
 
   if (!parsed.success) {
@@ -111,13 +117,14 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { q, limit } = parsed.data;
+  const { q, limit, deleted } = parsed.data;
   const bookingIdSearchTerms = getBookingIdSearchTerms(q);
 
   try {
     const bookings = await prisma.booking.findMany({
       where: {
         status: { not: "DRAFT" },
+        ...buildBookingDeletedWhere(deleted),
         OR: [
           ...bookingIdSearchTerms.map((term) => ({
             id: { startsWith: term },
@@ -138,6 +145,7 @@ export async function GET(request: NextRequest) {
       select: {
         id: true,
         status: true,
+        deletedAt: true,
         checkIn: true,
         checkOut: true,
         updatedAt: true,
@@ -223,6 +231,7 @@ export async function GET(request: NextRequest) {
         checkIn: booking.checkIn.toISOString().split("T")[0],
         checkOut: booking.checkOut.toISOString().split("T")[0],
         status: booking.status,
+        deletedAt: booking.deletedAt?.toISOString() ?? null,
         guestCount: booking._count.guests,
         paymentId: booking.payment?.id ?? null,
         xeroInvoiceId: booking.payment?.xeroInvoiceId ?? null,

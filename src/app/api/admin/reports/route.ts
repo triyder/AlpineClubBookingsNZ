@@ -13,10 +13,15 @@ import {
   OPERATIONAL_STAY_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
+import {
+  buildBookingDeletedWhere,
+  parseBookingDeletedVisibility,
+} from "@/lib/booking-delete-visibility";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  deleted: z.enum(["hide", "include", "only"]).default("hide"),
 });
 
 export async function GET(request: NextRequest) {
@@ -36,6 +41,7 @@ export async function GET(request: NextRequest) {
   const parsed = reportQuerySchema.safeParse({
     from: searchParams.get("from"),
     to: searchParams.get("to"),
+    deleted: parseBookingDeletedVisibility(searchParams.get("deleted")),
   });
 
   if (!parsed.success) {
@@ -49,6 +55,7 @@ export async function GET(request: NextRequest) {
   const toDate = new Date(parsed.data.to + "T23:59:59");
   const occupancyFromDate = new Date(parsed.data.from + "T00:00:00");
   const occupancyToDate = new Date(parsed.data.to + "T00:00:00");
+  const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);
 
   if (toDate <= fromDate) {
     return NextResponse.json({ error: "to must be after from" }, { status: 400 });
@@ -69,6 +76,7 @@ export async function GET(request: NextRequest) {
     ] = await Promise.all([
       prisma.booking.findMany({
         where: {
+          ...deletedWhere,
           createdAt: { gte: fromDate, lte: toDate },
         },
         include: {
@@ -79,6 +87,7 @@ export async function GET(request: NextRequest) {
       }),
       prisma.booking.findMany({
         where: {
+          ...deletedWhere,
           checkIn: { lte: toDate },
           checkOut: { gte: fromDate },
           status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },

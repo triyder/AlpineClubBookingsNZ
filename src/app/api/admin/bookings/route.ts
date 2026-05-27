@@ -4,6 +4,10 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
 import {
+  buildBookingDeletedWhere,
+  parseBookingDeletedVisibility,
+} from "@/lib/booking-delete-visibility";
+import {
   eachDateOnlyInRange,
   formatDateOnlyForTimeZone,
   normalizeDateOnlyForTimeZone,
@@ -75,6 +79,9 @@ export async function GET(request: NextRequest) {
 
   const VALID_STATUSES = new Set(["DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"]);
   const statusParam = request.nextUrl.searchParams.get("status");
+  const deletedVisibility = parseBookingDeletedVisibility(
+    request.nextUrl.searchParams.get("deleted")
+  );
   const statusFilter: Record<string, unknown> = {};
   if (statusParam && statusParam !== "all") {
     const statuses = statusParam.split(",").map((s) => s.trim()).filter(Boolean);
@@ -91,6 +98,7 @@ export async function GET(request: NextRequest) {
       prisma.booking.findMany({
         where: {
           ...statusFilter,
+          ...buildBookingDeletedWhere(deletedVisibility),
           checkIn: { lt: nextMonthStart },
           checkOut: { gt: monthStart },
         },
@@ -114,6 +122,7 @@ export async function GET(request: NextRequest) {
       checkIn: formatDateOnlyForTimeZone(b.checkIn),
       checkOut: formatDateOnlyForTimeZone(b.checkOut),
       status: b.status,
+      deletedAt: b.deletedAt?.toISOString() ?? null,
       guestCount: getMaxActiveGuestsInVisibleMonth(
         b,
         monthStart,

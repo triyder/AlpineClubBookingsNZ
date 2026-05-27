@@ -8,6 +8,10 @@ import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
+import {
+  buildBookingDeletedWhere,
+  parseBookingDeletedVisibility,
+} from "@/lib/booking-delete-visibility";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
@@ -94,6 +98,7 @@ export default async function AdminBookingsPage({
     sortBy?: string;
     sortDir?: string;
     month?: string;
+    deleted?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -110,6 +115,7 @@ export default async function AdminBookingsPage({
     ? params.sortDir
     : getDefaultSortDir(sortBy);
   const monthFilter = params.month;
+  const deletedVisibility = parseBookingDeletedVisibility(params.deleted);
   const currentSearchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (typeof value === "string" && value) {
@@ -138,6 +144,7 @@ export default async function AdminBookingsPage({
     // Exclude DRAFT bookings by default
     where.status = { not: BookingStatus.DRAFT };
   }
+  Object.assign(where, buildBookingDeletedWhere(deletedVisibility));
 
   if (upcomingDays !== null && !isNaN(upcomingDays)) {
     const now = new Date();
@@ -342,6 +349,11 @@ export default async function AdminBookingsPage({
                           {booking.requiresAdminReview ? (
                             <Badge variant="secondary" className="bg-amber-100 text-amber-900">
                               Review
+                            </Badge>
+                          ) : null}
+                          {booking.deletedAt ? (
+                            <Badge variant="secondary" className="bg-red-100 text-red-900">
+                              Deleted
                             </Badge>
                           ) : null}
                         </div>

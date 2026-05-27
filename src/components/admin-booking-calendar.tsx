@@ -57,6 +57,7 @@ export function AdminBookingCalendar() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const statusParam = searchParams.get("status");
+  const deletedParam = searchParams.get("deleted");
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -78,6 +79,9 @@ export function AdminBookingCalendar() {
       // Always pass status=all so the API returns every status (including CANCELLED);
       // the calendar's client-side toggle buttons handle visibility filtering.
       params.set("status", statusParam && statusParam !== "all" ? statusParam : "all");
+      if (deletedParam && deletedParam !== "hide") {
+        params.set("deleted", deletedParam);
+      }
       const res = await fetch(`/api/admin/bookings?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
@@ -89,7 +93,7 @@ export function AdminBookingCalendar() {
     } finally {
       setLoading(false);
     }
-  }, [monthKey, statusParam]);
+  }, [deletedParam, monthKey, statusParam]);
 
   useEffect(() => {
     fetchBookings();

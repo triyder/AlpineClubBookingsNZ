@@ -76,7 +76,7 @@ export async function GET() {
 
     // Bookings with guests, payment, and promo redemption
     const bookings = await prisma.booking.findMany({
-      where: { memberId: session.user.id },
+      where: { memberId: session.user.id, deletedAt: null },
       orderBy: { checkIn: "desc" },
       select: {
         checkIn: true,
@@ -118,7 +118,7 @@ export async function GET() {
     // Chore assignments (via bookings)
     const choreAssignments = await prisma.choreAssignment.findMany({
       where: {
-        booking: { memberId: session.user.id },
+        booking: { memberId: session.user.id, deletedAt: null },
         bookingGuestId: null, // assignments linked to the booking (not a specific guest)
       },
       select: {
@@ -140,6 +140,7 @@ export async function GET() {
     const guestChoreAssignments = await prisma.choreAssignment.findMany({
       where: {
         bookingGuest: { memberId: session.user.id },
+        booking: { deletedAt: null },
       },
       select: {
         date: true,

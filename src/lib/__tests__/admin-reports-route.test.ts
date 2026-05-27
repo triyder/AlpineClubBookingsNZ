@@ -112,6 +112,9 @@ describe("admin reports route", () => {
     });
     expect(data.occupancy).toHaveLength(14);
 
+    expect(mockPrisma.booking.findMany.mock.calls[0][0].where.deletedAt).toBeNull();
+    expect(mockPrisma.booking.findMany.mock.calls[1][0].where.deletedAt).toBeNull();
+
     expect(mockPrisma.memberSubscription.count.mock.calls).toHaveLength(3);
     expect(mockPrisma.memberSubscription.count.mock.calls[0][0]).toEqual({
       where: {

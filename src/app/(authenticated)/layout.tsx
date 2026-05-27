@@ -59,6 +59,7 @@ export default async function AuthenticatedLayout({
     const stayingBooking = await prisma.booking.findFirst({
       where: {
         memberId: session.user.id,
+        deletedAt: null,
         status: "PAID",
         checkIn: { lte: tomorrow },
         checkOut: { gte: today },

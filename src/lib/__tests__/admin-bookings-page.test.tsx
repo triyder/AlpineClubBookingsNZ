@@ -72,6 +72,26 @@ describe("AdminBookingsPage", () => {
     ]);
   });
 
+  it("hides soft-deleted bookings by default", async () => {
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({}),
+    });
+
+    const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.deletedAt).toBeNull();
+  });
+
+  it("can filter to deleted bookings only", async () => {
+    await AdminBookingsPage({
+      searchParams: Promise.resolve({
+        deleted: "only",
+      }),
+    });
+
+    const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.deletedAt).toEqual({ not: null });
+  });
+
   it("formats total guests with non-member guests in brackets", () => {
     expect(formatAdminBookingGuestCount(6, 2)).toBe("6 (2 non-members)");
     expect(formatAdminBookingGuestCount(1, 1)).toBe("1 (1 non-member)");

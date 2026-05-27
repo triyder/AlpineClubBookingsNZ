@@ -321,7 +321,7 @@ export async function getAdminMemberDetail(params: {
       },
     }),
     prisma.booking.findMany({
-      where: { memberId: id },
+      where: { memberId: id, deletedAt: null },
       orderBy: { checkIn: "desc" },
       select: {
         id: true,
@@ -340,6 +340,7 @@ export async function getAdminMemberDetail(params: {
     prisma.booking.aggregate({
       where: {
         memberId: id,
+        deletedAt: null,
         status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       },
       _sum: { finalPriceCents: true },

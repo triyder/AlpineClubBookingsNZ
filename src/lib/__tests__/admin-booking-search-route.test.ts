@@ -96,6 +96,7 @@ describe("Admin booking search route", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           status: { not: "DRAFT" },
+          deletedAt: null,
           OR: expect.arrayContaining([
             { id: { startsWith: "cmnn0xlj" } },
           ]),
@@ -113,6 +114,7 @@ describe("Admin booking search route", () => {
           checkIn: "2026-05-01",
           checkOut: "2026-05-03",
           status: "PAID",
+          deletedAt: null,
           guestCount: 2,
           paymentId: "payment-123",
           xeroInvoiceId: null,
@@ -236,6 +238,7 @@ describe("Admin booking search route", () => {
       expect.objectContaining({
         where: {
           status: { not: "DRAFT" },
+          deletedAt: null,
           OR: [
             { id: { startsWith: "alice" } },
             {
@@ -263,6 +266,7 @@ describe("Admin booking search route", () => {
         checkIn: "2026-05-01",
         checkOut: "2026-05-03",
         status: "PAID",
+        deletedAt: null,
         guestCount: 2,
         paymentId: "payment-123",
         xeroInvoiceId: null,
@@ -276,6 +280,7 @@ describe("Admin booking search route", () => {
         checkIn: "2026-06-10",
         checkOut: "2026-06-12",
         status: "CANCELLED",
+        deletedAt: null,
         guestCount: 1,
         paymentId: null,
         xeroInvoiceId: null,
@@ -290,6 +295,7 @@ describe("Admin booking search route", () => {
         checkIn: "2026-07-04",
         checkOut: "2026-07-05",
         status: "PAID",
+        deletedAt: null,
         guestCount: 3,
         paymentId: "payment-789",
         xeroInvoiceId: "inv-789",
@@ -303,6 +309,7 @@ describe("Admin booking search route", () => {
         checkIn: "2026-08-01",
         checkOut: "2026-08-02",
         status: "PAID",
+        deletedAt: null,
         guestCount: 4,
         paymentId: "payment-999",
         xeroInvoiceId: null,
@@ -316,6 +323,7 @@ describe("Admin booking search route", () => {
         checkIn: "2026-09-01",
         checkOut: "2026-09-03",
         status: "PAID",
+        deletedAt: null,
         guestCount: 5,
         paymentId: "payment-222",
         xeroInvoiceId: null,

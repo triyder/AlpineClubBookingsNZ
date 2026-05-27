@@ -54,9 +54,9 @@ async function getStats() {
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
     prisma.member.count({ where: { active: false } }),
-    prisma.booking.count(),
+    prisma.booking.count({ where: { deletedAt: null } }),
     prisma.booking.count({
-      where: { status: { in: [...ACTIVE_BOOKING_STATUSES] } },
+      where: { deletedAt: null, status: { in: [...ACTIVE_BOOKING_STATUSES] } },
     }),
     prisma.payment.aggregate({
       _sum: { amountCents: true },
@@ -68,10 +68,12 @@ async function getStats() {
     prisma.booking.count({
       where: {
         status: { in: [...ACTIVE_BOOKING_STATUSES] },
+        deletedAt: null,
         checkIn: { gte: today, lte: sevenDaysFromNow },
       },
     }),
     prisma.booking.findMany({
+      where: { deletedAt: null },
       orderBy: { createdAt: "desc" },
       take: 10,
       select: {
@@ -116,6 +118,7 @@ async function getStats() {
     prisma.booking.findMany({
       where: {
         status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
+        deletedAt: null,
         checkIn: { lte: lookAheadEnd },
         checkOut: { gt: today },
       },

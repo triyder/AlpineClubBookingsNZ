@@ -50,6 +50,7 @@ export default async function DashboardPage() {
   const stayingGuestBooking = await prisma.booking.findFirst({
     where: {
       memberId,
+      deletedAt: null,
       status: "PAID",
       checkIn: { lte: tomorrow },
       checkOut: { gte: today },
@@ -77,6 +78,7 @@ export default async function DashboardPage() {
     prisma.booking.findMany({
       where: {
         memberId,
+        deletedAt: null,
         status: { in: [...ACTIVE_BOOKING_STATUSES] },
         checkIn: { gte: today },
       },
@@ -92,7 +94,7 @@ export default async function DashboardPage() {
       },
     }),
     prisma.booking.findMany({
-      where: { memberId, status: { not: "DRAFT" } },
+      where: { memberId, deletedAt: null, status: { not: "DRAFT" } },
       orderBy: { createdAt: "desc" },
       take: 5,
       select: {
@@ -108,6 +110,7 @@ export default async function DashboardPage() {
     prisma.booking.findMany({
       where: {
         memberId,
+        deletedAt: null,
         status: "DRAFT",
         draftExpiresAt: { gt: today },
       },
@@ -124,6 +127,7 @@ export default async function DashboardPage() {
     prisma.booking.findMany({
       where: {
         memberId,
+        deletedAt: null,
         status: { in: [...ACTIVE_BOOKING_STATUSES, "COMPLETED"] },
         OR: [
           { status: { in: [...PAYMENT_OWED_BOOKING_STATUSES] } },

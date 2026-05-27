@@ -19,6 +19,7 @@ export function BookingFilters() {
   const [checkInTo, setCheckInTo] = useState(searchParams.get("checkInTo") || searchParams.get("to") || "");
   const [search, setSearch] = useState(searchParams.get("search") || "");
   const [month, setMonth] = useState(searchParams.get("month") || "");
+  const [deleted, setDeleted] = useState(searchParams.get("deleted") || "hide");
   const sortBy = searchParams.get("sortBy") || searchParams.get("sort") || "updatedAt";
   const sortDir = searchParams.get("sortDir") || "desc";
   const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
@@ -45,6 +46,7 @@ export function BookingFilters() {
     if (sortBy !== "updatedAt") params.set("sortBy", sortBy);
     if (sortDir !== "desc") params.set("sortDir", sortDir);
     if (month) params.set("month", month);
+    if (deleted !== "hide") params.set("deleted", deleted);
     router.push(`/admin/bookings?${params.toString()}`);
   }
 
@@ -56,6 +58,7 @@ export function BookingFilters() {
     setCheckInTo("");
     setSearch("");
     setMonth("");
+    setDeleted("hide");
     router.push("/admin/bookings");
   }
 
@@ -87,6 +90,18 @@ export function BookingFilters() {
           {monthOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
+        </select>
+      </div>
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-gray-500">Deleted</label>
+        <select
+          value={deleted}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setDeleted(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+        >
+          <option value="hide">Hide deleted</option>
+          <option value="include">Include deleted</option>
+          <option value="only">Deleted only</option>
         </select>
       </div>
       <DateRangeControls

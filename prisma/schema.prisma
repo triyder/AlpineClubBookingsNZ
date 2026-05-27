@@ -321,6 +321,7 @@ model Member {
   membershipCancellationParticipantsReviewed MembershipCancellationRequestParticipant[] @relation("MembershipCancellationParticipantReviewer")
   lifecycleActionRequestsRequested           MemberLifecycleActionRequest[]             @relation("MemberLifecycleActionRequester")
   lifecycleActionRequestsReviewed            MemberLifecycleActionRequest[]             @relation("MemberLifecycleActionReviewer")
+  bookingsDeleted                            Booking[]                                  @relation("BookingsDeletedBy")
 
   @@index([email])
   @@index([xeroContactId])
@@ -597,12 +598,16 @@ model Booking {
   waitlistPosition       Int?
   waitlistOfferedAt      DateTime?
   waitlistOfferExpiresAt DateTime?
+  deletedAt              DateTime?
+  deletedById            String?
+  deletedReason          String?       @db.VarChar(500)
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
   // Relations
   member                    Member                     @relation(fields: [memberId], references: [id], onDelete: Restrict)
   createdBy                 Member?                    @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy                 Member?                    @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   guests                    BookingGuest[]
   payment                   Payment?
   choreAssignments          ChoreAssignment[]
@@ -616,11 +621,15 @@ model Booking {
 
   @@index([memberId])
   @@index([createdById])
+  @@index([deletedById])
+  @@index([deletedAt])
   @@index([checkIn, checkOut])
   @@index([status])
   @@index([memberId, status])
   @@index([memberId, status, checkIn])
   @@index([status, createdAt])
+  @@index([status, deletedAt, updatedAt])
+  @@index([status, deletedAt, checkIn, checkOut])
   @@index([status, checkIn, checkOut, createdAt])
 }
 

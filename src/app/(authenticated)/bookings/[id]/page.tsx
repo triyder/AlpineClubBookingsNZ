@@ -14,6 +14,7 @@ import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
+import { DeleteBookingButton } from "@/components/delete-booking-button";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
@@ -99,10 +100,14 @@ export default async function BookingDetailPage({
       createdBy: {
         select: { firstName: true, lastName: true },
       },
+      deletedBy: {
+        select: { firstName: true, lastName: true, email: true },
+      },
     },
   });
 
   if (!booking) notFound();
+  if (booking.deletedAt && session.user.role !== "ADMIN") notFound();
   if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
     redirect("/bookings");
   }
@@ -117,6 +122,8 @@ export default async function BookingDetailPage({
           "booking.modification.payment.confirmed",
           "booking.modification.payment.failed",
           "booking.cancel",
+          "booking.delete.draft",
+          "booking.delete.cancelled.soft",
         ],
       },
     },
@@ -137,15 +144,16 @@ export default async function BookingDetailPage({
   const isDraft = booking.status === "DRAFT";
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
-  const canCancel = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
-  const showArrivalTime = !["CANCELLED", "COMPLETED"].includes(booking.status);
+  const isDeleted = Boolean(booking.deletedAt);
+  const canCancel = !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
+  const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role: session.user.role,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
-  const canModify = editPolicy.canModify;
+  const canModify = !isDeleted && editPolicy.canModify;
   const cancellationSettlement = booking.payment
     ? getCancellationSettlementBreakdown(
         booking.payment.refundedAmountCents,
@@ -229,6 +237,14 @@ export default async function BookingDetailPage({
     query.returnTo,
     session.user.role === "ADMIN" ? "/admin/bookings" : "/bookings"
   );
+  const canDeleteDraft =
+    !isDeleted &&
+    isDraft &&
+    (session.user.role === "ADMIN" || booking.memberId === session.user.id);
+  const canSoftDeleteCancelled =
+    !isDeleted &&
+    booking.status === "CANCELLED" &&
+    session.user.role === "ADMIN";
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -238,6 +254,22 @@ export default async function BookingDetailPage({
           <Button variant="outline">Back to Bookings</Button>
         </Link>
       </div>
+
+      {isDeleted ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <p className="font-medium">Deleted cancelled booking</p>
+          <p>
+            Deleted {booking.deletedAt?.toLocaleString("en-NZ")}
+            {booking.deletedBy
+              ? ` by ${booking.deletedBy.firstName} ${booking.deletedBy.lastName}`
+              : ""}
+            .
+          </p>
+          {booking.deletedReason ? (
+            <p className="mt-1">Reason: {booking.deletedReason}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <BookingEditor booking={editorData} canModify={canModify} />
 
@@ -311,12 +343,12 @@ export default async function BookingDetailPage({
       )}
 
       {/* Draft booking: $0 confirm or payment to complete */}
-      {isDraft && booking.finalPriceCents === 0 && (
+      {!isDeleted && isDraft && booking.finalPriceCents === 0 && (
         <ConfirmDraftButton bookingId={booking.id} />
       )}
 
       {/* Draft booking with non-zero price: show payment section to complete */}
-      {isDraft && booking.finalPriceCents > 0 && (
+      {!isDeleted && isDraft && booking.finalPriceCents > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Booking</CardTitle>
@@ -368,7 +400,7 @@ export default async function BookingDetailPage({
       )}
 
       {/* Show payment form if payment hasn't been completed */}
-      {(isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
+      {(!isDeleted && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Payment</CardTitle>
@@ -387,7 +419,7 @@ export default async function BookingDetailPage({
         </Card>
       )}
 
-      {(booking.status === "PENDING" && (!booking.payment || !booking.payment.stripeSetupIntentId)) && (
+      {(!isDeleted && booking.status === "PENDING" && (!booking.payment || !booking.payment.stripeSetupIntentId)) && (
         <Card>
           <CardHeader>
             <CardTitle>Save Payment Method</CardTitle>
@@ -409,6 +441,7 @@ export default async function BookingDetailPage({
 
       {/* Additional payment required after a modification that increased the price */}
       {booking.payment &&
+        !isDeleted &&
         booking.payment.additionalAmountCents > 0 &&
         booking.payment.additionalPaymentStatus !== "SUCCEEDED" && (
           <AdditionalPaymentCard
@@ -421,7 +454,24 @@ export default async function BookingDetailPage({
         <CancelBookingButton bookingId={booking.id} />
       )}
 
-      {booking.status === "CANCELLED" &&
+      {canDeleteDraft ? (
+        <DeleteBookingButton
+          bookingId={booking.id}
+          mode="draft"
+          returnHref={backHref}
+        />
+      ) : null}
+
+      {canSoftDeleteCancelled ? (
+        <DeleteBookingButton
+          bookingId={booking.id}
+          mode="cancelled"
+          returnHref={backHref}
+        />
+      ) : null}
+
+      {!isDeleted &&
+        booking.status === "CANCELLED" &&
         booking.payment &&
         booking.payment.status !== "REFUNDED" &&
         maxRefundableCents > 0 && (

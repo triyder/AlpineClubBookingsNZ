@@ -137,6 +137,7 @@ export default function ReportsPage() {
 
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
+  const [deleted, setDeleted] = useState("hide");
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +148,11 @@ export default function ReportsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/reports?from=${from}&to=${to}`);
+      const params = new URLSearchParams({ from, to });
+      if (deleted !== "hide") {
+        params.set("deleted", deleted);
+      }
+      const res = await fetch(`/api/admin/reports?${params.toString()}`);
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.error || "Failed to fetch reports");
@@ -159,7 +164,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [deleted, from, to]);
 
   useEffect(() => {
     fetchReports();
@@ -302,6 +307,18 @@ export default function ReportsPage() {
             onFromChange={setFrom}
             onToChange={setTo}
           />
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-500">Deleted</label>
+            <select
+              value={deleted}
+              onChange={(event) => setDeleted(event.target.value)}
+              className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+            >
+              <option value="hide">Hide deleted</option>
+              <option value="include">Include deleted</option>
+              <option value="only">Deleted only</option>
+            </select>
+          </div>
           <Button onClick={fetchReports} disabled={loading}>
             {loading ? "Loading..." : "Update"}
           </Button>
