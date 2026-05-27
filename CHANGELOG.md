@@ -2,9 +2,45 @@
 
 All notable public reference-release changes should be recorded here.
 
-## Unreleased
+## 0.5.0 - 2026-05-28
 
-No unreleased public-reference changes yet.
+- Added safe booking deletion with nullable booking soft-delete fields, admin
+  visibility filtering, deletion audit coverage, and a migration safety ledger
+  entry for the hot `Booking` table.
+- Added the archive lifecycle review queue and admin/member lifecycle surfaces
+  for governed archive handling.
+- Fixed promo beneficiary cap accounting with per-member promo redemption
+  allocations, allocation-aware redemption counts, and migration coverage for
+  existing redemptions.
+- Fixed placeholder subscription delete blockers so draft and placeholder guest
+  subscriptions no longer block legitimate member cleanup paths.
+- Folded the blue/green deploy engine into
+  `scripts/run-production-blue-green-deploy.sh` and removed the old
+  `scripts/blue-green-deploy.sh` entrypoint.
+- Extracted focused helpers and tests for family admin UI behavior, booking
+  guest removal, membership cancellation blockers, admin audit queries, finance
+  booking metrics, and Xero outbox payload parsing.
+- Migration/deployment notes:
+  - `20260527090000_add_booking_soft_delete_fields` adds nullable
+    `Booking.deletedAt`, `Booking.deletedById`, and `Booking.deletedReason`
+    columns, supporting indexes, and a `SET NULL` member foreign key. The
+    ledger marks it as an expand migration that old code ignores; deploy during
+    low booking traffic and let the deploy guard stop on lock timeout or
+    migration failure before cutover.
+  - `20260527120000_add_promo_redemption_allocations` creates
+    `PromoRedemptionAllocation`, backfills one allocation per existing
+    `PromoRedemption`, recalculates `PromoCode.currentRedemptions`, and installs
+    insert/update triggers so old app colors continue writing one-booker
+    allocations during blue/green drain. Run it during low promo-booking
+    traffic.
+  - `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` records both new migrations as
+    expand-phase and old-code-compatible. They do not require a breaking
+    migration override.
+  - The production wrapper now resolves the deploy ref, derives SHA-tagged GHCR
+    image references unless both `APP_IMAGE` and `MIGRATE_IMAGE` are supplied,
+    creates a clean archive workspace, preserves the live Caddy upstream state,
+    runs the integrated internal blue/green flow, syncs the source checkout to
+    the deployed commit, and prunes stale deploy workspaces.
 
 ## 0.4.0 - 2026-05-26
 
