@@ -1,27 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import {
-  calculateBookingPrice,
-  type SeasonRateData,
-} from "@/lib/pricing";
-import {
-  deletePromoRedemptionAndAdjustCount,
-  replacePromoRedemptionAllocations,
-  validateAndCalculatePromoDiscount,
-} from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
-  ADULT_SUPERVISION_REVIEW_REASON,
-  requiresAdultSupervisionReview,
-} from "@/lib/booking-review";
+  BookingGuestRemovalError,
+  removeBookingGuestInTransaction,
+} from "@/lib/booking-guest-removal-service";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 
 export async function DELETE(
   request: NextRequest,
@@ -42,276 +31,15 @@ export async function DELETE(
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
-
-      const booking = await tx.booking.findUnique({
-        where: { id: bookingId },
-        include: {
-          guests: true,
-          payment: true,
-          member: true,
-          promoRedemption: {
-            include: {
-              promoCode: {
-                include: { assignments: { select: { memberId: true } } },
-              },
-            },
-          },
-        },
-      });
-
-      if (!booking) {
-        throw new ApiError("Booking not found", 404);
-      }
-
-      if (
-        booking.memberId !== session.user.id &&
-        session.user.role !== "ADMIN"
-      ) {
-        throw new ApiError("Forbidden", 403);
-      }
-
-      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-        throw new ApiError(
-          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
-          400
-        );
-      }
-
-      const editPolicy = getBookingEditPolicy({
-        status: booking.status,
-        role: session.user.role,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-      });
-      if (!editPolicy.canModify) {
-        throw new ApiError(
-          editPolicy.reason ?? "This booking cannot be modified",
-          400
-        );
-      }
-      if (editPolicy.mode !== "future") {
-        throw new ApiError(
-          "Use the full booking edit flow for in-progress booking guest changes",
-          400
-        );
-      }
-
-      const guestToRemove = booking.guests.find((g) => g.id === guestId);
-      if (!guestToRemove) {
-        throw new ApiError("Guest not found on this booking", 404);
-      }
-
-      if (booking.guests.length <= 1) {
-        throw new ApiError(
-          "Cannot remove the last guest. Cancel the booking instead.",
-          400
-        );
-      }
-
-      // Check for chore assignments on the guest
-      const choreWarnings: string[] = [];
-      const guestAssignments = await tx.choreAssignment.findMany({
-        where: { bookingGuestId: guestId },
-        include: { choreTemplate: true },
-      });
-
-      for (const assignment of guestAssignments) {
-        if (
-          assignment.status === "CONFIRMED" ||
-          assignment.status === "COMPLETED"
-        ) {
-          choreWarnings.push(
-            `${assignment.choreTemplate.name} on ${assignment.date.toISOString().split("T")[0]} was ${assignment.status}`
-          );
-        }
-      }
-
-      // Delete chore assignments for this guest
-      await tx.choreAssignment.deleteMany({
-        where: { bookingGuestId: guestId },
-      });
-
-      // Delete the guest
-      await tx.bookingGuest.delete({ where: { id: guestId } });
-
-      // Recalculate price with remaining guests
-      const remainingGuests = booking.guests.filter((g) => g.id !== guestId);
-
-      const seasons = await tx.season.findMany({
-        where: { active: true },
-        include: { rates: true },
-      });
-
-      const seasonRateData: SeasonRateData[] = seasons.map((s) => ({
-        seasonId: s.id,
-        startDate: s.startDate,
-        endDate: s.endDate,
-        rates: s.rates.map((r) => ({
-          ageTier: r.ageTier,
-          isMember: r.isMember,
-          pricePerNightCents: r.pricePerNightCents,
-        })),
-      }));
-
-      const guestsForPricing = remainingGuests.map((g) => ({
-        ageTier: g.ageTier as AgeTier,
-        isMember: g.isMember,
-        memberId: g.memberId ?? null,
-      }));
-
-      const priceBreakdown = calculateBookingPrice(
-        booking.checkIn,
-        booking.checkOut,
-        guestsForPricing,
-        seasonRateData
-      );
-      const guestNightRates = guestsForPricing.map((guest, index) => ({
-        memberId: guest.memberId ?? null,
-        isMember: guest.isMember,
-        perNightRates: priceBreakdown.guests[index].perNightCents,
-      }));
-
-      const newTotalPriceCents = priceBreakdown.totalPriceCents;
-
-      // Handle promo recalculation
-      let newDiscountCents = 0;
-      let promoRemoved = false;
-
-      if (booking.promoRedemption?.promoCode) {
-        const promo = booking.promoRedemption.promoCode;
-        const application = await validateAndCalculatePromoDiscount(
-          promo,
-          {
-            memberId: booking.memberId,
-            bookingCheckIn: booking.checkIn,
-            totalPriceCents: newTotalPriceCents,
-            guests: guestNightRates,
-          },
-          promo.assignments.length > 0
-            ? promo.assignments.map((assignment) => assignment.memberId)
-            : null,
-          { excludeBookingId: bookingId, db: tx },
-        );
-
-        if (application.error || !application.discount) {
-          promoRemoved = true;
-          await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
-        } else {
-          const promoResult = application.discount;
-          newDiscountCents = promoResult.discountCents;
-
-          await replacePromoRedemptionAllocations(
-            tx,
-            booking.promoRedemption,
-            newDiscountCents,
-            promoResult.freeNightsUsed,
-            promoResult.eligibleGuestCount,
-            promoResult.allocations,
-          );
-        }
-      }
-
-      const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
-      const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
-      const requiresAdminReview = requiresAdultSupervisionReview(remainingGuests);
-      const adminReviewReason = requiresAdminReview
-        ? ADULT_SUPERVISION_REVIEW_REASON
-        : null;
-
-      // Handle refund for price decrease (Stripe call deferred to after tx)
-      let refundAmountCents = 0;
-      const hasSucceededPayment =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
-        booking.payment?.status === "SUCCEEDED";
-      const hasIssuedXeroInvoice =
-        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
-        !!booking.payment?.xeroInvoiceId;
-      const xeroRefundAmountCents =
-        hasIssuedXeroInvoice && priceDiffCents < 0 ? Math.abs(priceDiffCents) : 0;
-
-      if (hasSucceededPayment && priceDiffCents < 0 && booking.payment) {
-        refundAmountCents = Math.abs(priceDiffCents);
-      }
-
-      // Update hasNonMembers
-      const wasOnlyNonMember =
-        !guestToRemove.isMember &&
-        remainingGuests.every((g) => g.isMember);
-      const hasNonMembers = wasOnlyNonMember
-        ? false
-        : booking.hasNonMembers;
-
-      // Update guest prices (parallel to avoid sequential N+1)
-      await Promise.all(
-        remainingGuests.map((g, i) =>
-          tx.bookingGuest.update({
-            where: { id: g.id },
-            data: { priceCents: priceBreakdown.guests[i].priceCents },
-          })
-        )
-      );
-
-      // Update booking
-      const updatedBooking = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          totalPriceCents: newTotalPriceCents,
-          discountCents: newDiscountCents,
-          finalPriceCents: newFinalPriceCents,
-          hasNonMembers,
-          nonMemberHoldUntil: hasNonMembers
-            ? booking.nonMemberHoldUntil
-            : null,
-          requiresAdminReview,
-          adminReviewReason,
-        },
-        include: { guests: true, payment: true },
-      });
-
-      // Create BookingModification record
-      const bookingModification = await tx.bookingModification.create({
-        data: {
-          bookingId,
-          memberId: session.user.id,
-          modificationType: "GUEST_REMOVE",
-          previousData: {
-            guestCount: booking.guests.length,
-            removedGuest: {
-              firstName: guestToRemove.firstName,
-              lastName: guestToRemove.lastName,
-              ageTier: guestToRemove.ageTier,
-              isMember: guestToRemove.isMember,
-            },
-            totalPriceCents: booking.totalPriceCents,
-            finalPriceCents: booking.finalPriceCents,
-          },
-          newData: {
-            guestCount: updatedBooking.guests.length,
-            totalPriceCents: newTotalPriceCents,
-            finalPriceCents: newFinalPriceCents,
-          },
-          priceDiffCents,
-          changeFeeCents: 0,
-        },
-      });
-
-      return {
-        booking: updatedBooking,
-        removedGuest: guestToRemove,
-        priceDiffCents,
-        refundAmountCents,
-        xeroRefundAmountCents,
-        hasIssuedXeroInvoice,
-        paymentStatus: booking.payment?.status ?? null,
-        paymentId: booking.payment?.id ?? null,
-        promoRemoved,
-        choreWarnings,
-        oldGuestCount: booking.guests.length,
-        bookingModificationId: bookingModification.id,
-      };
-    });
+    const result = await prisma.$transaction((tx) =>
+      removeBookingGuestInTransaction({
+        tx,
+        bookingId,
+        guestId,
+        actorMemberId: session.user.id,
+        actorRole: session.user.role,
+      })
+    );
 
     // Process Stripe refund outside transaction (avoids holding advisory lock during API call)
     let stripeRefundId: string | undefined;
@@ -406,20 +134,11 @@ export async function DELETE(
       choreWarnings: result.choreWarnings,
     });
   } catch (err) {
-    if (err instanceof ApiError) {
+    if (err instanceof BookingGuestRemovalError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
     const message =
       err instanceof Error ? err.message : "Failed to remove guest";
     return NextResponse.json({ error: message }, { status: 400 });
-  }
-}
-
-class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number
-  ) {
-    super(message);
   }
 }
