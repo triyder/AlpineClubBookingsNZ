@@ -6,6 +6,8 @@ import {
   bookingPendingTemplate,
   bookingBumpedTemplate,
   bookingCancelledTemplate,
+  bookingReviewApprovedTemplate,
+  bookingReviewRejectedTemplate,
   choreRosterTemplate,
   hutLeaderAssignmentTemplate,
   emailVerificationTemplate,
@@ -553,6 +555,61 @@ export async function sendBookingCancelledEmail(
           : refundCents > 0
             ? `A refund of ${formatMoneyCents(refundCents)} has been processed to your original payment method.`
             : "No refund was applicable based on the cancellation policy.",
+    },
+  });
+}
+
+export async function sendBookingReviewApprovedEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  adminNotes: string;
+  bookingId: string;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your booking has been approved - ${CLUB_LODGE_NAME}`,
+    html: bookingReviewApprovedTemplate(
+      params.firstName,
+      params.checkIn,
+      params.checkOut,
+      params.adminNotes,
+      params.bookingId,
+    ),
+    templateName: "booking-review-approved",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      adminNotes: params.adminNotes,
+      bookingId: params.bookingId,
+    },
+  });
+}
+
+export async function sendBookingReviewRejectedEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  adminNotes: string;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your booking could not be approved - ${CLUB_LODGE_NAME}`,
+    html: bookingReviewRejectedTemplate(
+      params.firstName,
+      params.checkIn,
+      params.checkOut,
+      params.adminNotes,
+    ),
+    templateName: "booking-review-rejected",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      adminNotes: params.adminNotes,
     },
   });
 }

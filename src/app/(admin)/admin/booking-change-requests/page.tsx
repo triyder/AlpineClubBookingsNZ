@@ -196,9 +196,14 @@ export default function BookingChangeRequestsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Booking Change Requests</h1>
+        <h1 className="text-3xl font-bold">Booking change requests</h1>
         <p className="mt-1 text-muted-foreground">
           Review locked same-day and past-night booking change requests.
+          See also{" "}
+          <Link className="underline" href="/admin/booking-approvals">
+            booking approvals
+          </Link>{" "}
+          (new bookings flagged for admin review).
         </p>
       </div>
 

@@ -103,6 +103,9 @@ export default async function BookingDetailPage({
       deletedBy: {
         select: { firstName: true, lastName: true, email: true },
       },
+      adminReviewedBy: {
+        select: { firstName: true, lastName: true },
+      },
     },
   });
 
@@ -280,9 +283,36 @@ export default async function BookingDetailPage({
       )}
 
       {booking.requiresAdminReview && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <strong>Admin review required.</strong>{" "}
-          {booking.adminReviewReason ?? "This booking needs manual review by an admin."}
+        <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p>
+            <strong>
+              {booking.adminReviewStatus === "PENDING"
+                ? "Awaiting admin review."
+                : booking.adminReviewStatus === "APPROVED"
+                  ? "Approved by admin."
+                  : booking.adminReviewStatus === "REJECTED"
+                    ? "Declined by admin."
+                    : "Admin review required."}
+            </strong>{" "}
+            {booking.adminReviewReason ?? "This booking needs manual review by an admin."}
+          </p>
+          {booking.adminReviewStatus === "PENDING" && (
+            <p>
+              Payment cannot be taken until an admin approves. You can amend the
+              booking to include an adult guest if you would like to clear this flag.
+            </p>
+          )}
+          {booking.memberReviewJustification && (
+            <p>
+              <span className="font-medium">Your reason:</span>{" "}
+              {booking.memberReviewJustification}
+            </p>
+          )}
+          {booking.adminReviewNotes && booking.adminReviewStatus !== "PENDING" && (
+            <p>
+              <span className="font-medium">Admin note:</span> {booking.adminReviewNotes}
+            </p>
+          )}
         </div>
       )}
 

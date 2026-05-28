@@ -347,9 +347,11 @@ export default async function AdminBookingsPage({
                             </Badge>
                           </Link>
                           {booking.requiresAdminReview ? (
-                            <Badge variant="secondary" className="bg-amber-100 text-amber-900">
-                              Review
-                            </Badge>
+                            <Link href={`/admin/booking-approvals?bookingId=${booking.id}&status=ALL`}>
+                              <Badge variant="secondary" className="bg-amber-100 text-amber-900 cursor-pointer hover:bg-amber-200">
+                                Review
+                              </Badge>
+                            </Link>
                           ) : null}
                           {booking.deletedAt ? (
                             <Badge variant="secondary" className="bg-red-100 text-red-900">

@@ -55,6 +55,8 @@ async function getStats() {
     pendingCreditApprovals,
     pendingMembershipCancellations,
     pendingMemberArchives,
+    pendingBookingReviews,
+    pendingBookingChangeRequests,
   ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
@@ -115,6 +117,12 @@ async function getStats() {
         status: MemberLifecycleActionRequestStatus.REQUESTED,
       },
     }),
+    prisma.booking.count({
+      where: { adminReviewStatus: "PENDING", deletedAt: null },
+    }),
+    prisma.bookingChangeRequest.count({
+      where: { status: "REQUESTED" },
+    }),
   ]);
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
@@ -166,6 +174,8 @@ async function getStats() {
     pendingCreditApprovals,
     pendingMembershipCancellations,
     pendingMemberArchives,
+    pendingBookingReviews,
+    pendingBookingChangeRequests,
     pendingMembershipReviews:
       pendingMembershipCancellations + pendingMemberArchives,
   };
@@ -182,6 +192,16 @@ export default async function AdminDashboardPage() {
       : null,
     stats.pendingCreditApprovals > 0
       ? `${stats.pendingCreditApprovals} manual credit approval${stats.pendingCreditApprovals === 1 ? "" : "s"}`
+      : null,
+  ].filter(Boolean) as string[];
+  const hasPendingBookingApprovals =
+    stats.pendingBookingReviews > 0 || stats.pendingBookingChangeRequests > 0;
+  const bookingApprovalSummary = [
+    stats.pendingBookingReviews > 0
+      ? `${stats.pendingBookingReviews} new booking review${stats.pendingBookingReviews === 1 ? "" : "s"}`
+      : null,
+    stats.pendingBookingChangeRequests > 0
+      ? `${stats.pendingBookingChangeRequests} change request${stats.pendingBookingChangeRequests === 1 ? "" : "s"}`
       : null,
   ].filter(Boolean) as string[];
   const pendingMembershipReviewSummary = [
@@ -215,6 +235,22 @@ export default async function AdminDashboardPage() {
                 <p className="font-medium text-blue-900">Pending Review Queue</p>
                 <p className="text-sm text-blue-700 mt-1">
                   {pendingReviewSummary.join(" and ")} waiting for admin review.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {hasPendingBookingApprovals && (
+        <Link href="/admin/booking-approvals">
+          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <AlertTriangle className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-amber-900">Booking Approvals</p>
+                <p className="text-sm text-amber-800 mt-1">
+                  {bookingApprovalSummary.join(" and ")} waiting for admin decision.
                 </p>
               </div>
             </CardContent>

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
@@ -51,6 +52,7 @@ export default function AdminBookPage() {
   const [checkOut, setCheckOut] = useState<Date | null>(null);
   const [guests, setGuests] = useState<GuestData[]>([]);
   const [notes, setNotes] = useState("");
+  const [memberReviewJustification, setMemberReviewJustification] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
@@ -202,6 +204,15 @@ export default function AdminBookPage() {
     setPriceLoading(false);
   }
 
+  const requiresAdminReviewLocal = (() => {
+    if (guests.length === 0) return false;
+    const hasAdult = guests.some((g) => g.ageTier === "ADULT");
+    const hasMinor = guests.some(
+      (g) => g.ageTier === "YOUTH" || g.ageTier === "CHILD" || g.ageTier === "INFANT",
+    );
+    return hasMinor && !hasAdult;
+  })();
+
   async function handleSubmit() {
     setSubmitting(true);
     setError("");
@@ -220,6 +231,9 @@ export default function AdminBookPage() {
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         forMemberId: selectedMember!.id,
+        memberReviewJustification: requiresAdminReviewLocal
+          ? memberReviewJustification.trim() || undefined
+          : undefined,
       }),
     });
 
@@ -252,6 +266,9 @@ export default function AdminBookPage() {
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,
         forMemberId: selectedMember!.id,
+        memberReviewJustification: requiresAdminReviewLocal
+          ? memberReviewJustification.trim() || undefined
+          : undefined,
       }),
     });
 
@@ -541,6 +558,26 @@ export default function AdminBookPage() {
                   placeholder="Any special requirements..."
                 />
               </div>
+              {requiresAdminReviewLocal && (
+                <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <Label htmlFor="review-justification" className="text-amber-900">
+                    Reason for booking without an adult (optional, stored with the booking)
+                  </Label>
+                  <p className="text-sm text-amber-900">
+                    This booking has minors but no adult. Because you are an admin it
+                    will be auto-approved, but capturing the reason here documents the
+                    decision in the audit trail.
+                  </p>
+                  <Textarea
+                    id="review-justification"
+                    value={memberReviewJustification}
+                    onChange={(e) => setMemberReviewJustification(e.target.value)}
+                    rows={3}
+                    maxLength={1000}
+                    placeholder="Why is an adult not on this booking?"
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
                 <TimePicker value={expectedArrivalTime} onChange={setExpectedArrivalTime} />

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
@@ -130,6 +131,15 @@ export default function BookPage() {
   const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null }[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
   const [guestProfileBlocks, setGuestProfileBlocks] = useState<GuestProfileRequiredMember[]>([]);
+  const [memberReviewJustification, setMemberReviewJustification] = useState("");
+  const requiresAdminReviewLocal = (() => {
+    if (guests.length === 0) return false;
+    const hasAdult = guests.some((g) => g.ageTier === "ADULT");
+    const hasMinor = guests.some(
+      (g) => g.ageTier === "YOUTH" || g.ageTier === "CHILD" || g.ageTier === "INFANT",
+    );
+    return hasMinor && !hasAdult;
+  })();
 
   // Redirect admins to the admin booking page — admins must book on behalf of members
   useEffect(() => {
@@ -314,6 +324,10 @@ export default function BookPage() {
   }
 
   async function handleSubmit() {
+    if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
+      setError("Please add a reason for booking without an adult guest. This goes to an admin for review.");
+      return;
+    }
     setSubmitting(true);
     setError("");
     setErrorPaymentTargets([]);
@@ -333,6 +347,9 @@ export default function BookPage() {
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+        memberReviewJustification: requiresAdminReviewLocal
+          ? memberReviewJustification.trim()
+          : undefined,
       }),
     });
 
@@ -353,6 +370,10 @@ export default function BookPage() {
   }
 
   async function handleJoinWaitlist() {
+    if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
+      setError("Please add a reason for booking without an adult guest before joining the waitlist.");
+      return;
+    }
     setJoiningWaitlist(true);
     setError("");
     setErrorPaymentTargets([]);
@@ -371,6 +392,9 @@ export default function BookPage() {
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         waitlist: true,
+        memberReviewJustification: requiresAdminReviewLocal
+          ? memberReviewJustification.trim()
+          : undefined,
       }),
     });
 
@@ -404,6 +428,9 @@ export default function BookPage() {
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,
+        memberReviewJustification: requiresAdminReviewLocal
+          ? memberReviewJustification.trim() || undefined
+          : undefined,
       }),
     });
 
@@ -883,6 +910,26 @@ export default function BookPage() {
                   placeholder="Any special requirements..."
                 />
               </div>
+              {requiresAdminReviewLocal && (
+                <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <Label htmlFor="review-justification" className="text-amber-900">
+                    Reason for booking without an adult guest (required)
+                  </Label>
+                  <p className="text-sm text-amber-900">
+                    This booking includes minors but no adult. Please explain why so an
+                    admin can review. The booking will be held until an admin approves it,
+                    and payment cannot be taken until then.
+                  </p>
+                  <Textarea
+                    id="review-justification"
+                    value={memberReviewJustification}
+                    onChange={(e) => setMemberReviewJustification(e.target.value)}
+                    rows={3}
+                    maxLength={1000}
+                    placeholder="Explain why an adult is not on the booking..."
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
                 <TimePicker
