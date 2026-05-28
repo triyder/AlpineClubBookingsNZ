@@ -4,6 +4,9 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { getSeasonYear } from "@/lib/utils";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendChildRequestSubmittedEmail, sendAdminFamilyGroupRequestAlert } from "@/lib/email";
@@ -13,13 +16,16 @@ const requestChildSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
   firstName: nameField({ required: "First name required" }),
   lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format").optional(),
+  dateOfBirth: z
+    .string({ error: "Date of birth is required" })
+    .min(1, "Date of birth is required")
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),
 });
 
 /**
  * POST /api/members/family/request-child
  * Parent requests adding an infant/child/youth to their family group.
- * Goes to admin queue for approval — admin must link to existing member.
+ * Goes to admin queue for approval.
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -50,6 +56,27 @@ export async function POST(req: NextRequest) {
   }
 
   const { familyGroupId, firstName, lastName, dateOfBirth } = parsed.data;
+  const childDob = parseDateOnly(dateOfBirth);
+  if (Number.isNaN(childDob.getTime())) {
+    return NextResponse.json(
+      { error: "Date of birth must be a real calendar date" },
+      { status: 422 }
+    );
+  }
+  if (childDob > getTodayDateOnly()) {
+    return NextResponse.json(
+      { error: "Date of birth cannot be in the future" },
+      { status: 422 }
+    );
+  }
+
+  const ageTier = await computeAgeTier(childDob, getSeasonStartDate(getSeasonYear()));
+  if (ageTier === "ADULT") {
+    return NextResponse.json(
+      { error: "Use the same-email adult request flow for adult members" },
+      { status: 422 }
+    );
+  }
 
   // Verify requester is an active adult member in the specified group
   const requester = await prisma.member.findUnique({
@@ -84,14 +111,13 @@ export async function POST(req: NextRequest) {
       status: "PENDING",
       childFirstName: firstName.trim(),
       childLastName: lastName.trim(),
+      childDateOfBirth: childDob,
     },
   });
 
   if (existingRequest) {
     return NextResponse.json({ error: "A request for this child is already pending review" }, { status: 422 });
   }
-
-  const childDob = dateOfBirth ? new Date(dateOfBirth) : null;
 
   const request = await prisma.familyGroupJoinRequest.create({
     data: {
@@ -159,7 +185,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json(
     {
-      message: "Request submitted. An admin will review and link the infant/child/youth member to your family group.",
+      message: "Request submitted. An admin will review the infant/child/youth member for your family group.",
       requestId: request.id,
     },
     { status: 201 }

@@ -81,6 +81,25 @@ describe("computeAgeTierWithSettings — TAC default boundaries", () => {
         ?.subscriptionRequiredForBooking
     ).toBe(true);
   });
+
+  it("sets default family request member creation policy per tier", () => {
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "INFANT")
+        ?.familyGroupRequestCreateMemberAllowed
+    ).toBe(true);
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "CHILD")
+        ?.familyGroupRequestCreateMemberAllowed
+    ).toBe(true);
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "YOUTH")
+        ?.familyGroupRequestCreateMemberAllowed
+    ).toBe(false);
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "ADULT")
+        ?.familyGroupRequestCreateMemberAllowed
+    ).toBe(false);
+  });
 });
 
 describe("computeAgeTierWithSettings — custom settings", () => {
@@ -260,8 +279,36 @@ describe("normalizeAgeTierSettings", () => {
       customRows.map((row) => ({
         ...row,
         subscriptionRequiredForBooking: true,
+        familyGroupRequestCreateMemberAllowed: false,
       }))
     );
+  });
+
+  it("preserves explicit family request member creation settings", () => {
+    const customRows: AgeTierSettingData[] = [
+      {
+        tier: "INFANT",
+        minAge: 0,
+        maxAge: 4,
+        label: "Infant",
+        subscriptionRequiredForBooking: false,
+        familyGroupRequestCreateMemberAllowed: true,
+        xeroAcceptedContactGroups: [],
+        sortOrder: 0,
+      },
+      {
+        tier: "CHILD",
+        minAge: 5,
+        maxAge: 9,
+        label: "Child",
+        subscriptionRequiredForBooking: false,
+        familyGroupRequestCreateMemberAllowed: false,
+        xeroAcceptedContactGroups: [],
+        sortOrder: 1,
+      },
+    ];
+
+    expect(normalizeAgeTierSettings(customRows)).toEqual(customRows);
   });
 });
 

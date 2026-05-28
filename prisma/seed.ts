@@ -30,6 +30,7 @@ function seedAgeTierSettings() {
     maxAge: tier.maxAge,
     label: tier.label,
     subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+    familyGroupRequestCreateMemberAllowed: tier.familyGroupRequestCreateMemberAllowed,
     sortOrder,
   }));
 }
@@ -364,6 +365,7 @@ async function main() {
         maxAge: setting.maxAge,
         label: setting.label,
         subscriptionRequiredForBooking: setting.subscriptionRequiredForBooking,
+        familyGroupRequestCreateMemberAllowed: setting.familyGroupRequestCreateMemberAllowed,
         sortOrder: setting.sortOrder,
       },
       create: setting,

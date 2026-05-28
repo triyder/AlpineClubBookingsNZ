@@ -17,8 +17,8 @@ const validClub = {
     { id: "lodge", name: "Main Lodge", capacity: 20, type: "dormitory" as const },
   ],
   ageTiers: [
-    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false, nightlyRates },
-    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
+    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: true, nightlyRates },
+    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, nightlyRates },
   ],
 };
 
@@ -122,7 +122,7 @@ describe("clubConfigSchema", () => {
     const result = clubConfigSchema.safeParse({
       ...validClub,
       ageTiers: [
-        { id: "WEIRD", label: "Weird", minAge: 10, maxAge: 5, subscriptionRequiredForBooking: false, nightlyRates },
+        { id: "WEIRD", label: "Weird", minAge: 10, maxAge: 5, subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: false, nightlyRates },
       ],
     });
     expect(result.success).toBe(false);
@@ -132,8 +132,8 @@ describe("clubConfigSchema", () => {
     const result = clubConfigSchema.safeParse({
       ...validClub,
       ageTiers: [
-        { id: "ADULT", label: "A", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
-        { id: "ADULT", label: "B", minAge: 20, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
+        { id: "ADULT", label: "A", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, nightlyRates },
+        { id: "ADULT", label: "B", minAge: 20, maxAge: null, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, nightlyRates },
       ],
     });
     expect(result.success).toBe(false);
@@ -146,7 +146,7 @@ describe("clubConfigSchema", () => {
     const result = clubConfigSchema.safeParse({
       ...validClub,
       ageTiers: [
-        { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
+        { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, nightlyRates },
       ],
     });
     expect(result.success).toBe(true);
@@ -162,6 +162,7 @@ describe("clubConfigSchema", () => {
           minAge: 18,
           maxAge: null,
           subscriptionRequiredForBooking: true,
+          familyGroupRequestCreateMemberAllowed: false,
           nightlyRates: {
             ...nightlyRates,
             winter: { memberCents: -1, nonMemberCents: 6500 },

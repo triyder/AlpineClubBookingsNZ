@@ -25,6 +25,7 @@ type AgeTierRow = {
   maxAge: number | null;
   label: string;
   subscriptionRequiredForBooking: boolean;
+  familyGroupRequestCreateMemberAllowed: boolean;
   xeroContactGroupId: string | null;
   xeroContactGroupName: string | null;
   xeroAcceptedContactGroups: Array<{
@@ -47,6 +48,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     maxAge: 4,
     label: "Infant (under 5)",
     subscriptionRequiredForBooking: false,
+    familyGroupRequestCreateMemberAllowed: true,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -58,6 +60,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     maxAge: 9,
     label: "Child (5-9)",
     subscriptionRequiredForBooking: false,
+    familyGroupRequestCreateMemberAllowed: true,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -69,6 +72,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     maxAge: 17,
     label: "Youth (10-17)",
     subscriptionRequiredForBooking: true,
+    familyGroupRequestCreateMemberAllowed: false,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -80,6 +84,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     maxAge: null,
     label: "Adult (18+)",
     subscriptionRequiredForBooking: true,
+    familyGroupRequestCreateMemberAllowed: false,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -91,6 +96,8 @@ function normalizeAgeTierRows(rows: AgeTierRow[]): AgeTierRow[] {
   return rows.map((row) => ({
     ...row,
     subscriptionRequiredForBooking: row.subscriptionRequiredForBooking ?? true,
+    familyGroupRequestCreateMemberAllowed:
+      row.familyGroupRequestCreateMemberAllowed ?? false,
     xeroAcceptedContactGroups: Array.isArray(row.xeroAcceptedContactGroups)
       ? row.xeroAcceptedContactGroups
       : [],
@@ -353,6 +360,8 @@ export default function AgeTierSettingsPage() {
             const maxAgeInputId = `age-tier-max-age-${setting.tier}`;
             const primaryGroupInputId = `age-tier-primary-group-${setting.tier}`;
             const subscriptionInputId = `subscription-required-${setting.tier}`;
+            const familyRequestCreateInputId =
+              `family-request-create-member-${setting.tier}`;
 
             return (
               <div
@@ -455,7 +464,7 @@ export default function AgeTierSettingsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(16rem,20rem)_1fr]">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(16rem,20rem)_minmax(16rem,22rem)_1fr]">
                   <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3">
                     <Checkbox
                       id={subscriptionInputId}
@@ -476,6 +485,30 @@ export default function AgeTierSettingsPage() {
                       <p className="text-xs text-slate-500">
                         Requires a paid subscription before members in this tier can be
                         booked as owners or member guests.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3">
+                    <Checkbox
+                      id={familyRequestCreateInputId}
+                      checked={setting.familyGroupRequestCreateMemberAllowed}
+                      onCheckedChange={(checked) =>
+                        updateRow(
+                          setting.tier,
+                          "familyGroupRequestCreateMemberAllowed",
+                          checked === true
+                        )
+                      }
+                      disabled={!editing}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor={familyRequestCreateInputId}>
+                        Allow admin-created members from family group requests
+                      </Label>
+                      <p className="text-xs text-slate-500">
+                        Lets admins approve a pending family request by creating a
+                        non-login dependant when the request DOB maps to this tier.
                       </p>
                     </div>
                   </div>
@@ -577,6 +610,7 @@ export default function AgeTierSettingsPage() {
                 <th className="text-left py-2 font-medium text-slate-700">Label</th>
                 <th className="text-left py-2 font-medium text-slate-700">Age Range</th>
                 <th className="text-left py-2 font-medium text-slate-700">Booking Subscription</th>
+                <th className="text-left py-2 font-medium text-slate-700">Family Request Creation</th>
                 <th className="text-left py-2 font-medium text-slate-700">Xero Group</th>
               </tr>
             </thead>
@@ -592,6 +626,11 @@ export default function AgeTierSettingsPage() {
                   </td>
                   <td className="py-2 text-slate-600">
                     {setting.subscriptionRequiredForBooking ? "Required" : "Not required"}
+                  </td>
+                  <td className="py-2 text-slate-600">
+                    {setting.familyGroupRequestCreateMemberAllowed
+                      ? "Allowed"
+                      : "Link existing only"}
                   </td>
                   <td className="py-2 text-slate-600">
                     {setting.xeroContactGroupName ?? setting.xeroContactGroupId ? (

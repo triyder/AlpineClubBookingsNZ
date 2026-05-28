@@ -20,8 +20,8 @@ const validConfig = {
     { id: "lodge", name: "Main Lodge", capacity: 20, type: "dormitory" },
   ],
   ageTiers: [
-    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false, nightlyRates },
-    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
+    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false, familyGroupRequestCreateMemberAllowed: true, nightlyRates },
+    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, familyGroupRequestCreateMemberAllowed: false, nightlyRates },
   ],
 };
 

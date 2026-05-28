@@ -219,8 +219,8 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         familyGroupId,
         firstName: childFirstName.trim(),
         lastName: childLastName.trim(),
+        dateOfBirth: childDob,
       };
-      if (childDob) body.dateOfBirth = childDob;
 
       const res = await fetch("/api/members/family/request-child", {
         method: "POST",
@@ -768,7 +768,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                       Request to Add Infant/Child/Youth
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      An admin will review your request and link them to an existing member record.
+                      An admin will review your request and either link an existing member record or create an eligible non-login dependant.
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -791,12 +791,13 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                       </div>
                     </div>
                     <div>
-                      <Label htmlFor="child-dob">Date of Birth (optional)</Label>
+                      <Label htmlFor="child-dob">Date of Birth</Label>
                       <Input
                         id="child-dob"
                         type="date"
                         value={childDob}
                         onChange={(e) => setChildDob(e.target.value)}
+                        required
                       />
                     </div>
                     <div className="flex gap-2">

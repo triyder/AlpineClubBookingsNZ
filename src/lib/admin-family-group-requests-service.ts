@@ -5,7 +5,13 @@ import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import {
+  computeAgeTier,
+  computeAgeTierWithSettings,
+  getAgeTierSettings,
+  getSeasonStartDate,
+  type AgeTierSettingData,
+} from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
 import {
   buildParentLinks,
@@ -39,6 +45,11 @@ type JsonRouteResult = {
   body: unknown;
   init?: ResponseInit;
 };
+
+function cleanOptionalString(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
 
 function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
@@ -78,6 +89,33 @@ function getRequestName(request: {
     return [request.childFirstName, request.childLastName].filter(Boolean).join(" ").trim();
   }
   return [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ").trim();
+}
+
+function getChildRequestTierMetadata(
+  request: { type: string; childDateOfBirth?: Date | null },
+  ageTierSettings: AgeTierSettingData[]
+) {
+  if (request.type !== "CHILD_REQUEST" || !request.childDateOfBirth) {
+    return {
+      requestedAgeTier: null,
+      requestedAgeTierLabel: null,
+      canCreateMemberFromRequest: false,
+    };
+  }
+
+  const requestedAgeTier = computeAgeTierWithSettings(
+    request.childDateOfBirth,
+    getSeasonStartDate(getSeasonYear()),
+    ageTierSettings
+  );
+  const setting = ageTierSettings.find((candidate) => candidate.tier === requestedAgeTier);
+
+  return {
+    requestedAgeTier,
+    requestedAgeTierLabel: setting?.label ?? requestedAgeTier,
+    canCreateMemberFromRequest:
+      setting?.familyGroupRequestCreateMemberAllowed === true,
+  };
 }
 
 async function findPotentialMemberMatches(request: {
@@ -197,6 +235,7 @@ async function findPotentialMemberMatches(request: {
 }
 
 export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
+  const ageTierSettings = await getAgeTierSettings();
   const requests = await prisma.familyGroupJoinRequest.findMany({
     where: {
       status: "PENDING",
@@ -230,6 +269,7 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
   const mapped = await Promise.all(
     requests.map(async (request) => ({
       ...request,
+      ...getChildRequestTierMetadata(request, ageTierSettings),
       familyGroup: {
         ...request.familyGroup,
         members: request.familyGroup.memberships.map((membership) => membership.member),
@@ -316,6 +356,21 @@ export async function reviewAdminFamilyGroupRequest(params: {
           active: true,
           archivedAt: true,
           inheritEmailFromId: true,
+          phoneCountryCode: true,
+          phoneAreaCode: true,
+          phoneNumber: true,
+          streetAddressLine1: true,
+          streetAddressLine2: true,
+          streetCity: true,
+          streetRegion: true,
+          streetPostalCode: true,
+          streetCountry: true,
+          postalAddressLine1: true,
+          postalAddressLine2: true,
+          postalCity: true,
+          postalRegion: true,
+          postalPostalCode: true,
+          postalCountry: true,
         },
       },
       familyGroup: { select: { id: true, name: true } },
@@ -340,6 +395,36 @@ export async function reviewAdminFamilyGroupRequest(params: {
 
   if (action === "approve") {
     let affectedMemberId = request.requesterId;
+    let childMemberCreateData: {
+      email: string;
+      firstName: string;
+      lastName: string;
+      dateOfBirth: Date;
+      ageTier: AgeTier;
+      active: true;
+      canLogin: false;
+      role: "MEMBER";
+      parentMemberId: string;
+      inheritParentEmail: true;
+      inheritEmailFromId: string;
+      passwordHash: string;
+      emailVerified: true;
+      phoneCountryCode: string | null;
+      phoneAreaCode: string | null;
+      phoneNumber: string | null;
+      streetAddressLine1: string | null;
+      streetAddressLine2: string | null;
+      streetCity: string | null;
+      streetRegion: string | null;
+      streetPostalCode: string | null;
+      streetCountry: string | null;
+      postalAddressLine1: string | null;
+      postalAddressLine2: string | null;
+      postalCity: string | null;
+      postalRegion: string | null;
+      postalPostalCode: string | null;
+      postalCountry: string | null;
+    } | null = null;
     let adultMemberCreateData: {
       email: string;
       firstName: string;
@@ -363,21 +448,99 @@ export async function reviewAdminFamilyGroupRequest(params: {
     } | null = null;
 
     if (request.type === "CHILD_REQUEST") {
-      if (!linkedMemberId) {
+      if (linkedMemberId && data.createNewMember) {
+        return jsonResult(
+          { error: "Choose an existing child member or create a new dependant, not both." },
+          { status: 422 }
+        );
+      }
+
+      if (data.createNewMember) {
+        if (
+          request.requester.active === false ||
+          request.requester.archivedAt ||
+          request.requester.ageTier !== "ADULT"
+        ) {
+          return jsonResult(
+            { error: "Child requests can only be approved for active adult requesters." },
+            { status: 422 }
+          );
+        }
+        if (!request.childFirstName || !request.childLastName || !request.childDateOfBirth) {
+          return jsonResult(
+            { error: "Legacy child requests without DOB must link to an existing member or be rejected." },
+            { status: 422 }
+          );
+        }
+
+        const ageTierSettings = await getAgeTierSettings();
+        const childRequestTier = getChildRequestTierMetadata(request, ageTierSettings);
+        if (
+          !childRequestTier.requestedAgeTier ||
+          !childRequestTier.canCreateMemberFromRequest
+        ) {
+          return jsonResult(
+            {
+              error:
+                "This age tier is not configured to allow admin-created members from family group requests. Link an existing member or reject the request.",
+            },
+            { status: 422 }
+          );
+        }
+
+        const inheritEmailFromId =
+          request.requester.inheritEmailFromId || request.requesterId;
+        const validation = await validateInheritEmailSource({ inheritEmailFromId });
+        if (!validation.ok) {
+          return jsonResult({ error: validation.error }, { status: validation.status });
+        }
+
+        childMemberCreateData = {
+          email: request.requester.email.toLowerCase().trim(),
+          firstName: request.childFirstName.trim(),
+          lastName: request.childLastName.trim(),
+          dateOfBirth: request.childDateOfBirth,
+          ageTier: childRequestTier.requestedAgeTier,
+          active: true,
+          canLogin: false,
+          role: "MEMBER",
+          parentMemberId: request.requesterId,
+          inheritParentEmail: true,
+          inheritEmailFromId,
+          passwordHash: await hash(randomBytes(32).toString("hex"), 13),
+          emailVerified: true,
+          phoneCountryCode: cleanOptionalString(request.requester.phoneCountryCode),
+          phoneAreaCode: cleanOptionalString(request.requester.phoneAreaCode),
+          phoneNumber: cleanOptionalString(request.requester.phoneNumber),
+          streetAddressLine1: cleanOptionalString(request.requester.streetAddressLine1),
+          streetAddressLine2: cleanOptionalString(request.requester.streetAddressLine2),
+          streetCity: cleanOptionalString(request.requester.streetCity),
+          streetRegion: cleanOptionalString(request.requester.streetRegion),
+          streetPostalCode: cleanOptionalString(request.requester.streetPostalCode),
+          streetCountry: cleanOptionalString(request.requester.streetCountry),
+          postalAddressLine1: cleanOptionalString(request.requester.postalAddressLine1),
+          postalAddressLine2: cleanOptionalString(request.requester.postalAddressLine2),
+          postalCity: cleanOptionalString(request.requester.postalCity),
+          postalRegion: cleanOptionalString(request.requester.postalRegion),
+          postalPostalCode: cleanOptionalString(request.requester.postalPostalCode),
+          postalCountry: cleanOptionalString(request.requester.postalCountry),
+        };
+      } else if (!linkedMemberId) {
         return jsonResult(
           { error: "Select the member record to link before approving this infant/child/youth request." },
           { status: 422 }
         );
+      } else {
+        const linked = await validateLinkedMemberForRequest({
+          linkedMemberId,
+          requestType: request.type,
+        });
+        if ("error" in linked) {
+          return jsonResult({ error: linked.error }, { status: linked.status });
+        }
+        affectedMemberId = linked.memberId;
+        childMemberForParentLink = linked.member;
       }
-      const linked = await validateLinkedMemberForRequest({
-        linkedMemberId,
-        requestType: request.type,
-      });
-      if ("error" in linked) {
-        return jsonResult({ error: linked.error }, { status: linked.status });
-      }
-      affectedMemberId = linked.memberId;
-      childMemberForParentLink = linked.member;
     }
 
     if (request.type === "ADULT_REQUEST") {
@@ -440,8 +603,8 @@ export async function reviewAdminFamilyGroupRequest(params: {
       }
     }
 
-  if (request.type === "REMOVAL_REQUEST") {
-    if (!request.subjectMemberId) {
+    if (request.type === "REMOVAL_REQUEST") {
+      if (!request.subjectMemberId) {
         return jsonResult(
           { error: "Removal request is missing the member to remove." },
           { status: 422 }
@@ -452,130 +615,138 @@ export async function reviewAdminFamilyGroupRequest(params: {
 
     try {
       await prisma.$transaction(async (tx) => {
-      if (adultMemberCreateData) {
-        const created = await tx.member.create({
-          data: adultMemberCreateData,
-          select: { id: true },
-        });
-        affectedMemberId = created.id;
-      }
-
-      if (request.type === "CHILD_REQUEST" && childMemberForParentLink) {
-        if (
-          request.requester.active === false ||
-          request.requester.archivedAt ||
-          (request.requester.ageTier && request.requester.ageTier !== "ADULT")
-        ) {
-          throw new ReviewRequestError("Child requests can only be approved for active adult requesters.");
-        }
-        if (
-          (childMemberForParentLink.dependents?.length ?? 0) > 0 ||
-          (childMemberForParentLink.secondaryDependents?.length ?? 0) > 0
-        ) {
-          throw new ReviewRequestError("Selected child member already has dependants.");
+        if (childMemberCreateData) {
+          const created = await tx.member.create({
+            data: childMemberCreateData,
+            select: { id: true },
+          });
+          affectedMemberId = created.id;
         }
 
-        const requesterAlreadyLinked =
-          childMemberForParentLink.parentMemberId === request.requesterId ||
-          childMemberForParentLink.secondaryParentId === request.requesterId;
-        const linkAsSecondary =
-          Boolean(childMemberForParentLink.parentMemberId) &&
-          childMemberForParentLink.parentMemberId !== request.requesterId;
-        if (
-          !requesterAlreadyLinked &&
-          childMemberForParentLink.parentMemberId &&
-          childMemberForParentLink.secondaryParentId
-        ) {
-          throw new ReviewRequestError("Selected child member already has two parents linked.");
+        if (adultMemberCreateData) {
+          const created = await tx.member.create({
+            data: adultMemberCreateData,
+            select: { id: true },
+          });
+          affectedMemberId = created.id;
         }
 
-        const parentLinksAfterSave = [
-          ...(childMemberForParentLink.parent
-            ? [childMemberForParentLink.parent]
-            : []),
-          ...(childMemberForParentLink.secondaryParent
-            ? [childMemberForParentLink.secondaryParent]
-            : []),
-          {
-            id: request.requesterId,
-            inheritEmailFromId: request.requester.inheritEmailFromId,
-          },
-        ];
-        const explicitInheritEmailFromId =
-          Object.prototype.hasOwnProperty.call(data, "inheritEmailFromId")
-            ? data.inheritEmailFromId?.trim() || null
-            : request.requesterId;
-        const resolvedInheritEmailFromId = resolveParentNotificationSourceId(
-          parentLinksAfterSave,
-          explicitInheritEmailFromId
-        );
-        if (resolvedInheritEmailFromId === undefined && explicitInheritEmailFromId) {
-          throw new ReviewRequestError("Notification email recipient must be one of the linked parents.");
-        }
-        if (resolvedInheritEmailFromId) {
-          const validation = await validateInheritEmailSource(
-            {
-              memberId: childMemberForParentLink.id,
-              inheritEmailFromId: resolvedInheritEmailFromId,
-            },
-            tx
-          );
-          if (!validation.ok) {
-            throw new ReviewRequestError(validation.error, validation.status);
+        if (request.type === "CHILD_REQUEST" && childMemberForParentLink) {
+          if (
+            request.requester.active === false ||
+            request.requester.archivedAt ||
+            (request.requester.ageTier && request.requester.ageTier !== "ADULT")
+          ) {
+            throw new ReviewRequestError("Child requests can only be approved for active adult requesters.");
           }
+          if (
+            (childMemberForParentLink.dependents?.length ?? 0) > 0 ||
+            (childMemberForParentLink.secondaryDependents?.length ?? 0) > 0
+          ) {
+            throw new ReviewRequestError("Selected child member already has dependants.");
+          }
+
+          const requesterAlreadyLinked =
+            childMemberForParentLink.parentMemberId === request.requesterId ||
+            childMemberForParentLink.secondaryParentId === request.requesterId;
+          const linkAsSecondary =
+            Boolean(childMemberForParentLink.parentMemberId) &&
+            childMemberForParentLink.parentMemberId !== request.requesterId;
+          if (
+            !requesterAlreadyLinked &&
+            childMemberForParentLink.parentMemberId &&
+            childMemberForParentLink.secondaryParentId
+          ) {
+            throw new ReviewRequestError("Selected child member already has two parents linked.");
+          }
+
+          const parentLinksAfterSave = [
+            ...(childMemberForParentLink.parent
+              ? [childMemberForParentLink.parent]
+              : []),
+            ...(childMemberForParentLink.secondaryParent
+              ? [childMemberForParentLink.secondaryParent]
+              : []),
+            {
+              id: request.requesterId,
+              inheritEmailFromId: request.requester.inheritEmailFromId,
+            },
+          ];
+          const explicitInheritEmailFromId =
+            Object.prototype.hasOwnProperty.call(data, "inheritEmailFromId")
+              ? data.inheritEmailFromId?.trim() || null
+              : request.requesterId;
+          const resolvedInheritEmailFromId = resolveParentNotificationSourceId(
+            parentLinksAfterSave,
+            explicitInheritEmailFromId
+          );
+          if (resolvedInheritEmailFromId === undefined && explicitInheritEmailFromId) {
+            throw new ReviewRequestError("Notification email recipient must be one of the linked parents.");
+          }
+          if (resolvedInheritEmailFromId) {
+            const validation = await validateInheritEmailSource(
+              {
+                memberId: childMemberForParentLink.id,
+                inheritEmailFromId: resolvedInheritEmailFromId,
+              },
+              tx
+            );
+            if (!validation.ok) {
+              throw new ReviewRequestError(validation.error, validation.status);
+            }
+          }
+
+          await tx.member.update({
+            where: { id: childMemberForParentLink.id },
+            data: {
+              ...(!requesterAlreadyLinked
+                ? linkAsSecondary
+                  ? { secondaryParent: { connect: { id: request.requesterId } } }
+                  : { parent: { connect: { id: request.requesterId } } }
+                : {}),
+              inheritParentEmail: Boolean(resolvedInheritEmailFromId),
+              inheritEmailFrom: resolvedInheritEmailFromId
+                ? { connect: { id: resolvedInheritEmailFromId } }
+                : { disconnect: true },
+            },
+          });
         }
 
-        await tx.member.update({
-          where: { id: childMemberForParentLink.id },
-          data: {
-            ...(!requesterAlreadyLinked
-              ? linkAsSecondary
-                ? { secondaryParent: { connect: { id: request.requesterId } } }
-                : { parent: { connect: { id: request.requesterId } } }
-              : {}),
-            inheritParentEmail: Boolean(resolvedInheritEmailFromId),
-            inheritEmailFrom: resolvedInheritEmailFromId
-              ? { connect: { id: resolvedInheritEmailFromId } }
-              : { disconnect: true },
-          },
-        });
-      }
-
-      if (request.type === "REMOVAL_REQUEST") {
-        await tx.familyGroupMember.deleteMany({
-          where: {
-            familyGroupId: request.familyGroupId,
-            memberId: affectedMemberId,
-          },
-        });
-      } else {
-        await tx.familyGroupMember.upsert({
-          where: {
-            familyGroupId_memberId: {
+        if (request.type === "REMOVAL_REQUEST") {
+          await tx.familyGroupMember.deleteMany({
+            where: {
               familyGroupId: request.familyGroupId,
               memberId: affectedMemberId,
             },
-          },
-          create: {
-            familyGroupId: request.familyGroupId,
-            memberId: affectedMemberId,
-            role: "MEMBER",
-          },
-          update: {},
-        });
-      }
+          });
+        } else {
+          await tx.familyGroupMember.upsert({
+            where: {
+              familyGroupId_memberId: {
+                familyGroupId: request.familyGroupId,
+                memberId: affectedMemberId,
+              },
+            },
+            create: {
+              familyGroupId: request.familyGroupId,
+              memberId: affectedMemberId,
+              role: "MEMBER",
+            },
+            update: {},
+          });
+        }
 
-      await tx.familyGroupJoinRequest.update({
-        where: { id: requestId },
-        data: {
-          status: "APPROVED",
-          reviewedAt: new Date(),
-          reviewedBy: adminMemberId,
-          ...(request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
-            ? { linkedMemberId: affectedMemberId }
-            : {}),
-        },
-      });
+        await tx.familyGroupJoinRequest.update({
+          where: { id: requestId },
+          data: {
+            status: "APPROVED",
+            reviewedAt: new Date(),
+            reviewedBy: adminMemberId,
+            ...(request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
+              ? { linkedMemberId: affectedMemberId }
+              : {}),
+          },
+        });
       });
     } catch (error) {
       if (error instanceof ReviewRequestError) {

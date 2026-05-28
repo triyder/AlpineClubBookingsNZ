@@ -47,6 +47,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `ageTiers[].minAge` | yes | Minimum age, inclusive. |
 | `ageTiers[].maxAge` | yes | Maximum age, inclusive, or `null` for no upper bound. |
 | `ageTiers[].subscriptionRequiredForBooking` | yes | Whether the tier must hold a subscription to book as a member. |
+| `ageTiers[].familyGroupRequestCreateMemberAllowed` | yes | Whether admins may create a non-login dependant from a pending family group request whose DOB maps to this tier. |
 | `ageTiers[].nightlyRates.winter.memberCents` | yes | Winter member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.winter.nonMemberCents` | yes | Winter non-member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.summer.memberCents` | yes | Summer member nightly rate in integer cents. |

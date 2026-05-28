@@ -46,6 +46,7 @@ const ageTierSchema = z
       .min(0, "maxAge must be >= 0 when set")
       .nullable(),
     subscriptionRequiredForBooking: z.boolean(),
+    familyGroupRequestCreateMemberAllowed: z.boolean(),
     nightlyRates: ageTierNightlyRatesSchema,
   })
   .strict()

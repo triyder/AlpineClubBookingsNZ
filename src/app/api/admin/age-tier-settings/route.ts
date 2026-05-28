@@ -18,6 +18,7 @@ type AgeTierSettingInput = {
   maxAge: number | null;
   label: string;
   subscriptionRequiredForBooking: boolean;
+  familyGroupRequestCreateMemberAllowed: boolean;
   xeroContactGroupId: string | null;
   xeroContactGroupName: string | null;
   xeroAcceptedContactGroups: Array<{
@@ -36,6 +37,7 @@ const putSchema = z.object({
         maxAge: z.number().int().min(0).nullable(),
         label: z.string().min(1).max(100),
         subscriptionRequiredForBooking: z.boolean(),
+        familyGroupRequestCreateMemberAllowed: z.boolean(),
         xeroContactGroupId: z.string().trim().min(1).max(100).nullable().optional(),
         xeroContactGroupName: z.string().trim().min(1).max(255).nullable().optional(),
         xeroAcceptedContactGroups: z
@@ -70,6 +72,7 @@ export async function GET() {
       maxAge: true,
       label: true,
       subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
       xeroAcceptedContactGroups: {
@@ -243,6 +246,8 @@ export async function PUT(request: NextRequest) {
           maxAge: s.maxAge,
           label: s.label,
           subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
+          familyGroupRequestCreateMemberAllowed:
+            s.familyGroupRequestCreateMemberAllowed,
           xeroContactGroupId: s.xeroContactGroupId,
           xeroContactGroupName: s.xeroContactGroupName,
           sortOrder: s.sortOrder,
@@ -260,6 +265,8 @@ export async function PUT(request: NextRequest) {
           maxAge: s.maxAge,
           label: s.label,
           subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
+          familyGroupRequestCreateMemberAllowed:
+            s.familyGroupRequestCreateMemberAllowed,
           xeroContactGroupId: s.xeroContactGroupId,
           xeroContactGroupName: s.xeroContactGroupName,
           sortOrder: s.sortOrder,
@@ -291,6 +298,7 @@ export async function PUT(request: NextRequest) {
       maxAge: true,
       label: true,
       subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
       xeroAcceptedContactGroups: {

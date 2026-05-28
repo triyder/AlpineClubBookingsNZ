@@ -34,6 +34,7 @@ const DEFAULT_CONFIG: ClubConfig = {
       minAge: 0,
       maxAge: 4,
       subscriptionRequiredForBooking: false,
+      familyGroupRequestCreateMemberAllowed: true,
       nightlyRates: {
         winter: { memberCents: 0, nonMemberCents: 0 },
         summer: { memberCents: 0, nonMemberCents: 0 },
@@ -45,6 +46,7 @@ const DEFAULT_CONFIG: ClubConfig = {
       minAge: 5,
       maxAge: 9,
       subscriptionRequiredForBooking: false,
+      familyGroupRequestCreateMemberAllowed: true,
       nightlyRates: {
         winter: { memberCents: 1500, nonMemberCents: 2500 },
         summer: { memberCents: 1000, nonMemberCents: 2000 },
@@ -56,6 +58,7 @@ const DEFAULT_CONFIG: ClubConfig = {
       minAge: 10,
       maxAge: 17,
       subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: false,
       nightlyRates: {
         winter: { memberCents: 3000, nonMemberCents: 4500 },
         summer: { memberCents: 2500, nonMemberCents: 3500 },
@@ -67,6 +70,7 @@ const DEFAULT_CONFIG: ClubConfig = {
       minAge: 18,
       maxAge: null,
       subscriptionRequiredForBooking: true,
+      familyGroupRequestCreateMemberAllowed: false,
       nightlyRates: {
         winter: { memberCents: 4500, nonMemberCents: 6500 },
         summer: { memberCents: 3500, nonMemberCents: 5000 },

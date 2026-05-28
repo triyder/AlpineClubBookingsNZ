@@ -372,7 +372,7 @@ export default function FamilyGroupsPage() {
     if (action === "approve" && needsMemberSelection && !linkedMemberId) {
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: "Choose the member record to link, or create a new non-login adult where available.",
+        [request.id]: "Choose the member record to link, or create a new non-login member where available.",
       }));
       return;
     }

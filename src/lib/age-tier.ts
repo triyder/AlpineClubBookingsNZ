@@ -56,6 +56,8 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
         maxAge: r.maxAge,
         label: r.label,
         subscriptionRequiredForBooking: r.subscriptionRequiredForBooking ?? true,
+        familyGroupRequestCreateMemberAllowed:
+          r.familyGroupRequestCreateMemberAllowed ?? false,
         xeroContactGroupId: r.xeroContactGroupId,
         xeroContactGroupName: r.xeroContactGroupName,
         xeroAcceptedContactGroups: Array.isArray(r.xeroAcceptedContactGroups)

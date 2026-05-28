@@ -24,6 +24,7 @@ export type AgeTierSettingData = {
   maxAge: number | null;
   label: string;
   subscriptionRequiredForBooking?: boolean;
+  familyGroupRequestCreateMemberAllowed?: boolean;
   xeroContactGroupId?: string | null;
   xeroContactGroupName?: string | null;
   xeroAcceptedContactGroups?: Array<{
@@ -40,6 +41,7 @@ export const AGE_TIER_DEFAULTS: AgeTierSettingData[] = clubConfig.ageTiers.map(
     maxAge: tier.maxAge,
     label: tier.label,
     subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+    familyGroupRequestCreateMemberAllowed: tier.familyGroupRequestCreateMemberAllowed,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -93,6 +95,8 @@ export function normalizeAgeTierSettings(
         ...setting,
         subscriptionRequiredForBooking:
           setting.subscriptionRequiredForBooking ?? true,
+        familyGroupRequestCreateMemberAllowed:
+          setting.familyGroupRequestCreateMemberAllowed ?? false,
         xeroAcceptedContactGroups: setting.xeroAcceptedContactGroups ?? [],
       }))
   );

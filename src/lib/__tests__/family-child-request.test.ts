@@ -35,6 +35,10 @@ const mockedAuth = vi.mocked(auth);
 
 const adultSession = { user: { id: "adult1", role: "MEMBER" } } as any;
 
+function nextYearDateOnly() {
+  return `${new Date().getUTCFullYear() + 1}-01-01`;
+}
+
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/members/family/request-child", {
     method: "POST",
@@ -59,7 +63,12 @@ describe("POST /api/members/family/request-child", () => {
       familyGroupMemberships: [{ familyGroupId: "g1" }],
     } as any);
 
-    const res = await requestChild(makeRequest({ familyGroupId: "g1", firstName: "Sam", lastName: "Smith" }));
+    const res = await requestChild(makeRequest({
+      familyGroupId: "g1",
+      firstName: "Sam",
+      lastName: "Smith",
+      dateOfBirth: "2018-03-15",
+    }));
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toMatch(/only adults/i);
@@ -72,7 +81,12 @@ describe("POST /api/members/family/request-child", () => {
       familyGroupMemberships: [],
     } as any);
 
-    const res = await requestChild(makeRequest({ familyGroupId: "g1", firstName: "Sam", lastName: "Smith" }));
+    const res = await requestChild(makeRequest({
+      familyGroupId: "g1",
+      firstName: "Sam",
+      lastName: "Smith",
+      dateOfBirth: "2018-03-15",
+    }));
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toMatch(/not a member/i);
@@ -92,6 +106,46 @@ describe("POST /api/members/family/request-child", () => {
       familyGroupId: "g1", firstName: "Sam", lastName: "Smith", dateOfBirth: "not-a-date",
     }));
     expect(res.status).toBe(422);
+  });
+
+  it("rejects missing dateOfBirth", async () => {
+    mockedAuth.mockResolvedValue(adultSession);
+    const res = await requestChild(makeRequest({
+      familyGroupId: "g1", firstName: "Sam", lastName: "Smith",
+    }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(JSON.stringify(body)).toMatch(/date/i);
+  });
+
+  it("rejects impossible dateOfBirth", async () => {
+    mockedAuth.mockResolvedValue(adultSession);
+    const res = await requestChild(makeRequest({
+      familyGroupId: "g1", firstName: "Sam", lastName: "Smith", dateOfBirth: "2026-02-31",
+    }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/real calendar date/i);
+  });
+
+  it("rejects future dateOfBirth", async () => {
+    mockedAuth.mockResolvedValue(adultSession);
+    const res = await requestChild(makeRequest({
+      familyGroupId: "g1", firstName: "Sam", lastName: "Smith", dateOfBirth: nextYearDateOnly(),
+    }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/future/i);
+  });
+
+  it("rejects adult-tier dateOfBirth", async () => {
+    mockedAuth.mockResolvedValue(adultSession);
+    const res = await requestChild(makeRequest({
+      familyGroupId: "g1", firstName: "Sam", lastName: "Smith", dateOfBirth: "1990-03-15",
+    }));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/adult request flow/i);
   });
 
   it("creates child request successfully", async () => {
@@ -121,30 +175,7 @@ describe("POST /api/members/family/request-child", () => {
         type: "CHILD_REQUEST",
         childFirstName: "Sam",
         childLastName: "Smith",
-      }),
-    });
-  });
-
-  it("creates child request without dateOfBirth", async () => {
-    mockedAuth.mockResolvedValue(adultSession);
-    vi.mocked(prisma.member.findUnique)
-      .mockResolvedValueOnce({
-        id: "adult1", firstName: "Alice", lastName: "Smith", active: true, ageTier: "ADULT",
-        familyGroupMemberships: [{ familyGroupId: "g1" }],
-      } as any)
-      .mockResolvedValueOnce({ email: "alice@test.com" } as any);
-    vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({ id: "req2" } as any);
-    vi.mocked(prisma.familyGroup.findUnique).mockResolvedValue({ name: "Smith Family" } as any);
-
-    const res = await requestChild(makeRequest({
-      familyGroupId: "g1", firstName: "Jamie", lastName: "Smith",
-    }));
-    expect(res.status).toBe(201);
-
-    expect(prisma.familyGroupJoinRequest.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        childDateOfBirth: null,
+        childDateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
       }),
     });
   });
@@ -158,7 +189,10 @@ describe("POST /api/members/family/request-child", () => {
     vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue({ id: "existing" } as any);
 
     const res = await requestChild(makeRequest({
-      familyGroupId: "g1", firstName: "Sam", lastName: "Smith",
+      familyGroupId: "g1",
+      firstName: "Sam",
+      lastName: "Smith",
+      dateOfBirth: "2018-03-15",
     }));
     expect(res.status).toBe(422);
     const body = await res.json();
@@ -175,7 +209,7 @@ describe("POST /api/members/family/request-child", () => {
     );
 
     const res = await requestChild(makeRequest({
-      familyGroupId: "g1", firstName: "Sam", lastName: "Smith",
+      familyGroupId: "g1", firstName: "Sam", lastName: "Smith", dateOfBirth: "2018-03-15",
     }));
     expect(res.status).toBe(403);
   });

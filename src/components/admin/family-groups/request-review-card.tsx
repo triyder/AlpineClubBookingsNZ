@@ -72,6 +72,10 @@ export function FamilyGroupRequestReviewCard({
   const requiresMemberChoice =
     request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
   const selectedCreateNew = requestSelection === "__create__";
+  const canCreateChildMember =
+    request.type === "CHILD_REQUEST" &&
+    request.matchingMembers.length === 0 &&
+    request.canCreateMemberFromRequest === true;
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -116,11 +120,27 @@ export function FamilyGroupRequestReviewCard({
             {request.type === "ADULT_REQUEST" && (
               <p>Shared email: {request.requestedEmail || request.requester.email}</p>
             )}
+            {request.type === "CHILD_REQUEST" && (
+              request.requestedAgeTier ? (
+                <p>
+                  Requested age tier:{" "}
+                  <span className="font-medium text-slate-800">
+                    {request.requestedAgeTierLabel ?? request.requestedAgeTier}
+                  </span>
+                </p>
+              ) : (
+                <p>Requested age tier: Not available without DOB</p>
+              )
+            )}
           </div>
 
           <div>
             <Label htmlFor={`${idPrefix}request-member-${request.id}`}>
-              {request.type === "ADULT_REQUEST" ? "Adult member record" : "Suggested matches"}
+              {request.type === "ADULT_REQUEST"
+                ? "Adult member record"
+                : canCreateChildMember
+                  ? "Dependant member record"
+                  : "Suggested matches"}
             </Label>
             <select
               id={`${idPrefix}request-member-${request.id}`}
@@ -134,6 +154,9 @@ export function FamilyGroupRequestReviewCard({
               <option value="">Select a member record</option>
               {request.type === "ADULT_REQUEST" && (
                 <option value="__create__">Create new non-login adult from request</option>
+              )}
+              {canCreateChildMember && (
+                <option value="__create__">Create new non-login dependant from request</option>
               )}
               {candidateMembers.map((candidate) => (
                 <option key={candidate.id} value={candidate.id}>
@@ -172,7 +195,11 @@ export function FamilyGroupRequestReviewCard({
             <p className="text-xs text-slate-500">
               {request.type === "ADULT_REQUEST"
                 ? "Same-email adult approvals can link an existing non-login adult or create a new non-login adult."
-                : "Suggested matches are based on the requested infant, child, or youth name and date of birth. Search if the correct member record is not listed."}
+                : canCreateChildMember
+                  ? "No suggested match was found. Create a non-login dependant only if this is a missing member record."
+                  : request.childDateOfBirth
+                    ? "This requested tier is link-only. Link an existing member record or reject the request."
+                    : "Legacy child requests without DOB are link-only. Link an existing member record or reject the request."}
             </p>
           )}
 
@@ -302,6 +329,23 @@ export function FamilyGroupRequestReviewCard({
         </div>
       )}
 
+      {request.type === "CHILD_REQUEST" && selectedCreateNew && (
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50/60 p-3">
+          <p className="text-sm font-medium text-slate-900">
+            New non-login dependant will be created
+          </p>
+          <p className="mt-1 text-sm text-slate-700">
+            {getFamilyGroupRequestSubjectName(request)}
+          </p>
+          <p className="text-xs text-slate-500">
+            {request.childDateOfBirth
+              ? `DOB ${formatFamilyGroupDate(request.childDateOfBirth)}`
+              : "DOB not provided"}
+            {request.requestedAgeTierLabel ? ` - ${request.requestedAgeTierLabel}` : ""}
+          </p>
+        </div>
+      )}
+
       <div className="mt-4">
         <Label htmlFor={`${idPrefix}request-note-${request.id}`}>Optional rejection note</Label>
         <Input
@@ -325,7 +369,9 @@ export function FamilyGroupRequestReviewCard({
           {submitting
             ? "Saving..."
             : request.type === "CHILD_REQUEST"
-              ? "Approve and Link Member"
+              ? selectedCreateNew
+                ? "Approve and Create Dependant"
+                : "Approve and Link Member"
               : request.type === "ADULT_REQUEST"
                 ? selectedCreateNew
                   ? "Approve and Create Adult"

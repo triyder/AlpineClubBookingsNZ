@@ -70,6 +70,9 @@ export interface FamilyGroupRequest {
   requestedDateOfBirth?: string | null;
   requestedEmail?: string | null;
   requestNotes?: string | null;
+  requestedAgeTier?: string | null;
+  requestedAgeTierLabel?: string | null;
+  canCreateMemberFromRequest?: boolean;
   subjectMemberId?: string | null;
   subjectMember?: {
     id: string;
@@ -240,6 +243,13 @@ export function buildInitialRequestSelections(
     }
     if (request.type === "CHILD_REQUEST" && request.matchingMembers.length === 1) {
       nextSelections[request.id] = request.matchingMembers[0].id;
+    }
+    if (
+      request.type === "CHILD_REQUEST" &&
+      request.matchingMembers.length === 0 &&
+      request.canCreateMemberFromRequest === true
+    ) {
+      nextSelections[request.id] = "__create__";
     }
     if (request.type === "ADULT_REQUEST" && request.matchingMembers.length === 0) {
       nextSelections[request.id] = "__create__";
