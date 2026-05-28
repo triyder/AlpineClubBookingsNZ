@@ -23,6 +23,7 @@ export interface PromoValidationResult {
     valueCents: number | null;
     percentOff: number | null;
     freeNightsPerIndividual: number | null;
+    lifetimeFreeNightsCap: number | null;
     maxGuestsPerBooking: number | null;
     maxNightlyValueCents: number | null;
     memberGuestsOnly: boolean;
@@ -47,11 +48,14 @@ export interface AvailablePromoCode {
   percentOff: number | null;
   valueCents: number | null;
   freeNightsPerIndividual: number | null;
+  lifetimeFreeNightsCap: number | null;
 }
 
 export interface AssignedPromoCodeSummary extends AvailablePromoCode {
   id: string;
   assignedAt: Date | null;
+  // lifetimeFreeNightsCap is inherited from AvailablePromoCode and represents
+  // the maximum free nights this member can ever claim from this code.
   active: boolean;
   archivedAt: Date | null;
   validFrom: Date | null;
@@ -79,6 +83,7 @@ export interface PromoApplicationSubject extends PromoRuleSubject {
   valueCents: number | null;
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
+  lifetimeFreeNightsCap: number | null;
   maxGuestsPerBooking: number | null;
   maxNightlyValueCents: number | null;
   memberGuestsOnly: boolean;
@@ -329,6 +334,7 @@ export async function getAvailablePromoCodesForMember(
       percentOff: promoCode.percentOff,
       valueCents: promoCode.valueCents,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
+      lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
     }));
 }
 
@@ -366,6 +372,7 @@ export async function getAssignedPromoCodeSummariesForMember(
       percentOff: promoCode.percentOff,
       valueCents: promoCode.valueCents,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
+      lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
       assignedAt: assignment.createdAt ?? null,
       active: promoCode.active,
       archivedAt: promoCode.archivedAt,
@@ -394,7 +401,7 @@ function getAssignedPromoCodeStatusReason(
     currentRedemptions: number;
     maxUsesPerMember: number | null;
     type: PromoCodeType;
-    freeNightsPerIndividual: number | null;
+    lifetimeFreeNightsCap: number | null;
     allocations: Array<{ id: string; freeNightsUsed: number }>;
   },
   freeNightsUsed: number,
@@ -420,8 +427,8 @@ function getAssignedPromoCodeStatusReason(
   }
   if (
     promoCode.type === "FREE_NIGHTS" &&
-    promoCode.freeNightsPerIndividual !== null &&
-    freeNightsUsed >= promoCode.freeNightsPerIndividual
+    promoCode.lifetimeFreeNightsCap !== null &&
+    freeNightsUsed >= promoCode.lifetimeFreeNightsCap
   ) {
     return "Free nights used";
   }
@@ -446,6 +453,7 @@ export interface PromoRuleSubject {
   maxUniqueMembersTotal: number | null;
   type?: PromoCodeType;
   freeNightsPerIndividual?: number | null;
+  lifetimeFreeNightsCap?: number | null;
 }
 
 export interface PromoRuleCounts {
@@ -457,6 +465,10 @@ export interface PromoRuleCounts {
   requestedNewUniqueMemberCount?: number;
   memberRedemptionCounts?: Record<string, number>;
   memberFreeNightsUsedByMemberId?: Record<string, number>;
+  // True for assigned-member promos where every linked member guest is at
+  // their per-member cap (redemptions or lifetime free nights). Signals that
+  // no beneficiary survives the upstream filter.
+  allBeneficiariesExhausted?: boolean;
 }
 
 /**
@@ -535,18 +547,11 @@ export function validatePromoCodeRules(
     return "This promo code has reached its maximum number of unique members";
   }
 
-  if (
-    promoCode.maxUsesPerMember !== null &&
-    promoCode.maxUsesPerMember !== undefined &&
-    counts.memberRedemptionCounts &&
-    Object.values(counts.memberRedemptionCounts).some(
-      (redemptionCount) => redemptionCount >= promoCode.maxUsesPerMember!
-    )
-  ) {
-    return promoCode.maxUsesPerMember === 1
-      ? "A linked member guest has already used this promo code"
-      : "A linked member guest has reached the maximum uses of this promo code";
-  }
+  // For assigned-member promos, exhausted beneficiaries are filtered out
+  // upstream in validateAndCalculatePromoDiscount. The .some() rejection here
+  // would otherwise block the whole code when one linked guest is at cap,
+  // even if others still have allowance. The per-booker fallback below still
+  // applies for unassigned promos.
 
   if (
     promoCode.maxUsesPerMember !== null &&
@@ -561,22 +566,15 @@ export function validatePromoCodeRules(
 
   if (
     promoCode.type === "FREE_NIGHTS" &&
-    promoCode.freeNightsPerIndividual &&
-    counts.memberFreeNightsUsedByMemberId &&
-    Object.values(counts.memberFreeNightsUsedByMemberId).some(
-      (freeNightsUsed) => freeNightsUsed >= promoCode.freeNightsPerIndividual!
-    )
-  ) {
-    return "A linked member guest has used all free nights for this promo code";
-  }
-
-  if (
-    promoCode.type === "FREE_NIGHTS" &&
-    promoCode.freeNightsPerIndividual &&
+    promoCode.lifetimeFreeNightsCap &&
     !counts.memberFreeNightsUsedByMemberId &&
-    (counts.memberFreeNightsUsed ?? 0) >= promoCode.freeNightsPerIndividual
+    (counts.memberFreeNightsUsed ?? 0) >= promoCode.lifetimeFreeNightsCap
   ) {
     return "You have used all your free nights for this promo code";
+  }
+
+  if (counts.allBeneficiariesExhausted) {
+    return "All linked member guests have used this promo code";
   }
 
   return null;
@@ -600,7 +598,7 @@ export async function validateAndCalculatePromoDiscount(
   }
 
   const db = options.db ?? prisma;
-  const beneficiaryMemberIds = getPromoBeneficiaryMemberIds(
+  const initialBeneficiaryMemberIds = getPromoBeneficiaryMemberIds(
     {
       type: promoCode.type,
       valueCents: promoCode.valueCents,
@@ -617,7 +615,7 @@ export async function validateAndCalculatePromoDiscount(
 
   const beneficiaryUsage = await getPromoBeneficiaryUsage(
     promoCode.id,
-    beneficiaryMemberIds,
+    initialBeneficiaryMemberIds,
     options.excludeBookingId,
     db
   );
@@ -625,6 +623,41 @@ export async function validateAndCalculatePromoDiscount(
     redemptionCount: 0,
     freeNightsUsed: 0,
   };
+
+  // For assigned-member promos, drop beneficiaries who've already exhausted
+  // their per-member caps (redemptions or lifetime free nights). The promo
+  // still applies for the remaining beneficiaries; only if every beneficiary
+  // is exhausted do we reject the code.
+  const assignedScoped = hasAssignedMembers(assignedMemberIds);
+  const isMemberExhausted = (memberId: string) => {
+    const usage = beneficiaryUsage[memberId] ?? { redemptionCount: 0, freeNightsUsed: 0 };
+    if (
+      promoCode.maxUsesPerMember !== null &&
+      promoCode.maxUsesPerMember !== undefined &&
+      usage.redemptionCount >= promoCode.maxUsesPerMember
+    ) {
+      return true;
+    }
+    if (
+      promoCode.type === "FREE_NIGHTS" &&
+      promoCode.lifetimeFreeNightsCap !== null &&
+      promoCode.lifetimeFreeNightsCap !== undefined &&
+      usage.freeNightsUsed >= promoCode.lifetimeFreeNightsCap
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  const beneficiaryMemberIds =
+    assignedScoped && initialBeneficiaryMemberIds.length > 0
+      ? initialBeneficiaryMemberIds.filter((id) => !isMemberExhausted(id))
+      : initialBeneficiaryMemberIds;
+
+  const allBeneficiariesExhausted =
+    assignedScoped &&
+    initialBeneficiaryMemberIds.length > 0 &&
+    beneficiaryMemberIds.length === 0;
 
   let uniqueMembersUsed = 0;
   let requestedNewUniqueMemberCount: number | undefined;
@@ -645,37 +678,21 @@ export async function validateAndCalculatePromoDiscount(
     ).length;
   }
 
-  const memberRedemptionCounts = Object.fromEntries(
-    beneficiaryMemberIds.map((memberId) => [
-      memberId,
-      beneficiaryUsage[memberId]?.redemptionCount ?? 0,
-    ])
-  );
-  const memberFreeNightsUsedByMemberId = Object.fromEntries(
-    beneficiaryMemberIds.map((memberId) => [
-      memberId,
-      beneficiaryUsage[memberId]?.freeNightsUsed ?? 0,
-    ])
-  );
-
+  // For assigned-member promos the booker is just another linked member guest
+  // and per-member caps are enforced by the upstream filter, so we suppress
+  // the booker-scoped fallback checks in the validator.
   const validationError = validatePromoCodeRules(
     promoCode,
     bookingDetails,
     options.now ?? new Date(),
     {
-      memberRedemptionCount: bookerUsage.redemptionCount,
-      memberFreeNightsUsed: bookerUsage.freeNightsUsed,
+      memberRedemptionCount: assignedScoped ? undefined : bookerUsage.redemptionCount,
+      memberFreeNightsUsed: assignedScoped ? undefined : bookerUsage.freeNightsUsed,
       uniqueMembersUsed,
       memberHasRedeemedBefore: bookerUsage.redemptionCount > 0,
       requestedRedemptionCount: beneficiaryMemberIds.length,
       requestedNewUniqueMemberCount,
-      memberRedemptionCounts: beneficiaryMemberIds.length > 0
-        ? memberRedemptionCounts
-        : undefined,
-      memberFreeNightsUsedByMemberId:
-        promoCode.type === "FREE_NIGHTS" && beneficiaryMemberIds.length > 0
-          ? memberFreeNightsUsedByMemberId
-          : undefined,
+      allBeneficiariesExhausted,
     },
     assignedMemberIds
   );
@@ -683,27 +700,38 @@ export async function validateAndCalculatePromoDiscount(
   if (validationError) {
     return {
       error: validationError,
-      beneficiaryMemberIds,
+      beneficiaryMemberIds: initialBeneficiaryMemberIds,
     };
   }
 
   const remainingFreeNightsByMemberId =
-    promoCode.type === "FREE_NIGHTS" && promoCode.freeNightsPerIndividual
+    assignedScoped &&
+    promoCode.type === "FREE_NIGHTS" &&
+    promoCode.lifetimeFreeNightsCap !== null &&
+    promoCode.lifetimeFreeNightsCap !== undefined
       ? Object.fromEntries(
           beneficiaryMemberIds.map((memberId) => [
             memberId,
-            promoCode.freeNightsPerIndividual! -
-              (beneficiaryUsage[memberId]?.freeNightsUsed ?? 0),
+            Math.max(
+              0,
+              promoCode.lifetimeFreeNightsCap! -
+                (beneficiaryUsage[memberId]?.freeNightsUsed ?? 0)
+            ),
           ])
         )
       : undefined;
-  const assignedScoped = hasAssignedMembers(assignedMemberIds);
   const remainingFreeNights =
     !assignedScoped &&
     promoCode.type === "FREE_NIGHTS" &&
-    promoCode.freeNightsPerIndividual
-      ? promoCode.freeNightsPerIndividual - bookerUsage.freeNightsUsed
+    promoCode.lifetimeFreeNightsCap !== null &&
+    promoCode.lifetimeFreeNightsCap !== undefined
+      ? Math.max(0, promoCode.lifetimeFreeNightsCap - bookerUsage.freeNightsUsed)
       : undefined;
+
+  // Effective assigned-member list passed to pricing: filtered to those with
+  // remaining budget so exhausted members' guest rows are excluded from the
+  // discount candidates.
+  const effectiveAssignedMemberIds = assignedScoped ? beneficiaryMemberIds : assignedMemberIds;
 
   const discount = calculatePromoDiscountForGuestRates(
     {
@@ -718,7 +746,7 @@ export async function validateAndCalculatePromoDiscount(
     bookingDetails.totalPriceCents,
     bookingDetails.memberId,
     bookingDetails.guests,
-    assignedMemberIds,
+    effectiveAssignedMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId
   );
@@ -779,6 +807,7 @@ export async function validatePromoCodeFull(
       valueCents: promoCode.valueCents,
       percentOff: promoCode.percentOff,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
+      lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
       maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
       maxNightlyValueCents: promoCode.maxNightlyValueCents,
       memberGuestsOnly: promoCode.memberGuestsOnly,

@@ -77,6 +77,7 @@ export interface MemberPromoCode {
   percentOff: number | null
   valueCents: number | null
   freeNightsPerIndividual: number | null
+  lifetimeFreeNightsCap: number | null
   assignedAt: string | null
   active: boolean
   archivedAt: string | null

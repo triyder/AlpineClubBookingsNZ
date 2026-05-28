@@ -788,7 +788,8 @@ model PromoCode {
   // Per-individual benefit amounts (apply to each eligible guest on the booking)
   valueCents              Int? // Fixed amount off, per eligible guest
   percentOff              Int? // Percentage off, applied per eligible guest
-  freeNightsPerIndividual Int? // Free nights per eligible guest; also lifetime cap per beneficiary (sum of allocation freeNightsUsed for this code)
+  freeNightsPerIndividual Int? // Per-booking cap: max free nights applied to each eligible guest on a single booking
+  lifetimeFreeNightsCap   Int? // Lifetime cap: max free nights any single member can claim from this code across all their bookings (null = no lifetime cap)
   // Optional per-night value cap (FREE_NIGHTS and PERCENTAGE only): caps the discount applied to any single night
   maxNightlyValueCents    Int?
   // Per-booking limit: how many guests on a single booking the promo applies to (null = unlimited / all eligible guests)

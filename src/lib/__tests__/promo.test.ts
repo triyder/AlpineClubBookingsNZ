@@ -192,7 +192,9 @@ describe("validatePromoCodeRules", () => {
     ).toBeNull();
   });
 
-  it("rejects when any requested beneficiary has exhausted their member use cap", () => {
+  it("does not reject at rule layer when one beneficiary is at the use cap but others remain", () => {
+    // Per-beneficiary filtering is applied upstream in
+    // validateAndCalculatePromoDiscount, so the bare rule check is null here.
     expect(
       validatePromoCodeRules(
         makePromoCode({ maxUsesPerMember: 1 }),
@@ -200,7 +202,18 @@ describe("validatePromoCodeRules", () => {
         now,
         { memberRedemptionCounts: { "member-1": 0, "member-2": 1 } }
       )
-    ).toBe("A linked member guest has already used this promo code");
+    ).toBeNull();
+  });
+
+  it("rejects at rule layer when all assigned beneficiaries are exhausted", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ maxUsesPerMember: 1 }),
+        defaultBookingDetails,
+        now,
+        { allBeneficiariesExhausted: true }
+      )
+    ).toBe("All linked member guests have used this promo code");
   });
 
   it("checks expired before total cap", () => {
@@ -301,7 +314,7 @@ describe("validatePromoCodeRules - cumulative free nights", () => {
   it("returns error when all free nights have been consumed", () => {
     expect(
       validatePromoCodeRules(
-        makePromoCode({ type: "FREE_NIGHTS", freeNightsPerIndividual: 4 }),
+        makePromoCode({ type: "FREE_NIGHTS", lifetimeFreeNightsCap: 4 }),
         defaultBookingDetails,
         now,
         { memberFreeNightsUsed: 4 }
@@ -312,7 +325,7 @@ describe("validatePromoCodeRules - cumulative free nights", () => {
   it("returns error when free nights exceed allowance", () => {
     expect(
       validatePromoCodeRules(
-        makePromoCode({ type: "FREE_NIGHTS", freeNightsPerIndividual: 4 }),
+        makePromoCode({ type: "FREE_NIGHTS", lifetimeFreeNightsCap: 4 }),
         defaultBookingDetails,
         now,
         { memberFreeNightsUsed: 5 }
@@ -320,21 +333,22 @@ describe("validatePromoCodeRules - cumulative free nights", () => {
     ).toBe("You have used all your free nights for this promo code");
   });
 
-  it("rejects when any requested beneficiary has exhausted their free-night cap", () => {
+  it("does not reject at rule layer when one beneficiary is at the free-night cap but others remain", () => {
+    // Per-beneficiary filtering is applied upstream; the rule check is null here.
     expect(
       validatePromoCodeRules(
-        makePromoCode({ type: "FREE_NIGHTS", freeNightsPerIndividual: 3 }),
+        makePromoCode({ type: "FREE_NIGHTS", lifetimeFreeNightsCap: 3 }),
         defaultBookingDetails,
         now,
         { memberFreeNightsUsedByMemberId: { "member-1": 0, "member-2": 3 } }
       )
-    ).toBe("A linked member guest has used all free nights for this promo code");
+    ).toBeNull();
   });
 
   it("allows when some free nights remain", () => {
     expect(
       validatePromoCodeRules(
-        makePromoCode({ type: "FREE_NIGHTS", freeNightsPerIndividual: 4 }),
+        makePromoCode({ type: "FREE_NIGHTS", lifetimeFreeNightsCap: 4 }),
         defaultBookingDetails,
         now,
         { memberFreeNightsUsed: 2 }
@@ -353,10 +367,10 @@ describe("validatePromoCodeRules - cumulative free nights", () => {
     ).toBeNull();
   });
 
-  it("does not check free nights when freeNightsPerIndividual is null", () => {
+  it("does not check free nights when lifetimeFreeNightsCap is null", () => {
     expect(
       validatePromoCodeRules(
-        makePromoCode({ type: "FREE_NIGHTS", freeNightsPerIndividual: null }),
+        makePromoCode({ type: "FREE_NIGHTS", lifetimeFreeNightsCap: null }),
         defaultBookingDetails,
         now,
         { memberFreeNightsUsed: 10 }
@@ -749,6 +763,137 @@ describe("validateAndCalculatePromoDiscount", () => {
         }),
       })
     );
+  });
+
+  it("supports asymmetric per-booking and lifetime caps", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    // Member has already used 2 of 3 lifetime nights; per-booking cap is 1.
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockResolvedValue({
+      _sum: { freeNightsUsed: 2 },
+    } as any);
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          lifetimeFreeNightsCap: 3,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: 3,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+      },
+      {
+        memberId: "member-1",
+        totalPriceCents: 9000,
+        guests: [
+          { memberId: "member-1", isMember: true, perNightRates: [3000, 3000, 3000] },
+        ],
+      },
+      null
+    );
+
+    // Per-booking cap of 1 limits to one night; lifetime budget of 1 remaining
+    // is the smaller constraint. One night at 3000 → 3000.
+    expect(result.error).toBeUndefined();
+    expect(result.discount?.discountCents).toBe(3000);
+    expect(result.discount?.freeNightsUsed).toBe(1);
+    expect(result.remainingFreeNights).toBe(1);
+  });
+
+  it("applies discount only to beneficiaries with remaining lifetime budget (Brendon/Richie scenario)", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    // member-1 has exhausted lifetime cap of 1; member-2 has 0 used.
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockImplementation(
+      (args: any) =>
+        Promise.resolve({
+          _sum: {
+            freeNightsUsed: args.where.memberId === "member-1" ? 1 : 0,
+          },
+        } as any)
+    );
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          lifetimeFreeNightsCap: 1,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: 1,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: 3500,
+        memberGuestsOnly: false,
+      },
+      {
+        memberId: "member-1",
+        totalPriceCents: 10000,
+        guests: [
+          { memberId: "member-1", isMember: true, perNightRates: [5000] },
+          { memberId: "member-2", isMember: true, perNightRates: [5000] },
+        ],
+      },
+      ["member-1", "member-2"]
+    );
+
+    expect(result.error).toBeUndefined();
+    // Only member-2 receives the discount, capped at maxNightlyValueCents=3500.
+    expect(result.discount?.discountCents).toBe(3500);
+    expect(result.discount?.freeNightsUsed).toBe(1);
+    expect(result.beneficiaryMemberIds).toEqual(["member-2"]);
+  });
+
+  it("rejects when every assigned beneficiary has exhausted the lifetime cap", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    // Both members at lifetime cap of 1.
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockResolvedValue({
+      _sum: { freeNightsUsed: 1 },
+    } as any);
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          lifetimeFreeNightsCap: 1,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: 1,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+      },
+      {
+        memberId: "member-1",
+        totalPriceCents: 10000,
+        guests: [
+          { memberId: "member-1", isMember: true, perNightRates: [5000] },
+          { memberId: "member-2", isMember: true, perNightRates: [5000] },
+        ],
+      },
+      ["member-1", "member-2"]
+    );
+
+    expect(result.error).toBe("All linked member guests have used this promo code");
+    expect(result.discount).toBeUndefined();
   });
 });
 

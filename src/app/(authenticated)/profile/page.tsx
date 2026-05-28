@@ -38,6 +38,7 @@ function singleSearchParam(value?: string | string[]) {
 
 function formatPromoBenefit(promo: {
   freeNightsPerIndividual: number | null;
+  lifetimeFreeNightsCap: number | null;
   percentOff: number | null;
   type: string;
   valueCents: number | null;
@@ -58,8 +59,11 @@ function formatPromoBenefit(promo: {
     if (promo.freeNightsPerIndividual === null) {
       return "Free nights";
     }
-
-    return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per individual`;
+    const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`;
+    if (promo.lifetimeFreeNightsCap !== null) {
+      return `${perBooking} · ${promo.lifetimeFreeNightsCap} lifetime`;
+    }
+    return perBooking;
   }
 
   return promo.type.replaceAll("_", " ").toLowerCase();

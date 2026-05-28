@@ -83,11 +83,18 @@ export function MemberPromoCodesCard({ promoCodes }: { promoCodes: MemberPromoCo
                         {promo.redemptionCount}
                         {promo.maxUsesPerMember !== null ? `/${promo.maxUsesPerMember}` : ""} by this member
                       </p>
-                      {promo.type === "FREE_NIGHTS" && promo.freeNightsPerIndividual !== null && (
+                      {promo.type === "FREE_NIGHTS" && promo.lifetimeFreeNightsCap !== null && (
                         <p>
-                          {promo.freeNightsUsed}/{promo.freeNightsPerIndividual} free nights used
+                          {promo.freeNightsUsed}/{promo.lifetimeFreeNightsCap} free nights used (lifetime)
                         </p>
                       )}
+                      {promo.type === "FREE_NIGHTS" &&
+                        promo.lifetimeFreeNightsCap === null &&
+                        promo.freeNightsPerIndividual !== null && (
+                          <p>
+                            {promo.freeNightsUsed} free nights used · {promo.freeNightsPerIndividual} per booking
+                          </p>
+                        )}
                       {promo.maxUsesPerMember === 1 && <p>Single use per member</p>}
                     </div>
                   </TableCell>

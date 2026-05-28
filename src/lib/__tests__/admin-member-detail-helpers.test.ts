@@ -161,32 +161,38 @@ describe("admin-member-detail-helpers", () => {
   describe("formatPromoBenefit", () => {
     it("formats percentage", () => {
       expect(
-        formatPromoBenefit({ type: "PERCENTAGE", percentOff: 15, valueCents: null, freeNightsPerIndividual: null })
+        formatPromoBenefit({ type: "PERCENTAGE", percentOff: 15, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
       ).toBe("15% off per individual")
       expect(
-        formatPromoBenefit({ type: "PERCENTAGE", percentOff: null, valueCents: null, freeNightsPerIndividual: null })
+        formatPromoBenefit({ type: "PERCENTAGE", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
       ).toBe("Percentage discount")
     })
 
     it("formats fixed amount as dollars", () => {
       expect(
-        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: 2550, freeNightsPerIndividual: null })
+        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: 2550, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
       ).toBe("$25.50 off per individual")
       expect(
-        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: null, freeNightsPerIndividual: null })
+        formatPromoBenefit({ type: "FIXED_AMOUNT", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
       ).toBe("Fixed discount")
     })
 
     it("formats free nights with correct singular and plural", () => {
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1 })
-      ).toBe("1 free night per individual")
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1, lifetimeFreeNightsCap: null })
+      ).toBe("1 free night per booking")
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 3 })
-      ).toBe("3 free nights per individual")
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 3, lifetimeFreeNightsCap: null })
+      ).toBe("3 free nights per booking")
       expect(
-        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: null })
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: null, lifetimeFreeNightsCap: null })
       ).toBe("Free nights")
+    })
+
+    it("appends lifetime cap when set", () => {
+      expect(
+        formatPromoBenefit({ type: "FREE_NIGHTS", percentOff: null, valueCents: null, freeNightsPerIndividual: 1, lifetimeFreeNightsCap: 4 })
+      ).toBe("1 free night per booking · 4 lifetime")
     })
   })
 
