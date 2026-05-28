@@ -3,6 +3,12 @@ import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { processStripeWebhookEvent } from "@/lib/stripe-webhook-service";
+import {
+  isWebhookBodyTooLargeError,
+  readBoundedWebhookText,
+} from "@/lib/webhook-body";
+
+const STRIPE_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
 /**
  * Stripe webhook handler.
@@ -31,9 +37,23 @@ export async function POST(request: NextRequest) {
   let event: Stripe.Event;
 
   try {
-    const body = await request.text();
+    const body = await readBoundedWebhookText(
+      request,
+      STRIPE_WEBHOOK_MAX_BODY_BYTES
+    );
     event = constructWebhookEvent(body, signature, webhookSecret);
   } catch (err) {
+    if (isWebhookBodyTooLargeError(err)) {
+      logger.warn(
+        { maxBytes: STRIPE_WEBHOOK_MAX_BODY_BYTES },
+        "Stripe webhook payload exceeded size limit"
+      );
+      return NextResponse.json(
+        { error: "Webhook payload too large" },
+        { status: 413 }
+      );
+    }
+
     const message = err instanceof Error ? err.message : "Unknown error";
     logger.error({ err: message }, "Webhook signature verification failed");
     return NextResponse.json(

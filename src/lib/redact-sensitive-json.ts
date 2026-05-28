@@ -34,9 +34,28 @@ const SENSITIVE_STRING_VALUE_PATTERNS = [
 const STRIPE_SECRET_VALUE_PATTERN =
   /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|whsec_[A-Za-z0-9]+|(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+)\b/g;
 const TOKEN_QUERY_VALUE_PATTERN =
-  /([?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|payment[_-]?intent[_-]?client[_-]?secret|setup[_-]?intent[_-]?client[_-]?secret|token)=)[^&#\s]+/gi;
+  /([?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|payment[_-]?intent[_-]?client[_-]?secret|setup[_-]?intent[_-]?client[_-]?secret|oauth[_-]?state|token|state|code)=)[^&#\s]+/gi;
 const TOKEN_KEY_VALUE_PATTERN =
   /\b(access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password|stripe[_-]?token|token)\s*([:=])\s*("[^"]*"|'[^']*'|[^,\s;&]+)/gi;
+const SENSITIVE_QUERY_KEYS = new Set([
+  "access_token",
+  "access-token",
+  "refresh_token",
+  "refresh-token",
+  "id_token",
+  "id-token",
+  "client_secret",
+  "client-secret",
+  "payment_intent_client_secret",
+  "payment-intent-client-secret",
+  "setup_intent_client_secret",
+  "setup-intent-client-secret",
+  "oauth_state",
+  "oauth-state",
+  "token",
+  "state",
+  "code",
+]);
 
 function normalizeJsonKey(key: string) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -142,6 +161,25 @@ export function redactSensitiveJson(value: unknown): unknown {
   }
 
   return result;
+}
+
+export function redactSensitiveQueryParams(value: unknown): unknown {
+  if (typeof value === "string") {
+    return redactSensitiveText(value);
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return redactSensitiveJson(value);
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [
+      key,
+      SENSITIVE_QUERY_KEYS.has(key.toLowerCase())
+        ? REDACTED_SECRET
+        : redactSensitiveJson(entryValue),
+    ])
+  );
 }
 
 export function formatRedactedJson(value: unknown): string {

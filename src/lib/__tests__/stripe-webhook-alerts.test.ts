@@ -248,6 +248,25 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockConstructWebhookEvent).not.toHaveBeenCalled();
   });
 
+  it("rejects oversized Stripe webhook payloads before signature verification", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/webhooks/stripe", {
+        method: "POST",
+        headers: {
+          "stripe-signature": "test-sig",
+          "content-length": String(1024 * 1024 + 1),
+        },
+        body: "{}",
+      })
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error: "Webhook payload too large",
+    });
+    expect(mockConstructWebhookEvent).not.toHaveBeenCalled();
+  });
+
   it("uses the deduplicated notifier when invoice creation fails after payment success", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_primary",

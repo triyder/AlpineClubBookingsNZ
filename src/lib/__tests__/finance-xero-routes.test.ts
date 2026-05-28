@@ -8,6 +8,7 @@ const {
   mockGetFinanceXeroConsentUrl,
   mockDisconnectFinanceXero,
   mockHandleFinanceXeroCallback,
+  mockLogger,
 } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockFindUnique: vi.fn(),
@@ -15,6 +16,12 @@ const {
   mockGetFinanceXeroConsentUrl: vi.fn(),
   mockDisconnectFinanceXero: vi.fn(),
   mockHandleFinanceXeroCallback: vi.fn(),
+  mockLogger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -41,12 +48,7 @@ vi.mock("@/lib/finance-xero", () => ({
 }));
 
 vi.mock("@/lib/logger", () => ({
-  default: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
+  default: mockLogger,
 }));
 
 import { GET as connectFinanceXero } from "@/app/api/finance/xero/connect/route";
@@ -242,6 +244,14 @@ describe("finance Xero routes", () => {
     expect(mockHandleFinanceXeroCallback).toHaveBeenCalledWith(
       `https://example.org/api/finance/xero/callback?code=test-code&state=${state}`,
       state
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      {
+        callbackPath: "/api/finance/xero/callback",
+        hasCode: true,
+        hasState: true,
+      },
+      "Processing finance Xero OAuth callback"
     );
 
     const setCookie = response.headers.get("set-cookie");

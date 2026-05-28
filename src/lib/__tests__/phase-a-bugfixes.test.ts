@@ -393,7 +393,9 @@ describe("#30: Sentry Session Replay", () => {
     expect(content).toContain("breadcrumbsIntegration");
     // Must include sensitive data scrubbing
     expect(content).toContain("beforeSend");
-    expect(content).toContain("[REDACTED]");
+    expect(content).toContain("redactSensitiveJson");
+    expect(content).toContain("redactSensitiveQueryParams");
+    expect(content).toContain("redactSensitiveText");
     // Must include error filtering
     expect(content).toContain("ignoreErrors");
     expect(content).toContain("ResizeObserver loop");

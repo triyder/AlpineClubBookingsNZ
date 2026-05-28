@@ -8,8 +8,13 @@ import {
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
+import {
+  isWebhookBodyTooLargeError,
+  readBoundedWebhookText,
+} from "@/lib/webhook-body";
 
 export const runtime = "nodejs";
+const SES_SNS_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
 
 async function recordSesWebhookLog({
   eventType,
@@ -43,8 +48,28 @@ export async function POST(request: NextRequest) {
   try {
     let payload: unknown;
     try {
-      payload = JSON.parse(await request.text());
-    } catch {
+      payload = JSON.parse(
+        await readBoundedWebhookText(request, SES_SNS_WEBHOOK_MAX_BODY_BYTES)
+      );
+    } catch (error) {
+      if (isWebhookBodyTooLargeError(error)) {
+        await recordSesWebhookLog({
+          eventType,
+          eventId,
+          status: "failure",
+          startedAt,
+          error: "Payload too large",
+        });
+        logger.warn(
+          { maxBytes: SES_SNS_WEBHOOK_MAX_BODY_BYTES },
+          "SES/SNS webhook payload exceeded size limit"
+        );
+        return NextResponse.json(
+          { error: "Webhook payload too large" },
+          { status: 413 }
+        );
+      }
+
       await recordSesWebhookLog({
         eventType,
         eventId,

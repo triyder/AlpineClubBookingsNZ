@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatRedactedJson,
   redactSensitiveJson,
+  redactSensitiveQueryParams,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json";
 
@@ -185,5 +186,37 @@ describe("redact-sensitive-json", () => {
     ).toBe(
       "Stripe returned client_secret=[REDACTED] and [REDACTED]"
     );
+  });
+
+  it("redacts OAuth callback code and state query parameters in plain text", () => {
+    expect(
+      redactSensitiveText(
+        "GET /api/admin/xero/callback?code=live-code&state=csrf-state 302"
+      )
+    ).toBe(
+      "GET /api/admin/xero/callback?code=[REDACTED]&state=[REDACTED] 302"
+    );
+
+    expect(
+      redactSensitiveText(
+        "https://example.org/api/finance/xero/callback?state=csrf&code=oauth-code"
+      )
+    ).toBe(
+      "https://example.org/api/finance/xero/callback?state=[REDACTED]&code=[REDACTED]"
+    );
+  });
+
+  it("redacts OAuth callback code and state in structured query params", () => {
+    expect(
+      redactSensitiveQueryParams({
+        code: "oauth-code",
+        state: "csrf-state",
+        next: "/admin/xero",
+      })
+    ).toEqual({
+      code: "[REDACTED]",
+      state: "[REDACTED]",
+      next: "/admin/xero",
+    });
   });
 });

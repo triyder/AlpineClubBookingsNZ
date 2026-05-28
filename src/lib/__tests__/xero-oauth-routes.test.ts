@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockAuth, mockRequireActiveSessionUser, mockGetXeroConsentUrl, mockHandleXeroCallback } =
+const { mockAuth, mockRequireActiveSessionUser, mockGetXeroConsentUrl, mockHandleXeroCallback, mockLogger } =
   vi.hoisted(() => ({
     mockAuth: vi.fn(),
     mockRequireActiveSessionUser: vi.fn().mockResolvedValue(null),
     mockGetXeroConsentUrl: vi.fn(),
     mockHandleXeroCallback: vi.fn(),
+    mockLogger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
   }));
 
 vi.mock("@/lib/auth", () => ({
@@ -23,12 +29,7 @@ vi.mock("@/lib/xero", () => ({
 }));
 
 vi.mock("@/lib/logger", () => ({
-  default: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
+  default: mockLogger,
 }));
 
 import { GET as connectXero } from "@/app/api/admin/xero/connect/route";
@@ -92,6 +93,14 @@ describe("Xero OAuth admin routes", () => {
     expect(mockHandleXeroCallback).toHaveBeenCalledWith(
       `https://example.org/api/admin/xero/callback?code=test-code&state=${state}`,
       state
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      {
+        callbackPath: "/api/admin/xero/callback",
+        hasCode: true,
+        hasState: true,
+      },
+      "Processing Xero OAuth callback"
     );
 
     const setCookie = response.headers.get("set-cookie");

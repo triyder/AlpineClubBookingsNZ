@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
-import { redactSensitiveJson } from "@/lib/redact-sensitive-json";
+import {
+  redactSensitiveJson,
+  redactSensitiveQueryParams,
+  redactSensitiveText,
+} from "@/lib/redact-sensitive-json";
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN || "",
@@ -13,6 +17,20 @@ Sentry.init({
   // Scrub sensitive data from Sentry payloads
   beforeSend(event) {
     if (!process.env.SENTRY_DSN) return null; // Don't send if no DSN configured
+
+    if (event.message) {
+      event.message = redactSensitiveText(event.message);
+    }
+
+    if (event.request?.url) {
+      event.request.url = redactSensitiveText(event.request.url);
+    }
+
+    if (event.request?.query_string) {
+      event.request.query_string = redactSensitiveQueryParams(
+        event.request.query_string
+      ) as typeof event.request.query_string;
+    }
 
     if (event.request?.headers) {
       event.request.headers = redactSensitiveJson(
@@ -28,7 +46,23 @@ Sentry.init({
       event.extra = redactSensitiveJson(event.extra) as typeof event.extra;
     }
 
+    if (event.breadcrumbs) {
+      event.breadcrumbs = redactSensitiveJson(
+        event.breadcrumbs
+      ) as typeof event.breadcrumbs;
+    }
+
+    if (event.exception?.values) {
+      event.exception.values = redactSensitiveJson(
+        event.exception.values
+      ) as typeof event.exception.values;
+    }
+
     return event;
+  },
+
+  beforeBreadcrumb(breadcrumb) {
+    return redactSensitiveJson(breadcrumb) as typeof breadcrumb;
   },
 
   // Filter out noisy errors

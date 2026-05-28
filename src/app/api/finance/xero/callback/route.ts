@@ -38,7 +38,14 @@ export async function GET(request: NextRequest) {
       incomingUrl.pathname + incomingUrl.search,
       baseUrl
     ).toString();
-    logger.info({ publicCallbackUrl }, "Processing finance Xero OAuth callback");
+    logger.info(
+      {
+        callbackPath: incomingUrl.pathname,
+        hasCode: incomingUrl.searchParams.has("code"),
+        hasState: incomingUrl.searchParams.has("state"),
+      },
+      "Processing finance Xero OAuth callback"
+    );
     await handleFinanceXeroCallback(publicCallbackUrl, requestState ?? undefined);
 
     const response = NextResponse.redirect(

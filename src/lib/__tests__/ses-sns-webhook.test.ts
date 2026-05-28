@@ -117,6 +117,31 @@ describe("SES/SNS webhook route", () => {
     );
   });
 
+  it("rejects oversized SNS payloads before signature verification", async () => {
+    const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/webhooks/ses-sns", {
+        method: "POST",
+        headers: { "content-length": String(256 * 1024 + 1) },
+        body: "{}",
+      })
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error: "Webhook payload too large",
+    });
+    expect(mockVerifySnsWebhookMessage).not.toHaveBeenCalled();
+    expect(mockIngestSesSnsEmailFeedback).not.toHaveBeenCalled();
+    expect(mockRecordWebhookLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "ses-sns",
+        status: "failure",
+        error: "Payload too large",
+      })
+    );
+  });
+
   it("claims and ingests verified SES feedback notifications", async () => {
     const payload = snsEnvelope();
 

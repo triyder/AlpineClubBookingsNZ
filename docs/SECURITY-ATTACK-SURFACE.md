@@ -75,10 +75,52 @@ under `Data touched` instead.
 | `/api/finance/bookings/metrics`, `/api/finance/sync/**`, `/api/finance/xero/**`, `/api/finance/legacy-dashboard/**` | Finance viewer or manager guard depending on route. Legacy auth route redirects/204s for viewer access. | Finance viewer/manager; not lodge accounts. | Finance snapshots, booking metrics, finance sync run state, finance Xero tokens/config. | Finance Xero OAuth/API, finance sync service. | `requireFinanceViewerApiAccess()` or `requireFinanceManagerApiAccess()`; active and force-password-change checks; OAuth state for Xero callback. | Logger for sync/Xero failures; sync status records. | Privileged but not always admin. #618 should review finance role assignment and legacy dashboard bridge; #614 should cover ordinary member/admin-without-finance denial. |
 | `/api/cron`, `/api/cron/payments`, `/api/cron/xero`, `/api/cron/issue-reports` | Shared `x-cron-secret` header matching `CRON_SECRET`. | External scheduler or operator with cron secret. | Pending booking confirmation, payment recovery, Xero outbox/retry/inbound reconciliation, issue-report digest, cron run rows. | Stripe through payment recovery, Xero through operational sync, email alerts/digests. | Constant-time compare in each route, task allowlists, module-state gating for Xero tasks. | Logger; `CronJobRun` records for payment recovery; provider/service logs. | Secret helper is duplicated. #613 should centralize cron guard and #614 should test missing/wrong/different-length secrets. |
 | `/api/deploy/runtime-status` | Shared `x-cron-secret` header matching `CRON_SECRET`. | Blue/green deploy script or operator with cron secret. | Runtime role and cron-enabled flag only. | None. | Local `safeSecretCompare()` with `timingSafeEqual`. | None. | Correctly secret-gated, but duplicates cron guard code. #613 should migrate to the shared cron/deploy helper. |
-| `/api/webhooks/stripe` | Stripe signature. No session auth by design. | Stripe. | Stripe event payload, payment intent/setup intent state through service. | Stripe webhook verification and downstream payment handling. | Requires `STRIPE_WEBHOOK_SECRET` and `stripe-signature`; raw body signature verification. | Logger for signature errors; service-level records. | Do not add session auth. #616 should review idempotency and event coverage. |
-| `/api/webhooks/xero` | Xero HMAC signature. No session auth by design. | Xero. | Xero inbound event records, webhook logs, reconciliation queue. | Xero reconciliation cycle after response. | Requires `XERO_WEBHOOK_KEY`, `x-xero-signature`, HMAC with `timingSafeEqual`; invalid signatures return 401. | `recordWebhookLog()`, Xero inbound event records, logger. | Do not add session auth. #616 should review body size, replay/idempotency, and reconciliation batching. |
-| `/api/webhooks/ses-sns` | AWS SNS signature verification. No session auth by design. | AWS SNS for SES feedback. | Processed webhook ids, email suppression/failure records, webhook logs. | SNS certificate verification, SES feedback ingestion. | JSON envelope validation, SNS signature verification, optional topic ARN allowlist. | `recordWebhookLog()`, logger; duplicate event ids are idempotent. | Missing `SES_SNS_TOPIC_ARN` is warned but can verify without topic allowlist. #616 should confirm deployed config forbids unsafe missing topic ARN. |
+| `/api/webhooks/stripe` | Stripe signature. No session auth by design. | Stripe. | Stripe event payload, payment intent/setup intent state through service. | Stripe webhook verification and downstream payment handling. | Requires `STRIPE_WEBHOOK_SECRET` and `stripe-signature`; bounded raw body read before signature verification. | Logger for signature/body-limit errors; service-level records. | Do not add session auth. Event idempotency is handled by `ProcessedWebhookEvent`; keep Stripe event coverage under payment-integrity review. |
+| `/api/webhooks/xero` | Xero HMAC signature. No session auth by design. | Xero. | Xero inbound event records, webhook logs, reconciliation queue. | Xero reconciliation cycle after response. | Requires `XERO_WEBHOOK_KEY`, `x-xero-signature`, bounded body read, HMAC with `timingSafeEqual`, object payload, array `events`, and max-event cap; invalid signatures return 401. | `recordWebhookLog()`, Xero inbound event records, logger. | Do not add session auth. Replay/idempotency relies on Xero inbound correlation keys and async reconciliation. |
+| `/api/webhooks/ses-sns` | AWS SNS signature verification. No session auth by design. | AWS SNS for SES feedback. | Processed webhook ids, email suppression/failure records, webhook logs. | SNS certificate verification, SES feedback ingestion. | Bounded JSON envelope validation, SNS signature verification, and `SES_SNS_TOPIC_ARN` allowlisting unless a non-production unsafe override is set. | `recordWebhookLog()`, logger; duplicate event ids are idempotent. | `SES_SNS_TOPIC_ARN` must stay configured for deployed environments; unsafe missing-topic override is local-only. |
 | GitHub Actions, Dockerfile, Compose, deployment scripts | CI/deployment boundary, not app-session auth. | Maintainer, GitHub Actions, deploy operator. | Repository, package lock, Docker images, GHCR packages, environment variables, migrations. | npm, Docker, GHCR, Semgrep, gitleaks, Trivy, CodeQL if enabled by repo settings. | CI gates: audit, lint, tests, production build in CI only, Semgrep, gitleaks, Docker image security. Compose uses read-only app container, tmpfs cache, no-new-privileges, resource limits. | GitHub logs and deploy logs. | #619 should review workflow permissions, package publishing, secret scopes, image provenance, and deploy env contracts. |
+
+## External Integration Review (#616)
+
+This review covered the current Stripe, operational Xero, finance Xero,
+SES/SNS, Sentry, OAuth state, webhook signature, token encryption, and provider
+callback logging paths without live provider calls.
+
+Concrete hardening added from the review:
+
+- Stripe, Xero, and SES/SNS webhooks now enforce bounded request bodies before
+  provider verification or JSON parsing. Oversized payloads return `413`, while
+  malformed signed payloads still return `400`/`401` as appropriate.
+- Xero webhook JSON now requires an object payload with an array `events` value
+  and caps a single delivery to 100 events before processing any event rows.
+- Operational and finance Xero OAuth callbacks still pass the exact registered
+  callback URL to the Xero SDK, but logs now record only callback path and
+  presence flags for `code`/`state`.
+- Shared log/Sentry redaction now scrubs OAuth `code` and `state` query
+  parameters, plus Sentry request URLs, query strings, breadcrumbs, exception
+  values, and extra data.
+
+Verified controls already present and intentionally preserved:
+
+- Provider webhooks remain unauthenticated by session and rely on Stripe
+  signature verification, Xero HMAC verification, and SNS signature plus topic
+  allowlisting.
+- Stripe and SES/SNS webhook handlers claim event ids before side effects and
+  release the claim if downstream processing fails.
+- Xero inbound events use correlation keys for replay/idempotency and keep
+  reconciliation work outside the initial provider response path.
+- Operational and finance Xero token stores encrypt access and refresh tokens
+  at rest; finance token loading supports configured previous-key fallback for
+  rotation.
+
+Residual risks to keep visible:
+
+- Webhook rate limiting remains provider-signature based rather than IP based.
+- Xero webhook reconciliation still depends on stored tenant configuration and
+  the async worker succeeding after the provider response.
+- `SES_SNS_TOPIC_ARN` must stay configured outside local override scenarios.
+- Full CI, production build, and deployed endpoint validation are intentionally
+  left to GitHub Actions and approved deployment windows.
 
 ## Route Family Coverage
 

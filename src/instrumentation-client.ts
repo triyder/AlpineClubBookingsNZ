@@ -1,4 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
+import {
+  redactSensitiveJson,
+  redactSensitiveQueryParams,
+  redactSensitiveText,
+} from "@/lib/redact-sensitive-json";
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN || "",
@@ -26,28 +31,45 @@ Sentry.init({
   beforeSend(event) {
     if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return null;
 
+    if (event.message) {
+      event.message = redactSensitiveText(event.message);
+    }
+
+    if (event.request?.url) {
+      event.request.url = redactSensitiveText(event.request.url);
+    }
+
+    if (event.request?.query_string) {
+      event.request.query_string = redactSensitiveQueryParams(
+        event.request.query_string
+      ) as typeof event.request.query_string;
+    }
+
     if (event.request?.data) {
-      const dataStr =
-        typeof event.request.data === "string"
-          ? event.request.data
-          : JSON.stringify(event.request.data);
-      const sensitiveFields = [
-        "password",
-        "passwordHash",
-        "token",
-        "accessToken",
-        "refreshToken",
-        "secret",
-      ];
-      let scrubbed = dataStr;
-      for (const field of sensitiveFields) {
-        const regex = new RegExp(`("${field}"\\s*:\\s*)"[^"]*"`, "gi");
-        scrubbed = scrubbed.replace(regex, `$1"[REDACTED]"`);
-      }
-      event.request.data = scrubbed;
+      event.request.data = redactSensitiveJson(event.request.data);
+    }
+
+    if (event.extra) {
+      event.extra = redactSensitiveJson(event.extra) as typeof event.extra;
+    }
+
+    if (event.breadcrumbs) {
+      event.breadcrumbs = redactSensitiveJson(
+        event.breadcrumbs
+      ) as typeof event.breadcrumbs;
+    }
+
+    if (event.exception?.values) {
+      event.exception.values = redactSensitiveJson(
+        event.exception.values
+      ) as typeof event.exception.values;
     }
 
     return event;
+  },
+
+  beforeBreadcrumb(breadcrumb) {
+    return redactSensitiveJson(breadcrumb) as typeof breadcrumb;
   },
 
   // Filter out noisy errors

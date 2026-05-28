@@ -37,7 +37,14 @@ export async function GET(request: NextRequest) {
     // matches the registered redirect URI (inside Docker, request.url
     // resolves to the container's internal address like 0.0.0.0:3000).
     const publicCallbackUrl = new URL(incomingUrl.pathname + incomingUrl.search, baseUrl).toString();
-    logger.info({ publicCallbackUrl }, "Processing Xero OAuth callback");
+    logger.info(
+      {
+        callbackPath: incomingUrl.pathname,
+        hasCode: incomingUrl.searchParams.has("code"),
+        hasState: incomingUrl.searchParams.has("state"),
+      },
+      "Processing Xero OAuth callback"
+    );
     await handleXeroCallback(publicCallbackUrl, requestState ?? undefined);
     const response = NextResponse.redirect(new URL("/admin/xero?connected=true", baseUrl));
     response.cookies.set(

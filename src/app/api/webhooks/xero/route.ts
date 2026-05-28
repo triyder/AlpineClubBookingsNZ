@@ -5,6 +5,40 @@ import logger from "@/lib/logger";
 import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
+import {
+  isWebhookBodyTooLargeError,
+  readBoundedWebhookText,
+} from "@/lib/webhook-body";
+
+const XERO_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
+const XERO_WEBHOOK_MAX_EVENTS = 100;
+
+type XeroWebhookEventPayload = {
+  eventType?: string;
+  eventCategory?: string;
+  resourceId?: string;
+  eventDateUtc?: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isXeroWebhookEventPayload(
+  value: unknown
+): value is XeroWebhookEventPayload {
+  return (
+    isRecord(value) &&
+    isOptionalString(value.eventType) &&
+    isOptionalString(value.eventCategory) &&
+    isOptionalString(value.resourceId) &&
+    isOptionalString(value.eventDateUtc)
+  );
+}
 
 function scheduleAfterResponse(task: () => Promise<void>) {
   try {
@@ -39,7 +73,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing signature" }, { status: 401 });
   }
 
-  const body = await request.text();
+  let body: string;
+  try {
+    body = await readBoundedWebhookText(request, XERO_WEBHOOK_MAX_BODY_BYTES);
+  } catch (error) {
+    if (isWebhookBodyTooLargeError(error)) {
+      logger.warn(
+        { maxBytes: XERO_WEBHOOK_MAX_BODY_BYTES },
+        "Xero webhook payload exceeded size limit"
+      );
+      return NextResponse.json(
+        { error: "Webhook payload too large" },
+        { status: 413 }
+      );
+    }
+    throw error;
+  }
 
   // Verify HMAC-SHA256 signature
   const expectedSignature = createHmac("sha256", webhookKey)
@@ -55,7 +104,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Parse the payload
-  let payload;
+  let payload: unknown;
   try {
     payload = JSON.parse(body);
   } catch {
@@ -63,9 +112,30 @@ export async function POST(request: NextRequest) {
   }
 
   // Handle events
+  if (!isRecord(payload)) {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+
   const events = payload.events ?? [];
+  if (!Array.isArray(events)) {
+    return NextResponse.json({ error: "Invalid events payload" }, { status: 400 });
+  }
+
+  if (events.length > XERO_WEBHOOK_MAX_EVENTS) {
+    return NextResponse.json(
+      { error: "Too many webhook events" },
+      { status: 413 }
+    );
+  }
 
   for (const event of events) {
+    if (!isXeroWebhookEventPayload(event)) {
+      return NextResponse.json(
+        { error: "Invalid webhook event payload" },
+        { status: 400 }
+      );
+    }
+
     const { eventType, eventCategory, resourceId } = event;
     const eventStart = Date.now();
     const eventDateUtc =
