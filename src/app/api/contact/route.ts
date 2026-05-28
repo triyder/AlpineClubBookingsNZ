@@ -25,12 +25,17 @@ const CONTACT_EMAIL =
   process.env.CONTACT_EMAIL || CLUB_CONTACT_EMAIL;
 
 export async function POST(request: Request) {
-  // Rate limit: 5 per hour
   const rateLimited = applyRateLimit(rateLimiters.contact, request);
   if (rateLimited) return rateLimited;
 
+  let body: unknown;
   try {
-    const body = await request.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  try {
     const result = contactSchema.safeParse(body);
 
     if (!result.success) {

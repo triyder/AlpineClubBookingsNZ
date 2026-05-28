@@ -66,7 +66,9 @@ function makeParams(id = "assign-1") {
   return { params: Promise.resolve({ id }) };
 }
 
-function makeTokenParams(token = "test-token-abc") {
+const validActionToken = "a".repeat(64);
+
+function makeTokenParams(token = validActionToken) {
   return { params: Promise.resolve({ token }) };
 }
 

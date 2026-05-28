@@ -28,8 +28,8 @@ const addySearchResponseSchema = z.object({
   addresses: z
     .array(
       z.object({
-        a: z.string(),
-        id: z.union([z.string(), z.number()]),
+        a: z.string().max(300),
+        id: z.union([z.string().max(80), z.number()]),
       }),
     )
     .optional()
@@ -111,7 +111,7 @@ export async function searchAddyAddresses(input: {
 
   return {
     configured: true,
-    suggestions: body.addresses.map((address) => ({
+    suggestions: body.addresses.slice(0, 10).map((address) => ({
       id: String(address.id),
       label: address.a,
     })),

@@ -14,8 +14,14 @@ export async function POST(request: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.resendVerification, request);
   if (rateLimited) return rateLimited;
 
+  let body: unknown;
   try {
-    const body = await request.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  try {
     const parsed = resendSchema.safeParse(body);
 
     if (!parsed.success) {

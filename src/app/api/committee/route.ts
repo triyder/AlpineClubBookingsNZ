@@ -9,6 +9,7 @@ export async function GET() {
   const members = await prisma.committeeMember.findMany({
     where: { active: true },
     orderBy: { sortOrder: "asc" },
+    take: 50,
     select: {
       id: true,
       role: true,

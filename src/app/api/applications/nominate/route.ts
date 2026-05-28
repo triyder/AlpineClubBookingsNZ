@@ -7,9 +7,13 @@ import {
 } from "@/lib/nomination";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { isActionTokenFormat } from "@/lib/action-tokens";
 
 const nominateSchema = z.object({
-  token: z.string().min(1, "Nomination token is required"),
+  token: z
+    .string()
+    .trim()
+    .refine(isActionTokenFormat, "Nomination token is invalid"),
 });
 
 export async function POST(req: NextRequest) {

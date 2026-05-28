@@ -280,10 +280,10 @@ recovering action tokens, OAuth codes/states, client secrets, email addresses,
 or provider identifiers from logs.
 
 Current mitigations include `redact-sensitive-json` coverage for known token URL
-patterns and redaction in webhook error recording. Residual risk remains for
-new token patterns, callback URLs, and provider payloads that do not pass
-through the same redaction path. #615 and #616 should include explicit log
-redaction checks.
+patterns, URL-encoded callback paths, and redaction in webhook error recording.
+Residual risk remains for new token patterns and provider payloads that do not
+pass through the same redaction path. #616 should include explicit provider
+payload log redaction checks.
 
 ### Compromised CI Secret Or Deployment Secret
 
@@ -298,6 +298,43 @@ Semgrep, gitleaks, Trivy, protected PR flow, Compose hardening
 keeps `.env` and provider credentials out of git. #619 should review workflow
 permissions, image provenance, package visibility, and deploy secret rotation.
 
+## Public Endpoint Abuse Review - 2026-05-28
+
+Reviewed the explicit public and token-bearing surfaces from this inventory:
+Auth.js login, account recovery and verification routes, membership
+applications, contact, public committee/age-tier reads, Addy autocomplete,
+health/readiness, guest chore tokens, nomination tokens, and membership
+cancellation confirmation tokens. Booking discovery, promo validation, and issue
+reports are authenticated active-member routes in the current implementation, so
+they are not anonymous public endpoints.
+
+Hardening applied in #615:
+
+- Public JSON routes now return explicit 400s for malformed JSON instead of
+  falling into generic server errors for contact, forgot-password, reset-password,
+  and resend-verification payloads.
+- Action-token consumers now reject non-64-character hex tokens before hashing
+  or lookup on password reset, email verification, email-change confirmation,
+  guest chore links, nomination confirmation, and membership-cancellation
+  confirmation.
+- Addy autocomplete keeps session validation explicit and caps returned search
+  suggestions to the requested top 10. Malformed detail-session parameters fail
+  locally before calling Addy.
+- Public committee reads are capped to 50 active records.
+- Log redaction covers token-bearing `/membership-cancellation/`, `/chores/`,
+  and `/nominations/` paths, including URL-encoded `callbackUrl` values from
+  login redirects.
+
+Accepted residual risk:
+
+- In-memory rate limits remain single-instance only.
+- Membership application duplicate-account responses still reveal duplicate
+  applicant/pending-application state. That is useful applicant feedback today,
+  but should be revisited if public enumeration risk outweighs support value.
+- Public health/readiness remain unauthenticated for load balancers and
+  deployment checks; responses continue to expose only redacted status, version,
+  uptime, and DB/config check state.
+
 ## Follow-Up Mapping
 
 - #613 - Standardize route guards: route metadata and shared active-session and
@@ -306,10 +343,10 @@ permissions, image provenance, package visibility, and deploy secret rotation.
 - #614 - Route boundary tests: static tests now walk `src/app/api/**/route.ts`
   and require approved guard markers or public allowlist entries; future batches
   should broaden IDOR behavior coverage for booking and family-owned resources.
-- #615 - Anonymous public endpoints: review auth/account recovery, contact,
-  applications, address autocomplete, public health/read endpoints, public
-  token routes, response size bounds, non-enumerating responses, rate limits,
-  and token/log redaction.
+- #615 - Anonymous public endpoints: first-pass hardening now covers token
+  shape validation, malformed JSON behavior, Addy/committee response bounds, and
+  token-path log redaction. Remaining public-form policy tradeoffs are noted in
+  the accepted residual risk above.
 - #616 - External integrations: review Stripe, operational Xero, finance Xero,
   SES/SNS, Sentry, OAuth state handling, webhook signature/idempotency, token
   encryption, and provider callback logging.

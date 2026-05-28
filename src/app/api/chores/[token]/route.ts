@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateGuestChoreToken } from "@/lib/guest-chore-token";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { isActionTokenFormat } from "@/lib/action-tokens";
 
 /**
  * GET /api/chores/[token]
@@ -16,6 +17,13 @@ export async function GET(
   }
 
   const { token } = await params;
+
+  if (!isActionTokenFormat(token)) {
+    return NextResponse.json(
+      { error: "Invalid or expired token" },
+      { status: 404 }
+    );
+  }
 
   const result = await validateGuestChoreToken(token);
   if (!result) {

@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
-import { hashActionToken } from "@/lib/action-tokens";
+import { hashActionToken, isActionTokenFormat } from "@/lib/action-tokens";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const verifyEmailQuerySchema = z.object({
-  token: z.string().min(1),
+  token: z.string().trim().refine(isActionTokenFormat),
 });
 
 export async function GET(request: NextRequest) {
@@ -16,12 +16,17 @@ export async function GET(request: NextRequest) {
   }
 
   const baseUrl = process.env.NEXTAUTH_URL || request.url;
+  const tokenParam = request.nextUrl.searchParams.get("token");
+  if (!tokenParam) {
+    return NextResponse.redirect(new URL("/login?verifyError=missing", baseUrl));
+  }
+
   const parsed = verifyEmailQuerySchema.safeParse({
-    token: request.nextUrl.searchParams.get("token"),
+    token: tokenParam,
   });
 
   if (!parsed.success) {
-    return NextResponse.redirect(new URL("/login?verifyError=missing", baseUrl));
+    return NextResponse.redirect(new URL("/login?verifyError=invalid", baseUrl));
   }
   const { token } = parsed.data;
 

@@ -12,11 +12,11 @@ import {
   shouldRepairXeroContactNameOrder,
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
-import { hashActionToken } from "@/lib/action-tokens";
+import { hashActionToken, isActionTokenFormat } from "@/lib/action-tokens";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const confirmEmailChangeQuerySchema = z.object({
-  token: z.string().min(1),
+  token: z.string().trim().refine(isActionTokenFormat),
 });
 
 const XERO_CONTACT_SYNC_SELECT = {
@@ -50,12 +50,17 @@ export async function GET(request: NextRequest) {
   }
 
   const baseUrl = process.env.NEXTAUTH_URL || request.url;
+  const tokenParam = request.nextUrl.searchParams.get("token");
+  if (!tokenParam) {
+    return NextResponse.redirect(new URL("/profile?emailChangeError=missing", baseUrl));
+  }
+
   const parsed = confirmEmailChangeQuerySchema.safeParse({
-    token: request.nextUrl.searchParams.get("token"),
+    token: tokenParam,
   });
 
   if (!parsed.success) {
-    return NextResponse.redirect(new URL("/profile?emailChangeError=missing", baseUrl));
+    return NextResponse.redirect(new URL("/profile?emailChangeError=invalid", baseUrl));
   }
   const { token } = parsed.data;
 

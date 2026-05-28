@@ -56,6 +56,7 @@ const mockedUpdateToken = vi.mocked(prisma.passwordResetToken.update);
 const mockedCreateAuditLog = vi.mocked(prisma.auditLog.create);
 const mockedTransaction = vi.mocked(prisma.$transaction);
 const mockedSendPasswordResetEmail = vi.mocked(sendPasswordResetEmail);
+const validResetToken = "a".repeat(64);
 
 describe("password reset routes", () => {
   beforeEach(() => {
@@ -115,14 +116,14 @@ describe("password reset routes", () => {
     const req = new NextRequest("http://localhost/api/auth/reset-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: "reset-token", password: "123456789012" }),
+      body: JSON.stringify({ token: validResetToken, password: "123456789012" }),
     });
 
     const res = await resetPassword(req);
 
     expect(res.status).toBe(200);
     expect(mockedFindToken).toHaveBeenCalledWith({
-      where: { tokenHash: hashActionToken("reset-token") },
+      where: { tokenHash: hashActionToken(validResetToken) },
       include: { member: true },
     });
     expect(mockedMemberUpdate).toHaveBeenCalledWith({
@@ -150,5 +151,46 @@ describe("password reset routes", () => {
       }),
     });
     expect(mockedTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed reset tokens before lookup", async () => {
+    const req = new NextRequest("http://localhost/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "not-a-token", password: "123456789012" }),
+    });
+
+    const res = await resetPassword(req);
+
+    expect(res.status).toBe(400);
+    expect(mockedFindToken).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for malformed forgot-password JSON", async () => {
+    const req = new NextRequest("http://localhost/api/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    const res = await forgotPassword(req);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid JSON payload" });
+    expect(mockedFindMember).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for malformed reset-password JSON", async () => {
+    const req = new NextRequest("http://localhost/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    const res = await resetPassword(req);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "Invalid JSON payload" });
+    expect(mockedFindToken).not.toHaveBeenCalled();
   });
 });

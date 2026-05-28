@@ -4,14 +4,17 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
-import { hashActionToken } from "@/lib/action-tokens";
+import { hashActionToken, isActionTokenFormat } from "@/lib/action-tokens";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 
 const resetPasswordSchema = z.object({
-  token: z.string().min(1, "Token is required"),
+  token: z
+    .string()
+    .trim()
+    .refine(isActionTokenFormat, "Reset token is invalid"),
   password: z.string().min(12, "Password must be at least 12 characters").max(128, "Password must be at most 128 characters"),
 });
 
@@ -19,8 +22,14 @@ export async function POST(req: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.resetPassword, req);
   if (rateLimited) return rateLimited;
 
+  let body: unknown;
   try {
-    const body = await req.json();
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  try {
     const parsed = resetPasswordSchema.safeParse(body);
 
     if (!parsed.success) {

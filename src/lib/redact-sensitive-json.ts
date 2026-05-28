@@ -76,13 +76,13 @@ function redactJsonStringCandidate(value: string): string | null {
   }
 }
 
-// Membership cancellation tokens travel in the URL path so they can land
-// in webserver, proxy, and observability access logs. The token alone is
-// not enough to consume the request because the consume route also
-// requires the matching member session, but redacting the token from log
-// strings removes the disclosure vector regardless. See docs/SECURITY.md.
-const MEMBERSHIP_CANCELLATION_TOKEN_PATTERN =
-  /\/membership-cancellation\/[A-Za-z0-9_-]+/g;
+// Token-bearing paths can land in webserver, proxy, callbackUrl, and
+// observability access logs. Redact both literal paths and URL-encoded callback
+// paths so opaque action tokens do not leak through login redirects.
+const TOKEN_PATH_PATTERN =
+  /(\/(?:membership-cancellation|chores|nominations)\/)[A-Za-z0-9_-]+/g;
+const ENCODED_TOKEN_PATH_PATTERN =
+  /(%2F(?:membership-cancellation|chores|nominations)%2F)[A-Za-z0-9_-]+/gi;
 
 export function redactSensitiveText(value: string): string {
   const redactedJsonCandidate = redactJsonStringCandidate(value);
@@ -91,10 +91,8 @@ export function redactSensitiveText(value: string): string {
   }
 
   const redactedValue = value
-    .replace(
-      MEMBERSHIP_CANCELLATION_TOKEN_PATTERN,
-      `/membership-cancellation/${REDACTED_SECRET}`
-    )
+    .replace(TOKEN_PATH_PATTERN, `$1${REDACTED_SECRET}`)
+    .replace(ENCODED_TOKEN_PATH_PATTERN, `$1${REDACTED_SECRET}`)
     .replace(
       /("?(?:authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password|stripe[_-]?token|email|phone|phone[_-]?number|mobile[_-]?phone|payment[_-]?method(?:[_-]?id)?|charge(?:[_-]?id)?|client[_-]?reference[_-]?id)"?\s*:\s*")([^"]*)"/gi,
       `$1${REDACTED_SECRET}"`

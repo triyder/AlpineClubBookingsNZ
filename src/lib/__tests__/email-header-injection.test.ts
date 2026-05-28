@@ -122,4 +122,21 @@ describe("email header CRLF injection protections", () => {
     expect(mockTransporter.sendMail).not.toHaveBeenCalled();
     expect(mockPrisma.committeeMember.findFirst).not.toHaveBeenCalled();
   });
+
+  it("returns 400 for malformed contact-form JSON", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid JSON payload",
+    });
+    expect(mockTransporter.sendMail).not.toHaveBeenCalled();
+    expect(mockPrisma.committeeMember.findFirst).not.toHaveBeenCalled();
+  });
 });

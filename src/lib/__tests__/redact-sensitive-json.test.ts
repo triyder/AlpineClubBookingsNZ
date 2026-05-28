@@ -124,7 +124,7 @@ describe("redact-sensitive-json", () => {
     ).toContain('"authorization": "[REDACTED]"');
   });
 
-  it("redacts the token segment of /membership-cancellation/<token> URL paths", () => {
+  it("redacts token-bearing URL path segments", () => {
     expect(
       redactSensitiveText(
         "GET /membership-cancellation/abcDEF123_token-with-mixed 200 OK"
@@ -143,6 +143,32 @@ describe("redact-sensitive-json", () => {
         "/membership-cancellation/aA1_-/extra/path?keep=true"
       )
     ).toBe("/membership-cancellation/[REDACTED]/extra/path?keep=true");
+
+    expect(
+      redactSensitiveText(
+        "GET /chores/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      )
+    ).toBe("GET /chores/[REDACTED]");
+
+    expect(
+      redactSensitiveText(
+        "GET /nominations/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      )
+    ).toBe("GET /nominations/[REDACTED]");
+  });
+
+  it("redacts token-bearing callback URLs after URL encoding", () => {
+    expect(
+      redactSensitiveText(
+        "GET /login?callbackUrl=%2Fmembership-cancellation%2FabcDEF123_token 302"
+      )
+    ).toBe("GET /login?callbackUrl=%2Fmembership-cancellation%2F[REDACTED] 302");
+
+    expect(
+      redactSensitiveText(
+        "GET /login?callbackUrl=%2Fnominations%2F0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 302"
+      )
+    ).toBe("GET /login?callbackUrl=%2Fnominations%2F[REDACTED] 302");
   });
 
   it("redacts token query parameters and Stripe client secrets in plain text", () => {

@@ -4,6 +4,16 @@ import {
   getAddyAddressSelection,
 } from "@/lib/addy-api";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { z } from "zod";
+
+const detailsQuerySchema = z.object({
+  session: z
+    .string()
+    .trim()
+    .max(80)
+    .regex(/^[A-Za-z0-9_-]+$/)
+    .optional(),
+});
 
 export async function GET(
   request: Request,
@@ -22,13 +32,17 @@ export async function GET(
     return NextResponse.json({ error: "Invalid address id" }, { status: 400 });
   }
 
-  const searchParams = new URL(request.url).searchParams;
-  const session = searchParams.get("session") ?? undefined;
+  const searchParams = Object.fromEntries(new URL(request.url).searchParams);
+  const parsedQuery = detailsQuerySchema.safeParse(searchParams);
+
+  if (!parsedQuery.success) {
+    return NextResponse.json({ error: "Invalid address query" }, { status: 400 });
+  }
 
   try {
     const result = await getAddyAddressSelection({
       id: parsedId.data,
-      session: session?.match(/^[A-Za-z0-9_-]{1,80}$/) ? session : undefined,
+      session: parsedQuery.data.session,
     });
 
     if (!result.configured) {

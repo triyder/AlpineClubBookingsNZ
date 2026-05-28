@@ -8,9 +8,13 @@ import {
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { isActionTokenFormat } from "@/lib/action-tokens";
 
 const confirmationSchema = z.object({
-  token: z.string().trim().min(1),
+  token: z
+    .string()
+    .trim()
+    .refine(isActionTokenFormat, "Cancellation confirmation token is invalid"),
   decision: z.enum(["confirm", "decline"]),
 });
 

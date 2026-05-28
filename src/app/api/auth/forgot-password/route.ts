@@ -15,8 +15,14 @@ export async function POST(req: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.forgotPassword, req);
   if (rateLimited) return rateLimited;
 
+  let body: unknown;
   try {
-    const body = await req.json();
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+  }
+
+  try {
     const parsed = forgotPasswordSchema.safeParse(body);
 
     if (!parsed.success) {
