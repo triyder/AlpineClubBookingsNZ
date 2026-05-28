@@ -292,6 +292,7 @@ describe("POST /api/members/family/request-child — email on submit", () => {
         familyGroupId: "fg1",
         firstName: "Timmy",
         lastName: "Doe",
+        dateOfBirth: "2018-03-15",
       }),
     });
 
