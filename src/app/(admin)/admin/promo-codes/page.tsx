@@ -61,6 +61,7 @@ interface PromoCode {
   valueCents: number | null;
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
+  lifetimeFreeNightsCap: number | null;
   maxNightlyValueCents: number | null;
   maxGuestsPerBooking: number | null;
   maxRedemptionsTotal: number | null;
@@ -106,6 +107,7 @@ export default function PromoCodesPage() {
   const [percentOff, setPercentOff] = useState("");
   const [valueDollars, setValueDollars] = useState("");
   const [freeNightsPerIndividual, setFreeNightsPerIndividual] = useState("");
+  const [lifetimeFreeNightsCap, setLifetimeFreeNightsCap] = useState("");
   const [maxNightlyValueDollars, setMaxNightlyValueDollars] = useState("");
   const [maxGuestsPerBooking, setMaxGuestsPerBooking] = useState("");
   const [maxRedemptionsTotal, setMaxRedemptionsTotal] = useState("");
@@ -251,6 +253,7 @@ export default function PromoCodesPage() {
     setPercentOff("");
     setValueDollars("");
     setFreeNightsPerIndividual("");
+    setLifetimeFreeNightsCap("");
     setMaxNightlyValueDollars("");
     setMaxGuestsPerBooking("");
     setMaxRedemptionsTotal("");
@@ -285,6 +288,9 @@ export default function PromoCodesPage() {
     );
     setFreeNightsPerIndividual(
       promo.freeNightsPerIndividual != null ? String(promo.freeNightsPerIndividual) : ""
+    );
+    setLifetimeFreeNightsCap(
+      promo.lifetimeFreeNightsCap != null ? String(promo.lifetimeFreeNightsCap) : ""
     );
     setMaxNightlyValueDollars(
       promo.maxNightlyValueCents != null
@@ -351,6 +357,9 @@ export default function PromoCodesPage() {
     } else if (type === "FREE_NIGHTS") {
       payload.freeNightsPerIndividual = freeNightsPerIndividual
         ? parseInt(freeNightsPerIndividual)
+        : null;
+      payload.lifetimeFreeNightsCap = lifetimeFreeNightsCap
+        ? parseInt(lifetimeFreeNightsCap)
         : null;
     }
 
@@ -448,8 +457,13 @@ export default function PromoCodesPage() {
         return `${promo.percentOff}% off per individual`;
       case "FIXED_AMOUNT":
         return `${formatCents(promo.valueCents || 0)} off per individual`;
-      case "FREE_NIGHTS":
-        return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual !== 1 ? "s" : ""} per individual`;
+      case "FREE_NIGHTS": {
+        const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual !== 1 ? "s" : ""} per booking`;
+        if (promo.lifetimeFreeNightsCap != null) {
+          return `${perBooking} · ${promo.lifetimeFreeNightsCap} lifetime`;
+        }
+        return perBooking;
+      }
       default:
         return "";
     }
@@ -738,24 +752,42 @@ export default function PromoCodesPage() {
                 )}
 
                 {type === "FREE_NIGHTS" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="freeNightsPerIndividual">
-                      Free nights per individual (lifetime cap)
-                    </Label>
-                    <Input
-                      id="freeNightsPerIndividual"
-                      type="number"
-                      min="1"
-                      value={freeNightsPerIndividual}
-                      onChange={(e) => setFreeNightsPerIndividual(e.target.value)}
-                      placeholder="e.g. 2"
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Each eligible guest receives up to this many free nights on a booking. Also caps the
-                      booker&apos;s lifetime total free nights from this code across all their bookings.
-                    </p>
-                  </div>
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="freeNightsPerIndividual">
+                        Free nights per individual (per booking)
+                      </Label>
+                      <Input
+                        id="freeNightsPerIndividual"
+                        type="number"
+                        min="1"
+                        value={freeNightsPerIndividual}
+                        onChange={(e) => setFreeNightsPerIndividual(e.target.value)}
+                        placeholder="e.g. 2"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Each eligible guest receives up to this many free nights on a single booking.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lifetimeFreeNightsCap">
+                        Lifetime free nights per individual (optional)
+                      </Label>
+                      <Input
+                        id="lifetimeFreeNightsCap"
+                        type="number"
+                        min="1"
+                        value={lifetimeFreeNightsCap}
+                        onChange={(e) => setLifetimeFreeNightsCap(e.target.value)}
+                        placeholder="Leave blank for no lifetime cap"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Caps the total free nights any one member can claim from this code across all
+                        their bookings. Leave blank for no lifetime cap.
+                      </p>
+                    </div>
+                  </>
                 )}
               </div>
 

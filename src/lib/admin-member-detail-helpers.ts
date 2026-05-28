@@ -49,6 +49,7 @@ export interface PromoCodeBenefitSource {
   percentOff: number | null
   valueCents: number | null
   freeNightsPerIndividual: number | null
+  lifetimeFreeNightsCap: number | null
 }
 
 export interface XeroCreateFormFields {
@@ -188,7 +189,11 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
       : "Fixed discount"
   }
   if (promo.freeNightsPerIndividual !== null) {
-    return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per individual`
+    const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`
+    if (promo.lifetimeFreeNightsCap != null) {
+      return `${perBooking} · ${promo.lifetimeFreeNightsCap} lifetime`
+    }
+    return perBooking
   }
   return "Free nights"
 }

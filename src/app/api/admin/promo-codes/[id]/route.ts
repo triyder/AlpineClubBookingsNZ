@@ -12,6 +12,7 @@ const updatePromoCodeSchema = z.object({
   valueCents: z.number().int().min(0).optional().nullable(),
   percentOff: z.number().int().min(0).max(100).optional().nullable(),
   freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
+  lifetimeFreeNightsCap: z.number().int().min(1).optional().nullable(),
   maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
   maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
@@ -187,6 +188,16 @@ export async function PUT(
               freeNightsPerIndividual:
                 type === "FREE_NIGHTS"
                   ? (data.freeNightsPerIndividual ?? existing.freeNightsPerIndividual)
+                  : null,
+            }
+          : {}),
+        ...(data.type !== undefined || data.lifetimeFreeNightsCap !== undefined
+          ? {
+              lifetimeFreeNightsCap:
+                type === "FREE_NIGHTS"
+                  ? (data.lifetimeFreeNightsCap !== undefined
+                      ? data.lifetimeFreeNightsCap
+                      : existing.lifetimeFreeNightsCap)
                   : null,
             }
           : {}),

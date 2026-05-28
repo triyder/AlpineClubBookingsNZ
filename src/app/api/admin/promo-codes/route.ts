@@ -12,6 +12,7 @@ const promoCodeSchema = z.object({
   valueCents: z.number().int().min(0).optional().nullable(),
   percentOff: z.number().int().min(0).max(100).optional().nullable(),
   freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
+  lifetimeFreeNightsCap: z.number().int().min(1).optional().nullable(),
   maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
   maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
@@ -143,6 +144,7 @@ export async function POST(req: NextRequest) {
         valueCents: data.type === "FIXED_AMOUNT" ? data.valueCents : null,
         percentOff: data.type === "PERCENTAGE" ? data.percentOff : null,
         freeNightsPerIndividual: data.type === "FREE_NIGHTS" ? data.freeNightsPerIndividual : null,
+        lifetimeFreeNightsCap: data.type === "FREE_NIGHTS" ? (data.lifetimeFreeNightsCap ?? null) : null,
         // Nightly value cap only meaningful for PERCENTAGE and FREE_NIGHTS.
         maxNightlyValueCents:
           data.type === "FIXED_AMOUNT" ? null : (data.maxNightlyValueCents ?? null),

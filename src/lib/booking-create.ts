@@ -216,6 +216,7 @@ interface ResolvedPromo {
         valueCents: number | null;
         percentOff: number | null;
         freeNightsPerIndividual: number | null;
+        lifetimeFreeNightsCap: number | null;
         maxGuestsPerBooking: number | null;
         maxNightlyValueCents: number | null;
         memberGuestsOnly: boolean;
@@ -240,6 +241,7 @@ type LockedPromoRow = {
   valueCents: number | null;
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
+  lifetimeFreeNightsCap: number | null;
   maxGuestsPerBooking: number | null;
   maxNightlyValueCents: number | null;
   code: string;
