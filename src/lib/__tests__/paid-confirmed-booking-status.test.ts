@@ -107,6 +107,11 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).not.toContain(
       BookingStatus.CONFIRMED
     );
+    // AWAITING_REVIEW must hold capacity so admins decisions don't
+    // overbook against members who booked the same nights in parallel.
+    expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(
+      BookingStatus.AWAITING_REVIEW
+    );
 
     expect(OPERATIONAL_STAY_BOOKING_STATUSES).toContain(BookingStatus.PAID);
     expect(OPERATIONAL_STAY_BOOKING_STATUSES).toContain(BookingStatus.COMPLETED);
@@ -119,6 +124,10 @@ describe("paid legacy CONFIRMED booking repair", () => {
       BookingStatus.PAYMENT_PENDING
     );
     expect(PAYMENT_OWED_BOOKING_STATUSES).not.toContain(BookingStatus.PAID);
+    // AWAITING_REVIEW must NOT be payable — that's the whole point of the gate.
+    expect(PAYMENT_OWED_BOOKING_STATUSES).not.toContain(
+      BookingStatus.AWAITING_REVIEW
+    );
   });
 
   it("counts PAID bookings when checking capacity", async () => {

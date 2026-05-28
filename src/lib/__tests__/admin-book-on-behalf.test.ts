@@ -472,7 +472,7 @@ describe("Create booking guest normalization", () => {
     );
   });
 
-  it("flags minor-only draft bookings for admin review", async () => {
+  it("requires a member justification when a minor-only draft is created by a member", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
@@ -486,22 +486,39 @@ describe("Create booking guest normalization", () => {
     (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "b2",
       memberId: "m1",
-      status: "DRAFT",
+      status: "AWAITING_REVIEW",
       guests: [],
     });
 
-    const req = makeRequest({
+    // First: no justification — should be rejected with 400.
+    const reqMissing = makeRequest({
       checkIn,
       checkOut,
       draft: true,
       guests: [{ firstName: "Junior", lastName: "Guest", ageTier: "YOUTH", isMember: false }],
     });
-    const res = await POST(req);
-    expect(res.status).toBe(201);
+    const resMissing = await POST(reqMissing);
+    expect(resMissing.status).toBe(400);
+
+    // Then: with justification — should land as AWAITING_REVIEW with PENDING review status.
+    const reqOk = makeRequest({
+      checkIn,
+      checkOut,
+      draft: true,
+      memberReviewJustification: "Both grandparents are taking the kids and have stayed before.",
+      guests: [{ firstName: "Junior", lastName: "Guest", ageTier: "YOUTH", isMember: false }],
+    });
+    const resOk = await POST(reqOk);
+    expect(resOk.status).toBe(201);
 
     const createCall = (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(createCall.data.requiresAdminReview).toBe(true);
     expect(createCall.data.adminReviewReason).toContain("does not include an adult");
+    expect(createCall.data.adminReviewStatus).toBe("PENDING");
+    expect(createCall.data.memberReviewJustification).toBe(
+      "Both grandparents are taking the kids and have stayed before."
+    );
+    expect(createCall.data.status).toBe("AWAITING_REVIEW");
   });
 });
 
