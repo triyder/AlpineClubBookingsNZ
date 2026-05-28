@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
+import { requireCronSecret } from "@/lib/cron-auth";
 import logger from "@/lib/logger";
 
 /**
@@ -8,16 +8,8 @@ import logger from "@/lib/logger";
  * Secured with CRON_SECRET header.
  */
 export async function POST(request: NextRequest) {
-  const cronSecret = request.headers.get("x-cron-secret");
-  const expected = process.env.CRON_SECRET;
-  if (
-    !cronSecret ||
-    !expected ||
-    cronSecret.length !== expected.length ||
-    !timingSafeEqual(Buffer.from(cronSecret), Buffer.from(expected))
-  ) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
+  const unauthorized = requireCronSecret(request);
+  if (unauthorized) return unauthorized;
 
   try {
     const result = await confirmPendingBookings();

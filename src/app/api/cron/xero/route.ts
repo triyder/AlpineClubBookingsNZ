@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
+import { requireCronSecret } from "@/lib/cron-auth";
 import {
   backfillHistoricalXeroObjectLinks,
   cleanupStaleCanonicalXeroObjectLinks,
@@ -19,16 +19,8 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
  * Secured with CRON_SECRET to prevent unauthorized access.
  */
 export async function POST(request: NextRequest) {
-  const cronSecret = request.headers.get("x-cron-secret");
-  const expected = process.env.CRON_SECRET;
-  if (
-    !cronSecret ||
-    !expected ||
-    cronSecret.length !== expected.length ||
-    !timingSafeEqual(Buffer.from(cronSecret), Buffer.from(expected))
-  ) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
+  const unauthorized = requireCronSecret(request);
+  if (unauthorized) return unauthorized;
 
   const task = request.nextUrl.searchParams.get("task") ?? "memberships";
   if (!["memberships", "outbox", "retries", "inbound", "backfill", "link-cleanup", "report", "all"].includes(task)) {

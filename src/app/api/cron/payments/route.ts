@@ -1,25 +1,14 @@
-import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
 import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-operation-outbox";
+import { requireCronSecret } from "@/lib/cron-auth";
 import logger from "@/lib/logger";
 
 const cronTaskQuerySchema = z.object({
   task: z.enum(["recovery"]).optional().default("recovery"),
 });
-
-function isAuthorizedCronRequest(request: NextRequest) {
-  const cronSecret = request.headers.get("x-cron-secret");
-  const expected = process.env.CRON_SECRET;
-  return !!(
-    cronSecret &&
-    expected &&
-    cronSecret.length === expected.length &&
-    timingSafeEqual(Buffer.from(cronSecret), Buffer.from(expected))
-  );
-}
 
 async function recordCronRun({
   startedAt,
@@ -57,9 +46,8 @@ async function recordCronRun({
  * Secured manual trigger for durable Stripe payment recovery work.
  */
 export async function POST(request: NextRequest) {
-  if (!isAuthorizedCronRequest(request)) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
+  const unauthorized = requireCronSecret(request);
+  if (unauthorized) return unauthorized;
 
   const queryEntries = Array.from(request.nextUrl.searchParams.entries());
   const seenTaskKeys = queryEntries.filter(([key]) => key === "task").length;

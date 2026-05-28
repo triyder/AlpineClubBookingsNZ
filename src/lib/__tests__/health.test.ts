@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $queryRaw: vi.fn(),
+    member: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -247,6 +250,10 @@ describe("GET /api/health/ready", () => {
 describe("GET /api/admin/runtime-status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   it("requires an authenticated session", async () => {

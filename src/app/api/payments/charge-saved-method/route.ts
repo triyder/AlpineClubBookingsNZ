@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
 import {
@@ -7,6 +6,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { auth } from "@/lib/auth";
+import { isValidCronSecret } from "@/lib/cron-auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -31,11 +31,9 @@ export async function POST(request: NextRequest) {
 
   try {
     // This endpoint is called by internal cron or admin
-    const cronSecret = request.headers.get("x-cron-secret");
-    const expected = process.env.CRON_SECRET;
-    const isAuthorizedCron = !!(cronSecret && expected &&
-      cronSecret.length === expected.length &&
-      timingSafeEqual(Buffer.from(cronSecret), Buffer.from(expected)));
+    const isAuthorizedCron = isValidCronSecret(
+      request.headers.get("x-cron-secret")
+    );
 
     const session = await auth();
     let isAdmin = false;

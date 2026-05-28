@@ -16,7 +16,11 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 
-import { requireActiveSessionUser, requireAdmin } from "@/lib/session-guards";
+import {
+  requireActiveSession,
+  requireActiveSessionUser,
+  requireAdmin,
+} from "@/lib/session-guards";
 
 describe("requireActiveSessionUser", () => {
   beforeEach(() => {
@@ -86,6 +90,69 @@ describe("requireAdmin", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.session.user.id).toBe("admin-1");
+    }
+  });
+
+  it("rejects inactive admins through the active-session check", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockFindUnique.mockResolvedValue({ active: false, forcePasswordChange: false });
+
+    const result = await requireAdmin();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      await expect(result.response.json()).resolves.toEqual({
+        error: "Account is deactivated",
+      });
+    }
+  });
+
+  it("rejects admins who must change their password", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: true });
+
+    const result = await requireAdmin();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      await expect(result.response.json()).resolves.toEqual({
+        error: "Password change required",
+      });
+    }
+  });
+});
+
+describe("requireActiveSession", () => {
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockAuth.mockReset();
+  });
+
+  it("rejects unauthenticated API callers with the member-route envelope", async () => {
+    mockAuth.mockResolvedValue(null);
+
+    const result = await requireActiveSession();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+      await expect(result.response.json()).resolves.toEqual({
+        error: "Unauthorised",
+      });
+    }
+  });
+
+  it("returns the session after active-account checks pass", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
+
+    const result = await requireActiveSession();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.session.user.id).toBe("member-1");
     }
   });
 });

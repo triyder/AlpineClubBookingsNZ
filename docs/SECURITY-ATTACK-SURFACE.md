@@ -27,7 +27,7 @@ Authentication and authorization currently use these mechanisms:
 | Lodge/kiosk guard | `checkLodgeAuth()` in `src/lib/lodge-auth.ts`, including active session and hut-leader PIN session support. | `/api/lodge/**` and lodge roster/guest routes. |
 | Cron/deploy secret | Repeated `x-cron-secret` comparison against `CRON_SECRET`, usually with `timingSafeEqual`. | `/api/cron/**`, `/api/deploy/runtime-status`. |
 | Provider signature | Stripe signed body, Xero HMAC, SES/SNS signature verification. | `/api/webhooks/**`. |
-| Public exception | Documented in this inventory only. | Anonymous health, contact, application, auth token, address autocomplete, committee, age-tier, and public token routes. |
+| Public exception | Explicit route metadata in `src/lib/api-route-security.ts`, backed by static route-boundary tests. | Anonymous health, contact, application, auth token, address autocomplete, committee, age-tier, and public token routes. |
 
 Known guard gap: `src/app/api/admin/runtime-status/route.ts` checks
 `role === "ADMIN"` but does not use the active-session guard path. #613 should
@@ -193,8 +193,8 @@ probing. Current mitigations are route-specific rate limits, Zod validation,
 non-secret public health responses, token expiry, and provider signatures.
 
 Residual risk: rate limits are in-memory and single-instance. Public exceptions
-are documented here but not yet enforced by a route metadata registry. #613,
-#614, and #615 should address that.
+are now backed by route metadata and static tests, but #615 should still review
+the concrete anonymous endpoint behavior.
 
 ### Authenticated Member
 
@@ -300,12 +300,12 @@ permissions, image provenance, package visibility, and deploy secret rotation.
 
 ## Follow-Up Mapping
 
-- #613 - Standardize route guards: migrate admin hand-rolled checks to
-  `requireAdmin()` or equivalent, add shared active-member helper, centralize
-  cron/deploy secret checking, and introduce explicit public-route metadata.
-- #614 - Route boundary tests: walk `src/app/api/**/route.ts`, require approved
-  guard markers or public allowlist entries, and add representative behavior
-  tests for admin, member, finance, lodge, cron/deploy, webhook, and IDOR cases.
+- #613 - Standardize route guards: route metadata and shared active-session and
+  cron/deploy helpers now exist; future batches should continue migrating
+  hand-rolled admin checks to `requireAdmin()` or equivalent.
+- #614 - Route boundary tests: static tests now walk `src/app/api/**/route.ts`
+  and require approved guard markers or public allowlist entries; future batches
+  should broaden IDOR behavior coverage for booking and family-owned resources.
 - #615 - Anonymous public endpoints: review auth/account recovery, contact,
   applications, address autocomplete, public health/read endpoints, public
   token routes, response size bounds, non-enumerating responses, rate limits,

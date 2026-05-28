@@ -222,6 +222,22 @@ describe("finance booking metrics route", () => {
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
+  it("rejects unauthenticated callers", async () => {
+    mockAuth.mockResolvedValue(null);
+
+    const response = await getFinanceBookingMetricsRoute(
+      new NextRequest(
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+      )
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Unauthorised",
+    });
+    expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
+  });
+
   it("returns 400 when the query is incomplete", async () => {
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(

@@ -12,13 +12,25 @@ type RequireAdminResult =
   | { ok: true; session: { user: SessionUser } }
   | { ok: false; response: NextResponse };
 
+type RequireActiveSessionResult =
+  | { ok: true; session: { user: SessionUser } }
+  | { ok: false; response: NextResponse };
+
 type RequireAdminOptions = {
   unauthenticatedResponse?: () => NextResponse;
   forbiddenResponse?: () => NextResponse;
 };
 
+type RequireActiveSessionOptions = RequireActiveSessionUserOptions & {
+  unauthenticatedResponse?: () => NextResponse;
+};
+
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+function unauthorisedResponse() {
+  return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
 }
 
 function forbiddenResponse() {
@@ -60,6 +72,32 @@ export async function requireAdmin(
 type RequireActiveSessionUserOptions = {
   allowForcePasswordChange?: boolean;
 };
+
+/**
+ * Shared active-session API helper for member-facing routes. It preserves the
+ * existing member-route behavior: a missing session is 401 "Unauthorised" and
+ * active/force-password-change checks are delegated to requireActiveSessionUser.
+ */
+export async function requireActiveSession(
+  options: RequireActiveSessionOptions = {}
+): Promise<RequireActiveSessionResult> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return {
+      ok: false,
+      response: options.unauthenticatedResponse?.() ?? unauthorisedResponse(),
+    };
+  }
+
+  const inactive = await requireActiveSessionUser(session.user.id, {
+    allowForcePasswordChange: options.allowForcePasswordChange,
+  });
+  if (inactive) {
+    return { ok: false, response: inactive };
+  }
+
+  return { ok: true, session: { user: session.user as SessionUser } };
+}
 
 export async function requireActiveSessionUser(
   userId: string,
