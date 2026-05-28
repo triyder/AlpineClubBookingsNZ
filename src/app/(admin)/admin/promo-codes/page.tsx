@@ -12,6 +12,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { APP_CURRENCY } from "@/config/operational";
 import { formatCents } from "@/lib/pricing";
 
@@ -20,6 +27,17 @@ interface MemberOption {
   firstName: string;
   lastName: string;
   email: string;
+}
+
+interface XeroAccountOption {
+  code: string;
+  name: string;
+  type: string;
+}
+
+interface XeroItemOption {
+  code: string;
+  name: string;
 }
 
 interface PromoAssignment {
@@ -109,6 +127,12 @@ export default function PromoCodesPage() {
   const [memberResults, setMemberResults] = useState<MemberOption[]>([]);
   const [searchingMembers, setSearchingMembers] = useState(false);
 
+  const [xeroAccounts, setXeroAccounts] = useState<XeroAccountOption[]>([]);
+  const [xeroItems, setXeroItems] = useState<XeroItemOption[]>([]);
+  const [xeroDataLoaded, setXeroDataLoaded] = useState(false);
+  const [xeroDataLoading, setXeroDataLoading] = useState(false);
+  const [xeroDataError, setXeroDataError] = useState("");
+
   const fetchPromoCodes = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/promo-codes");
@@ -142,6 +166,40 @@ export default function PromoCodesPage() {
       fetchArchivedCodes();
     }
   }, [showArchived, fetchArchivedCodes]);
+
+  const fetchXeroReferenceData = useCallback(async () => {
+    if (xeroDataLoaded || xeroDataLoading) return;
+    setXeroDataLoading(true);
+    setXeroDataError("");
+    try {
+      const [accountsRes, itemsRes] = await Promise.all([
+        fetch("/api/admin/xero/chart-of-accounts"),
+        fetch("/api/admin/xero/items"),
+      ]);
+      if (!accountsRes.ok || !itemsRes.ok) {
+        throw new Error("Xero not connected or accounts/items unavailable");
+      }
+      const accountsData = (await accountsRes.json()) as { accounts?: XeroAccountOption[] };
+      const itemsData = (await itemsRes.json()) as { items?: XeroItemOption[] };
+      setXeroAccounts(accountsData.accounts ?? []);
+      setXeroItems(itemsData.items ?? []);
+      setXeroDataLoaded(true);
+    } catch (err) {
+      setXeroDataError(
+        err instanceof Error
+          ? err.message
+          : "Could not load Xero accounts/items"
+      );
+    } finally {
+      setXeroDataLoading(false);
+    }
+  }, [xeroDataLoaded, xeroDataLoading]);
+
+  useEffect(() => {
+    if (showForm) {
+      void fetchXeroReferenceData();
+    }
+  }, [showForm, fetchXeroReferenceData]);
 
   async function searchMembers(query: string) {
     setMemberSearch(query);
@@ -892,31 +950,87 @@ export default function PromoCodesPage() {
                     Code the discount line on the Xero invoice to a separate item or account so promo usage shows in the P&amp;L. Leave both blank to keep the existing behaviour (discount inherits the hut-fee codes).
                   </p>
                 </div>
+                {xeroDataLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading Xero accounts and items...</p>
+                ) : null}
+                {xeroDataError ? (
+                  <p className="text-xs text-amber-600">
+                    {xeroDataError}. Enter the codes manually below.
+                  </p>
+                ) : null}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="xeroItemCode">Xero Item Code</Label>
-                    <Input
-                      id="xeroItemCode"
-                      type="text"
-                      value={xeroItemCode}
-                      onChange={(e) => setXeroItemCode(e.target.value)}
-                      placeholder="e.g. PROMO-DISC"
-                      maxLength={30}
-                    />
+                    {xeroDataLoaded && xeroItems.length > 0 ? (
+                      <Select
+                        value={xeroItemCode || "__none__"}
+                        onValueChange={(value) =>
+                          setXeroItemCode(value === "__none__" ? "" : value)
+                        }
+                      >
+                        <SelectTrigger id="xeroItemCode">
+                          <SelectValue placeholder="Select item..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">
+                            <span className="text-muted-foreground">Not configured</span>
+                          </SelectItem>
+                          {xeroItems.map((item) => (
+                            <SelectItem key={item.code} value={item.code}>
+                              {item.code} - {item.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id="xeroItemCode"
+                        type="text"
+                        value={xeroItemCode}
+                        onChange={(e) => setXeroItemCode(e.target.value)}
+                        placeholder="e.g. PROMO-DISC"
+                        maxLength={30}
+                      />
+                    )}
                     <p className="text-xs text-muted-foreground">
                       If set, the discount line posts to this Xero item. The item&apos;s mapped account in Xero takes priority over the account code below.
                     </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="xeroAccountCode">Xero Account Code</Label>
-                    <Input
-                      id="xeroAccountCode"
-                      type="text"
-                      value={xeroAccountCode}
-                      onChange={(e) => setXeroAccountCode(e.target.value)}
-                      placeholder="e.g. 201"
-                      maxLength={10}
-                    />
+                    {xeroDataLoaded && xeroAccounts.length > 0 ? (
+                      <Select
+                        value={xeroAccountCode || "__none__"}
+                        onValueChange={(value) =>
+                          setXeroAccountCode(value === "__none__" ? "" : value)
+                        }
+                      >
+                        <SelectTrigger id="xeroAccountCode">
+                          <SelectValue placeholder="Select account..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">
+                            <span className="text-muted-foreground">Not configured (use default)</span>
+                          </SelectItem>
+                          {xeroAccounts
+                            .filter((a) => a.type === "REVENUE")
+                            .map((account) => (
+                              <SelectItem key={account.code} value={account.code}>
+                                {account.code} - {account.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        id="xeroAccountCode"
+                        type="text"
+                        value={xeroAccountCode}
+                        onChange={(e) => setXeroAccountCode(e.target.value)}
+                        placeholder="e.g. 201"
+                        maxLength={10}
+                      />
+                    )}
                     <p className="text-xs text-muted-foreground">
                       Used when no item code is set, or to override the item&apos;s default account.
                     </p>
