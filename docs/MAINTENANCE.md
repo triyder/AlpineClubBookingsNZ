@@ -34,6 +34,37 @@ CI also runs independent static and container checks:
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
+## Supply-Chain And Deployment Security Policy
+
+- Keep GitHub Actions default permissions at `contents: read`. Grant elevated
+  permissions only on the job that needs them, such as `packages: write` for
+  GHCR publishing on `main`.
+- Do not reference GitHub Actions by default branches such as `master` or
+  `main`. Use released major tags for trusted first-party and widely used
+  actions that Dependabot can track, and use explicit release tags for scanner
+  actions or images where drift would change gate behavior.
+- Keep scanner container inputs isolated. Source checkouts mounted into scanner
+  containers should be read-only unless the scanner must write to the source
+  tree; write artifacts to `$RUNNER_TEMP` or another dedicated output mount.
+- Keep production image tags commit-SHA based. Operators should deploy the app
+  and migration images that match the resolved `origin/main` commit.
+- Keep GHCR host tokens read-only. Production hosts need `read:packages`; CI
+  publishing uses the workflow `GITHUB_TOKEN` in the publish job only.
+- Treat Docker image security as two gates: CRITICAL Trivy findings fail the PR,
+  while HIGH findings are warning-only until reviewed and promoted to a blocking
+  policy.
+
+Accepted residual risk:
+
+- Most GitHub Actions remain pinned to released major tags rather than full
+  commit SHAs so Dependabot and upstream patch releases can keep routine
+  maintenance low-friction.
+- The project does not yet publish signed image attestations or SBOM artifacts;
+  image provenance is currently the commit-SHA tag, protected PR checks, and the
+  GHCR package publish job.
+- The `npm audit --audit-level=high` gate keeps high/critical npm advisories
+  blocking, while lower severity advisories remain review-driven.
+
 ## Maintainability Budgets
 
 The repo has a handful of oversized files and route surfaces. Future

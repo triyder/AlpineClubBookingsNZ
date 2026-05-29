@@ -497,6 +497,54 @@ Residual risks to keep visible:
 - The legacy dashboard export remains a bearer-token bridge for compatibility;
   keep it disabled when the legacy dashboard is not actively used.
 
+## CI, Dependency, Docker, And Deployment Hardening Review - 2026-05-29
+
+Reviewed the current #619 supply-chain and deployment boundary: GitHub Actions
+permissions, action and scanner versions, npm audit policy, Dependabot policy,
+gitleaks/Semgrep/Trivy gates, Dockerfile runtime shape, Compose exposure, GHCR
+image naming, and deployment environment contracts.
+
+Hardening applied in #619:
+
+- The Docker image security job no longer uses
+  `aquasecurity/trivy-action@master`; both Trivy steps now use the explicit
+  `v0.36.0` release tag.
+- Semgrep now mounts the repository read-only and writes SARIF output to a
+  dedicated `$RUNNER_TEMP` artifact mount.
+- The pull-request gitleaks Docker scan now mounts the repository read-only.
+- `docs/MAINTENANCE.md` now records the action pinning, scanner isolation,
+  GHCR token, commit-SHA image tag, and Trivy severity policies.
+
+Verified controls already present and intentionally preserved:
+
+- Workflow default permissions are `contents: read`; only GHCR publishing on
+  `main` gets `packages: write`.
+- `verify` remains the only CI job that runs the full production build, and it
+  uses fake/test provider values. Local Lightsail validation should stay
+  lightweight unless explicitly approved.
+- Semgrep uses a pinned `semgrep/semgrep:1.161.0` image, PR-diff gitleaks uses
+  `ghcr.io/gitleaks/gitleaks:v8.28.0`, and the Dockerfile uses
+  `node:24.15-alpine`.
+- Dependabot checks npm, GitHub Actions, and Docker weekly, with Node runtime
+  ignores keeping the app on Node 24 until the runtime policy changes.
+- The final app container runs as `nextjs`, Compose uses read-only app
+  filesystems, tmpfs cache/temp mounts, `no-new-privileges`, resource limits,
+  and Caddy is the only public port exposure in the production stack.
+- `.dockerignore` excludes `.env`, `.env.*`, `.git`, `node_modules`, `.next`,
+  coverage, docs, and markdown from the Docker build context.
+- GHCR app and migrate images are commit-SHA tagged, and production deployment
+  resolves `origin/main` to select matching images.
+
+Residual risks to keep visible:
+
+- Most GitHub Actions remain pinned to released major tags rather than full
+  commit SHAs so Dependabot and upstream patch releases can keep routine
+  maintenance low-friction.
+- HIGH Trivy findings remain warning-only; CRITICAL findings block. Promote
+  HIGH to blocking later if the operational noise level is acceptable.
+- The repo does not yet publish signed image attestations or SBOM artifacts.
+  Current image provenance is protected PR checks plus commit-SHA GHCR tags.
+
 ## Follow-Up Mapping
 
 - #613 - Standardize route guards: route metadata and shared active-session and
@@ -519,7 +567,6 @@ Residual risks to keep visible:
 - #618 - Lodge, finance, and legacy privileged interfaces: review completed;
   account-bound PIN sessions, staying-guest contact redaction, generic finance
   failure redirects, and generic legacy bridge 500s are now documented above.
-- #619 - CI, dependency, Docker, and deployment hardening: review workflow
-  permissions, dependency/update policy, image build/publish provenance, GHCR
-  scopes, Compose hardening, deployment environment contracts, and secret
-  rotation/runbook coverage.
+- #619 - CI, dependency, Docker, and deployment hardening: review completed;
+  Trivy pinning, read-only scanner mounts, action/dependency policy, image tag
+  provenance, GHCR scope, and Compose residual risks are documented above.
