@@ -133,4 +133,32 @@ describe("Xero OAuth admin routes", () => {
     expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Max-Age=0");
   });
+
+  it("does not reflect provider callback error details into the redirect URL", async () => {
+    const state = "b".repeat(64);
+    mockHandleXeroCallback.mockRejectedValue(
+      new Error(
+        "Xero apiCallback failed for https://example.org/api/admin/xero/callback?code=secret-code&state=secret-state"
+      )
+    );
+
+    const response = await handleXeroConnectCallback(
+      new NextRequest(
+        `http://internal:3000/api/admin/xero/callback?code=test-code&state=${state}`,
+        {
+          headers: {
+            cookie: `xero_oauth_state=${state}`,
+          },
+        }
+      )
+    );
+
+    const location = response.headers.get("location");
+    expect(response.status).toBe(307);
+    expect(location).toBe(
+      "https://example.org/admin/xero?error=Xero%20connection%20failed.%20Please%20reconnect%20from%20the%20admin%20page."
+    );
+    expect(location).not.toContain("secret-code");
+    expect(location).not.toContain("secret-state");
+  });
 });

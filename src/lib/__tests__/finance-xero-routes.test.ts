@@ -304,4 +304,32 @@ describe("finance Xero routes", () => {
     expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Max-Age=0");
   });
+
+  it("does not reflect provider callback error details into the finance redirect URL", async () => {
+    const state = createFinanceXeroOAuthState("finance-manager-1");
+    mockHandleFinanceXeroCallback.mockRejectedValue(
+      new Error(
+        "Finance apiCallback failed for https://example.org/api/finance/xero/callback?code=secret-code&state=secret-state"
+      )
+    );
+
+    const response = await handleFinanceXeroConnectCallback(
+      new NextRequest(
+        `http://internal:3000/api/finance/xero/callback?code=test-code&state=${state}`,
+        {
+          headers: {
+            cookie: `finance_xero_oauth_state=${state}`,
+          },
+        }
+      )
+    );
+
+    const location = response.headers.get("location");
+    expect(response.status).toBe(307);
+    expect(location).toBe(
+      "https://example.org/finance?error=Finance%20Xero%20connection%20failed.%20Please%20reconnect%20from%20the%20finance%20page."
+    );
+    expect(location).not.toContain("secret-code");
+    expect(location).not.toContain("secret-state");
+  });
 });

@@ -105,6 +105,13 @@ function applyRefundStatus(
   return baseStatus;
 }
 
+function boundedRefundedAmountCents(
+  amountCents: number,
+  ...candidates: number[]
+) {
+  return Math.min(amountCents, Math.max(0, ...candidates));
+}
+
 async function loadPaymentWithTransactions(store: PaymentStore, paymentId: string) {
   return store.payment.findUnique({
     where: { id: paymentId },
@@ -578,7 +585,8 @@ export async function syncRefundedAmountFromStripe({
     select: { refundedAmountCents: true },
   });
 
-  const nextRefundedAmountCents = Math.max(
+  const nextRefundedAmountCents = boundedRefundedAmountCents(
+    transaction.amountCents,
     transaction.refundedAmountCents,
     refundedAmountCents
   );
@@ -660,7 +668,8 @@ export async function syncRefundsFromStripeCharge({
     store,
     transaction.id
   );
-  const nextRefundedAmountCents = Math.max(
+  const nextRefundedAmountCents = boundedRefundedAmountCents(
+    transaction.amountCents,
     transaction.refundedAmountCents,
     refundedAmountCents,
     ledgerRefundedAmountCents
@@ -772,8 +781,15 @@ export async function refundPaymentTransactions({
       store,
     });
 
-    const nextRefundedAmountCents =
-      transaction.refundedAmountCents + refundAmountForTransaction;
+    const ledgerRefundedAmountCents = await sumRecordedRefundsForTransaction(
+      store,
+      transaction.id
+    );
+    const nextRefundedAmountCents = boundedRefundedAmountCents(
+      transaction.amountCents,
+      transaction.refundedAmountCents,
+      ledgerRefundedAmountCents
+    );
     await store.paymentTransaction.update({
       where: { id: transaction.id },
       data: {

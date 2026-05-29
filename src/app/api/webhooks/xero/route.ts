@@ -6,6 +6,7 @@ import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 import {
+  isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
   readBoundedWebhookText,
 } from "@/lib/webhook-body";
@@ -14,9 +15,9 @@ const XERO_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
 const XERO_WEBHOOK_MAX_EVENTS = 100;
 
 type XeroWebhookEventPayload = {
-  eventType?: string;
-  eventCategory?: string;
-  resourceId?: string;
+  eventType: string;
+  eventCategory: string;
+  resourceId: string;
   eventDateUtc?: string;
 };
 
@@ -24,8 +25,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isValidOptionalDateString(value: unknown): value is string | undefined {
+  if (value === undefined) {
+    return true;
+  }
+
+  return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
 }
 
 function isXeroWebhookEventPayload(
@@ -33,10 +42,10 @@ function isXeroWebhookEventPayload(
 ): value is XeroWebhookEventPayload {
   return (
     isRecord(value) &&
-    isOptionalString(value.eventType) &&
-    isOptionalString(value.eventCategory) &&
-    isOptionalString(value.resourceId) &&
-    isOptionalString(value.eventDateUtc)
+    isNonEmptyString(value.eventType) &&
+    isNonEmptyString(value.eventCategory) &&
+    isNonEmptyString(value.resourceId) &&
+    isValidOptionalDateString(value.eventDateUtc)
   );
 }
 
@@ -85,6 +94,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Webhook payload too large" },
         { status: 413 }
+      );
+    }
+    if (isWebhookBodyInvalidContentLengthError(error)) {
+      logger.warn(
+        { contentLength: error.contentLength },
+        "Xero webhook had invalid content-length header"
+      );
+      return NextResponse.json(
+        { error: "Invalid content-length header" },
+        { status: 400 }
       );
     }
     throw error;
@@ -143,18 +162,18 @@ export async function POST(request: NextRequest) {
     const correlationKey = buildXeroIdempotencyKey(
       "xero",
       "webhook",
-      eventCategory || "UNKNOWN",
-      eventType || "UNKNOWN",
-      resourceId || "UNKNOWN",
+      eventCategory,
+      eventType,
+      resourceId,
       typeof event.eventDateUtc === "string" ? event.eventDateUtc : "NO_DATE"
     );
 
     try {
       await recordXeroInboundEvent({
         source: "webhook",
-        eventCategory: eventCategory ?? null,
-        eventType: eventType ?? "UNKNOWN",
-        resourceId: resourceId ?? null,
+        eventCategory,
+        eventType,
+        resourceId,
         eventCreatedAt: eventDateUtc,
         correlationKey,
         payload: event,
@@ -179,16 +198,16 @@ export async function POST(request: NextRequest) {
       await recordWebhookLog({
         source: "xero",
         eventType: `${eventCategory}.${eventType}`,
-        eventId: resourceId || "unknown",
+        eventId: resourceId,
         status: "success",
         durationMs: Date.now() - eventStart,
       });
     } catch (err) {
       await recordXeroInboundEvent({
         source: "webhook",
-        eventCategory: eventCategory ?? null,
-        eventType: eventType ?? "UNKNOWN",
-        resourceId: resourceId ?? null,
+        eventCategory,
+        eventType,
+        resourceId,
         eventCreatedAt: eventDateUtc,
         correlationKey,
         payload: event,
@@ -202,7 +221,7 @@ export async function POST(request: NextRequest) {
       await recordWebhookLog({
         source: "xero",
         eventType: `${eventCategory}.${eventType}`,
-        eventId: resourceId || "unknown",
+        eventId: resourceId,
         status: "failure",
         durationMs: Date.now() - eventStart,
         error: err instanceof Error ? err.message : String(err),

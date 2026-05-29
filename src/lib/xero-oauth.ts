@@ -41,12 +41,17 @@ export async function handleXeroCallback(url: string, state?: string): Promise<v
 
   const tenants = xero.tenants;
   const tenantId = tenants.length > 0 ? tenants[0].tenantId : null;
+  if (!tenantId) {
+    throw new Error(
+      "Xero did not return an organisation to connect. Please reconnect and choose the club organisation in Xero."
+    );
+  }
 
   await saveXeroTokens({
     accessToken: tokenSet.access_token!,
     refreshToken: tokenSet.refresh_token!,
     expiresAt: new Date(Date.now() + (tokenSet.expires_in ?? 1800) * 1000),
-    tenantId: tenantId ?? undefined,
+    tenantId,
   });
 }
 

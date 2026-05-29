@@ -117,4 +117,81 @@ describe("Xero webhook route", () => {
     });
     expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed Xero webhook content-length before signature verification", async () => {
+    const body = "{}";
+    const signature = createHmac("sha256", "xero-webhook-key")
+      .update(body)
+      .digest("base64");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/webhooks/xero", {
+        method: "POST",
+        headers: {
+          "x-xero-signature": signature,
+          "content-length": "256kb",
+        },
+        body,
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid content-length header",
+    });
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects signed Xero events with invalid event dates", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      signedRequest({
+        events: [
+          {
+            eventType: "UPDATE",
+            eventCategory: "INVOICE",
+            resourceId: "invoice-1",
+            eventDateUtc: "not-a-date",
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid webhook event payload",
+    });
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("records valid signed Xero events with required resource identity", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      signedRequest({
+        events: [
+          {
+            eventType: "UPDATE",
+            eventCategory: "INVOICE",
+            resourceId: "invoice-1",
+            eventDateUtc: "2026-05-29T00:00:00.000Z",
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRecordXeroInboundEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "invoice-1",
+        eventCreatedAt: new Date("2026-05-29T00:00:00.000Z"),
+        correlationKey:
+          "xero:webhook:INVOICE:UPDATE:invoice-1:2026-05-29T00:00:00.000Z",
+      })
+    );
+  });
 });

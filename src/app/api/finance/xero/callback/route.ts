@@ -8,6 +8,24 @@ import {
 import { handleFinanceXeroCallback } from "@/lib/finance-xero";
 import logger from "@/lib/logger";
 
+function getSafeFinanceXeroCallbackErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error ?? "Finance Xero connection failed");
+
+  if (
+    message ===
+      "Invalid finance Xero OAuth state. Please reconnect from the finance page." ||
+    message ===
+      "Finance Xero did not return an organisation to connect. Please reconnect and choose the finance organisation in Xero."
+  ) {
+    return message;
+  }
+
+  return "Finance Xero connection failed. Please reconnect from the finance page.";
+}
+
 export async function GET(request: NextRequest) {
   const baseUrl = process.env.NEXTAUTH_URL || request.url;
   const incomingUrl = new URL(request.url);
@@ -59,10 +77,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     logger.error({ err: error }, "Finance Xero callback error");
-    const message =
-      error instanceof Error
-        ? error.message
-        : String(error ?? "Finance Xero connection failed");
+    const message = getSafeFinanceXeroCallbackErrorMessage(error);
     const response = NextResponse.redirect(
       new URL(`/finance?error=${encodeURIComponent(message)}`, baseUrl)
     );

@@ -172,6 +172,57 @@ describe("payment refund ledger", () => {
     );
   });
 
+  it("does not double-count a direct refund when an idempotent retry replays the same Stripe refund", async () => {
+    const { store, transaction, refunds } = createRefundStore();
+    transaction.refundedAmountCents = 2500;
+    transaction.status = "PARTIALLY_REFUNDED";
+    refunds.set("re_direct_1", {
+      id: "payment_refund_1",
+      paymentId: "payment_1",
+      paymentTransactionId: "txn_1",
+      stripeRefundId: "re_direct_1",
+      stripeChargeId: "ch_1",
+      stripePaymentIntentId: "pi_1",
+      amountCents: 2500,
+      currency: "nzd",
+      status: "succeeded",
+      reason: "requested_by_customer",
+      stripeCreatedAt: new Date("2026-02-02T02:40:00.000Z"),
+    });
+    mocks.processRefund.mockResolvedValue({
+      id: "re_direct_1",
+      amount: 2500,
+      currency: "nzd",
+      status: "succeeded",
+      reason: "requested_by_customer",
+      created: 1770000000,
+      charge: "ch_1",
+      payment_intent: "pi_1",
+    });
+
+    await refundPaymentTransactions({
+      paymentId: "payment_1",
+      amountCents: 2500,
+      idempotencyKeyPrefix: "retry_refund",
+      store: store as any,
+    });
+
+    expect(store.paymentTransaction.update).toHaveBeenCalledWith({
+      where: { id: "txn_1" },
+      data: expect.objectContaining({
+        refundedAmountCents: 2500,
+        status: "PARTIALLY_REFUNDED",
+      }),
+    });
+    expect(store.payment.update).toHaveBeenCalledWith({
+      where: { id: "payment_1" },
+      data: expect.objectContaining({
+        refundedAmountCents: 2500,
+        status: "PARTIALLY_REFUNDED",
+      }),
+    });
+  });
+
   it("upserts charge refund webhook rows by Stripe refund ID", async () => {
     const { store } = createRefundStore();
     const refund = {

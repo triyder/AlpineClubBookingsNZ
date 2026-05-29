@@ -4,6 +4,7 @@ import logger from "@/lib/logger";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { processStripeWebhookEvent } from "@/lib/stripe-webhook-service";
 import {
+  isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
   readBoundedWebhookText,
 } from "@/lib/webhook-body";
@@ -51,6 +52,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Webhook payload too large" },
         { status: 413 }
+      );
+    }
+
+    if (isWebhookBodyInvalidContentLengthError(err)) {
+      logger.warn(
+        { contentLength: err.contentLength },
+        "Stripe webhook had invalid content-length header"
+      );
+      return NextResponse.json(
+        { error: "Invalid content-length header" },
+        { status: 400 }
       );
     }
 

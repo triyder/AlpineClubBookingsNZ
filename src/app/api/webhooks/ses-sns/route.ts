@@ -9,6 +9,7 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 import {
+  isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
   readBoundedWebhookText,
 } from "@/lib/webhook-body";
@@ -67,6 +68,24 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { error: "Webhook payload too large" },
           { status: 413 }
+        );
+      }
+
+      if (isWebhookBodyInvalidContentLengthError(error)) {
+        await recordSesWebhookLog({
+          eventType,
+          eventId,
+          status: "failure",
+          startedAt,
+          error: "Invalid content-length header",
+        });
+        logger.warn(
+          { contentLength: error.contentLength },
+          "SES/SNS webhook had invalid content-length header"
+        );
+        return NextResponse.json(
+          { error: "Invalid content-length header" },
+          { status: 400 }
         );
       }
 

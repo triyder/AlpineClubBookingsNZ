@@ -9,6 +9,23 @@ import {
   XERO_OAUTH_STATE_COOKIE,
 } from "@/lib/xero-oauth-state";
 
+function getSafeXeroCallbackErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String(error ?? "Xero connection failed");
+
+  if (
+    message === "Invalid Xero OAuth state. Please reconnect from the admin page." ||
+    message ===
+      "Xero did not return an organisation to connect. Please reconnect and choose the club organisation in Xero."
+  ) {
+    return message;
+  }
+
+  return "Xero connection failed. Please reconnect from the admin page.";
+}
+
 /**
  * GET /api/admin/xero/callback
  * Handles the OAuth2 callback from Xero after admin grants consent.
@@ -55,7 +72,7 @@ export async function GET(request: NextRequest) {
     return response;
   } catch (error) {
     logger.error({ err: error }, "Xero callback error");
-    const message = error instanceof Error ? error.message : String(error ?? "Xero connection failed");
+    const message = getSafeXeroCallbackErrorMessage(error);
     const response = NextResponse.redirect(
       new URL(`/admin/xero?error=${encodeURIComponent(message)}`, baseUrl)
     );

@@ -5,10 +5,23 @@ export class WebhookBodyTooLargeError extends Error {
   }
 }
 
+export class WebhookBodyInvalidContentLengthError extends Error {
+  constructor(readonly contentLength: string) {
+    super("Webhook payload has an invalid content-length header");
+    this.name = "WebhookBodyInvalidContentLengthError";
+  }
+}
+
 export function isWebhookBodyTooLargeError(
   error: unknown
 ): error is WebhookBodyTooLargeError {
   return error instanceof WebhookBodyTooLargeError;
+}
+
+export function isWebhookBodyInvalidContentLengthError(
+  error: unknown
+): error is WebhookBodyInvalidContentLengthError {
+  return error instanceof WebhookBodyInvalidContentLengthError;
 }
 
 export async function readBoundedWebhookText(
@@ -17,8 +30,17 @@ export async function readBoundedWebhookText(
 ): Promise<string> {
   const declaredLength = request.headers.get("content-length");
   if (declaredLength) {
-    const parsedLength = Number.parseInt(declaredLength, 10);
-    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+    const normalizedLength = declaredLength.trim();
+    if (!/^(0|[1-9][0-9]*)$/.test(normalizedLength)) {
+      throw new WebhookBodyInvalidContentLengthError(declaredLength);
+    }
+
+    const parsedLength = Number.parseInt(normalizedLength, 10);
+    if (!Number.isSafeInteger(parsedLength)) {
+      throw new WebhookBodyInvalidContentLengthError(declaredLength);
+    }
+
+    if (parsedLength > maxBytes) {
       throw new WebhookBodyTooLargeError(maxBytes);
     }
   }
