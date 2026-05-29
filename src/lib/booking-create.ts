@@ -143,7 +143,7 @@ export class BookingReviewJustificationRequiredError extends Error {
  * Admin-created bookings auto-approve the review (no second pass on their
  * own work). Member-created bookings that trip the rule require a written
  * justification and land with adminReviewStatus = PENDING so an admin can
- * decide via the booking-approvals queue.
+ * decide via the booking requests queue.
  */
 function resolveAdminReviewFields(args: {
   guests: BookingGuestInput[];

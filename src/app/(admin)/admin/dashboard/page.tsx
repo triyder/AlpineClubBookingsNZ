@@ -243,12 +243,12 @@ export default async function AdminDashboardPage() {
       )}
 
       {hasPendingBookingApprovals && (
-        <Link href="/admin/booking-approvals">
+        <Link href="/admin/booking-requests">
           <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-900">Booking Approvals</p>
+                <p className="font-medium text-amber-900">Booking Requests</p>
                 <p className="text-sm text-amber-800 mt-1">
                   {bookingApprovalSummary.join(" and ")} waiting for admin decision.
                 </p>

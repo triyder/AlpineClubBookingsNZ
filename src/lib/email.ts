@@ -79,6 +79,7 @@ import { formatNZDate, formatNZDateTime } from "./nzst-date";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -1939,7 +1940,10 @@ export async function sendAdminBookingChangeRequestAlert(data: {
   reason: string | null;
   requestId: string;
 }) {
-  const reviewUrl = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/admin/booking-change-requests?requestId=${encodeURIComponent(data.requestId)}`;
+  const reviewUrl = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}${buildBookingRequestsHref(
+    "changes",
+    { requestId: data.requestId },
+  )}`;
 
   await sendToAdmins({
     subject: `Booking Change Request: ${data.memberName}`,

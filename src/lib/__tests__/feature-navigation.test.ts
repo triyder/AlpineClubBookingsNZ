@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getVisibleAdminNavSections } from "@/components/admin-sidebar";
 import { getNavBarLinks } from "@/components/nav-bar";
+import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import type { FeatureFlags } from "@/config/schema";
 
 const allOn: FeatureFlags = {
@@ -61,6 +62,25 @@ describe("feature-aware navigation", () => {
     expect(items).not.toContain("Chores");
     expect(items).not.toContain("Xero");
     expect(items).toContain("Bookings");
+    expect(items).toContain("Booking Requests");
+    expect(items).not.toContain("Change Requests");
     expect(items).toContain("Modules");
+  });
+
+  it("links booking request navigation to the combined request page", () => {
+    const item = getVisibleAdminNavSections(allOn)
+      .flatMap((section) => section.items)
+      .find((navItem) => navItem.label === "Booking Requests");
+
+    expect(item?.href).toBe("/admin/booking-requests");
+  });
+
+  it("preserves old booking request deep-link params on the combined page", () => {
+    expect(
+      buildBookingRequestsHref("changes", {
+        requestId: "request-1",
+        tab: "approvals",
+      })
+    ).toBe("/admin/booking-requests?tab=changes&requestId=request-1");
   });
 });

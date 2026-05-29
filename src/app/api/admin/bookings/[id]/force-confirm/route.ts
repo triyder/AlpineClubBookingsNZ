@@ -110,7 +110,7 @@ export async function POST(
 
       // No payment row needed when parking for review.
       if (nextStatus === BookingStatus.AWAITING_REVIEW) {
-        // Nothing further; admin must approve via the booking-approvals
+        // Nothing further; admin must approve via the booking requests
         // queue before payment can be taken.
       } else if (nextStatus === BookingStatus.PAID) {
         await tx.payment.upsert({

@@ -62,7 +62,7 @@ const navSections: NavSection[] = [
     label: "Bookings & Payments",
     items: [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
-      { href: "/admin/booking-change-requests", label: "Change Requests", icon: ClipboardList },
+      { href: "/admin/booking-requests", label: "Booking Requests", icon: ClipboardList },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
       { href: "/admin/refund-requests", label: "Refunds & Credits", icon: RotateCcw },
@@ -196,17 +196,24 @@ function usePendingRefundAppeals(): number {
   return count;
 }
 
-function usePendingBookingChangeRequests(): number {
+function usePendingBookingRequests(): number {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/admin/booking-change-requests?status=PENDING&pageSize=1")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
+    Promise.all([
+      fetch("/api/admin/booking-reviews?status=PENDING&pageSize=1")
+        .then((response) => (response.ok ? response.json() : null)),
+      fetch("/api/admin/booking-change-requests?status=REQUESTED&pageSize=1")
+        .then((response) => (response.ok ? response.json() : null)),
+    ])
+      .then(([reviewData, changeData]) => {
         if (!cancelled) {
-          setCount(typeof data?.total === "number" ? data.total : 0);
+          setCount(
+            (reviewData?.pagination?.total ?? 0) +
+              (typeof changeData?.total === "number" ? changeData.total : 0),
+          );
         }
       })
       .catch(() => {});
@@ -283,7 +290,7 @@ function SidebarLinks({
   const pendingFamilyRequests = usePendingFamilyRequests();
   const pendingApplications = usePendingApplications();
   const pendingRefundAppeals = usePendingRefundAppeals();
-  const pendingBookingChangeRequests = usePendingBookingChangeRequests();
+  const pendingBookingRequests = usePendingBookingRequests();
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
   const visibleNavSections = getVisibleAdminNavSections(features);
@@ -296,8 +303,8 @@ function SidebarLinks({
   if (pendingFamilyRequests > 0) {
     badges["/admin/family-groups"] = pendingFamilyRequests;
   }
-  if (pendingBookingChangeRequests > 0) {
-    badges["/admin/booking-change-requests"] = pendingBookingChangeRequests;
+  if (pendingBookingRequests > 0) {
+    badges["/admin/booking-requests"] = pendingBookingRequests;
   }
   if (pendingRefundAppeals + pendingCreditApprovals > 0) {
     badges["/admin/refund-requests"] =
