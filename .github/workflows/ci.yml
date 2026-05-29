@@ -54,8 +54,10 @@ jobs:
 
       - name: Run Semgrep static analysis
         run: |
+          mkdir -p "$RUNNER_TEMP/semgrep-output"
           docker run --rm \
-            -v "$PWD:/src" \
+            -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/semgrep-output:/out" \
             -w /src \
             "${SEMGREP_IMAGE}" \
             semgrep scan \
@@ -67,14 +69,14 @@ jobs:
               --metrics=off \
               --exclude node_modules \
               --exclude .next \
-              --sarif-output semgrep-results.sarif
+              --sarif-output /out/semgrep-results.sarif
 
       - name: Upload Semgrep SARIF artifact
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: semgrep-sarif-${{ github.run_id }}
-          path: semgrep-results.sarif
+          path: ${{ runner.temp }}/semgrep-output/semgrep-results.sarif
           if-no-files-found: ignore
 
   gitleaks-full-repo:
@@ -111,7 +113,7 @@ jobs:
       - name: Scan pull request commit range with gitleaks
         run: |
           docker run --rm \
-            -v "$PWD:/repo" \
+            -v "$PWD:/repo:ro" \
             ghcr.io/gitleaks/gitleaks:v8.28.0 \
             git /repo \
             --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
@@ -189,7 +191,7 @@ jobs:
             .
 
       - name: Fail on CRITICAL image vulnerabilities
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REF }}
           format: table
@@ -198,7 +200,7 @@ jobs:
 
       - name: Warn on HIGH image vulnerabilities
         continue-on-error: true
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REF }}
           format: table

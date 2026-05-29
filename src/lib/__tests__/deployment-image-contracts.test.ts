@@ -34,6 +34,24 @@ describe("deployment image contracts", () => {
     expect(workflow).toContain("target: builder");
   });
 
+  it("pins scanner actions and images away from default branch refs", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+
+    expect(workflow).toContain("SEMGREP_IMAGE: semgrep/semgrep:1.161.0");
+    expect(workflow).toContain("ghcr.io/gitleaks/gitleaks:v8.28.0");
+    expect(workflow).toContain("uses: aquasecurity/trivy-action@v0.36.0");
+    expect(workflow).not.toMatch(/uses:\s+\S+@(master|main)\b/);
+  });
+
+  it("mounts scanner source checkouts read-only", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+
+    expect(workflow).toContain('-v "$PWD:/src:ro"');
+    expect(workflow).toContain('-v "$RUNNER_TEMP/semgrep-output:/out"');
+    expect(workflow).toContain('-v "$PWD:/repo:ro"');
+    expect(workflow).toContain("${{ runner.temp }}/semgrep-output/semgrep-results.sarif");
+  });
+
   it("deploys the resolved commit SHA image references from the production script", () => {
     const deployScript = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 
