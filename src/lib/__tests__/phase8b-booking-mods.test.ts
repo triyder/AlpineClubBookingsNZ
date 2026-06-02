@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 // --- Mocks ---
@@ -125,6 +125,17 @@ const mockedProcessRefund = vi.mocked(processRefund);
 const mockedGetHoldDays = vi.mocked(getNonMemberHoldDays);
 const mockedValidatePromo = vi.mocked(validatePromoCodeRules);
 const mockedValidateAndCalculatePromo = vi.mocked(validateAndCalculatePromoDiscount);
+
+const TEST_NOW = new Date("2026-05-20T12:00:00.000Z");
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(TEST_NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // Helper to make a booking object
 function makeBooking(overrides: Record<string, unknown> = {}) {
