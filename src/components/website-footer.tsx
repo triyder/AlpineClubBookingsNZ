@@ -4,7 +4,7 @@ import { CLUB_FACEBOOK_URL, CLUB_NAME, CLUB_PUBLIC_URL } from "@/config/club-ide
 
 export function WebsiteFooter() {
   return (
-    <footer className="border-t border-brand-gold/15 bg-brand-charcoal text-brand-mist">
+    <footer className="border-t border-brand-gold/15 bg-brand-charcoal text-brand-snow/90">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
           {/* Club info */}
@@ -103,7 +103,7 @@ export function WebsiteFooter() {
           </div>
         </div>
 
-        <div className="mt-10 border-t border-brand-ridge/30 pt-6 text-center text-sm text-brand-mist/80">
+        <div className="mt-10 border-t border-brand-ridge/30 pt-6 text-center text-sm text-brand-snow/85">
           <p>
             &copy; {new Date().getFullYear()} {CLUB_NAME} Incorporated. All
             rights reserved.

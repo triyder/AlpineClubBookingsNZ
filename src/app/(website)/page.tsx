@@ -68,7 +68,9 @@ export default function HomePage() {
           alt={`${CLUB_NAME} lodge on Mt Ruapehu`}
           fill
           className="object-cover"
-          priority
+          sizes="100vw"
+          loading="eager"
+          fetchPriority="high"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-brand-deep/92 via-brand-charcoal/82 to-brand-charcoal/48" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,203,5,0.24),transparent_30%)]" />
@@ -160,6 +162,7 @@ export default function HomePage() {
                 alt="Snowboarding on Mt Ruapehu with mountain panorama"
                 fill
                 className="object-cover hover:scale-105 transition-transform duration-500"
+                sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-brand-deep/75 to-transparent p-4">
                 <span className="text-brand-snow text-sm font-medium">Skiing & Snowboarding</span>
@@ -171,6 +174,7 @@ export default function HomePage() {
                 alt="Whakapapa ski field on Mt Ruapehu"
                 fill
                 className="object-cover hover:scale-105 transition-transform duration-500"
+                sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-brand-deep/75 to-transparent p-4">
                 <span className="text-brand-snow text-sm font-medium">Whakapapa Ski Area</span>
@@ -182,6 +186,7 @@ export default function HomePage() {
                 alt="Sunset from Mt Ruapehu"
                 fill
                 className="object-cover hover:scale-105 transition-transform duration-500"
+                sizes="(min-width: 1024px) 33vw, (min-width: 640px) 67vw, 100vw"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-brand-deep/75 to-transparent p-4">
                 <span className="text-brand-snow text-sm font-medium">Mountain Sunsets</span>
@@ -261,7 +266,7 @@ export default function HomePage() {
               asChild
               className="border-2 border-brand-snow/70 bg-transparent text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
             >
-              <Link href="/about">Learn More</Link>
+              <Link href="/about">About the Club</Link>
             </Button>
           </div>
         </div>

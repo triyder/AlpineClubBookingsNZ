@@ -54,6 +54,7 @@ describe("CSP policy", () => {
     );
     expect(directive(policy, "script-src")).not.toContain("'unsafe-inline'");
     expect(directive(policy, "style-src")).toContain("'unsafe-inline'");
+    expect(directive(policy, "worker-src")).toBe("worker-src 'self' blob:");
     expect(directive(policy, "object-src")).toBe("object-src 'none'");
     expect(directive(policy, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });

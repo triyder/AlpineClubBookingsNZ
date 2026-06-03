@@ -7,6 +7,8 @@ export const SECURITY_HEADERS = {
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Strict-Transport-Security": "max-age=31536000",
+  "Cross-Origin-Opener-Policy": "same-origin",
 } as const;
 
 export function createCspNonce() {
@@ -38,6 +40,7 @@ export function buildContentSecurityPolicy(nonce: string) {
     "font-src 'self' data:",
     "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io",
     "frame-src https://js.stripe.com https://hooks.stripe.com",
+    "worker-src 'self' blob:",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
