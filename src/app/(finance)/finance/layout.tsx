@@ -1,7 +1,10 @@
+import { headers } from "next/headers";
+import { AppProviders } from "@/components/app-providers";
 import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
-import { CLUB_NAME } from "@/config/club-identity";
+import { CLUB_NAME, clubIdentity } from "@/config/club-identity";
+import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   hasFinanceManagerAccess,
@@ -17,39 +20,42 @@ export default async function FinanceLayout({
   const fullName = `${member.firstName} ${member.lastName}`.trim() || "Member";
   const isManager = hasFinanceManagerAccess(member.financeAccessLevel);
   const effectiveModules = await loadEffectiveModuleFlags();
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
-      <NavBar
-        features={effectiveModules}
-        user={{
-          name: fullName,
-          email: member.email,
-          role: member.role,
-          canAccessFinance: true,
-        }}
-      />
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8 flex flex-col gap-3 rounded-2xl border bg-card p-6 text-card-foreground shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
-              Finance
-            </p>
-            <h1 className="text-3xl font-semibold text-foreground">
-              {CLUB_NAME} finance workspace
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Review finance reports, booking performance, and sync status in
-              one place.
-            </p>
+    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+      <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
+        <NavBar
+          features={effectiveModules}
+          user={{
+            name: fullName,
+            email: member.email,
+            role: member.role,
+            canAccessFinance: true,
+          }}
+        />
+        <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+          <div className="mb-8 flex flex-col gap-3 rounded-2xl border bg-card p-6 text-card-foreground shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
+                Finance
+              </p>
+              <h1 className="text-3xl font-semibold text-foreground">
+                {CLUB_NAME} finance workspace
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Review finance reports, booking performance, and sync status in
+                one place.
+              </p>
+            </div>
+            <Badge variant={isManager ? "default" : "secondary"}>
+              {isManager ? "Finance manager" : "Finance viewer"}
+            </Badge>
           </div>
-          <Badge variant={isManager ? "default" : "secondary"}>
-            {isManager ? "Finance manager" : "Finance viewer"}
-          </Badge>
-        </div>
-        {children}
-      </main>
-      <ReportIssueWidget />
-    </div>
+          {children}
+        </main>
+        <ReportIssueWidget />
+      </div>
+    </AppProviders>
   );
 }

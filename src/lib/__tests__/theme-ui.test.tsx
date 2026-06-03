@@ -3,27 +3,22 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AppProviders } from "@/components/app-providers";
 import { AppThemeProvider } from "@/components/app-theme-provider";
 import {
   ThemeSwitcher,
   UI_THEME_STORAGE_KEY,
 } from "@/components/theme-switcher";
-import RootLayout from "@/app/layout";
+import type { ClubIdentity } from "@/config/club-identity-types";
 
 const {
-  headersMock,
   setThemeMock,
   themeProviderMock,
   useThemeMock,
 } = vi.hoisted(() => ({
-  headersMock: vi.fn(),
   setThemeMock: vi.fn(),
   themeProviderMock: vi.fn(({ children }: { children: ReactNode }) => children),
   useThemeMock: vi.fn(),
-}));
-
-vi.mock("next/headers", () => ({
-  headers: headersMock,
 }));
 
 vi.mock("next-auth/react", () => ({
@@ -39,10 +34,24 @@ vi.mock("@/components/ui/sonner", () => ({
   Toaster: () => <div data-testid="toaster" />,
 }));
 
+const testClubIdentity: ClubIdentity = {
+  bookingsName: "Example Bookings",
+  contactEmail: "contact@example.org",
+  emailFromName: "Example Club",
+  lodgeCapacity: 20,
+  lodgeName: "Example Lodge",
+  lodgeTravelNote: "Allow travel time.",
+  name: "Example Club",
+  publicHost: "example.org",
+  publicUrl: "https://example.org",
+  shortName: "Example",
+  socialLinks: {},
+  supportEmail: "support@example.org",
+};
+
 describe("AppThemeProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    headersMock.mockResolvedValue(new Headers());
     useThemeMock.mockReturnValue({
       setTheme: setThemeMock,
       theme: "system",
@@ -70,10 +79,12 @@ describe("AppThemeProvider", () => {
     );
   });
 
-  it("receives the root layout CSP nonce from the x-nonce header", async () => {
-    headersMock.mockResolvedValue(new Headers({ "x-nonce": "layout-nonce" }));
-
-    render(await RootLayout({ children: <span>page content</span> }));
+  it("passes the route layout CSP nonce through AppProviders", async () => {
+    render(
+      <AppProviders clubIdentity={testClubIdentity} nonce="layout-nonce">
+        <span>page content</span>
+      </AppProviders>
+    );
 
     expect(themeProviderMock).toHaveBeenCalledWith(
       expect.objectContaining({

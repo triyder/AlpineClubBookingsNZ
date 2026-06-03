@@ -1,12 +1,5 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
-import { SessionProvider } from "next-auth/react";
-import { AppThemeProvider } from "@/components/app-theme-provider";
-import { ClubIdentityProvider } from "@/components/club-identity-provider";
-import { CspNonceProvider } from "@/components/security/csp-nonce-provider";
-import { Toaster } from "@/components/ui/sonner";
 import { CLUB_NAME, CLUB_PUBLIC_URL, clubIdentity } from "@/config/club-identity";
-import { CSP_NONCE_HEADER } from "@/lib/csp";
 import "./globals.css";
 
 const baseUrl = process.env.NEXTAUTH_URL || CLUB_PUBLIC_URL;
@@ -47,19 +40,10 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
-
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col font-sans">
-        <CspNonceProvider nonce={nonce}>
-          <AppThemeProvider nonce={nonce}>
-            <ClubIdentityProvider value={clubIdentity}>
-              <SessionProvider>{children}</SessionProvider>
-              <Toaster richColors position="top-right" />
-            </ClubIdentityProvider>
-          </AppThemeProvider>
-        </CspNonceProvider>
+        {children}
       </body>
     </html>
   );

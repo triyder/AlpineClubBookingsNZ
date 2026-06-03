@@ -1,5 +1,9 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
+import { clubIdentity } from "@/config/club-identity";
+import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { prisma } from "@/lib/prisma";
 
 export default async function LodgeLayout({
@@ -29,9 +33,13 @@ export default async function LodgeLayout({
     redirect("/change-password");
   }
 
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
+
   return (
-    <div className="app-theme-scope min-h-screen bg-background text-foreground">
-      {children}
-    </div>
+    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+      <div className="app-theme-scope min-h-screen bg-background text-foreground">
+        {children}
+      </div>
+    </AppProviders>
   );
 }

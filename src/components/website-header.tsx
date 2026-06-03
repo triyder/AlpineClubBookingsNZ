@@ -1,21 +1,9 @@
-"use client";
-
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useClubIdentity } from "@/components/club-identity-provider";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { CLUB_NAME } from "@/config/club-identity";
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
-import { cn } from "@/lib/utils";
 
 interface WebsiteHeaderProps {
   isAuthenticated: boolean;
@@ -31,15 +19,6 @@ const navLinks = [
 ];
 
 export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
-  const club = useClubIdentity();
-  const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
-    return pathname.startsWith(href);
-  };
-
   const bookingsHref = isAuthenticated ? "/book" : buildBookingLoginPath();
   const dashboardHref = isAuthenticated ? "/dashboard" : "/login";
 
@@ -53,7 +32,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
         >
           <Image
             src="/branding/logo.png"
-            alt={club.name}
+            alt={CLUB_NAME}
             width={140}
             height={48}
             className="h-10 w-auto"
@@ -67,12 +46,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
             <Link
               key={link.href}
               href={link.href}
-              className={cn(
-                "rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                isActive(link.href)
-                  ? "bg-brand-gold text-brand-charcoal shadow-sm"
-                  : "text-brand-snow/80 hover:bg-brand-snow/10 hover:text-brand-snow"
-              )}
+              className="rounded-md px-3 py-2 text-sm font-medium text-brand-snow/80 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow"
             >
               {link.label}
             </Link>
@@ -112,52 +86,35 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           )}
         </div>
 
-        {/* Mobile hamburger */}
-        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="lg:hidden text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
-              aria-label="Open menu"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent
-            side="right"
-            className="website-theme website-mobile-menu w-72 border-brand-ridge/25"
+        {/* Mobile menu */}
+        <details className="group relative lg:hidden">
+          <summary
+            aria-label="Open menu"
+            className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-md text-brand-snow transition-colors hover:bg-brand-snow/10 hover:text-brand-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold [&::-webkit-details-marker]:hidden"
           >
-            <SheetHeader>
-              <SheetTitle className="flex items-center gap-2 text-left font-heading text-brand-snow">
-                <Image
-                  src="/branding/logo.png"
-                  alt={club.name}
-                  width={120}
-                  height={40}
-                  className="h-8 w-auto"
-                />
-              </SheetTitle>
-            </SheetHeader>
-
-            <div className="mt-6 flex flex-col gap-1">
+            <Menu className="h-5 w-5" aria-hidden="true" />
+          </summary>
+          <div className="website-mobile-menu absolute right-0 top-12 w-72 rounded-md border border-brand-ridge/25 bg-brand-charcoal p-5 text-brand-snow shadow-2xl">
+            <div className="mb-5">
+              <Image
+                src="/branding/logo.png"
+                alt={CLUB_NAME}
+                width={120}
+                height={40}
+                className="h-8 w-auto"
+              />
+            </div>
+            <nav className="flex flex-col gap-1">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    "rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
-                    isActive(link.href)
-                      ? "bg-brand-gold text-brand-charcoal"
-                      : "text-brand-snow/85 hover:bg-brand-snow/10 hover:text-brand-snow"
-                  )}
+                  className="rounded-md px-3 py-2.5 text-sm font-medium text-brand-snow/85 transition-colors hover:bg-brand-snow/10 hover:text-brand-snow"
                 >
                   {link.label}
                 </Link>
               ))}
-            </div>
-
+            </nav>
             <div className="mt-6 flex flex-col gap-2 border-t border-brand-snow/10 px-3 pt-6">
               {isAuthenticated ? (
                 <>
@@ -167,14 +124,10 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                     asChild
                     className="w-full border-brand-snow/20 bg-brand-snow/5 text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
                   >
-                    <Link href={dashboardHref} onClick={() => setMobileOpen(false)}>
-                      Dashboard
-                    </Link>
+                    <Link href={dashboardHref}>Dashboard</Link>
                   </Button>
                   <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
-                    <Link href={bookingsHref} onClick={() => setMobileOpen(false)}>
-                      Book Now
-                    </Link>
+                    <Link href={bookingsHref}>Book Now</Link>
                   </Button>
                 </>
               ) : (
@@ -185,20 +138,16 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                     asChild
                     className="w-full border-brand-snow/20 bg-brand-snow/5 text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
                   >
-                    <Link href="/login" onClick={() => setMobileOpen(false)}>
-                      Log In
-                    </Link>
+                    <Link href="/login">Log In</Link>
                   </Button>
                   <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
-                    <Link href={bookingsHref} onClick={() => setMobileOpen(false)}>
-                      Book Now
-                    </Link>
+                    <Link href={bookingsHref}>Book Now</Link>
                   </Button>
                 </>
               )}
             </div>
-          </SheetContent>
-        </Sheet>
+          </div>
+        </details>
       </div>
     </header>
   );

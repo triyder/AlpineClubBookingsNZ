@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement, ReactNode } from "react";
 
 const { mockAuth, mockFindUnique, mockRedirect } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
@@ -20,6 +21,14 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("next/navigation", () => ({
   redirect: (path: string) => mockRedirect(path),
+}));
+
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers()),
+}));
+
+vi.mock("@/components/app-providers", () => ({
+  AppProviders: ({ children }: { children: ReactNode }) => children,
 }));
 
 describe("lodge layout authentication", () => {
@@ -52,10 +61,10 @@ describe("lodge layout authentication", () => {
 
     const { default: LodgeLayout } = await import("@/app/(lodge)/layout");
     const result = await LodgeLayout({ children: "secure" });
+    const layoutShell = (result as ReactElement<{ children: ReactElement }>).props
+      .children;
 
-    expect((result as { props: { children: string } }).props.children).toBe(
-      "secure"
-    );
+    expect(layoutShell.props.children).toBe("secure");
   });
 
   it("redirects inactive authenticated users back to login", async () => {

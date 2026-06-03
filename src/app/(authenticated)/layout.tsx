@@ -1,4 +1,6 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
@@ -6,7 +8,9 @@ import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { clubIdentity } from "@/config/club-identity";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
+import { CSP_NONCE_HEADER } from "@/lib/csp";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
@@ -79,15 +83,18 @@ export default async function AuthenticatedLayout({
   };
   const showOnboardingWizard = shouldShowMemberOnboarding(member);
   const effectiveModules = await loadEffectiveModuleFlags();
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
-      <NavBar user={user} features={effectiveModules} />
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        {children}
-      </main>
-      <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
-      <ReportIssueWidget />
-    </div>
+    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+      <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
+        <NavBar user={user} features={effectiveModules} />
+        <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+          {children}
+        </main>
+        <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
+        <ReportIssueWidget />
+      </div>
+    </AppProviders>
   );
 }

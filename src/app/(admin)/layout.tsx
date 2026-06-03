@@ -1,12 +1,16 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AdminSidebar } from "@/components/admin-sidebar";
 import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { clubIdentity } from "@/config/club-identity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
+import { CSP_NONCE_HEADER } from "@/lib/csp";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
@@ -51,20 +55,23 @@ export default async function AdminLayout({
   };
   const showOnboardingWizard = shouldShowMemberOnboarding(member);
   const effectiveModules = await loadEffectiveModuleFlags();
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
-      <NavBar user={user} features={effectiveModules} />
-      <div className="flex flex-1">
-        <AdminSidebar features={effectiveModules} />
-        <div className="flex flex-1 flex-col md:overflow-hidden">
-          <main className="flex-1 overflow-y-auto p-6 print:overflow-visible print:p-0 md:p-8">
-            {children}
-          </main>
+    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+      <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
+        <NavBar user={user} features={effectiveModules} />
+        <div className="flex flex-1">
+          <AdminSidebar features={effectiveModules} />
+          <div className="flex flex-1 flex-col md:overflow-hidden">
+            <main className="flex-1 overflow-y-auto p-6 print:overflow-visible print:p-0 md:p-8">
+              {children}
+            </main>
+          </div>
         </div>
+        <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
+        <ReportIssueWidget avoidDesktopSidebar />
       </div>
-      <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
-      <ReportIssueWidget avoidDesktopSidebar />
-    </div>
+    </AppProviders>
   );
 }

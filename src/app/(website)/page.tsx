@@ -71,6 +71,7 @@ export default function HomePage() {
           sizes="100vw"
           loading="eager"
           fetchPriority="high"
+          quality={70}
         />
         <div className="absolute inset-0 bg-gradient-to-r from-brand-deep/92 via-brand-charcoal/82 to-brand-charcoal/48" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,203,5,0.24),transparent_30%)]" />
