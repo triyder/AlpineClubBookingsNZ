@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
   },
   output: "standalone",
   poweredByHeader: false,
+  turbopack: {
+    root: process.cwd(),
+  },
 };
 
 // Warn at build time if Sentry is partially configured
