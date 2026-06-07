@@ -1,5 +1,6 @@
 import {
   BookingStatus,
+  PaymentSource,
   PaymentStatus,
   type AgeTier,
   type Booking,
@@ -1107,11 +1108,11 @@ export async function calculateModificationSettlementOptions({
   netChargeCents: number;
 }): Promise<BookingModificationSettlementOptions | null> {
   const basisAmountCents = Math.max(0, -netChargeCents);
-  const hasSucceededPayment =
+  const hasSettledPayment =
     isSettledBookingStatus(booking.status) &&
     booking.payment?.status === PaymentStatus.SUCCEEDED;
 
-  if (basisAmountCents <= 0 || !hasSucceededPayment) {
+  if (basisAmountCents <= 0 || !hasSettledPayment) {
     return null;
   }
 
@@ -1196,8 +1197,10 @@ export async function applyPaymentAdjustments(
   },
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
-  const hasSucceededPayment =
+  const hasSettledPayment =
     inSettledStatus && booking.payment?.status === "SUCCEEDED";
+  const hasSucceededPayment =
+    hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice =
     inSettledStatus && !!booking.payment?.xeroInvoiceId;
 
@@ -1218,19 +1221,21 @@ export async function applyPaymentAdjustments(
   let additionalAmountCents = 0;
   let pendingRefundAmountCents = 0;
 
-  if (hasSucceededPayment && booking.payment) {
+  if (hasSettledPayment && booking.payment) {
     if (settlementOptions && netAmountCents < 0) {
       if (selectedSettlement.settlementMethod === "credit") {
         accountCreditAmountCents = selectedSettlement.amountCents;
       } else {
         refundAmountCents = selectedSettlement.amountCents;
       }
-      pendingRefundAmountCents = refundAmountCents;
+      pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
     } else if (netAmountCents < 0) {
       refundAmountCents = Math.abs(netAmountCents);
-      pendingRefundAmountCents = refundAmountCents;
+      pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
     } else if (netAmountCents > 0) {
-      additionalAmountCents = netAmountCents;
+      additionalAmountCents = hasSucceededPayment
+        ? netAmountCents
+        : xeroAdditionalAmountCents;
     }
 
     if (changeFeeCents > 0) {

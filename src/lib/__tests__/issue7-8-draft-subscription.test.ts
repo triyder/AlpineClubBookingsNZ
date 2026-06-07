@@ -561,6 +561,51 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
     );
   });
 
+  it("rejects existing Internet Banking payments before creating a Stripe intent", async () => {
+    const stripe = await import("@/lib/stripe");
+    mockAuth.mockResolvedValue(memberSession());
+
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "ib-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 10000,
+      hasNonMembers: false,
+      requiresAdminReview: false,
+      member: {
+        id: "member-1",
+        email: "test@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+      guests: [{ id: "g1" }],
+      payment: {
+        id: "payment-ib-1",
+        source: "INTERNET_BANKING",
+        status: "PENDING",
+        reference: "BOOKING-IB-1",
+        stripePaymentIntentId: null,
+      },
+    });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "ib-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntent(req);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error:
+        "This booking is already awaiting Internet Banking payment and cannot use the Stripe payment flow",
+    });
+    expect(stripe.findOrCreateCustomer).not.toHaveBeenCalled();
+    expect(stripe.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects non-payable statuses (CANCELLED)", async () => {
     mockAuth.mockResolvedValue(memberSession());
 

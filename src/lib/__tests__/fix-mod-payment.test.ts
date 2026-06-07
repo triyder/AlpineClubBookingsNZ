@@ -39,6 +39,8 @@ const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
 const mockMarkPaymentIntentTransactionFailed = vi.fn();
 const mockCompleteCanceledSupersededPaymentIntentRecovery = vi.fn();
 const mockQueueSupersededPaymentIntentRefundRecovery = vi.fn();
+const mockQueueSupersededAdditionalIntentCancellations = vi.fn();
+const mockQueueSupersededPrimaryIntentCancellations = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund", message: "queued" });
@@ -177,6 +179,13 @@ vi.mock("@/lib/payment-recovery", () => ({
       : paymentIntent.payment_method?.id ?? null,
 }));
 
+vi.mock("@/lib/booking-payment-cleanup", () => ({
+  queueSupersededAdditionalIntentCancellations: (...args: unknown[]) =>
+    mockQueueSupersededAdditionalIntentCancellations(...args),
+  queueSupersededPrimaryIntentCancellations: (...args: unknown[]) =>
+    mockQueueSupersededPrimaryIntentCancellations(...args),
+}));
+
 // Chore cleanup mock
 vi.mock("@/lib/chore-cleanup", () => ({
   cleanupChoreAssignmentsForDateChange: vi.fn().mockResolvedValue({ choreWarnings: [] }),
@@ -222,6 +231,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       id: "p1",
       bookingId: "bk1",
       amountCents: 10000,
+      source: "STRIPE",
       status: "SUCCEEDED",
       stripePaymentIntentId: "pi_original",
       stripeCustomerId: "cus_123",
@@ -273,6 +283,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
 }
 
 beforeEach(() => {
+  mockQueueSupersededAdditionalIntentCancellations.mockResolvedValue([]);
+  mockQueueSupersededPrimaryIntentCancellations.mockResolvedValue([]);
   mockUpsertPaymentIntentTransaction.mockResolvedValue({});
   mockRefundPaymentTransactions.mockResolvedValue({
     refunds: [{ refundId: "re_test_1", paymentIntentId: "pi_original", amountCents: 1000 }],
@@ -482,6 +494,53 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
 
     // No additional PI created
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 3000,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+  });
+
+  it("does not send Internet Banking date reductions to Stripe refund recovery", async () => {
+    const booking = makeBooking({
+      payment: {
+        ...makeBooking().payment,
+        source: "INTERNET_BANKING",
+        stripePaymentIntentId: null,
+        stripeCustomerId: null,
+        xeroInvoiceId: "inv_ib_1",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 7000,
+      guests: [{ priceCents: 7000, perNightCents: [3500] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkOut: "2026-08-02" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.refundAmountCents).toBe(3000);
+    expect(data.additionalPaymentClientSecret).toBeNull();
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
 
     await Promise.resolve();
@@ -759,6 +818,11 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
         status: "PENDING",
       })
     );
+    expect(mockQueueSupersededAdditionalIntentCancellations).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "p1",
+      newPaymentIntentId: "pi_guest_extra",
+    });
 
     await Promise.resolve();
     expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(

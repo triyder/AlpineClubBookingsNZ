@@ -3,6 +3,7 @@ import {
   type Booking,
   type BookingGuest,
   type Payment,
+  PaymentSource,
   type PaymentStatus,
   type Role,
 } from "@prisma/client";
@@ -310,9 +311,11 @@ export async function modifyBookingDates({
     let refundAmountCents = 0;
     let additionalAmountCents = 0;
 
-    const hasSucceededPayment =
+    const hasSettledPayment =
       ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
       booking.payment?.status === "SUCCEEDED";
+    const hasSucceededPayment =
+      hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
     const hasIssuedXeroInvoice =
       ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
       !!booking.payment?.xeroInvoiceId;
@@ -324,14 +327,16 @@ export async function modifyBookingDates({
 
     let pendingRefundAmountCents = 0;
 
-    if (hasSucceededPayment && booking.payment) {
+    if (hasSettledPayment && booking.payment) {
       const netAmountCents = priceDiffCents + changeFeeCents;
 
       if (netAmountCents < 0) {
         refundAmountCents = Math.abs(netAmountCents);
-        pendingRefundAmountCents = refundAmountCents;
+        pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
       } else if (netAmountCents > 0) {
-        additionalAmountCents = netAmountCents;
+        additionalAmountCents = hasSucceededPayment
+          ? netAmountCents
+          : xeroAdditionalAmountCents;
       }
 
       if (changeFeeCents > 0) {

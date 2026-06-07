@@ -6,7 +6,7 @@ import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource } from "@prisma/client";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
@@ -80,6 +80,16 @@ export async function POST(request: NextRequest) {
         {
           error:
             "This booking must stay in the saved-card flow until the non-member hold window expires",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
+      return NextResponse.json(
+        {
+          error:
+            "This booking is already awaiting Internet Banking payment and cannot use the Stripe payment flow",
         },
         { status: 400 }
       );

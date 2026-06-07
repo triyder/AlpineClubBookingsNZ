@@ -249,6 +249,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       id: "pay_1",
       bookingId: "bk1",
       amountCents: 5000,
+      source: "STRIPE",
       status: "SUCCEEDED",
       stripePaymentIntentId: "pi_original",
       xeroInvoiceId: "inv_primary",
@@ -966,6 +967,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           id: "pay_1",
           bookingId: "bk1",
           amountCents: 10000,
+          source: "STRIPE",
           status: "SUCCEEDED",
           stripePaymentIntentId: "pi_original",
           xeroInvoiceId: "inv_primary",
@@ -1057,6 +1059,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
           id: "pay_1",
           bookingId: "bk1",
           amountCents: 10000,
+          source: "STRIPE",
           status: "SUCCEEDED",
           stripePaymentIntentId: "pi_original",
           xeroInvoiceId: "inv_primary",
@@ -1261,6 +1264,74 @@ describe("PUT /api/bookings/[id]/modify", () => {
       bookingModificationId: "mod_1",
       amountCents: 5000,
     });
+  });
+
+  it("keeps paid Internet Banking reductions out of Stripe refund recovery", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment = {
+      ...booking.payment!,
+      amountCents: 10000,
+      source: "INTERNET_BANKING",
+      stripePaymentIntentId: null,
+      stripeCustomerId: null,
+      xeroInvoiceId: "inv_ib_1",
+    };
+
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"], settlementMethod: "card" }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(5000);
+    expect(data.stripeRefundId).toBeNull();
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockEnqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 5000,
+        bookingModificationId: "mod_1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
   });
 
   it("rejects paid reductions without a settlement method", async () => {

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
+import {
+  PaymentSource,
+  PaymentStatus,
+  PaymentTransactionKind,
+  type AgeTier,
+} from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -38,6 +43,7 @@ import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -351,9 +357,11 @@ export async function POST(
 
       // Calculate additional amount for confirmed+paid bookings
       let additionalAmountCents = 0;
-      const hasSucceededPayment =
+      const hasSettledPayment =
         ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
+      const hasSucceededPayment =
+        hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
       const hasIssuedXeroInvoice =
         ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         !!booking.payment?.xeroInvoiceId;
@@ -487,6 +495,17 @@ export async function POST(
           },
           idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
         });
+
+        await queueSupersededAdditionalIntentCancellations({
+          bookingId,
+          paymentId: result.paymentId,
+          newPaymentIntentId: pi.id,
+        }).catch((err) =>
+          logger.error(
+            { err, bookingId, paymentIntentId: pi.id },
+            "Failed to queue superseded additional intent cancellations"
+          )
+        );
 
         await upsertPaymentIntentTransaction({
           paymentId: result.paymentId,
