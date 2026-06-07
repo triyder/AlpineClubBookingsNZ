@@ -287,6 +287,7 @@ export async function POST(
 
       // Recalculate promo discount
       let newDiscountCents = 0;
+      let newPromoAdjustmentCents = 0;
       let promoRemoved = false;
 
       if (booking.promoRedemption?.promoCode) {
@@ -311,11 +312,13 @@ export async function POST(
         } else {
           const promoResult = application.discount;
           newDiscountCents = promoResult.discountCents;
+          newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
 
           await replacePromoRedemptionAllocations(
             tx,
             booking.promoRedemption,
             newDiscountCents,
+            newPromoAdjustmentCents,
             promoResult.freeNightsUsed,
             promoResult.eligibleGuestCount,
             promoResult.allocations,
@@ -323,7 +326,7 @@ export async function POST(
         }
       }
 
-      const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
+      const newFinalPriceCents = newTotalPriceCents + newPromoAdjustmentCents;
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
       // Update hasNonMembers
@@ -389,6 +392,7 @@ export async function POST(
         data: {
           totalPriceCents: newTotalPriceCents,
           discountCents: newDiscountCents,
+          promoAdjustmentCents: newPromoAdjustmentCents,
           finalPriceCents: newFinalPriceCents,
           hasNonMembers,
           nonMemberHoldUntil,
@@ -416,6 +420,8 @@ export async function POST(
           previousData: {
             guestCount: booking.guests.length,
             totalPriceCents: booking.totalPriceCents,
+            discountCents: booking.discountCents,
+            promoAdjustmentCents: booking.promoAdjustmentCents,
             finalPriceCents: booking.finalPriceCents,
           },
           newData: {
@@ -427,6 +433,8 @@ export async function POST(
               isMember: g.isMember,
             })),
             totalPriceCents: newTotalPriceCents,
+            discountCents: newDiscountCents,
+            promoAdjustmentCents: newPromoAdjustmentCents,
             finalPriceCents: newFinalPriceCents,
           },
           priceDiffCents,

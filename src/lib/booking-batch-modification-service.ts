@@ -149,7 +149,7 @@ export async function modifyBookingBatch({
       guestNightRates: pricing.guestNightRates,
     });
 
-    const newFinalPriceCents = pricing.newTotalPriceCents - promo.newDiscountCents;
+    const newFinalPriceCents = pricing.newTotalPriceCents + promo.newPromoAdjustmentCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
     const changeFeeCents = await calculateModificationChangeFee({
@@ -200,6 +200,7 @@ export async function modifyBookingBatch({
         checkOut: dates.newCheckOut,
         totalPriceCents: pricing.newTotalPriceCents,
         discountCents: promo.newDiscountCents,
+        promoAdjustmentCents: promo.newPromoAdjustmentCents,
         finalPriceCents: newFinalPriceCents,
         hasNonMembers: lifecycle.hasNonMembers,
         nonMemberHoldUntil: lifecycle.newNonMemberHoldUntil,
@@ -235,6 +236,7 @@ export async function modifyBookingBatch({
           guestCount: booking.guests.length,
           totalPriceCents: booking.totalPriceCents,
           discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
           finalPriceCents: booking.finalPriceCents,
           removedGuests: guestPlan.removedGuests.map((g) => ({
             firstName: g.firstName,
@@ -251,6 +253,7 @@ export async function modifyBookingBatch({
           })),
           totalPriceCents: pricing.newTotalPriceCents,
           discountCents: promo.newDiscountCents,
+          promoAdjustmentCents: promo.newPromoAdjustmentCents,
           finalPriceCents: newFinalPriceCents,
           promoRemoved: promo.promoRemoved,
           promoChanged: promo.promoChanged,
