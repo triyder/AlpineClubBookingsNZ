@@ -56,8 +56,9 @@ Important route groups:
   contact, reset password, nomination, and public token flows.
 - `src/app/(authenticated)` contains member dashboard, booking, profile, family,
   and booking-detail pages.
-- `src/app/(admin)` contains administrative operations for members, bookings,
-  payments, reports, lodge, Xero, audit logs, and policies.
+- `src/app/(admin)` contains administrative operations for members, member CSV
+  import, bookings, bed allocation, payments, reports, lodge, Xero, audit logs,
+  and policies.
 - `src/app/api` contains route handlers for auth, bookings, payments, admin,
   finance, lodge, webhooks, cron, and health checks.
 
@@ -76,6 +77,7 @@ Use these ownership boundaries when adding new code:
 | Route-private admin UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks` | Large admin routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-modify.ts`, `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
+| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
@@ -133,10 +135,13 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   cancellation requests, setup invites, password/email tokens, notification
   preferences, deletion requests, and audit logs.
 - Seasons, season rates, booking periods, minimum-stay policies, group
-  discounts, age-tier settings, promo codes, and promo redemptions.
+  discounts, age-tier settings, promo codes, fixed-nightly promo adjustments,
+  and promo redemptions.
 - Bookings, guests, payments, refunds, booking modifications, waitlist offers,
   account-credit ledger entries, chores, hut-leader assignments, lodge PIN
   sessions, and issue reports.
+- Lodge rooms, lodge beds, bed allocations, allocation settings, and allocation
+  approval metadata.
 - Operational Xero tokens, object links, cache tables, inbound events,
   operation queues, account/item mappings, and API usage metering.
 - Finance Xero tokens, finance sync runs, finance snapshots, finance usage
@@ -151,8 +156,8 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    night. `PENDING`, `PAID`, and `COMPLETED` bookings hold beds because the
    daily completion job marks stays completed from check-in day while the
    guests are still operationally in the lodge.
-3. Minimum-stay, booking-window, age-tier, membership, group-discount, promo,
-   and account-credit rules are applied.
+3. Minimum-stay, booking-window, age-tier, membership, group-discount, fixed or
+   percentage promo, and account-credit rules are applied.
 4. If all guests are members, or check-in is within the non-member hold window,
    the booking can proceed to payment immediately.
 5. If non-members are included outside the hold window, a card can be saved and
@@ -168,15 +173,21 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    the transaction. Future approve / reject paths that recount eligibility
    then mutate the member graph should follow the same idiom so a parallel
    write cannot race the re-check.
-8. Stripe records payment state; Xero operations are queued or performed through
-   durable integration helpers and linked back to local records.
+8. Payment state records an explicit source. Stripe payments stay on Stripe
+   PaymentIntent, refund, and recovery paths; Internet Banking payments issue a
+   Xero invoice and settle through inbound Xero reconciliation.
+9. Bed allocations reconcile when bookings are confirmed, modified, waitlist
+   confirmed, force-confirmed, cancelled, completed, or deleted. Automatic
+   allocation can fill missing guest nights from active room/bed inventory, and
+   admins can manually move or approve allocations.
 
 In-progress member self-service edits are limited to future unused nights from
 NZ tomorrow onward. NZ today and earlier are locked for admin review through
 booking change requests. Positive booking-edit deltas use supplementary Xero
-invoices after additional Stripe payment succeeds, while negative deltas use
-modification credit notes instead of unsafe financial mutation of a paid,
-part-paid, credited, or locked original invoice.
+invoices after additional Stripe payment succeeds, while negative deltas use a
+settlement choice: Stripe refund work where applicable or an idempotent
+source-linked member account credit. Both avoid unsafe financial mutation of a
+paid, part-paid, credited, or locked original invoice.
 
 Money values are integer cents. Booking dates are New Zealand date-only lodge
 nights rather than timestamps.
@@ -196,10 +207,11 @@ Completed bookings continue to consume capacity for their remaining stay nights.
 
 ## Admin and Lodge
 
-Admin pages cover member management, bookings, payments, seasons, policies,
-refund requests, promo codes, communications, health, audit logs, reports,
-Xero, committee data, issue reports, waitlist, lodge operations, hut leaders,
-and roster/chores.
+Admin pages cover member management, member CSV import, bookings, operational
+booking filters, bed allocation, payments, seasons, policies, refund requests,
+promo codes, communications, health, audit logs, reports, Xero operations and
+inbound-event drilldowns, committee data, issue reports, waitlist, lodge
+operations, hut leaders, and roster/chores.
 
 Membership cancellation is a member-initiated account lifecycle workflow.
 Requests can include the requester, dependants, non-login adults, and related
@@ -231,7 +243,8 @@ exposing the full admin interface.
 
 Stripe is used for PaymentIntents, SetupIntents, saved payment methods, refunds,
 and webhook reconciliation. Webhook routes should be idempotent and must not
-trust client-supplied payment state.
+trust client-supplied payment state. Internet Banking payments are explicitly
+excluded from Stripe-only PaymentIntent, refund, and recovery paths.
 
 Superseded Stripe PaymentIntents that can no longer settle a booking are tracked
 through `PaymentRecoveryOperation`. The recovery worker cancels still-open
@@ -243,6 +256,8 @@ captures without running the normal booking-confirmation path.
 Operational Xero handles member/contact sync, booking invoices, payments,
 credit notes, item codes, contact groups, inbound webhooks, local caches, retry
 queues, and usage metering. Xero tokens are encrypted at rest.
+Internet Banking bookings use this boundary to issue invoice-backed payment
+instructions and reconcile settlement from inbound Xero invoice/payment state.
 
 ### Finance Xero
 

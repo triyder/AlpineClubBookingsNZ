@@ -69,8 +69,9 @@ Minimum production categories:
   `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
   subdomains from that value.
 - Module capability flags: `FEATURE_KIOSK`, `FEATURE_CHORES`,
-  `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
-  `FEATURE_XERO_INTEGRATION` must be explicit `true` or `false` values.
+  `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, `FEATURE_XERO_INTEGRATION`,
+  `FEATURE_BED_ALLOCATION`, and `FEATURE_INTERNET_BANKING_PAYMENTS` must be
+  explicit `true` or `false` values.
   These are deploy/operator capability gates. Admin Modules activation is the
   database-backed club-level layer, so an optional module is active only when
   its `.env` capability and Admin Modules activation are both enabled.

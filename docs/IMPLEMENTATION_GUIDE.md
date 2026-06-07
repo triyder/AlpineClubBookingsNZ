@@ -78,11 +78,16 @@ FEATURE_CHORES=false
 FEATURE_FINANCE_DASHBOARD=false
 FEATURE_WAITLIST=false
 FEATURE_XERO_INTEGRATION=false
+FEATURE_BED_ALLOCATION=false
+FEATURE_INTERNET_BANKING_PAYMENTS=false
 ```
 
 Only the literal value `true` enables a feature.
 The env value is a deploy-time capability gate. After migrations run, admins can
 activate or deactivate allowed optional modules at `/admin/modules`.
+Internet Banking payments also require operational Xero to be enabled,
+configured, and connected because invoice issuing and settlement reconciliation
+run through that integration.
 
 ## 4. Bring Up A Local Database
 
@@ -148,6 +153,8 @@ Use non-production accounts until your own deployment is ready:
 
 - Stripe test mode for payments and webhooks.
 - Xero demo tenants for operational and finance sync flows.
+- Internet Banking payment trials only against a Xero demo tenant and
+  non-production bank-reference process.
 - SES sandbox or another non-production SMTP setup for email.
 - A dedicated Sentry project if browser/server error reporting is enabled.
 

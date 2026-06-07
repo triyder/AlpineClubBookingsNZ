@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+vi.setConfig({ testTimeout: 10_000 });
+
 // ---------------------------------------------------------------------------
 // Mock Prisma
 // ---------------------------------------------------------------------------

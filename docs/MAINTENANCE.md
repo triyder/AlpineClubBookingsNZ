@@ -115,9 +115,12 @@ reviewers can spot regressions without making the report a CI gate.
 
 ### Known remaining hotspots
 
-These files are intentionally still over budget in the current post-refactor
-baseline. Do not expand this list casually; new entries should be treated as
-review findings unless there is an explicit follow-up plan.
+These files are intentionally accepted carry-over hotspots in the current
+post-refactor baseline. This table is not a blanket allow-list for every file
+that may appear in `npm run quality:report`. Feature-heavy releases can leave
+additional advisory "newly oversized" entries visible; keep those warnings
+visible unless a reviewer explicitly accepts them, and prefer follow-up
+extraction over expanding this table casually.
 
 | File | Current LOC | Disposition |
 | --- | ---: | --- |

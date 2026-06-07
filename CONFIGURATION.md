@@ -164,8 +164,8 @@ checks for Stripe, Xero, cron, or other operator-owned credentials.
 | `FEATURE_FINANCE_DASHBOARD` | Makes finance dashboard routes/navigation and finance sync cron available when Admin Modules activation also allows them. |
 | `FEATURE_WAITLIST` | Makes waitlist routes and waitlist cron available when Admin Modules activation also allows them. |
 | `FEATURE_XERO_INTEGRATION` | Makes operational Xero routes/navigation and Xero cron available when Admin Modules activation also allows them. |
-| `FEATURE_BED_ALLOCATION` | Makes upcoming room/bed setup and guest bed allocation controls available when Admin Modules activation also allows them. |
-| `FEATURE_INTERNET_BANKING_PAYMENTS` | Makes the upcoming Internet Banking payment option available when Admin Modules activation also allows it. Operational Xero still needs its own capability, credentials, and tenant connection before invoices can be issued. |
+| `FEATURE_BED_ALLOCATION` | Makes room/bed inventory, guest-to-bed allocation, auto-allocation, and allocation approval controls available when Admin Modules activation also allows them. |
+| `FEATURE_INTERNET_BANKING_PAYMENTS` | Makes the Internet Banking payment option available when Admin Modules activation also allows it. Operational Xero still needs its own capability, credentials, and tenant connection before invoices can be issued and reconciled. |
 
 Cron-backed optional modules check effective module state before doing module
 work. If an Admin Modules setting is disabled while the `.env` capability is

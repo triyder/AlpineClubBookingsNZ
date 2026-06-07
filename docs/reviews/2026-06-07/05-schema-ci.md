@@ -15,12 +15,12 @@ The 2026-06-07 migration set reviewed in this pass is:
 - `20260607120000_add_bed_allocation_and_internet_banking_modules`
 - `20260607130000_add_fixed_nightly_promo_adjustments`
 - `20260607133000_add_bed_allocation_inventory`
-- `20260607141349_make_booking_modification_credit_unique`
 - `20260607142000_add_bed_allocation_settings`
 - `20260607150000_add_payment_source_foundation`
 - `20260607164000_add_booking_modification_credit_source`
+- `20260607165000_make_booking_modification_credit_unique`
 
-Schema validation passed with Prisma 7.8.0. The follow-up uniqueness migration for `MemberCredit.sourceBookingModificationId` supports idempotent booking-modification account-credit creation.
+Schema validation passed with Prisma 7.8.0. The follow-up uniqueness migration for `MemberCredit.sourceBookingModificationId` supports idempotent booking-modification account-credit creation and is ordered after the migration that creates the source column.
 
 ## Dependency Review
 
@@ -82,4 +82,3 @@ Full test result recorded before this report: 277 files passed, 1 skipped; 2988 
 ## Schema/CI Conclusion
 
 Schema and lockfile state are valid, dependency audit is clean, local validation passes, and PR #691 CI is green. The final docs PR and post-merge `main` CI must also pass before closing #683 and #674.
-

@@ -2,6 +2,55 @@
 
 All notable public reference-release changes should be recorded here.
 
+## 0.7.0 - 2026-06-08
+
+- Added room and bed allocation management with admin room/bed inventory,
+  first-fit family-aware allocation planning, automatic lifecycle
+  reconciliation for booking confirmation/edit/cancel/waitlist flows, manual
+  allocation controls, approval tracking, and focused bed-allocation filters.
+- Added per-guest booking date ranges to the live booking and modification
+  flows, including capacity accounting, quote validation, waitlist, roster, and
+  finance/reporting paths that count only each guest's actual stay nights.
+- Added fixed-nightly-price promo codes with set-price and cap-only modes,
+  integer-cent promo adjustment tracking, member/profile display, booking edit
+  support, Xero invoice handling, and promo-admin validation.
+- Added Internet Banking payment support backed by operational Xero invoices,
+  first-class `PaymentSource` typing, payment option discovery, booking-detail
+  invoice/reference display, and inbound Xero reconciliation for settlement
+  instead of routing bank-transfer bookings through Stripe.
+- Added booking reduction settlement choices so negative booking modifications
+  can become either Stripe refund work or idempotent member account credits,
+  with source-linked modification credits and Xero settlement payload coverage.
+- Added the member CSV import wizard with column mapping, date-format handling,
+  preview/failure reporting, skip counts, and hardened import validation.
+- Added admin operational filters and drilldowns for booking payment source,
+  Xero sync state, bed allocation state, per-guest ranges, change/refund state,
+  payment settlement kind, Xero operations, and inbound Xero events.
+- Hardened payment and accounting boundaries so Internet Banking bookings do
+  not enter Stripe-only PaymentIntent, refund, or recovery paths and Xero
+  invoice settlement is driven by the inbound reconciliation path.
+- Hardened API and operational surfaces with centralized malformed-JSON
+  responses on changed routes, cron/payment/Xero audit visibility, and a pinned
+  Turbopack root for predictable Next.js 16 builds.
+- Migration/deployment notes:
+  - New optional module gates are `FEATURE_BED_ALLOCATION` and
+    `FEATURE_INTERNET_BANKING_PAYMENTS`; Internet Banking also requires
+    operational Xero capability, credentials, and tenant connection.
+  - `20260607120000_add_bed_allocation_and_internet_banking_modules` adds the
+    Admin Modules activation booleans for bed allocation and Internet Banking.
+  - `20260607130000_add_fixed_nightly_promo_adjustments` adds fixed-nightly
+    promo types and integer-cent adjustment columns on booking/promo redemption
+    records; deploy during low promo-booking traffic.
+  - `20260607133000_add_bed_allocation_inventory` and
+    `20260607142000_add_bed_allocation_settings` add the room, bed, allocation,
+    and settings tables used by admin bed allocation.
+  - `20260607150000_add_payment_source_foundation` adds first-class Stripe vs
+    Internet Banking payment source fields; do not enable Internet Banking
+    payments for members until old app colors have drained.
+  - `20260607164000_add_booking_modification_credit_source` and
+    `20260607165000_make_booking_modification_credit_unique` add source-linked,
+    idempotent member credits for booking reductions.
+
 ## 0.6.0 - 2026-06-03
 
 - Added booking review and approval workflows, including `AWAITING_REVIEW`

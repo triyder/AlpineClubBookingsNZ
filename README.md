@@ -16,11 +16,13 @@ fork for another organisation. See `NOTICE.md`.
 
 - Member registration, profile management, family/dependent relationships, and
   membership nomination workflows
-- Bed-capacity booking flow with date-only New Zealand lodge nights, waitlist,
-  non-member holds, booking changes, cancellation rules, refunds, credits,
-  promo codes, and Stripe payments
-- Admin tools for members, bookings, payments, seasons, policies, reports,
-  email, audit logs, issue reports, waitlist, lodge, and hut leaders
+- Bed-capacity booking flow with date-only New Zealand lodge nights, per-guest
+  stay ranges, waitlist, non-member holds, booking changes, cancellation rules,
+  refunds, credits, promo codes, Stripe payments, and Xero-backed Internet
+  Banking invoice payments
+- Admin tools for members, CSV import, bookings, bed allocation, payments,
+  seasons, policies, reports, email, audit logs, issue reports, waitlist,
+  lodge, Xero operations, and hut leaders
 - Lodge kiosk with PIN access, arrivals/departures, chores, and issue reporting
 - Xero integrations for operational accounting plus a separate finance Xero
   boundary and finance reports
@@ -56,9 +58,10 @@ fork for another organisation. See `NOTICE.md`.
    Graph image, and public website photos. Keep the `*.example.*` files as
    reusable placeholders for forks.
 4. Set deploy capability flags in `.env`: `FEATURE_KIOSK`,
-   `FEATURE_CHORES`, `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
-   `FEATURE_XERO_INTEGRATION`. Only the literal value `true` makes a module
-   available to the deployment.
+   `FEATURE_CHORES`, `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`,
+   `FEATURE_XERO_INTEGRATION`, `FEATURE_BED_ALLOCATION`, and
+   `FEATURE_INTERNET_BANKING_PAYMENTS`. Only the literal value `true` makes a
+   module available to the deployment.
 5. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
    change the seeded admin password on first login.
 6. After sign-in, use **Admin > Modules** to set club-level activation for

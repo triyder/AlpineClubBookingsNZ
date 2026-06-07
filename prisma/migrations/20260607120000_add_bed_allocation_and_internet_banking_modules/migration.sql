@@ -1,4 +1,4 @@
--- Add admin activation flags for upcoming optional modules.
+-- Add admin activation flags for optional modules.
 -- Provider credentials, Xero tenant data, and payment secrets stay outside this table.
 ALTER TABLE "ClubModuleSettings"
   ADD COLUMN IF NOT EXISTS "bedAllocation" BOOLEAN NOT NULL DEFAULT true,
