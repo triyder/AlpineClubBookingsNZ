@@ -5,6 +5,7 @@ import {
   bedAllocationErrorResponse,
   requireBedAllocationAdmin,
 } from "@/lib/admin-bed-allocation-routes";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 
 // requireAdmin() is enforced by requireBedAllocationAdmin().
@@ -24,7 +25,10 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
 
   try {
-    const body = bedPatchSchema.safeParse(await request.json());
+    const json = await parseJsonRequestBody(request);
+    if (!json.ok) return json.response;
+
+    const body = bedPatchSchema.safeParse(json.body);
     if (!body.success) {
       return NextResponse.json(
         { error: "Invalid input", details: body.error.flatten() },

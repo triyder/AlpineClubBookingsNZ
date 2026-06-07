@@ -12,6 +12,7 @@ import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,8 +25,10 @@ export async function POST(request: NextRequest) {
       return inactiveResponse;
     }
 
-    const body = await request.json();
-    const parsed = CreatePaymentIntentSchema.safeParse(body);
+    const json = await parseJsonRequestBody(request);
+    if (!json.ok) return json.response;
+
+    const parsed = CreatePaymentIntentSchema.safeParse(json.body);
 
     if (!parsed.success) {
       return NextResponse.json(

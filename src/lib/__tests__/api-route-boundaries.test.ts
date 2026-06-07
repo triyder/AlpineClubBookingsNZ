@@ -23,6 +23,25 @@ function routeContents(filePath: string) {
   return fs.readFileSync(path.join(process.cwd(), filePath), "utf8");
 }
 
+const issue675MalformedJsonRoutes = [
+  "src/app/api/admin/bed-allocation/allocations/route.ts",
+  "src/app/api/admin/bed-allocation/auto-allocate/route.ts",
+  "src/app/api/admin/bed-allocation/approve/route.ts",
+  "src/app/api/admin/bed-allocation/beds/[id]/route.ts",
+  "src/app/api/admin/bed-allocation/beds/route.ts",
+  "src/app/api/admin/bed-allocation/rooms/[id]/route.ts",
+  "src/app/api/admin/bed-allocation/rooms/route.ts",
+  "src/app/api/admin/bed-allocation/settings/route.ts",
+  "src/app/api/admin/promo-codes/[id]/route.ts",
+  "src/app/api/admin/promo-codes/route.ts",
+  "src/app/api/bookings/[id]/guests/route.ts",
+  "src/app/api/bookings/[id]/modify-quote/route.ts",
+  "src/app/api/bookings/quote/route.ts",
+  "src/app/api/bookings/route.ts",
+  "src/app/api/payments/create-payment-intent/route.ts",
+  "src/app/api/promo-codes/validate/route.ts",
+] as const;
+
 function hasAdminGuard(contents: string) {
   return (
     /\brequireAdmin\s*\(/.test(contents) ||
@@ -134,6 +153,24 @@ describe("API route boundary metadata", () => {
         return [`${routePath}: member route lacks active-session guard marker`];
       }
 
+      return [];
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps issue #675 JSON-consuming routes on the controlled malformed JSON path", () => {
+    const violations = issue675MalformedJsonRoutes.flatMap((routePath) => {
+      const contents = routeContents(routePath);
+      const directParse =
+        /\bawait\s+(?:req|request)\.json\(\)/.test(contents);
+
+      if (!contents.includes("parseJsonRequestBody(")) {
+        return [`${routePath}: route does not use controlled JSON parsing`];
+      }
+      if (directParse) {
+        return [`${routePath}: route still directly awaits request.json()`];
+      }
       return [];
     });
 

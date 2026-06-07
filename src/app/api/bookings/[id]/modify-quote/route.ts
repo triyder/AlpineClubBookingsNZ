@@ -15,6 +15,7 @@ import {
   daysUntilDate,
   loadCancellationPolicy,
 } from "@/lib/cancellation";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   validateAndCalculatePromoDiscount,
   validatePromoCodeFull,
@@ -171,8 +172,10 @@ export async function POST(
     );
   }
 
-  const body = await request.json();
-  const parsed = modifyQuoteSchema.safeParse(body);
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
+
+  const parsed = modifyQuoteSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },

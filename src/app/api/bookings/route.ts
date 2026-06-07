@@ -43,6 +43,7 @@ import {
   BookingGuestStayRangeValidationError,
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -88,8 +89,10 @@ export async function POST(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const body = await request.json();
-  const parsed = createBookingSchema.safeParse(body);
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
+
+  const parsed = createBookingSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(

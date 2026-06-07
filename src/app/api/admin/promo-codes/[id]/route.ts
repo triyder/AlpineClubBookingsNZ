@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 
 const updatePromoCodeSchema = z.object({
@@ -93,8 +94,10 @@ export async function PUT(
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
-  const body = await req.json();
-  const parsed = updatePromoCodeSchema.safeParse(body);
+  const json = await parseJsonRequestBody(req);
+  if (!json.ok) return json.response;
+
+  const parsed = updatePromoCodeSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(

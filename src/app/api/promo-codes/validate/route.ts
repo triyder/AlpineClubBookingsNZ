@@ -11,6 +11,7 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
@@ -50,8 +51,10 @@ export async function POST(req: NextRequest) {
     return inactiveResponse;
   }
 
-  const body = await req.json();
-  const parsed = validateSchema.safeParse(body);
+  const json = await parseJsonRequestBody(req);
+  if (!json.ok) return json.response;
+
+  const parsed = validateSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(

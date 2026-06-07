@@ -12,6 +12,7 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -54,8 +55,10 @@ export async function POST(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const body = await request.json();
-  const parsed = quoteSchema.safeParse(body);
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
+
+  const parsed = quoteSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(

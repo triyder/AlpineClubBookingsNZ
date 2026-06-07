@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 
 const promoCodeSchema = z.object({
@@ -84,8 +85,10 @@ export async function POST(req: NextRequest) {
     return inactiveResponse;
   }
 
-  const body = await req.json();
-  const parsed = promoCodeSchema.safeParse(body);
+  const json = await parseJsonRequestBody(req);
+  if (!json.ok) return json.response;
+
+  const parsed = promoCodeSchema.safeParse(json.body);
 
   if (!parsed.success) {
     return NextResponse.json(

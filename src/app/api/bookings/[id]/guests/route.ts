@@ -25,6 +25,7 @@ import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -76,8 +77,10 @@ export async function POST(
 
   const { id: bookingId } = await params;
 
-  const body = await request.json();
-  const parsed = addGuestsSchema.safeParse(body);
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
+
+  const parsed = addGuestsSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
