@@ -605,6 +605,8 @@ describe("P2.3: Guest subscription check", () => {
       ],
       payment: {
         id: "payment-1",
+        amountCents: 10000,
+        refundedAmountCents: 0,
         status: "SUCCEEDED",
       },
       promoRedemption: null,

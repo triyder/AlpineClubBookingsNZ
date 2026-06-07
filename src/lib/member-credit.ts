@@ -34,6 +34,20 @@ type AdminAdjustmentRequestRecord = Prisma.AdminCreditAdjustmentRequestGetPayloa
   select: typeof adminAdjustmentRequestSelect;
 }>;
 
+const bookingModificationCreditSelect = {
+  id: true,
+  memberId: true,
+  amountCents: true,
+  type: true,
+  sourceBookingId: true,
+  sourceBookingModificationId: true,
+  xeroCreditNoteId: true,
+} satisfies Prisma.MemberCreditSelect;
+
+type BookingModificationCreditRecord = Prisma.MemberCreditGetPayload<{
+  select: typeof bookingModificationCreditSelect;
+}>;
+
 const adminAdjustmentRequestListSelect = {
   id: true,
   memberId: true,
@@ -130,17 +144,105 @@ export async function createBookingModificationCredit(
   tx?: Prisma.TransactionClient
 ): Promise<void> {
   const db = tx || prisma;
-  await db.memberCredit.create({
-    data: {
+  const existingCredit = await findBookingModificationCredit(
+    db,
+    bookingModificationId
+  );
+  if (existingCredit) {
+    await assertMatchingBookingModificationCredit(db, existingCredit, {
       memberId,
       amountCents,
-      type: CreditType.BOOKING_MODIFICATION_REFUND,
-      description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
-      sourceBookingId: bookingId,
-      sourceBookingModificationId: bookingModificationId,
-      xeroCreditNoteId: xeroCreditNoteId ?? null,
-    },
+      bookingId,
+      bookingModificationId,
+      xeroCreditNoteId,
+    });
+    return;
+  }
+
+  try {
+    await db.memberCredit.create({
+      data: {
+        memberId,
+        amountCents,
+        type: CreditType.BOOKING_MODIFICATION_REFUND,
+        description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
+        sourceBookingId: bookingId,
+        sourceBookingModificationId: bookingModificationId,
+        xeroCreditNoteId: xeroCreditNoteId ?? null,
+      },
+    });
+  } catch (error) {
+    if (!isPrismaUniqueConstraintError(error)) {
+      throw error;
+    }
+
+    const replayedCredit = await findBookingModificationCredit(
+      db,
+      bookingModificationId
+    );
+    if (!replayedCredit) {
+      throw error;
+    }
+    await assertMatchingBookingModificationCredit(db, replayedCredit, {
+      memberId,
+      amountCents,
+      bookingId,
+      bookingModificationId,
+      xeroCreditNoteId,
+    });
+  }
+}
+
+async function findBookingModificationCredit(
+  db: Prisma.TransactionClient | typeof prisma,
+  bookingModificationId: string
+): Promise<BookingModificationCreditRecord | null> {
+  return db.memberCredit.findUnique({
+    where: { sourceBookingModificationId: bookingModificationId },
+    select: bookingModificationCreditSelect,
   });
+}
+
+async function assertMatchingBookingModificationCredit(
+  db: Prisma.TransactionClient | typeof prisma,
+  existingCredit: BookingModificationCreditRecord,
+  expected: {
+    memberId: string;
+    amountCents: number;
+    bookingId: string;
+    bookingModificationId: string;
+    xeroCreditNoteId?: string;
+  }
+): Promise<void> {
+  if (
+    existingCredit.memberId !== expected.memberId ||
+    existingCredit.amountCents !== expected.amountCents ||
+    existingCredit.type !== CreditType.BOOKING_MODIFICATION_REFUND ||
+    existingCredit.sourceBookingId !== expected.bookingId ||
+    existingCredit.sourceBookingModificationId !== expected.bookingModificationId
+  ) {
+    throw new Error(
+      `Booking modification credit ${expected.bookingModificationId} already exists with different ledger details`
+    );
+  }
+
+  const expectedXeroCreditNoteId = expected.xeroCreditNoteId ?? null;
+  if (
+    existingCredit.xeroCreditNoteId &&
+    expectedXeroCreditNoteId &&
+    existingCredit.xeroCreditNoteId !== expectedXeroCreditNoteId
+  ) {
+    throw new Error(
+      `Booking modification credit ${expected.bookingModificationId} already links to a different Xero credit note`
+    );
+  }
+
+  if (!existingCredit.xeroCreditNoteId && expectedXeroCreditNoteId) {
+    await db.memberCredit.update({
+      where: { id: existingCredit.id },
+      data: { xeroCreditNoteId: expectedXeroCreditNoteId },
+    });
+  }
 }
 
 /**

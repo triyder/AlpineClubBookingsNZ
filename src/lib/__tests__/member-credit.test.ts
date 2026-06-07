@@ -6,8 +6,10 @@ const prismaMock = {
   memberCredit: {
     aggregate: vi.fn(),
     create: vi.fn(),
+    findUnique: vi.fn(),
     findMany: vi.fn(),
     groupBy: vi.fn(),
+    update: vi.fn(),
   },
   auditLog: {
     create: vi.fn(),
@@ -164,6 +166,82 @@ describe("member-credit helpers", () => {
           xeroCreditNoteId: null,
         }),
       });
+    });
+  });
+
+  describe("createBookingModificationCredit", () => {
+    it("creates a traceable BOOKING_MODIFICATION_REFUND record", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+
+      const { createBookingModificationCredit } = await import("@/lib/member-credit");
+      await createBookingModificationCredit(
+        "member-1",
+        3750,
+        "booking-abc12345",
+        "mod-1"
+      );
+
+      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          memberId: "member-1",
+          amountCents: 3750,
+          type: "BOOKING_MODIFICATION_REFUND",
+          sourceBookingId: "booking-abc12345",
+          sourceBookingModificationId: "mod-1",
+          xeroCreditNoteId: null,
+        }),
+      });
+    });
+
+    it("does not duplicate credit for the same booking modification", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findUnique).mockResolvedValue({
+        id: "credit-1",
+        memberId: "member-1",
+        amountCents: 3750,
+        type: "BOOKING_MODIFICATION_REFUND",
+        sourceBookingId: "booking-abc12345",
+        sourceBookingModificationId: "mod-1",
+        xeroCreditNoteId: null,
+      } as any);
+
+      const { createBookingModificationCredit } = await import("@/lib/member-credit");
+      await createBookingModificationCredit(
+        "member-1",
+        3750,
+        "booking-abc12345",
+        "mod-1"
+      );
+
+      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+    });
+
+    it("replays safely after a unique conflict", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findUnique)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: "credit-1",
+          memberId: "member-1",
+          amountCents: 3750,
+          type: "BOOKING_MODIFICATION_REFUND",
+          sourceBookingId: "booking-abc12345",
+          sourceBookingModificationId: "mod-1",
+          xeroCreditNoteId: null,
+        } as any);
+      vi.mocked(prisma.memberCredit.create).mockRejectedValueOnce({ code: "P2002" });
+
+      const { createBookingModificationCredit } = await import("@/lib/member-credit");
+      await createBookingModificationCredit(
+        "member-1",
+        3750,
+        "booking-abc12345",
+        "mod-1"
+      );
+
+      expect(prisma.memberCredit.create).toHaveBeenCalledTimes(1);
     });
   });
 
