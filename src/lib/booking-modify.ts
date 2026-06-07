@@ -68,6 +68,10 @@ import {
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
 import {
+  getRemainingRefundableCents,
+  hasCapturedPayment,
+} from "@/lib/booking-payment-state";
+import {
   formatDateOnly,
   normalizeDateOnlyForTimeZone,
   parseDateOnly,
@@ -1107,10 +1111,14 @@ export async function calculateModificationSettlementOptions({
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment">;
   netChargeCents: number;
 }): Promise<BookingModificationSettlementOptions | null> {
-  const basisAmountCents = Math.max(0, -netChargeCents);
+  const reductionAmountCents = Math.max(0, -netChargeCents);
+  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
+  const basisAmountCents = Math.min(
+    reductionAmountCents,
+    remainingRefundableCents,
+  );
   const hasSettledPayment =
-    isSettledBookingStatus(booking.status) &&
-    booking.payment?.status === PaymentStatus.SUCCEEDED;
+    isSettledBookingStatus(booking.status) && hasCapturedPayment(booking.payment);
 
   if (basisAmountCents <= 0 || !hasSettledPayment) {
     return null;
@@ -1156,7 +1164,7 @@ function resolveSelectedSettlementAmount({
     throw new ApiError("Choose a refund or account credit before saving", 400);
   }
 
-  if (!settlementOptions.requiresSettlementMethod && !settlementMethod) {
+  if (!settlementOptions.requiresSettlementMethod) {
     return {
       settlementMethod: null,
       amountCents: 0,
@@ -1198,11 +1206,12 @@ export async function applyPaymentAdjustments(
 ): Promise<PaymentAdjustmentResult> {
   const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSettledPayment =
-    inSettledStatus && booking.payment?.status === "SUCCEEDED";
+    inSettledStatus && hasCapturedPayment(booking.payment);
   const hasSucceededPayment =
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
   const hasIssuedXeroInvoice =
     inSettledStatus && !!booking.payment?.xeroInvoiceId;
+  const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;
   const selectedSettlement = resolveSelectedSettlementAmount({
@@ -1230,7 +1239,10 @@ export async function applyPaymentAdjustments(
       }
       pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
     } else if (netAmountCents < 0) {
-      refundAmountCents = Math.abs(netAmountCents);
+      refundAmountCents = Math.min(
+        Math.abs(netAmountCents),
+        remainingRefundableCents,
+      );
       pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
     } else if (netAmountCents > 0) {
       additionalAmountCents = hasSucceededPayment

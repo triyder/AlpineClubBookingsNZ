@@ -333,7 +333,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       }),
     },
     memberCredit: {
+      findUnique: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "credit_1" }),
+      update: vi.fn().mockResolvedValue({ id: "credit_1" }),
     },
     paymentTransaction: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -1334,6 +1336,72 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
   });
 
+  it("caps partially refunded Stripe reductions at the remaining refundable balance", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment = {
+      ...booking.payment!,
+      amountCents: 10000,
+      status: "PARTIALLY_REFUNDED",
+      refundedAmountCents: 6000,
+    };
+
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"], settlementMethod: "card" }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(4000);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 4000 })
+    );
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 4000,
+        bookingModificationId: "mod_1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+  });
+
   it("rejects paid reductions without a settlement method", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
@@ -1518,6 +1586,67 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(data.accountCreditAmountCents).toBe(0);
     expect(data.settlementMethod).toBeNull();
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(tx.memberCredit.create).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroModificationAccountCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale settlement method input when no reduction value is returnable", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment!.amountCents = 10000;
+    mockLoadCancellationPolicy.mockResolvedValueOnce([
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 0,
+        creditRefundPercentage: 0,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ]);
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"], settlementMethod: "credit" }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(0);
+    expect(data.accountCreditAmountCents).toBe(0);
+    expect(data.settlementMethod).toBeNull();
     expect(tx.memberCredit.create).not.toHaveBeenCalled();
 
     await Promise.resolve();

@@ -2075,7 +2075,7 @@ model MemberCredit {
   approvedById       String? // Admin who approved a manual adjustment
   approvalRequestId  String?    @unique // Links approved manual adjustments to their request
   sourceBookingId    String? // Booking that generated the credit (cancellation)
-  sourceBookingModificationId String? // Booking modification that generated the credit
+  sourceBookingModificationId String?    @unique // Booking modification that generated the credit
   appliedToBookingId String? // Booking where credit was spent
   xeroCreditNoteId   String? // Linked Xero credit note ID
   createdAt          DateTime   @default(now())
@@ -2092,7 +2092,6 @@ model MemberCredit {
   @@index([requestedById])
   @@index([approvedById])
   @@index([sourceBookingId])
-  @@index([sourceBookingModificationId])
   @@index([appliedToBookingId])
 }
 
