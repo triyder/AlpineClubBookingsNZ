@@ -171,6 +171,7 @@ export async function POST(req: NextRequest) {
   const results = {
     created: 0,
     skipped: 0,
+    skippedRows: [] as Array<{ row: number; email: string; reason: string }>,
     errors: [] as Array<{ row: number; errors: string[] }>,
     total: rows.length,
   };
@@ -198,7 +199,9 @@ export async function POST(req: NextRequest) {
     where: { email: { in: allEmails }, canLogin: true },
     select: { email: true },
   });
-  const existingEmailSet = new Set(existingMembers.map((m) => m.email));
+  const existingEmailSet = new Set(
+    existingMembers.map((m) => m.email.toLowerCase().trim())
+  );
 
   // Pre-validate all rows before committing (all-or-nothing)
   interface ValidatedRow {
@@ -229,6 +232,11 @@ export async function POST(req: NextRequest) {
     // Skip if already exists in DB
     if (existingEmailSet.has(email)) {
       results.skipped++;
+      results.skippedRows.push({
+        row: rowNum,
+        email,
+        reason: "Login email already exists",
+      });
       continue;
     }
 
@@ -302,6 +310,7 @@ export async function POST(req: NextRequest) {
             role: row.role,
             ageTier: row.ageTier,
             active: true,
+            canLogin: true,
             emailVerified: true, // Admin-imported members don't need email verification
             passwordHash,
           },

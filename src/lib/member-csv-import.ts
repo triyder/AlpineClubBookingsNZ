@@ -161,19 +161,30 @@ export interface MemberImportPreview {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES = new Set(["MEMBER", "ADMIN"]);
-const MONTHS_BY_ABBREVIATION = new Map([
+const MONTHS_BY_NAME = new Map([
   ["jan", 1],
+  ["january", 1],
   ["feb", 2],
+  ["february", 2],
   ["mar", 3],
+  ["march", 3],
   ["apr", 4],
+  ["april", 4],
   ["may", 5],
   ["jun", 6],
+  ["june", 6],
   ["jul", 7],
+  ["july", 7],
   ["aug", 8],
+  ["august", 8],
   ["sep", 9],
+  ["september", 9],
   ["oct", 10],
+  ["october", 10],
   ["nov", 11],
+  ["november", 11],
   ["dec", 12],
+  ["december", 12],
 ]);
 
 function isLineBreak(character: string) {
@@ -473,7 +484,7 @@ function normalizeDateParts(year: number, month: number, day: number) {
 }
 
 function parseMonthName(value: string) {
-  return MONTHS_BY_ABBREVIATION.get(value.trim().slice(0, 3).toLowerCase()) ?? null;
+  return MONTHS_BY_NAME.get(value.trim().toLowerCase()) ?? null;
 }
 
 export type MemberImportDateNormalizationResult =
@@ -692,10 +703,12 @@ export function buildMemberImportPreview(
     }
   }
 
+  const hasErrors = fileErrors.length > 0 || rows.some((row) => row.errors.length > 0);
+
   return {
     rows,
-    importRows: rows.map((row) => row.values),
+    importRows: hasErrors ? [] : rows.map((row) => row.values),
     fileErrors,
-    hasErrors: fileErrors.length > 0 || rows.some((row) => row.errors.length > 0),
+    hasErrors,
   };
 }

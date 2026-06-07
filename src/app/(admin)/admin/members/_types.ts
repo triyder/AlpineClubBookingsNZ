@@ -108,6 +108,7 @@ export interface ImportRow {
 export interface ImportResult {
   created: number
   skipped: number
+  skippedRows?: Array<{ row: number; email: string; reason: string }>
   errors: Array<{ row: number; errors: string[] }>
   total?: number
 }

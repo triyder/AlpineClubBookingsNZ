@@ -154,6 +154,27 @@ describe("member CSV import parser", () => {
     expect(preview.rows[0].errors[0]).toContain("valid calendar date");
   });
 
+  it("does not prepare commit rows when preview validation fails", () => {
+    const parsed = parseMemberImportCsv(
+      "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990"
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+      {
+        ...createDefaultMemberImportDateFormatMapping(),
+        dateOfBirth: "dd/MM/yyyy",
+      }
+    );
+
+    expect(preview.hasErrors).toBe(true);
+    expect(preview.importRows).toEqual([]);
+  });
+
   it("normalizes every supported date format to date-only storage format", () => {
     expect(normalizeMemberImportDateValue("1990-01-15", "yyyy-MM-dd")).toEqual({
       ok: true,
@@ -182,6 +203,26 @@ describe("member CSV import parser", () => {
     expect(normalizeMemberImportDateValue("Jan 5 1990", "MMM d yyyy")).toEqual({
       ok: true,
       value: "1990-01-05",
+    });
+  });
+
+  it("accepts exact month names but rejects month-name prefix matches", () => {
+    expect(normalizeMemberImportDateValue("5 January 1990", "d MMM yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-05",
+    });
+    expect(normalizeMemberImportDateValue("January 5 1990", "MMM d yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-05",
+    });
+
+    expect(normalizeMemberImportDateValue("5 Januaryx 1990", "d MMM yyyy")).toEqual({
+      ok: false,
+      error: "contains an unknown month for d MMM yyyy",
+    });
+    expect(normalizeMemberImportDateValue("Januaryx 5 1990", "MMM d yyyy")).toEqual({
+      ok: false,
+      error: "contains an unknown month for MMM d yyyy",
     });
   });
 

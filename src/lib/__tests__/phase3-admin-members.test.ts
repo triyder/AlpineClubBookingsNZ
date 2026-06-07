@@ -800,6 +800,45 @@ describe("Phase 3: Admin Member Management", () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
+    it("creates imported members as login-enabled primary accounts", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      const createMember = vi.fn(async ({ data }: any) => ({
+        id: "new-login",
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+      }));
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: { create: createMember },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [{ firstName: "Login", lastName: "Member", email: "login@test.com" }],
+          sendInvites: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await importMembers(req);
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.created).toBe(1);
+      expect(createMember).toHaveBeenCalledTimes(1);
+      expect(createMember.mock.calls[0][0].data).toMatchObject({
+        email: "login@test.com",
+        active: true,
+        canLogin: true,
+        emailVerified: true,
+      });
+    });
+
     it("imports more than nine members in one request", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
@@ -952,6 +991,13 @@ describe("Phase 3: Admin Member Management", () => {
       const res = await importMembers(req);
       const body = await res.json();
       expect(body.skipped).toBe(1);
+      expect(body.skippedRows).toEqual([
+        {
+          row: 1,
+          email: "existing@test.com",
+          reason: "Login email already exists",
+        },
+      ]);
       expect(body.created).toBe(1);
     });
 

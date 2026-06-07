@@ -592,6 +592,15 @@ export function MemberImportDialog({
                       ))}
                     </div>
                   )}
+                  {importResult.skippedRows && importResult.skippedRows.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto rounded-md border border-yellow-200 p-3 text-xs text-yellow-800">
+                      {importResult.skippedRows.map((skipped, index) => (
+                        <p key={`${skipped.row}-${index}`}>
+                          Row {skipped.row}: {skipped.reason} ({skipped.email})
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
