@@ -1,6 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
+  endOfDateOnlyForTimeZone,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
+import {
   buildAuditCategoryWhere,
   buildAuditMemberScopeWhere,
   isAuditTimelineCategory,
@@ -79,10 +83,10 @@ export function buildAuditDateWhere(params: {
 
   const createdAt: Prisma.DateTimeFilter = {};
   if (params.from) {
-    createdAt.gte = new Date(`${params.from}T00:00:00`);
+    createdAt.gte = startOfDateOnlyForTimeZone(params.from);
   }
   if (params.to) {
-    createdAt.lte = new Date(`${params.to}T23:59:59`);
+    createdAt.lte = endOfDateOnlyForTimeZone(params.to);
   }
   return { createdAt };
 }

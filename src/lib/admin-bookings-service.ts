@@ -17,7 +17,15 @@ import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  endOfDateOnlyForTimeZone,
+  formatDateOnly,
+  getTodayDateOnly,
+  parseDateOnly,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
@@ -114,12 +122,21 @@ export interface AdminBookingsOptions {
   bedAllocationEnabled?: boolean;
 }
 
-function parseDateStart(value: string) {
-  return new Date(`${value}T00:00:00`);
+function parseDateOnlyFilter(value: string) {
+  return parseDateOnly(value);
 }
 
-function parseDateEnd(value: string) {
-  return new Date(`${value}T23:59:59`);
+function parseDateTimeStart(value: string) {
+  return startOfDateOnlyForTimeZone(value);
+}
+
+function parseDateTimeEnd(value: string) {
+  return endOfDateOnlyForTimeZone(value);
+}
+
+function monthEndDateOnly(year: number, month: number) {
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 }
 
 export function getAdminBookingSortBy(params: { sortBy?: string; sort?: string }): BookingSortBy {
@@ -199,10 +216,8 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   Object.assign(where, buildBookingDeletedWhere(parseBookingDeletedVisibility(query.deleted)));
 
   if (upcomingDays !== null && !isNaN(upcomingDays)) {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + upcomingDays);
+    const today = getTodayDateOnly();
+    const futureDate = addDaysDateOnly(today, upcomingDays);
     checkInFilter.gte = today;
     checkInFilter.lte = futureDate;
 
@@ -220,15 +235,15 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
 
   if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
     const [year, month] = query.month.split("-").map(Number);
-    checkInFilter.gte = new Date(year, month - 1, 1);
-    checkInFilter.lte = new Date(year, month, 0);
+    checkInFilter.gte = parseDateOnly(`${year}-${String(month).padStart(2, "0")}-01`);
+    checkInFilter.lte = parseDateOnly(monthEndDateOnly(year, month));
   }
 
-  if (checkInFrom) checkInFilter.gte = parseDateStart(checkInFrom);
-  if (checkInTo) checkInFilter.lte = parseDateEnd(checkInTo);
-  if (legacyToDate) checkOutFilter.lte = parseDateEnd(legacyToDate);
-  if (query.updatedFrom) updatedAtFilter.gte = parseDateStart(query.updatedFrom);
-  if (query.updatedTo) updatedAtFilter.lte = parseDateEnd(query.updatedTo);
+  if (checkInFrom) checkInFilter.gte = parseDateOnlyFilter(checkInFrom);
+  if (checkInTo) checkInFilter.lte = parseDateOnlyFilter(checkInTo);
+  if (legacyToDate) checkOutFilter.lte = parseDateOnlyFilter(legacyToDate);
+  if (query.updatedFrom) updatedAtFilter.gte = parseDateTimeStart(query.updatedFrom);
+  if (query.updatedTo) updatedAtFilter.lte = parseDateTimeEnd(query.updatedTo);
 
   if (query.search?.trim()) {
     const queryTerms = query.search.trim().split(/\s+/).filter(Boolean);

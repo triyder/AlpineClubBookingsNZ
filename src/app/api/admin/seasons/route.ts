@@ -5,12 +5,17 @@ import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { ageTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+})
 
 const seasonSchema = z.object({
   name: z.string().min(1, "Name is required"),
   type: z.enum(["WINTER", "SUMMER"]),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format"),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format"),
+  startDate: dateOnlyString,
+  endDate: dateOnlyString,
   active: z.boolean().default(true),
   rates: z.array(
     z.object({
@@ -61,7 +66,10 @@ export async function POST(req: NextRequest) {
 
   const { name, type, startDate, endDate, active, rates } = parsed.data
 
-  if (new Date(endDate) <= new Date(startDate)) {
+  const parsedStartDate = parseDateOnly(startDate)
+  const parsedEndDate = parseDateOnly(endDate)
+
+  if (parsedEndDate <= parsedStartDate) {
     return NextResponse.json(
       { error: "End date must be after start date" },
       { status: 400 }
@@ -72,8 +80,8 @@ export async function POST(req: NextRequest) {
   const overlapping = await prisma.season.findFirst({
     where: {
       AND: [
-        { startDate: { lte: new Date(endDate) } },
-        { endDate: { gte: new Date(startDate) } },
+        { startDate: { lte: parsedEndDate } },
+        { endDate: { gte: parsedStartDate } },
       ],
     },
   })
@@ -89,8 +97,8 @@ export async function POST(req: NextRequest) {
     data: {
       name,
       type,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
       active,
       rates: {
         create: rates.map((rate) => ({

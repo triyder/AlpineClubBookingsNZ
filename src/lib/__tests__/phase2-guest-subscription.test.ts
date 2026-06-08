@@ -152,15 +152,17 @@ const mockPrisma = prisma as unknown as {
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
 
-const checkIn = new Date("2026-12-01");
-const checkOut = new Date("2026-12-03");
+const checkInDate = "2026-12-01";
+const checkOutDate = "2026-12-03";
+const checkIn = new Date(`${checkInDate}T00:00:00.000Z`);
+const checkOut = new Date(`${checkOutDate}T00:00:00.000Z`);
 
 function makeRequest(guests: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) {
   return new NextRequest("http://localhost/api/bookings", {
     method: "POST",
     body: JSON.stringify({
-      checkIn: checkIn.toISOString(),
-      checkOut: checkOut.toISOString(),
+      checkIn: checkInDate,
+      checkOut: checkOutDate,
       guests,
       ...extra,
     }),

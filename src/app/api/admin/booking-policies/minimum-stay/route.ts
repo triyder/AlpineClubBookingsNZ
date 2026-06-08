@@ -4,11 +4,16 @@ import { requireActiveSessionUser } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+})
 
 const createSchema = z.object({
   name: z.string().min(1).max(200),
-  startDate: z.string(),
-  endDate: z.string(),
+  startDate: dateOnlyString,
+  endDate: dateOnlyString,
   triggerDays: z.array(z.number().int().min(0).max(6)).min(1, "At least one trigger day is required"),
   minimumNights: z.number().int().min(2, "Minimum nights must be at least 2"),
   active: z.boolean().optional(),
@@ -45,8 +50,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const data = createSchema.parse(body)
 
-    const startDate = new Date(data.startDate)
-    const endDate = new Date(data.endDate)
+    const startDate = parseDateOnly(data.startDate)
+    const endDate = parseDateOnly(data.endDate)
 
     if (endDate <= startDate) {
       return NextResponse.json(

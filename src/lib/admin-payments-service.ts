@@ -15,6 +15,11 @@ import {
 } from "@/lib/admin-operational-state";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import {
+  endOfDateOnlyForTimeZone,
+  parseDateOnly,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const amountSchema = z.string().trim().regex(/^\d+(\.\d{1,2})?$/);
@@ -121,12 +126,16 @@ function moneyStringToCents(value: string) {
   return Number(dollars) * 100 + Number(cents.padEnd(2, "0"));
 }
 
-function startOfInputDate(date: string) {
-  return new Date(`${date}T00:00:00`);
+function startOfInputDateTime(date: string) {
+  return startOfDateOnlyForTimeZone(date);
 }
 
-function endOfInputDate(date: string) {
-  return new Date(`${date}T23:59:59`);
+function endOfInputDateTime(date: string) {
+  return endOfDateOnlyForTimeZone(date);
+}
+
+function inputDateOnly(date: string) {
+  return parseDateOnly(date);
 }
 
 function insensitiveContains(term: string) {
@@ -250,10 +259,10 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
     if (checkInFrom || checkInTo) {
       const checkInFilter: Prisma.DateTimeFilter = {};
       if (checkInFrom) {
-        checkInFilter.gte = startOfInputDate(checkInFrom);
+        checkInFilter.gte = inputDateOnly(checkInFrom);
       }
       if (checkInTo) {
-        checkInFilter.lte = endOfInputDate(checkInTo);
+        checkInFilter.lte = inputDateOnly(checkInTo);
       }
       bookingWhere.checkIn = checkInFilter;
     }
@@ -402,10 +411,10 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         };
       })
       .filter((payment) => {
-        if (activityFrom && payment.latestActivityAt < startOfInputDate(activityFrom)) {
+        if (activityFrom && payment.latestActivityAt < startOfInputDateTime(activityFrom)) {
           return false;
         }
-        if (activityTo && payment.latestActivityAt > endOfInputDate(activityTo)) {
+        if (activityTo && payment.latestActivityAt > endOfInputDateTime(activityTo)) {
           return false;
         }
         if (!matchesXeroStateFilter(payment.xeroState, xeroState)) {

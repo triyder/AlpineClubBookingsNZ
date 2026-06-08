@@ -7,7 +7,9 @@ import {
   formatLocalDateOnly,
   getTodayDateOnly,
   isDateOnlyString,
+  endOfDateOnlyForTimeZone,
   parseDateOnly,
+  startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
 
 describe("date-only helpers", () => {
@@ -31,6 +33,15 @@ describe("date-only helpers", () => {
     expect(
       formatDateOnlyForTimeZone(new Date("2026-04-29T12:00:00.000Z"))
     ).toBe("2026-04-30");
+  });
+
+  it("builds exact New Zealand calendar day boundaries", () => {
+    expect(
+      startOfDateOnlyForTimeZone("2026-04-30", "Pacific/Auckland").toISOString()
+    ).toBe("2026-04-29T12:00:00.000Z");
+    expect(
+      endOfDateOnlyForTimeZone("2026-04-30", "Pacific/Auckland").toISOString()
+    ).toBe("2026-04-30T11:59:59.999Z");
   });
 
   it("adds days in UTC so lodge dates stay aligned with @db.Date values", () => {

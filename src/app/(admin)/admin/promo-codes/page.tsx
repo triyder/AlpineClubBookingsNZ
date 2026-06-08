@@ -19,7 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { APP_CURRENCY } from "@/config/operational";
+import { APP_CURRENCY, APP_TIME_ZONE } from "@/config/operational";
+import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { formatCents } from "@/lib/pricing";
 
 interface MemberOption {
@@ -79,6 +80,7 @@ interface PromoCode {
   bookingStartUntil: string | null;
   membersOnly: boolean;
   memberGuestsOnly: boolean;
+  assignedMembersOnlyOwnNights: boolean | null;
   xeroItemCode: string | null;
   xeroAccountCode: string | null;
   active: boolean;
@@ -94,6 +96,16 @@ const TYPE_LABELS: Record<string, string> = {
   FREE_NIGHTS: "Free Nights",
   FIXED_NIGHTLY_PRICE: "Fixed Price per Night",
 };
+
+function formatPromoDateInput(value: string | null) {
+  return value ? formatDateOnlyForTimeZone(new Date(value), APP_TIME_ZONE) : "";
+}
+
+function formatPromoDateDisplay(value: string | null) {
+  return value
+    ? new Date(value).toLocaleDateString("en-NZ", { timeZone: APP_TIME_ZONE })
+    : "";
+}
 
 export default function PromoCodesPage() {
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
@@ -125,6 +137,7 @@ export default function PromoCodesPage() {
   const [bookingStartUntil, setBookingStartUntil] = useState("");
   const [membersOnly, setMembersOnly] = useState(false);
   const [memberGuestsOnly, setMemberGuestsOnly] = useState(false);
+  const [assignedMembersOnlyOwnNights, setAssignedMembersOnlyOwnNights] = useState(true);
   const [xeroItemCode, setXeroItemCode] = useState("");
   const [xeroAccountCode, setXeroAccountCode] = useState("");
   const [active, setActive] = useState(true);
@@ -273,6 +286,7 @@ export default function PromoCodesPage() {
     setBookingStartUntil("");
     setMembersOnly(false);
     setMemberGuestsOnly(false);
+    setAssignedMembersOnlyOwnNights(true);
     setXeroItemCode("");
     setXeroAccountCode("");
     setActive(true);
@@ -323,12 +337,13 @@ export default function PromoCodesPage() {
     setMaxUsesPerMember(
       promo.maxUsesPerMember != null ? String(promo.maxUsesPerMember) : ""
     );
-    setValidFrom(promo.validFrom ? promo.validFrom.split("T")[0] : "");
-    setValidUntil(promo.validUntil ? promo.validUntil.split("T")[0] : "");
-    setBookingStartFrom(promo.bookingStartFrom ? promo.bookingStartFrom.split("T")[0] : "");
-    setBookingStartUntil(promo.bookingStartUntil ? promo.bookingStartUntil.split("T")[0] : "");
+    setValidFrom(formatPromoDateInput(promo.validFrom));
+    setValidUntil(formatPromoDateInput(promo.validUntil));
+    setBookingStartFrom(formatPromoDateInput(promo.bookingStartFrom));
+    setBookingStartUntil(formatPromoDateInput(promo.bookingStartUntil));
     setMembersOnly(promo.membersOnly);
     setMemberGuestsOnly(promo.memberGuestsOnly);
+    setAssignedMembersOnlyOwnNights(promo.assignedMembersOnlyOwnNights ?? true);
     setXeroItemCode(promo.xeroItemCode ?? "");
     setXeroAccountCode(promo.xeroAccountCode ?? "");
     setActive(promo.active);
@@ -348,6 +363,7 @@ export default function PromoCodesPage() {
       type,
       membersOnly,
       memberGuestsOnly,
+      assignedMembersOnlyOwnNights,
       xeroItemCode: xeroItemCode.trim() || null,
       xeroAccountCode: xeroAccountCode.trim() || null,
       active,
@@ -595,11 +611,11 @@ export default function PromoCodesPage() {
               <span className="text-muted-foreground">Valid:</span>{" "}
               <span className="font-medium">
                 {promo.validFrom
-                  ? new Date(promo.validFrom).toLocaleDateString("en-NZ")
+                  ? formatPromoDateDisplay(promo.validFrom)
                   : "Any time"}
                 {" - "}
                 {promo.validUntil
-                  ? new Date(promo.validUntil).toLocaleDateString("en-NZ")
+                  ? formatPromoDateDisplay(promo.validUntil)
                   : "No expiry"}
               </span>
             </div>
@@ -643,6 +659,11 @@ export default function PromoCodesPage() {
                   </Badge>
                 ))}
               </div>
+              <Badge variant="outline" className="mt-2 text-xs">
+                {promo.assignedMembersOnlyOwnNights ?? true
+                  ? "Assigned guests only"
+                  : "Booker chooses guests"}
+              </Badge>
             </div>
           )}
         </CardContent>
@@ -1168,23 +1189,61 @@ export default function PromoCodesPage() {
                   )}
                 </div>
                 {assignedMembers.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    {assignedMembers.map((m) => (
-                      <Badge
-                        key={m.id}
-                        variant="secondary"
-                        className="flex items-center gap-1 py-1 px-2"
-                      >
-                        {m.firstName} {m.lastName}
-                        <button
-                          type="button"
-                          onClick={() => removeMember(m.id)}
-                          className="ml-1 text-muted-foreground hover:text-foreground"
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {assignedMembers.map((m) => (
+                        <Badge
+                          key={m.id}
+                          variant="secondary"
+                          className="flex items-center gap-1 py-1 px-2"
                         >
-                          &times;
-                        </button>
-                      </Badge>
-                    ))}
+                          {m.firstName} {m.lastName}
+                          <button
+                            type="button"
+                            onClick={() => removeMember(m.id)}
+                            className="ml-1 text-muted-foreground hover:text-foreground"
+                          >
+                            &times;
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="assignedMembersOnlyOwnNights"
+                          checked={assignedMembersOnlyOwnNights}
+                          onChange={() => setAssignedMembersOnlyOwnNights(true)}
+                          className="mt-1"
+                        />
+                        <span className="space-y-1">
+                          <span className="block text-sm font-medium">
+                            Assigned guests only
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            Anyone can enter the code, but it discounts only the listed members&apos; own nights.
+                          </span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="radio"
+                          name="assignedMembersOnlyOwnNights"
+                          checked={!assignedMembersOnlyOwnNights}
+                          onChange={() => setAssignedMembersOnlyOwnNights(false)}
+                          className="mt-1"
+                        />
+                        <span className="space-y-1">
+                          <span className="block text-sm font-medium">
+                            Booker chooses guests
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            Only a listed member can use the code as booker, then choose which guests receive it.
+                          </span>
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 )}
               </div>

@@ -17,6 +17,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
+import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 interface MinStayViolation {
   policyName: string;
@@ -66,7 +67,7 @@ export function ChangeDatesDialog({
   const [additionalAmountCents, setAdditionalAmountCents] = useState(0);
   const [paymentComplete, setPaymentComplete] = useState(false);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = formatDateOnly(getTodayDateOnly());
 
   async function fetchQuote() {
     setQuoteError("");

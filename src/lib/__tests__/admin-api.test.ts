@@ -411,8 +411,8 @@ describe("Admin Payments API", () => {
 
     const callArgs = vi.mocked(prisma.payment.findMany).mock.calls[0][0] as any;
     expect(callArgs.where.amountCents).toEqual({ gte: 5000, lte: 7500 });
-    expect(callArgs.where.booking.is.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00"));
-    expect(callArgs.where.booking.is.checkIn.lte).toEqual(new Date("2026-07-31T23:59:59"));
+    expect(callArgs.where.booking.is.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(callArgs.where.booking.is.checkIn.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
     expect(callArgs.where.AND).toHaveLength(2);
     expect(callArgs.where.AND[0].OR).toEqual(
       expect.arrayContaining([
@@ -749,8 +749,8 @@ describe("Admin Audit Log API", () => {
     const dateWhere = callArgs.where.AND.find(
       (clause: any) => Boolean(clause.createdAt)
     );
-    expect(dateWhere.createdAt.gte).toEqual(new Date("2026-04-01T00:00:00"));
-    expect(dateWhere.createdAt.lte).toEqual(new Date("2026-04-30T23:59:59"));
+    expect(dateWhere.createdAt.gte).toEqual(new Date("2026-03-31T11:00:00.000Z"));
+    expect(dateWhere.createdAt.lte).toEqual(new Date("2026-04-30T11:59:59.999Z"));
   });
 
   it("filters by category, outcome, severity, entity, and text search", async () => {

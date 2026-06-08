@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import { getTodayDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 
 // Matches HH:mm with 30-min increments (00 or 30)
 const arrivalTimeSchema = z.object({
@@ -53,9 +54,8 @@ export async function PUT(
   }
 
   // Cannot update after check-in date has passed
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (new Date(booking.checkIn) < today) {
+  const today = getTodayDateOnly();
+  if (normalizeDateOnlyForTimeZone(booking.checkIn) < today) {
     return NextResponse.json(
       { error: "Cannot update arrival time after check-in date has passed" },
       { status: 400 }
@@ -126,9 +126,8 @@ export async function DELETE(
     );
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (new Date(booking.checkIn) < today) {
+  const today = getTodayDateOnly();
+  if (normalizeDateOnlyForTimeZone(booking.checkIn) < today) {
     return NextResponse.json(
       { error: "Cannot update arrival time after check-in date has passed" },
       { status: 400 }

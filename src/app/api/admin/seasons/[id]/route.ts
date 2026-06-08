@@ -5,12 +5,17 @@ import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { ageTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+})
 
 const updateSeasonSchema = z.object({
   name: z.string().min(1).optional(),
   type: z.enum(["WINTER", "SUMMER"]).optional(),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startDate: dateOnlyString.optional(),
+  endDate: dateOnlyString.optional(),
   active: z.boolean().optional(),
   rates: z.array(
     z.object({
@@ -79,8 +84,10 @@ export async function PUT(
 
   const { rates, startDate, endDate, ...seasonData } = parsed.data
 
-  const effectiveStart = startDate ? new Date(startDate) : existing.startDate
-  const effectiveEnd = endDate ? new Date(endDate) : existing.endDate
+  const parsedStartDate = startDate ? parseDateOnly(startDate) : undefined
+  const parsedEndDate = endDate ? parseDateOnly(endDate) : undefined
+  const effectiveStart = parsedStartDate ?? existing.startDate
+  const effectiveEnd = parsedEndDate ?? existing.endDate
 
   if (effectiveEnd <= effectiveStart) {
     return NextResponse.json(
@@ -115,8 +122,8 @@ export async function PUT(
       where: { id },
       data: {
         ...seasonData,
-        ...(startDate && { startDate: new Date(startDate) }),
-        ...(endDate && { endDate: new Date(endDate) }),
+        ...(parsedStartDate && { startDate: parsedStartDate }),
+        ...(parsedEndDate && { endDate: parsedEndDate }),
       },
     })
 

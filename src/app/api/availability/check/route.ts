@@ -3,11 +3,15 @@ import { checkCapacity } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
-import { formatDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const availabilityCheckQuerySchema = z.object({
-  checkIn: z.string().date(),
-  checkOut: z.string().date(),
+  checkIn: dateOnlyString.transform(parseDateOnly),
+  checkOut: dateOnlyString.transform(parseDateOnly),
 });
 
 export async function GET(request: NextRequest) {
@@ -32,12 +36,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const checkIn = new Date(parsed.data.checkIn);
-  const checkOut = new Date(parsed.data.checkOut);
-
-  if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime())) {
-    return NextResponse.json({ error: "Invalid dates" }, { status: 400 });
-  }
+  const { checkIn, checkOut } = parsed.data;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "checkOut must be after checkIn" }, { status: 400 });

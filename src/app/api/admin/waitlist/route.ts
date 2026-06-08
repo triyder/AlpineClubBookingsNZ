@@ -8,8 +8,11 @@ import {
   getFinanceBookingMetricsWindowDayCount,
   MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
 } from "@/lib/finance-booking-metrics";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 
-const isoDateParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDateParam = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const querySchema = z
   .object({
@@ -82,10 +85,10 @@ export async function GET(request: NextRequest) {
 
   if (from || to) {
     if (from) {
-      where.checkIn = { ...(where.checkIn as object || {}), gte: new Date(from) };
+      where.checkIn = { ...((where.checkIn as object) || {}), gte: parseDateOnly(from) };
     }
     if (to) {
-      where.checkOut = { ...(where.checkOut as object || {}), lte: new Date(to) };
+      where.checkOut = { ...((where.checkOut as object) || {}), lte: parseDateOnly(to) };
     }
   }
 
@@ -108,8 +111,8 @@ export async function GET(request: NextRequest) {
     memberName: `${b.member.firstName} ${b.member.lastName}`,
     memberEmail: b.member.email,
     memberId: b.member.id,
-    checkIn: b.checkIn.toISOString().split("T")[0],
-    checkOut: b.checkOut.toISOString().split("T")[0],
+    checkIn: formatDateOnly(b.checkIn),
+    checkOut: formatDateOnly(b.checkOut),
     guestCount: b.guests.length,
     guests: b.guests,
     status: b.status,

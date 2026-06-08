@@ -26,10 +26,15 @@ import {
   type NormalizedBookingGuestStayRange,
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const quoteSchema = z.object({
-  checkIn: z.string().transform((s) => new Date(s)),
-  checkOut: z.string().transform((s) => new Date(s)),
+  checkIn: dateOnlyString.transform(parseDateOnly),
+  checkOut: dateOnlyString.transform(parseDateOnly),
   guests: z.array(
     z.object({
       ageTier: ageTierEnum,

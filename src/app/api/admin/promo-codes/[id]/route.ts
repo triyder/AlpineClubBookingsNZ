@@ -5,6 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const updatePromoCodeSchema = z.object({
   code: z.string().min(1).transform((s) => s.toUpperCase().trim()).optional(),
@@ -21,12 +26,13 @@ const updatePromoCodeSchema = z.object({
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
   maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
   maxUsesPerMember: z.number().int().min(1).optional().nullable(),
-  validFrom: z.string().optional().nullable(),
-  validUntil: z.string().optional().nullable(),
-  bookingStartFrom: z.string().optional().nullable(),
-  bookingStartUntil: z.string().optional().nullable(),
+  validFrom: dateOnlyString.optional().nullable(),
+  validUntil: dateOnlyString.optional().nullable(),
+  bookingStartFrom: dateOnlyString.optional().nullable(),
+  bookingStartUntil: dateOnlyString.optional().nullable(),
   membersOnly: z.boolean().optional(),
   memberGuestsOnly: z.boolean().optional(),
+  assignedMembersOnlyOwnNights: z.boolean().optional(),
   xeroItemCode: z.string().trim().min(1).max(30).optional().nullable(),
   xeroAccountCode: z.string().trim().min(1).max(10).optional().nullable(),
   active: z.boolean().optional(),
@@ -158,9 +164,18 @@ export async function PUT(
     );
   }
 
-  if (data.validFrom && data.validUntil && new Date(data.validUntil) <= new Date(data.validFrom)) {
+  const effectiveValidFrom =
+    data.validFrom !== undefined
+      ? data.validFrom
+      : existing.validFrom ? formatDateOnly(existing.validFrom) : null;
+  const effectiveValidUntil =
+    data.validUntil !== undefined
+      ? data.validUntil
+      : existing.validUntil ? formatDateOnly(existing.validUntil) : null;
+
+  if (effectiveValidFrom && effectiveValidUntil && effectiveValidUntil < effectiveValidFrom) {
     return NextResponse.json(
-      { error: "Valid until must be after valid from" },
+      { error: "Valid until must be on or after valid from" },
       { status: 400 }
     );
   }
@@ -168,16 +183,16 @@ export async function PUT(
   const effectiveBookingStartFrom =
     data.bookingStartFrom !== undefined
       ? data.bookingStartFrom
-      : existing.bookingStartFrom?.toISOString() ?? null;
+      : existing.bookingStartFrom ? formatDateOnly(existing.bookingStartFrom) : null;
   const effectiveBookingStartUntil =
     data.bookingStartUntil !== undefined
       ? data.bookingStartUntil
-      : existing.bookingStartUntil?.toISOString() ?? null;
+      : existing.bookingStartUntil ? formatDateOnly(existing.bookingStartUntil) : null;
 
   if (
     effectiveBookingStartFrom &&
     effectiveBookingStartUntil &&
-    new Date(effectiveBookingStartUntil) <= new Date(effectiveBookingStartFrom)
+    effectiveBookingStartUntil <= effectiveBookingStartFrom
   ) {
     return NextResponse.json(
       { error: "Booking check-in until must be after booking check-in from" },
@@ -246,19 +261,22 @@ export async function PUT(
         ...(data.maxUniqueMembersTotal !== undefined && { maxUniqueMembersTotal: data.maxUniqueMembersTotal }),
         ...(data.maxUsesPerMember !== undefined && { maxUsesPerMember: data.maxUsesPerMember }),
         ...(data.validFrom !== undefined && {
-          validFrom: data.validFrom ? new Date(data.validFrom) : null,
+          validFrom: data.validFrom ? parseDateOnly(data.validFrom) : null,
         }),
         ...(data.validUntil !== undefined && {
-          validUntil: data.validUntil ? new Date(data.validUntil) : null,
+          validUntil: data.validUntil ? parseDateOnly(data.validUntil) : null,
         }),
         ...(data.bookingStartFrom !== undefined && {
-          bookingStartFrom: data.bookingStartFrom ? new Date(data.bookingStartFrom) : null,
+          bookingStartFrom: data.bookingStartFrom ? parseDateOnly(data.bookingStartFrom) : null,
         }),
         ...(data.bookingStartUntil !== undefined && {
-          bookingStartUntil: data.bookingStartUntil ? new Date(data.bookingStartUntil) : null,
+          bookingStartUntil: data.bookingStartUntil ? parseDateOnly(data.bookingStartUntil) : null,
         }),
         ...(data.membersOnly !== undefined && { membersOnly: data.membersOnly }),
         ...(data.memberGuestsOnly !== undefined && { memberGuestsOnly: data.memberGuestsOnly }),
+        ...(data.assignedMembersOnlyOwnNights !== undefined && {
+          assignedMembersOnlyOwnNights: data.assignedMembersOnlyOwnNights,
+        }),
         ...(data.xeroItemCode !== undefined && { xeroItemCode: data.xeroItemCode }),
         ...(data.xeroAccountCode !== undefined && { xeroAccountCode: data.xeroAccountCode }),
         ...(data.active !== undefined && { active: data.active }),

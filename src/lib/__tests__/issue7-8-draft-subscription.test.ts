@@ -221,15 +221,15 @@ function adminSession(id = "admin-1") {
   return { user: { id, role: "ADMIN" } };
 }
 
-const checkIn = new Date("2026-12-01");
-const checkOut = new Date("2026-12-03");
+const checkInDate = "2026-12-01";
+const checkOutDate = "2026-12-03";
 
 function makeBookingBody(extra: Record<string, unknown> = {}) {
   return new NextRequest("http://localhost/api/bookings", {
     method: "POST",
     body: JSON.stringify({
-      checkIn: checkIn.toISOString(),
-      checkOut: checkOut.toISOString(),
+      checkIn: checkInDate,
+      checkOut: checkOutDate,
       guests: [{ firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true }],
       ...extra,
     }),

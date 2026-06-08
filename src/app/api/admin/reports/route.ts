@@ -17,6 +17,11 @@ import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
+import {
+  endOfDateOnlyForTimeZone,
+  parseDateOnly,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -51,10 +56,10 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const fromDate = new Date(parsed.data.from + "T00:00:00");
-  const toDate = new Date(parsed.data.to + "T23:59:59");
-  const occupancyFromDate = new Date(parsed.data.from + "T00:00:00");
-  const occupancyToDate = new Date(parsed.data.to + "T00:00:00");
+  const fromDate = startOfDateOnlyForTimeZone(parsed.data.from);
+  const toDate = endOfDateOnlyForTimeZone(parsed.data.to);
+  const occupancyFromDate = parseDateOnly(parsed.data.from);
+  const occupancyToDate = parseDateOnly(parsed.data.to);
   const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);
 
   if (toDate <= fromDate) {

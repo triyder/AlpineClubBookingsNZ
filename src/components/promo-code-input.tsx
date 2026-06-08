@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatLocalDateOnly } from "@/lib/date-only";
 
 export interface PromoResult {
   code: string;
@@ -13,12 +14,15 @@ export interface PromoResult {
   promoAdjustmentCents: number;
   totalPriceCents: number;
   finalPriceCents: number;
+  selectedGuestIndexes?: number[];
 }
 
 interface PromoCodeInputProps {
   checkIn: Date;
   checkOut: Date;
   guests: {
+    firstName?: string;
+    lastName?: string;
     ageTier: string;
     isMember: boolean;
     memberId?: string;
@@ -43,6 +47,9 @@ export function PromoCodeInput({
   const [code, setCode] = useState(appliedPromo?.code || "");
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState("");
+  const [selectionRequired, setSelectionRequired] = useState(false);
+  const [selectableGuestIndexes, setSelectableGuestIndexes] = useState<number[]>([]);
+  const [selectedGuestIndexes, setSelectedGuestIndexes] = useState<number[]>([]);
 
   useEffect(() => {
     if (prefillCode && !appliedPromo) {
@@ -55,6 +62,10 @@ export function PromoCodeInput({
       setError("Please enter a promo code");
       return;
     }
+    if (selectionRequired && selectedGuestIndexes.length === 0) {
+      setError("Choose at least one guest for this promo code");
+      return;
+    }
 
     setValidating(true);
     setError("");
@@ -65,22 +76,32 @@ export function PromoCodeInput({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           code: code.trim(),
-          checkIn: checkIn.toISOString(),
-          checkOut: checkOut.toISOString(),
-	          guests: guests.map((g) => ({
-	            ageTier: g.ageTier,
-	            isMember: g.isMember,
-	            ...(g.memberId ? { memberId: g.memberId } : {}),
-	            ...(g.stayStart ? { stayStart: g.stayStart } : {}),
-	            ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
-	          })),
+          checkIn: formatLocalDateOnly(checkIn),
+          checkOut: formatLocalDateOnly(checkOut),
+          guests: guests.map((g) => ({
+            ageTier: g.ageTier,
+            isMember: g.isMember,
+            ...(g.memberId ? { memberId: g.memberId } : {}),
+            ...(g.stayStart ? { stayStart: g.stayStart } : {}),
+            ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
+          })),
+          ...(selectionRequired ? { promoGuestIndexes: selectedGuestIndexes } : {}),
           ...(forMemberId ? { forMemberId } : {}),
         }),
       });
 
       const data = await res.json();
 
-      if (!res.ok) {
+      if (data.requiresGuestSelection) {
+        setSelectionRequired(true);
+        setSelectableGuestIndexes(data.selectableGuestIndexes || []);
+        setSelectedGuestIndexes([]);
+        setError(data.error || "Choose which guests should receive this promo code");
+        onPromoApplied(null);
+        return;
+      }
+
+      if (!res.ok || data.valid === false) {
         setError(data.error || "Invalid promo code");
         onPromoApplied(null);
         return;
@@ -94,6 +115,7 @@ export function PromoCodeInput({
         promoAdjustmentCents: data.promoAdjustmentCents,
         totalPriceCents: data.totalPriceCents,
         finalPriceCents: data.finalPriceCents,
+        selectedGuestIndexes: data.selectedGuestIndexes,
       });
     } catch {
       setError("Failed to validate promo code");
@@ -112,7 +134,35 @@ export function PromoCodeInput({
   function handleRemove() {
     setCode("");
     setError("");
+    setSelectionRequired(false);
+    setSelectableGuestIndexes([]);
+    setSelectedGuestIndexes([]);
     onPromoApplied(null);
+  }
+
+  function handleCodeChange(value: string) {
+    setCode(value.toUpperCase());
+    setError("");
+    setSelectionRequired(false);
+    setSelectableGuestIndexes([]);
+    setSelectedGuestIndexes([]);
+  }
+
+  function toggleGuestIndex(index: number, checked: boolean) {
+    setSelectedGuestIndexes((current) => {
+      const next = checked
+        ? [...current, index]
+        : current.filter((value) => value !== index);
+      return [...new Set(next)].sort((a, b) => a - b);
+    });
+    setError("");
+  }
+
+  function guestLabel(index: number) {
+    const guest = guests[index];
+    const name = [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim();
+    const label = name || `Guest ${index + 1}`;
+    return `${label}${guest?.isMember ? " (member)" : ""}`;
   }
 
   return (
@@ -148,10 +198,7 @@ export function PromoCodeInput({
           <Input
             id="promoCode"
             value={code}
-            onChange={(e) => {
-              setCode(e.target.value.toUpperCase());
-              setError("");
-            }}
+            onChange={(e) => handleCodeChange(e.target.value)}
             placeholder="Enter promo code"
             className="flex-1"
           />
@@ -159,10 +206,28 @@ export function PromoCodeInput({
             type="button"
             variant="outline"
             onClick={handleApply}
-            disabled={validating || !code.trim()}
+            disabled={validating || !code.trim() || (selectionRequired && selectedGuestIndexes.length === 0)}
           >
-            {validating ? "Checking..." : "Apply"}
+            {validating ? "Checking..." : selectionRequired ? "Apply Selected" : "Apply"}
           </Button>
+        </div>
+      )}
+      {!appliedPromo && selectionRequired && (
+        <div className="rounded-md border p-3">
+          <p className="mb-2 text-sm font-medium">Choose promo guests</p>
+          <div className="space-y-2">
+            {selectableGuestIndexes.map((index) => (
+              <label key={index} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selectedGuestIndexes.includes(index)}
+                  onChange={(event) => toggleGuestIndex(index, event.target.checked)}
+                  className="rounded border-input"
+                />
+                <span>{guestLabel(index)}</span>
+              </label>
+            ))}
+          </div>
         </div>
       )}
       {error && <p className="text-sm text-red-600">{error}</p>}

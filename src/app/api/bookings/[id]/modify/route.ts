@@ -40,6 +40,7 @@ const batchModifySchema = z.object({
     )
     .optional(),
   promoCode: z.string().optional(),
+  promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
   removePromoCode: z.boolean().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
   settlementMethod: z.enum(["card", "credit"]).optional(),

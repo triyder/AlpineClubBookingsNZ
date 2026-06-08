@@ -102,10 +102,10 @@ describe("AdminBookingsPage", () => {
     });
 
     const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
-    expect(callArgs.where.updatedAt.gte).toEqual(new Date("2026-05-01T00:00:00"));
-    expect(callArgs.where.updatedAt.lte).toEqual(new Date("2026-05-31T23:59:59"));
-    expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00"));
-    expect(callArgs.where.checkIn.lte).toEqual(new Date("2026-07-31T23:59:59"));
+    expect(callArgs.where.updatedAt.gte).toEqual(new Date("2026-04-30T12:00:00.000Z"));
+    expect(callArgs.where.updatedAt.lte).toEqual(new Date("2026-05-31T11:59:59.999Z"));
+    expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(callArgs.where.checkIn.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
     expect(callArgs.where.checkOut).toBeUndefined();
   });
 
@@ -118,8 +118,8 @@ describe("AdminBookingsPage", () => {
     });
 
     const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
-    expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00"));
-    expect(callArgs.where.checkOut.lte).toEqual(new Date("2026-07-31T23:59:59"));
+    expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(callArgs.where.checkOut.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
   });
 
   it("sorts by member using stable member-name ordering", async () => {

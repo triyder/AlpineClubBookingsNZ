@@ -646,6 +646,7 @@ model Booking {
   choreAssignments           ChoreAssignment[]
   promoRedemption            PromoRedemption?
   promoRedemptionAllocations PromoRedemptionAllocation[]
+  promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
   modifications              BookingModification[]
   changeRequests             BookingChangeRequest[]
   creditsFromCancellation    MemberCredit[]              @relation("CreditSource")
@@ -691,6 +692,7 @@ model BookingGuest {
   choreAssignments ChoreAssignment[]
   choreTokens      GuestChoreToken[]
   bedAllocations   BedAllocation[]
+  promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
 
   @@index([bookingId])
   @@index([bookingId, stayStart, stayEnd])
@@ -928,6 +930,7 @@ model PromoCode {
   bookingStartUntil       DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
   membersOnly             Boolean       @default(false) // Booker must be a member
   memberGuestsOnly        Boolean       @default(false) // Promo only applies to guest rows flagged as members
+  assignedMembersOnlyOwnNights Boolean   @default(true) // Assigned members can only apply the promo to their own linked guest nights
   // Optional Xero coding for the discount line on the booking invoice. When set, the discount
   // posts to these codes (separately reportable in the P&L) instead of inheriting hut-fee codes.
   // If a Xero Item Code is set and that Item has an account mapped in Xero, the item's mapping
@@ -965,6 +968,7 @@ model PromoRedemption {
   booking     Booking                     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   member      Member                      @relation(fields: [memberId], references: [id], onDelete: Cascade)
   allocations PromoRedemptionAllocation[]
+  guestTargets PromoRedemptionGuestTarget[]
 
   @@index([promoCodeId])
   @@index([memberId])
@@ -992,6 +996,22 @@ model PromoRedemptionAllocation {
   @@index([promoCodeId])
   @@index([memberId])
   @@index([bookingId])
+}
+
+model PromoRedemptionGuestTarget {
+  id                String   @id @default(cuid())
+  promoRedemptionId String
+  bookingId         String
+  bookingGuestId    String
+  createdAt         DateTime @default(now())
+
+  promoRedemption PromoRedemption @relation(fields: [promoRedemptionId], references: [id], onDelete: Cascade)
+  booking         Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingGuest    BookingGuest    @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+
+  @@unique([promoRedemptionId, bookingGuestId])
+  @@index([bookingId])
+  @@index([bookingGuestId])
 }
 
 model PromoCodeAssignment {

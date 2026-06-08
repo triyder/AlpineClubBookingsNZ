@@ -4,10 +4,15 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const cancellationRuleSchema = z.object({
   daysBeforeStay: z.number().int().min(0),
@@ -19,8 +24,8 @@ const cancellationRuleSchema = z.object({
 
 const createSchema = z.object({
   name: z.string().min(1).max(200),
-  startDate: z.string(),
-  endDate: z.string(),
+  startDate: dateOnlyString,
+  endDate: dateOnlyString,
   nonMemberHoldDays: z.number().int().min(1).max(30),
   cancellationRules: z.array(cancellationRuleSchema).min(1),
   active: z.boolean().optional(),
@@ -62,8 +67,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const data = createSchema.parse(body);
 
-    const startDate = new Date(data.startDate);
-    const endDate = new Date(data.endDate);
+    const startDate = parseDateOnly(data.startDate);
+    const endDate = parseDateOnly(data.endDate);
 
     if (endDate <= startDate) {
       return NextResponse.json(

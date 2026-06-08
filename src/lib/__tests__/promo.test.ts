@@ -78,6 +78,16 @@ describe("validatePromoCodeRules", () => {
     ).toBeNull();
   });
 
+  it("uses New Zealand date keys for validFrom", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ validFrom: new Date("2026-07-01T00:00:00.000Z") }),
+        defaultBookingDetails,
+        new Date("2026-06-30T12:01:00.000Z")
+      )
+    ).toBeNull();
+  });
+
   it("returns error when promo code has expired", () => {
     expect(
       validatePromoCodeRules(
@@ -96,6 +106,23 @@ describe("validatePromoCodeRules", () => {
         now
       )
     ).toBeNull();
+  });
+
+  it("keeps validUntil active through the selected New Zealand date", () => {
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ validUntil: new Date("2026-07-15T00:00:00.000Z") }),
+        defaultBookingDetails,
+        new Date("2026-07-15T11:59:59.000Z")
+      )
+    ).toBeNull();
+    expect(
+      validatePromoCodeRules(
+        makePromoCode({ validUntil: new Date("2026-07-15T00:00:00.000Z") }),
+        defaultBookingDetails,
+        new Date("2026-07-15T12:00:00.000Z")
+      )
+    ).toBe("This promo code has expired");
   });
 
   it("returns error when total redemptions cap reached", () => {
@@ -989,6 +1016,189 @@ describe("validateAndCalculatePromoDiscount", () => {
 
     expect(result.error).toBe("All linked member guests have used this promo code");
     expect(result.discount).toBeUndefined();
+  });
+
+  it("lets assigned members apply a promo to anyone on their booking when own-night scoping is off", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    } as any);
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          assignedMembersOnlyOwnNights: false,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+        assignedMembersOnlyOwnNights: false,
+      },
+      {
+        memberId: "member-1",
+        totalPriceCents: 7000,
+        guests: [
+          { memberId: "member-2", isMember: true, perNightRates: [5000] },
+          { memberId: null, isMember: false, perNightRates: [2000] },
+        ],
+      },
+      ["member-1"],
+      { selectedGuestIndexes: [0, 1] }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.discount?.discountCents).toBe(7000);
+    expect(result.beneficiaryMemberIds).toEqual(["member-1"]);
+    expect(result.selectedGuestIndexes).toEqual([0, 1]);
+    expect(result.discount?.allocations).toEqual([
+      {
+        memberId: "member-1",
+        discountCents: 7000,
+        priceAdjustmentCents: -7000,
+        freeNightsUsed: 2,
+      },
+    ]);
+  });
+
+  it("lets any booker use an own-night assigned promo when the assigned member is staying", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    } as any);
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          assignedMembersOnlyOwnNights: true,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+        assignedMembersOnlyOwnNights: true,
+      },
+      {
+        memberId: "booker-1",
+        totalPriceCents: 7000,
+        guests: [
+          { memberId: "member-1", isMember: true, perNightRates: [5000] },
+          { memberId: null, isMember: false, perNightRates: [2000] },
+        ],
+      },
+      ["member-1"]
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.discount?.discountCents).toBe(5000);
+    expect(result.beneficiaryMemberIds).toEqual(["member-1"]);
+    expect(result.discount?.allocations).toEqual([
+      {
+        memberId: "member-1",
+        discountCents: 5000,
+        priceAdjustmentCents: -5000,
+        freeNightsUsed: 1,
+      },
+    ]);
+  });
+
+  it("rejects an own-night assigned promo when no assigned member is staying", async () => {
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
+    vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    } as any);
+    vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
+
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          assignedMembersOnlyOwnNights: true,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+        assignedMembersOnlyOwnNights: true,
+      },
+      {
+        memberId: "booker-1",
+        totalPriceCents: 5000,
+        guests: [
+          { memberId: "member-2", isMember: true, perNightRates: [5000] },
+        ],
+      },
+      ["member-1"]
+    );
+
+    expect(result.error).toBe(
+      "This promo code only applies when an assigned member is staying on the booking"
+    );
+    expect(result.discount).toBeUndefined();
+  });
+
+  it("requires guest selection for assigned-booker promos", async () => {
+    const result = await validateAndCalculatePromoDiscount(
+      {
+        ...makePromoCode({
+          type: "FREE_NIGHTS",
+          freeNightsPerIndividual: 1,
+          assignedMembersOnlyOwnNights: false,
+        }),
+        type: "FREE_NIGHTS",
+        valueCents: null,
+        percentOff: null,
+        freeNightsPerIndividual: 1,
+        lifetimeFreeNightsCap: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
+        maxGuestsPerBooking: null,
+        maxNightlyValueCents: null,
+        memberGuestsOnly: false,
+        assignedMembersOnlyOwnNights: false,
+      },
+      {
+        memberId: "member-1",
+        totalPriceCents: 7000,
+        guests: [
+          { memberId: "member-1", isMember: true, perNightRates: [5000] },
+          { memberId: null, isMember: false, perNightRates: [2000] },
+        ],
+      },
+      ["member-1"]
+    );
+
+    expect(result.error).toBe("Choose which guests should receive this promo code");
+    expect(result.requiresGuestSelection).toBe(true);
+    expect(result.selectableGuestIndexes).toEqual([0, 1]);
   });
 });
 

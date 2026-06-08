@@ -17,11 +17,12 @@ import { formatDateOnly } from "@/lib/date-only";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { ReactNode } from "react";
 
 function formatDate(value: Date) {
-  return value.toLocaleDateString("en-NZ");
+  return value.toLocaleDateString("en-NZ", { timeZone: APP_TIME_ZONE });
 }
 
 export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuests: number) {
