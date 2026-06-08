@@ -98,6 +98,39 @@ type NormalizedAddGuestWithRange = Omit<NormalizedAddGuest, "stayStart" | "stayE
   stayEnd: Date;
 };
 
+type PromoRedemptionWithTargets = {
+  promoCode: {
+    assignedMembersOnlyOwnNights?: boolean | null;
+    assignments: Array<{ memberId: string }>;
+  };
+  guestTargets?: Array<{ bookingGuestId: string }>;
+};
+
+function promoRequiresStoredGuestTargets(redemption: PromoRedemptionWithTargets) {
+  return (
+    redemption.promoCode.assignments.length > 0 &&
+    redemption.promoCode.assignedMembersOnlyOwnNights === false
+  );
+}
+
+function selectedIndexesForStoredGuestTargets(
+  redemption: PromoRedemptionWithTargets,
+  guestNightRates: Array<{ bookingGuestId?: string | null }>
+) {
+  if (!promoRequiresStoredGuestTargets(redemption)) {
+    return undefined;
+  }
+
+  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
+  if (targetIds.size === 0) {
+    return guestNightRates.map((_, index) => index);
+  }
+
+  return guestNightRates
+    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
+    .filter((index) => index >= 0);
+}
+
 function hasStayRangeValue(value: string | null | undefined): boolean {
   return typeof value === "string" ? value.trim() !== "" : value !== null && value !== undefined;
 }
@@ -136,6 +169,7 @@ export async function POST(
       payment: true,
       promoRedemption: {
         include: {
+          guestTargets: { select: { bookingGuestId: true } },
           promoCode: {
             include: { assignments: { select: { memberId: true } } },
           },
@@ -404,6 +438,7 @@ export async function POST(
 
   const guestsForPricing = [
     ...proposedRemainingGuests.map((entry) => ({
+      bookingGuestId: entry.guest.id,
       ageTier: entry.guest.ageTier as AgeTier,
       isMember: entry.guest.isMember,
       memberId: entry.guest.memberId ?? null,
@@ -411,6 +446,7 @@ export async function POST(
       stayEnd: entry.stayEnd,
     })),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
+      bookingGuestId: null,
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
@@ -728,6 +764,7 @@ export async function POST(
   // Helper: get per-night rates per guest for promo calculation
   function getGuestNightRates() {
     return guestsForPricing.map((guest, index) => ({
+      bookingGuestId: guest.bookingGuestId,
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: priceBreakdown?.guests[index]?.perNightCents ?? [],
@@ -769,18 +806,23 @@ export async function POST(
   } else if (booking.promoRedemption?.promoCode) {
     // Keep existing promo, recalculate with new price
     const promo = booking.promoRedemption.promoCode;
+    const guestNightRates = getGuestNightRates();
+    const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
+      booking.promoRedemption,
+      guestNightRates
+    );
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
         memberId: booking.memberId,
         bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
-        guests: getGuestNightRates(),
+        guests: guestNightRates,
       },
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      { excludeBookingId: bookingId, db: prisma },
+      { excludeBookingId: bookingId, db: prisma, selectedGuestIndexes },
     );
 
     if (application.error || !application.discount) {

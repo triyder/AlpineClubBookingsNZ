@@ -519,6 +519,7 @@ export default function BookPage() {
         guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
+        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         paymentMethod:
@@ -572,6 +573,7 @@ export default function BookPage() {
         guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
+        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         expectedArrivalTime: expectedArrivalTime || undefined,
         waitlist: true,
         memberReviewJustification: requiresAdminReviewLocal
@@ -613,6 +615,7 @@ export default function BookPage() {
         guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
+        promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,

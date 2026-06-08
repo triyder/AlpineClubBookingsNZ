@@ -44,10 +44,15 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const createBookingSchema = z.object({
-  checkIn: z.string().transform((s) => new Date(s)),
-  checkOut: z.string().transform((s) => new Date(s)),
+  checkIn: dateOnlyString.transform(parseDateOnly),
+  checkOut: dateOnlyString.transform(parseDateOnly),
   guests: z
     .array(
       z.object({
@@ -64,6 +69,7 @@ const createBookingSchema = z.object({
     .max(LODGE_CAPACITY),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
+  promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
   draft: z.boolean().optional(),
   waitlist: z.boolean().optional(),
   expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
@@ -161,6 +167,7 @@ export async function POST(request: NextRequest) {
     guests,
     notes,
     promoCode: promoCodeStr,
+    promoGuestIndexes,
     draft,
     waitlist,
     expectedArrivalTime,
@@ -204,8 +211,7 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getTodayDateOnly();
   if (checkIn < today) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
   }
@@ -296,6 +302,7 @@ export async function POST(request: NextRequest) {
         guests: guestInputs,
         notes,
         promoCodeStr,
+        promoGuestIndexes,
         expectedArrivalTime,
         groupDiscount,
         memberReviewJustification,
@@ -352,6 +359,7 @@ export async function POST(request: NextRequest) {
       guests: guestInputs,
       notes,
       promoCodeStr,
+      promoGuestIndexes,
       expectedArrivalTime,
       applyCreditCents: parsed.data.applyCreditCents,
       groupDiscount,
@@ -391,6 +399,7 @@ export async function POST(request: NextRequest) {
         guests: guestInputs,
         notes,
         promoCodeStr,
+        promoGuestIndexes,
         expectedArrivalTime,
         groupDiscount,
         memberReviewJustification,

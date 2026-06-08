@@ -4,10 +4,15 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
   normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const cancellationRuleSchema = z.object({
   daysBeforeStay: z.number().int().min(0),
@@ -19,8 +24,8 @@ const cancellationRuleSchema = z.object({
 
 const updateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
+  startDate: dateOnlyString.optional(),
+  endDate: dateOnlyString.optional(),
   nonMemberHoldDays: z.number().int().min(1).max(30).optional(),
   cancellationRules: z.array(cancellationRuleSchema).min(1).optional(),
   active: z.boolean().optional(),
@@ -76,8 +81,8 @@ export async function PUT(
       return NextResponse.json({ error: "Period not found" }, { status: 404 });
     }
 
-    const startDate = data.startDate ? new Date(data.startDate) : existing.startDate;
-    const endDate = data.endDate ? new Date(data.endDate) : existing.endDate;
+    const startDate = data.startDate ? parseDateOnly(data.startDate) : existing.startDate;
+    const endDate = data.endDate ? parseDateOnly(data.endDate) : existing.endDate;
 
     if (endDate <= startDate) {
       return NextResponse.json(

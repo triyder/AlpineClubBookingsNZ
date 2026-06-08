@@ -76,6 +76,49 @@ type DateModificationTransactionResult =
     xeroAdditionalAmountCents: number;
   };
 
+type PromoRedemptionWithTargets = {
+  promoCode: {
+    assignedMembersOnlyOwnNights?: boolean | null;
+    assignments: Array<{ memberId: string }>;
+  };
+  guestTargets?: Array<{ bookingGuestId: string }>;
+};
+
+function promoRequiresStoredGuestTargets(redemption: PromoRedemptionWithTargets) {
+  return (
+    redemption.promoCode.assignments.length > 0 &&
+    redemption.promoCode.assignedMembersOnlyOwnNights === false
+  );
+}
+
+function selectedIndexesForStoredGuestTargets(
+  redemption: PromoRedemptionWithTargets,
+  guestNightRates: Array<{ bookingGuestId?: string | null }>
+) {
+  if (!promoRequiresStoredGuestTargets(redemption)) {
+    return undefined;
+  }
+
+  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
+  if (targetIds.size === 0) {
+    return guestNightRates.map((_, index) => index);
+  }
+
+  return guestNightRates
+    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
+    .filter((index) => index >= 0);
+}
+
+function targetBookingGuestIdsForSelectedIndexes(
+  guestNightRates: Array<{ bookingGuestId?: string | null }>,
+  selectedGuestIndexes: number[] | undefined
+) {
+  if (!selectedGuestIndexes) return undefined;
+  return selectedGuestIndexes
+    .map((index) => guestNightRates[index]?.bookingGuestId)
+    .filter((id): id is string => Boolean(id));
+}
+
 export type DateModificationResponse = {
   booking: ModifiedBooking;
   priceDiffCents: number;
@@ -112,6 +155,7 @@ export async function modifyBookingDates({
         member: true,
         promoRedemption: {
           include: {
+            guestTargets: { select: { bookingGuestId: true } },
             promoCode: {
               include: { assignments: { select: { memberId: true } } },
             },
@@ -225,6 +269,7 @@ export async function modifyBookingDates({
     }));
 
     const guestsForPricing = booking.guests.map((g) => ({
+      bookingGuestId: g.id,
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
@@ -247,6 +292,7 @@ export async function modifyBookingDates({
 
     const newTotalPriceCents = priceBreakdown.totalPriceCents;
     const guestNightRates = guestsForPricing.map((guest, index) => ({
+      bookingGuestId: guest.bookingGuestId,
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: priceBreakdown.guests[index].perNightCents,
@@ -258,6 +304,10 @@ export async function modifyBookingDates({
 
     if (booking.promoRedemption?.promoCode) {
       const promo = booking.promoRedemption.promoCode;
+      const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
+        booking.promoRedemption,
+        guestNightRates
+      );
       const application = await validateAndCalculatePromoDiscount(
         promo,
         {
@@ -269,7 +319,7 @@ export async function modifyBookingDates({
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
           : null,
-        { excludeBookingId: bookingId, db: tx },
+        { excludeBookingId: bookingId, db: tx, selectedGuestIndexes },
       );
 
       if (application.error || !application.discount) {
@@ -288,6 +338,10 @@ export async function modifyBookingDates({
           promoResult.freeNightsUsed,
           promoResult.eligibleGuestCount,
           promoResult.allocations,
+          targetBookingGuestIdsForSelectedIndexes(
+            guestNightRates,
+            application.selectedGuestIndexes
+          ),
         );
       }
     }

@@ -111,6 +111,7 @@ export async function modifyBookingBatch({
             promoCode: {
               include: { assignments: { select: { memberId: true } } },
             },
+            guestTargets: { select: { bookingGuestId: true } },
           },
         },
       },

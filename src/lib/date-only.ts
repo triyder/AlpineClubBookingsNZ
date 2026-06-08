@@ -19,6 +19,85 @@ export function parseDateOnly(dateStr: string): Date {
   return isDateOnlyString(dateStr) ? buildDateOnly(dateStr) : new Date(NaN);
 }
 
+function getDateParts(dateStr: string) {
+  if (!isDateOnlyString(dateStr)) {
+    return null;
+  }
+
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return { year, month, day };
+}
+
+function getTimeZoneOffsetMs(date: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const readPart = (type: string) => {
+    const value = parts.find((part) => part.type === type)?.value;
+    return value ? Number(value) : NaN;
+  };
+  const asUtc = Date.UTC(
+    readPart("year"),
+    readPart("month") - 1,
+    readPart("day"),
+    readPart("hour"),
+    readPart("minute"),
+    readPart("second")
+  );
+
+  return asUtc - date.getTime();
+}
+
+function zonedDateOnlyTimeToUtc(
+  dateStr: string,
+  timeZone: string,
+  hours = 0,
+  minutes = 0,
+  seconds = 0,
+  milliseconds = 0
+): Date {
+  const parts = getDateParts(dateStr);
+  if (!parts) return new Date(NaN);
+
+  const localAsUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    hours,
+    minutes,
+    seconds,
+    milliseconds
+  );
+  let result = new Date(localAsUtc - getTimeZoneOffsetMs(new Date(localAsUtc), timeZone));
+  result = new Date(localAsUtc - getTimeZoneOffsetMs(result, timeZone));
+  return result;
+}
+
+export function startOfDateOnlyForTimeZone(
+  dateStr: string,
+  timeZone = APP_TIME_ZONE
+): Date {
+  return zonedDateOnlyTimeToUtc(dateStr, timeZone);
+}
+
+export function endOfDateOnlyForTimeZone(
+  dateStr: string,
+  timeZone = APP_TIME_ZONE
+): Date {
+  const nextDate = addDaysDateOnly(parseDateOnly(dateStr), 1);
+  if (Number.isNaN(nextDate.getTime())) return new Date(NaN);
+  const nextStart = startOfDateOnlyForTimeZone(formatDateOnly(nextDate), timeZone);
+  return new Date(nextStart.getTime() - 1);
+}
+
 export function formatDateOnly(date: Date): string {
   return date.toISOString().slice(0, 10);
 }

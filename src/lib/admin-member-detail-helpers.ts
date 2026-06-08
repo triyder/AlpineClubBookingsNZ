@@ -3,6 +3,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address"
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational"
 
 export interface AdminActor {
   id: string
@@ -280,7 +281,8 @@ export function getMissingFieldsForXeroCreate(
 }
 
 export function formatMemberDateNz(value: string) {
-  return new Date(value).toLocaleDateString("en-NZ", {
+  return new Date(value).toLocaleDateString(APP_LOCALE, {
+    timeZone: APP_TIME_ZONE,
     day: "numeric",
     month: "short",
     year: "numeric",

@@ -4,6 +4,7 @@ import {
   PaymentStatus,
   PaymentTransactionKind,
   type AgeTier,
+  type BookingGuest,
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -61,6 +62,49 @@ const addGuestsSchema = z.object({
     .max(LODGE_CAPACITY),
 });
 
+type PromoRedemptionWithTargets = {
+  promoCode: {
+    assignedMembersOnlyOwnNights?: boolean | null;
+    assignments: Array<{ memberId: string }>;
+  };
+  guestTargets?: Array<{ bookingGuestId: string }>;
+};
+
+function promoRequiresStoredGuestTargets(redemption: PromoRedemptionWithTargets) {
+  return (
+    redemption.promoCode.assignments.length > 0 &&
+    redemption.promoCode.assignedMembersOnlyOwnNights === false
+  );
+}
+
+function selectedIndexesForStoredGuestTargets(
+  redemption: PromoRedemptionWithTargets,
+  guestNightRates: Array<{ bookingGuestId?: string | null }>
+) {
+  if (!promoRequiresStoredGuestTargets(redemption)) {
+    return undefined;
+  }
+
+  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
+  if (targetIds.size === 0) {
+    return guestNightRates.map((_, index) => index);
+  }
+
+  return guestNightRates
+    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
+    .filter((index) => index >= 0);
+}
+
+function targetBookingGuestIdsForSelectedIndexes(
+  guestNightRates: Array<{ bookingGuestId?: string | null }>,
+  selectedGuestIndexes: number[] | undefined
+) {
+  if (!selectedGuestIndexes) return undefined;
+  return selectedGuestIndexes
+    .map((index) => guestNightRates[index]?.bookingGuestId)
+    .filter((id): id is string => Boolean(id));
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -104,6 +148,7 @@ export async function POST(
           member: true,
           promoRedemption: {
             include: {
+              guestTargets: { select: { bookingGuestId: true } },
               promoCode: {
                 include: { assignments: { select: { memberId: true } } },
               },
@@ -252,7 +297,7 @@ export async function POST(
       }
 
       // Create BookingGuest records
-      const createdGuests = [];
+      const createdGuests: BookingGuest[] = [];
       for (let i = 0; i < normalizedNewGuests.length; i++) {
         const guest = await tx.bookingGuest.create({
           data: {
@@ -273,11 +318,15 @@ export async function POST(
       // Recalculate total booking price with all guests
       const allGuestsForPricing = [
         ...booking.guests.map((g) => ({
+          bookingGuestId: g.id,
           ageTier: g.ageTier as AgeTier,
           isMember: g.isMember,
           memberId: g.memberId ?? null,
         })),
-        ...newGuestInputs,
+        ...newGuestInputs.map((guest, index) => ({
+          ...guest,
+          bookingGuestId: createdGuests[index]?.id ?? null,
+        })),
       ];
       const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
       const adminReviewReason = requiresAdminReview
@@ -291,6 +340,7 @@ export async function POST(
         seasonRateData
       );
       const guestNightRates = allGuestsForPricing.map((guest, index) => ({
+        bookingGuestId: guest.bookingGuestId,
         memberId: guest.memberId ?? null,
         isMember: guest.isMember,
         perNightRates: fullPriceBreakdown.guests[index].perNightCents,
@@ -305,6 +355,10 @@ export async function POST(
 
       if (booking.promoRedemption?.promoCode) {
         const promo = booking.promoRedemption.promoCode;
+        const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
+          booking.promoRedemption,
+          guestNightRates
+        );
         const application = await validateAndCalculatePromoDiscount(
           promo,
           {
@@ -316,7 +370,7 @@ export async function POST(
           promo.assignments.length > 0
             ? promo.assignments.map((assignment) => assignment.memberId)
             : null,
-          { excludeBookingId: bookingId, db: tx }
+          { excludeBookingId: bookingId, db: tx, selectedGuestIndexes }
         );
 
         if (application.error || !application.discount) {
@@ -335,6 +389,10 @@ export async function POST(
             promoResult.freeNightsUsed,
             promoResult.eligibleGuestCount,
             promoResult.allocations,
+            targetBookingGuestIdsForSelectedIndexes(
+              guestNightRates,
+              application.selectedGuestIndexes
+            ),
           );
         }
       }

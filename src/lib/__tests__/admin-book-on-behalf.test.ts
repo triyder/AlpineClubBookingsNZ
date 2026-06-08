@@ -129,10 +129,12 @@ function makeRequest(body: Record<string, unknown>) {
 
 const futureDate = new Date();
 futureDate.setDate(futureDate.getDate() + 30);
-const checkIn = futureDate.toISOString();
+const checkIn = futureDate.toISOString().slice(0, 10);
 const checkOutDate = new Date(futureDate);
 checkOutDate.setDate(checkOutDate.getDate() + 2);
-const checkOut = checkOutDate.toISOString();
+const checkOut = checkOutDate.toISOString().slice(0, 10);
+const promoCheckIn = checkIn;
+const promoCheckOut = checkOut;
 
 const baseBookingPayload = {
   checkIn,
@@ -663,8 +665,8 @@ describe("Promo Validate API - forMemberId", () => {
       method: "POST",
       body: JSON.stringify({
         code: "TEST10",
-        checkIn,
-        checkOut,
+        checkIn: promoCheckIn,
+        checkOut: promoCheckOut,
         guests: [{ ageTier: "ADULT", isMember: true }],
         forMemberId: "target-m1",
       }),
@@ -730,8 +732,8 @@ describe("Promo Validate API - forMemberId", () => {
       method: "POST",
       body: JSON.stringify({
         code: "SET30",
-        checkIn,
-        checkOut,
+        checkIn: promoCheckIn,
+        checkOut: promoCheckOut,
         guests: [{ ageTier: "ADULT", isMember: true, memberId: "m1" }],
       }),
       headers: { "Content-Type": "application/json" },

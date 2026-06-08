@@ -9,6 +9,10 @@ import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
+import {
+  endOfDateOnlyForTimeZone,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -27,11 +31,11 @@ const querySchema = z.object({
 });
 
 function startOfInputDate(date: string) {
-  return new Date(`${date}T00:00:00`);
+  return startOfDateOnlyForTimeZone(date);
 }
 
 function endOfInputDate(date: string) {
-  return new Date(`${date}T23:59:59`);
+  return endOfDateOnlyForTimeZone(date);
 }
 
 export async function GET(request: NextRequest) {

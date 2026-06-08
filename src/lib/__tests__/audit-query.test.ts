@@ -129,8 +129,8 @@ describe("audit query helpers", () => {
         }),
         {
           createdAt: {
-            gte: new Date("2026-04-01T00:00:00"),
-            lte: new Date("2026-04-30T23:59:59"),
+            gte: new Date("2026-03-31T11:00:00.000Z"),
+            lte: new Date("2026-04-30T11:59:59.999Z"),
           },
         },
         { outcome: "success" },

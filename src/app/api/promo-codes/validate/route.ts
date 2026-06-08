@@ -19,11 +19,16 @@ import {
   type NormalizedBookingGuestStayRange,
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const validateSchema = z.object({
   code: z.string().min(1, "Promo code is required"),
-  checkIn: z.string().transform((s) => new Date(s)),
-  checkOut: z.string().transform((s) => new Date(s)),
+  checkIn: dateOnlyString.transform(parseDateOnly),
+  checkOut: dateOnlyString.transform(parseDateOnly),
   guests: z
     .array(
       z.object({
@@ -36,6 +41,7 @@ const validateSchema = z.object({
     )
     .min(1),
   forMemberId: z.string().optional(),
+  promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -148,8 +154,19 @@ export async function POST(req: NextRequest) {
         guests: promoGuests,
       },
       assignedMemberIds,
-      { db: prisma }
+      { db: prisma, selectedGuestIndexes: parsed.data.promoGuestIndexes }
     );
+    if (application.requiresGuestSelection) {
+      return NextResponse.json({
+        valid: false,
+        requiresGuestSelection: true,
+        error: application.error,
+        code: promoCode!.code,
+        description: promoCode!.description,
+        type: promoCode!.type,
+        selectableGuestIndexes: application.selectableGuestIndexes ?? [],
+      });
+    }
     if (application.error || !application.discount) {
       return NextResponse.json(
         { valid: false, error: application.error ?? "Promo code could not be applied" },
@@ -168,6 +185,7 @@ export async function POST(req: NextRequest) {
       freeNightsUsed: promoResult.freeNightsUsed,
       eligibleGuestCount: promoResult.eligibleGuestCount,
       remainingFreeNights: application.remainingFreeNights,
+      selectedGuestIndexes: application.selectedGuestIndexes,
       totalPriceCents: price.totalPriceCents,
       finalPriceCents: price.totalPriceCents + promoResult.priceAdjustmentCents,
     });

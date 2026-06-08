@@ -40,6 +40,27 @@ describe("date-range-presets", () => {
     });
   });
 
+  it("clamps month-based ranges when today is at the end of a month", () => {
+    const lastMonth = bookingFilterDateRangePresets.find(
+      (option) => option.key === "last_month"
+    );
+    const nextMonth = bookingFilterDateRangePresets.find(
+      (option) => option.key === "next_month"
+    );
+    const today = new Date("2026-03-31T00:00:00.000Z");
+
+    expect(lastMonth).toBeDefined();
+    expect(nextMonth).toBeDefined();
+    expect(getDateRangeForPreset(lastMonth!, today)).toEqual({
+      from: "2026-02-01",
+      to: "2026-02-28",
+    });
+    expect(getDateRangeForPreset(nextMonth!, today)).toEqual({
+      from: "2026-04-01",
+      to: "2026-04-30",
+    });
+  });
+
   it("builds last year ranges for reports", () => {
     const preset = reportsDateRangePresets.find(
       (option) => option.key === "last_year"
@@ -60,6 +81,18 @@ describe("date-range-presets", () => {
         bookingFilterDateRangePresets
       )
     ).toBe("last_month");
+  });
+
+  it("matches presets against NZ today by default", () => {
+    vi.setSystemTime(new Date("2026-04-30T13:00:00Z"));
+
+    expect(
+      findMatchingDateRangePreset(
+        "2026-05-01",
+        "2026-05-31",
+        bookingFilterDateRangePresets
+      )
+    ).toBe("this_month");
   });
 
   it("returns null for custom ranges", () => {

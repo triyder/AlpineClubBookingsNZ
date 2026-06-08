@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
+import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 interface HutLeaderAssignment {
   id: string;
@@ -231,7 +232,7 @@ export default function HutLeadersPage() {
     setEditingMember(null);
   }
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = formatDateOnly(getTodayDateOnly());
   const datesSelected = formData.startDate && formData.endDate && formData.startDate <= formData.endDate;
 
   return (

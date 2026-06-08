@@ -112,6 +112,36 @@ describe("admin promo code routes - fixed nightly price", () => {
         fixedNightlyPriceCents: 3000,
         fixedNightlyMode: "SET_PRICE",
         maxNightlyValueCents: null,
+        assignedMembersOnlyOwnNights: true,
+      }),
+    });
+  });
+
+  it("allows one-day promo validity windows and stores date-only values", async () => {
+    mocks.prisma.promoCode.findUnique.mockResolvedValueOnce(null);
+    mocks.tx.promoCode.create.mockResolvedValue({ id: "pc-1" });
+    mocks.tx.promoCode.findUnique.mockResolvedValue({
+      id: "pc-1",
+      code: "ONEDAY",
+      type: "PERCENTAGE",
+      assignments: [],
+    });
+
+    const response = await POST(request("http://localhost/api/admin/promo-codes", {
+      code: "oneday",
+      type: "PERCENTAGE",
+      percentOff: 25,
+      validFrom: "2026-07-15",
+      validUntil: "2026-07-15",
+      assignedMembersOnlyOwnNights: false,
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.tx.promoCode.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        validFrom: new Date("2026-07-15T00:00:00.000Z"),
+        validUntil: new Date("2026-07-15T00:00:00.000Z"),
+        assignedMembersOnlyOwnNights: false,
       }),
     });
   });
@@ -168,6 +198,7 @@ describe("admin promo code routes - fixed nightly price", () => {
       fixedNightlyPriceCents: 3500,
       fixedNightlyMode: "CAP_ONLY",
       maxNightlyValueCents: 1000,
+      assignedMembersOnlyOwnNights: true,
     }), { params: Promise.resolve({ id: "pc-1" }) });
 
     expect(response.status).toBe(200);
@@ -181,6 +212,7 @@ describe("admin promo code routes - fixed nightly price", () => {
         fixedNightlyPriceCents: 3500,
         fixedNightlyMode: "CAP_ONLY",
         maxNightlyValueCents: null,
+        assignedMembersOnlyOwnNights: true,
       }),
     });
   });

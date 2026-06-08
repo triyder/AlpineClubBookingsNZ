@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only"
 
 interface Guest {
   id: string
@@ -59,11 +60,11 @@ const AGE_TIER_COLORS: Record<string, string> = {
 }
 
 function formatDateForInput(d: Date): string {
-  return d.toISOString().split("T")[0]
+  return formatDateOnly(d)
 }
 
 export default function RosterPage() {
-  const [selectedDate, setSelectedDate] = useState(formatDateForInput(new Date()))
+  const [selectedDate, setSelectedDate] = useState(formatDateForInput(getTodayDateOnly()))
   const [roster, setRoster] = useState<RosterData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")

@@ -25,7 +25,6 @@ import {
   AlertTriangle,
   UserX,
 } from "lucide-react";
-import { eachDayOfInterval, addDays } from "date-fns";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { CLUB_NAME } from "@/config/club-identity";
@@ -33,14 +32,27 @@ import {
   ACTIVE_BOOKING_STATUSES,
   OPERATIONAL_STAY_BOOKING_STATUSES,
 } from "@/lib/booking-status";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  endOfDateOnlyForTimeZone,
+  formatDateOnly,
+  getTodayDateOnly,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
 
 async function getStats() {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-  const sevenDaysFromNow = new Date(now);
-  sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = getTodayDateOnly();
+  const todayKey = formatDateOnly(today);
+  const monthPrefix = todayKey.slice(0, 8);
+  const startOfMonth = startOfDateOnlyForTimeZone(`${monthPrefix}01`);
+  const monthEndDay = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  const endOfMonth = endOfDateOnlyForTimeZone(
+    `${monthPrefix}${String(monthEndDay).padStart(2, "0")}`
+  );
+  const sevenDaysFromNow = addDaysDateOnly(today, 7);
 
   const [
     totalMembers,
@@ -128,7 +140,7 @@ async function getStats() {
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
 
   // Check for unassigned hut leader dates in the next 14 days
-  const lookAheadEnd = addDays(today, 14);
+  const lookAheadEnd = addDaysDateOnly(today, 14);
   const [hutLeaderAssignments, bookingsFor14Days] = await Promise.all([
     prisma.hutLeaderAssignment.findMany({
       where: { startDate: { lte: lookAheadEnd }, endDate: { gte: today } },
@@ -146,7 +158,7 @@ async function getStats() {
   ]);
 
   const unassignedDatesWithBookings: string[] = [];
-  const days14 = eachDayOfInterval({ start: today, end: lookAheadEnd });
+  const days14 = eachDateOnlyInRange(today, addDaysDateOnly(lookAheadEnd, 1));
   for (const day of days14) {
     const isCovered = hutLeaderAssignments.some(
       (a) => a.startDate.getTime() <= day.getTime() && a.endDate.getTime() >= day.getTime()
@@ -156,7 +168,7 @@ async function getStats() {
       (b) => b.checkIn.getTime() <= day.getTime() && b.checkOut.getTime() > day.getTime()
     );
     if (hasBooking) {
-      unassignedDatesWithBookings.push(day.toISOString().split("T")[0]);
+      unassignedDatesWithBookings.push(formatDateOnly(day));
     }
   }
 

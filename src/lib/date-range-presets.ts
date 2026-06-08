@@ -1,18 +1,4 @@
-import {
-  addDays,
-  addMonths,
-  endOfMonth,
-  endOfQuarter,
-  endOfYear,
-  format,
-  startOfMonth,
-  startOfQuarter,
-  startOfYear,
-  subDays,
-  subMonths,
-  subQuarters,
-  subYears,
-} from "date-fns";
+import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 export const CUSTOM_DATE_RANGE_KEY = "custom";
 
@@ -27,8 +13,48 @@ export interface DateRangePreset {
   getRange: (today: Date) => DateRangeValues;
 }
 
+function dateOnly(year: number, monthIndex: number, day: number): Date {
+  return new Date(Date.UTC(year, monthIndex, day));
+}
+
+function addMonthsDateOnly(date: Date, months: number): Date {
+  const targetMonthStart = dateOnly(date.getUTCFullYear(), date.getUTCMonth() + months, 1);
+  const lastDayOfTargetMonth = endOfMonthDateOnly(targetMonthStart).getUTCDate();
+  return dateOnly(
+    targetMonthStart.getUTCFullYear(),
+    targetMonthStart.getUTCMonth(),
+    Math.min(date.getUTCDate(), lastDayOfTargetMonth)
+  );
+}
+
+function startOfMonthDateOnly(date: Date): Date {
+  return dateOnly(date.getUTCFullYear(), date.getUTCMonth(), 1);
+}
+
+function endOfMonthDateOnly(date: Date): Date {
+  return dateOnly(date.getUTCFullYear(), date.getUTCMonth() + 1, 0);
+}
+
+function startOfQuarterDateOnly(date: Date): Date {
+  const quarterStartMonth = Math.floor(date.getUTCMonth() / 3) * 3;
+  return dateOnly(date.getUTCFullYear(), quarterStartMonth, 1);
+}
+
+function endOfQuarterDateOnly(date: Date): Date {
+  const quarterStartMonth = Math.floor(date.getUTCMonth() / 3) * 3;
+  return dateOnly(date.getUTCFullYear(), quarterStartMonth + 3, 0);
+}
+
+function startOfYearDateOnly(date: Date): Date {
+  return dateOnly(date.getUTCFullYear(), 0, 1);
+}
+
+function endOfYearDateOnly(date: Date): Date {
+  return dateOnly(date.getUTCFullYear(), 11, 31);
+}
+
 function toInputDate(date: Date): string {
-  return format(date, "yyyy-MM-dd");
+  return formatDateOnly(date);
 }
 
 function makeRange(from: Date, to: Date): DateRangeValues {
@@ -47,27 +73,27 @@ const allDatesPreset: DateRangePreset = {
 const last7DaysPreset: DateRangePreset = {
   key: "last_7_days",
   label: "Last 7 Days",
-  getRange: (today) => makeRange(subDays(today, 6), today),
+  getRange: (today) => makeRange(addDaysDateOnly(today, -6), today),
 };
 
 const last30DaysPreset: DateRangePreset = {
   key: "last_30_days",
   label: "Last 30 Days",
-  getRange: (today) => makeRange(subDays(today, 29), today),
+  getRange: (today) => makeRange(addDaysDateOnly(today, -29), today),
 };
 
 const thisMonthPreset: DateRangePreset = {
   key: "this_month",
   label: "This Month",
-  getRange: (today) => makeRange(startOfMonth(today), endOfMonth(today)),
+  getRange: (today) => makeRange(startOfMonthDateOnly(today), endOfMonthDateOnly(today)),
 };
 
 const lastMonthPreset: DateRangePreset = {
   key: "last_month",
   label: "Last Month",
   getRange: (today) => {
-    const lastMonth = subMonths(today, 1);
-    return makeRange(startOfMonth(lastMonth), endOfMonth(lastMonth));
+    const lastMonth = addMonthsDateOnly(today, -1);
+    return makeRange(startOfMonthDateOnly(lastMonth), endOfMonthDateOnly(lastMonth));
   },
 };
 
@@ -75,8 +101,8 @@ const nextMonthPreset: DateRangePreset = {
   key: "next_month",
   label: "Next Month",
   getRange: (today) => {
-    const nextMonth = addMonths(today, 1);
-    return makeRange(startOfMonth(nextMonth), endOfMonth(nextMonth));
+    const nextMonth = addMonthsDateOnly(today, 1);
+    return makeRange(startOfMonthDateOnly(nextMonth), endOfMonthDateOnly(nextMonth));
   },
 };
 
@@ -84,36 +110,36 @@ const lastQuarterPreset: DateRangePreset = {
   key: "last_quarter",
   label: "Last Quarter",
   getRange: (today) => {
-    const lastQuarter = subQuarters(today, 1);
-    return makeRange(startOfQuarter(lastQuarter), endOfQuarter(lastQuarter));
+    const lastQuarter = addMonthsDateOnly(today, -3);
+    return makeRange(startOfQuarterDateOnly(lastQuarter), endOfQuarterDateOnly(lastQuarter));
   },
 };
 
 const yearToDatePreset: DateRangePreset = {
   key: "year_to_date",
   label: "Year to Date",
-  getRange: (today) => makeRange(startOfYear(today), today),
+  getRange: (today) => makeRange(startOfYearDateOnly(today), today),
 };
 
 const lastYearPreset: DateRangePreset = {
   key: "last_year",
   label: "Last Year",
   getRange: (today) => {
-    const lastYear = subYears(today, 1);
-    return makeRange(startOfYear(lastYear), endOfYear(lastYear));
+    const lastYear = dateOnly(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate());
+    return makeRange(startOfYearDateOnly(lastYear), endOfYearDateOnly(lastYear));
   },
 };
 
 const next30DaysPreset: DateRangePreset = {
   key: "next_30_days",
   label: "Next 30 Days",
-  getRange: (today) => makeRange(today, addDays(today, 29)),
+  getRange: (today) => makeRange(today, addDaysDateOnly(today, 29)),
 };
 
 const next90DaysPreset: DateRangePreset = {
   key: "next_90_days",
   label: "Next 90 Days",
-  getRange: (today) => makeRange(today, addDays(today, 89)),
+  getRange: (today) => makeRange(today, addDaysDateOnly(today, 89)),
 };
 
 export const auditAndPaymentsDateRangePresets: readonly DateRangePreset[] = [
@@ -148,7 +174,7 @@ export const reportsDateRangePresets: readonly DateRangePreset[] = [
 
 export function getDateRangeForPreset(
   preset: DateRangePreset,
-  today = new Date()
+  today = getTodayDateOnly()
 ): DateRangeValues {
   return preset.getRange(today);
 }
@@ -157,7 +183,7 @@ export function findMatchingDateRangePreset(
   from: string,
   to: string,
   presets: readonly DateRangePreset[],
-  today = new Date()
+  today = getTodayDateOnly()
 ): string | null {
   const match = presets.find((preset) => {
     const range = getDateRangeForPreset(preset, today);

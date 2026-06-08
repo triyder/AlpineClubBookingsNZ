@@ -5,6 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+
+const dateOnlyString = z.string().refine(isDateOnlyString, {
+  message: "Date must be YYYY-MM-DD",
+});
 
 const promoCodeSchema = z.object({
   code: z.string().min(1, "Code is required").transform((s) => s.toUpperCase().trim()),
@@ -21,12 +26,13 @@ const promoCodeSchema = z.object({
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
   maxUniqueMembersTotal: z.number().int().min(1).optional().nullable(),
   maxUsesPerMember: z.number().int().min(1).optional().nullable(),
-  validFrom: z.string().optional().nullable(),
-  validUntil: z.string().optional().nullable(),
-  bookingStartFrom: z.string().optional().nullable(),
-  bookingStartUntil: z.string().optional().nullable(),
+  validFrom: dateOnlyString.optional().nullable(),
+  validUntil: dateOnlyString.optional().nullable(),
+  bookingStartFrom: dateOnlyString.optional().nullable(),
+  bookingStartUntil: dateOnlyString.optional().nullable(),
   membersOnly: z.boolean().default(false),
   memberGuestsOnly: z.boolean().default(false),
+  assignedMembersOnlyOwnNights: z.boolean().default(true),
   xeroItemCode: z.string().trim().min(1).max(30).optional().nullable(),
   xeroAccountCode: z.string().trim().min(1).max(10).optional().nullable(),
   active: z.boolean().default(true),
@@ -124,9 +130,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (data.validFrom && data.validUntil && new Date(data.validUntil) <= new Date(data.validFrom)) {
+  if (data.validFrom && data.validUntil && data.validUntil < data.validFrom) {
     return NextResponse.json(
-      { error: "Valid until must be after valid from" },
+      { error: "Valid until must be on or after valid from" },
       { status: 400 }
     );
   }
@@ -134,7 +140,7 @@ export async function POST(req: NextRequest) {
   if (
     data.bookingStartFrom &&
     data.bookingStartUntil &&
-    new Date(data.bookingStartUntil) <= new Date(data.bookingStartFrom)
+    data.bookingStartUntil <= data.bookingStartFrom
   ) {
     return NextResponse.json(
       { error: "Booking check-in until must be after booking check-in from" },
@@ -175,12 +181,13 @@ export async function POST(req: NextRequest) {
         maxRedemptionsTotal: data.maxRedemptionsTotal ?? null,
         maxUniqueMembersTotal: data.maxUniqueMembersTotal ?? null,
         maxUsesPerMember: data.maxUsesPerMember ?? null,
-        validFrom: data.validFrom ? new Date(data.validFrom) : null,
-        validUntil: data.validUntil ? new Date(data.validUntil) : null,
-        bookingStartFrom: data.bookingStartFrom ? new Date(data.bookingStartFrom) : null,
-        bookingStartUntil: data.bookingStartUntil ? new Date(data.bookingStartUntil) : null,
+        validFrom: data.validFrom ? parseDateOnly(data.validFrom) : null,
+        validUntil: data.validUntil ? parseDateOnly(data.validUntil) : null,
+        bookingStartFrom: data.bookingStartFrom ? parseDateOnly(data.bookingStartFrom) : null,
+        bookingStartUntil: data.bookingStartUntil ? parseDateOnly(data.bookingStartUntil) : null,
         membersOnly: data.membersOnly,
         memberGuestsOnly: data.memberGuestsOnly,
+        assignedMembersOnlyOwnNights: data.assignedMembersOnlyOwnNights,
         xeroItemCode: data.xeroItemCode ?? null,
         xeroAccountCode: data.xeroAccountCode ?? null,
         active: data.active,

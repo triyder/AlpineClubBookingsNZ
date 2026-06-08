@@ -54,11 +54,13 @@ describe("feature-aware navigation", () => {
   it("hides disabled effective admin sidebar items", () => {
     const items = getVisibleAdminNavSections({
       ...allOn,
+      bedAllocation: false,
       chores: false,
       waitlist: false,
       xeroIntegration: false,
     }).flatMap((section) => section.items.map((item) => item.label));
 
+    expect(items).not.toContain("Bed Allocation");
     expect(items).not.toContain("Waitlist");
     expect(items).not.toContain("Roster");
     expect(items).not.toContain("Chores");

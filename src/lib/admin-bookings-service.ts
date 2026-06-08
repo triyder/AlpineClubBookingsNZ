@@ -17,7 +17,15 @@ import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  endOfDateOnlyForTimeZone,
+  formatDateOnly,
+  getTodayDateOnly,
+  parseDateOnly,
+  startOfDateOnlyForTimeZone,
+} from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
@@ -110,12 +118,25 @@ export interface AdminBookingsResult {
   sortDir: SortDir;
 }
 
-function parseDateStart(value: string) {
-  return new Date(`${value}T00:00:00`);
+export interface AdminBookingsOptions {
+  bedAllocationEnabled?: boolean;
 }
 
-function parseDateEnd(value: string) {
-  return new Date(`${value}T23:59:59`);
+function parseDateOnlyFilter(value: string) {
+  return parseDateOnly(value);
+}
+
+function parseDateTimeStart(value: string) {
+  return startOfDateOnlyForTimeZone(value);
+}
+
+function parseDateTimeEnd(value: string) {
+  return endOfDateOnlyForTimeZone(value);
+}
+
+function monthEndDateOnly(year: number, month: number) {
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 }
 
 export function getAdminBookingSortBy(params: { sortBy?: string; sort?: string }): BookingSortBy {
@@ -195,10 +216,8 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   Object.assign(where, buildBookingDeletedWhere(parseBookingDeletedVisibility(query.deleted)));
 
   if (upcomingDays !== null && !isNaN(upcomingDays)) {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const futureDate = new Date(today);
-    futureDate.setDate(futureDate.getDate() + upcomingDays);
+    const today = getTodayDateOnly();
+    const futureDate = addDaysDateOnly(today, upcomingDays);
     checkInFilter.gte = today;
     checkInFilter.lte = futureDate;
 
@@ -216,15 +235,15 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
 
   if (query.month && /^\d{4}-\d{2}$/.test(query.month)) {
     const [year, month] = query.month.split("-").map(Number);
-    checkInFilter.gte = new Date(year, month - 1, 1);
-    checkInFilter.lte = new Date(year, month, 0);
+    checkInFilter.gte = parseDateOnly(`${year}-${String(month).padStart(2, "0")}-01`);
+    checkInFilter.lte = parseDateOnly(monthEndDateOnly(year, month));
   }
 
-  if (checkInFrom) checkInFilter.gte = parseDateStart(checkInFrom);
-  if (checkInTo) checkInFilter.lte = parseDateEnd(checkInTo);
-  if (legacyToDate) checkOutFilter.lte = parseDateEnd(legacyToDate);
-  if (query.updatedFrom) updatedAtFilter.gte = parseDateStart(query.updatedFrom);
-  if (query.updatedTo) updatedAtFilter.lte = parseDateEnd(query.updatedTo);
+  if (checkInFrom) checkInFilter.gte = parseDateOnlyFilter(checkInFrom);
+  if (checkInTo) checkInFilter.lte = parseDateOnlyFilter(checkInTo);
+  if (legacyToDate) checkOutFilter.lte = parseDateOnlyFilter(legacyToDate);
+  if (query.updatedFrom) updatedAtFilter.gte = parseDateTimeStart(query.updatedFrom);
+  if (query.updatedTo) updatedAtFilter.lte = parseDateTimeEnd(query.updatedTo);
 
   if (query.search?.trim()) {
     const queryTerms = query.search.trim().split(/\s+/).filter(Boolean);
@@ -380,7 +399,10 @@ function buildBedWarnings(
   return warnings;
 }
 
-function deriveBedState(booking: BookingCandidate): Pick<
+function deriveBedState(
+  booking: BookingCandidate,
+  bedAllocationEnabled = true
+): Pick<
   AdminBookingOperationalState,
   | "bedState"
   | "expectedGuestNights"
@@ -388,6 +410,16 @@ function deriveBedState(booking: BookingCandidate): Pick<
   | "unapprovedBedAllocations"
   | "bedWarningCount"
 > {
+  if (!bedAllocationEnabled) {
+    return {
+      bedState: "complete",
+      expectedGuestNights: 0,
+      allocatedGuestNights: 0,
+      unapprovedBedAllocations: 0,
+      bedWarningCount: 0,
+    };
+  }
+
   const expectedGuestNightKeys = new Set(
     booking.guests.flatMap((guest) => guestNightKeys(guest))
   );
@@ -458,7 +490,8 @@ function matchesChangeStateFilter(
 function deriveBookingOperationalState(
   booking: BookingCandidate,
   activityByRecord: Map<string, XeroActivitySummary>,
-  invoiceLinkedPaymentIds: Set<string>
+  invoiceLinkedPaymentIds: Set<string>,
+  options: AdminBookingsOptions = {}
 ): AdminBookingOperationalState {
   const paymentSource = (booking.payment?.source ?? "NONE") as PaymentSourceFilter;
   const activity = mergeXeroActivitySummaries([
@@ -501,7 +534,7 @@ function deriveBookingOperationalState(
     xeroActivity: activity,
     invoiceLinked,
     invoiceExpected,
-    ...deriveBedState(booking),
+    ...deriveBedState(booking, options.bedAllocationEnabled ?? true),
     hasPerGuestDates,
     guestDateRanges,
     requiresReview:
@@ -567,9 +600,13 @@ async function loadXeroStateInputs(bookings: BookingCandidate[]) {
   };
 }
 
-export async function listAdminBookings(query: AdminBookingsQuery): Promise<AdminBookingsResult> {
+export async function listAdminBookings(
+  query: AdminBookingsQuery,
+  options: AdminBookingsOptions = {}
+): Promise<AdminBookingsResult> {
   const sortBy = getAdminBookingSortBy(query);
   const sortDir = query.sortDir ?? getDefaultAdminBookingSortDir(sortBy);
+  const bedAllocationEnabled = options.bedAllocationEnabled ?? true;
   const candidates = await loadBookingCandidates(buildBookingWhere(query));
   const { activityByRecord, invoiceLinkedPaymentIds } = await loadXeroStateInputs(candidates);
 
@@ -579,7 +616,8 @@ export async function listAdminBookings(query: AdminBookingsQuery): Promise<Admi
       operational: deriveBookingOperationalState(
         booking,
         activityByRecord,
-        invoiceLinkedPaymentIds
+        invoiceLinkedPaymentIds,
+        { bedAllocationEnabled }
       ),
     }))
     .filter((booking) => {
@@ -589,7 +627,10 @@ export async function listAdminBookings(query: AdminBookingsQuery): Promise<Admi
       if (!matchesXeroStateFilter(booking.operational.xeroState, query.xeroState)) {
         return false;
       }
-      if (!matchesBedStateFilter(booking.operational.bedState, query.bedState)) {
+      if (
+        bedAllocationEnabled &&
+        !matchesBedStateFilter(booking.operational.bedState, query.bedState)
+      ) {
         return false;
       }
       if (!matchesChangeStateFilter(booking.operational, query.changeState)) {

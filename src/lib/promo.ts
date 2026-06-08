@@ -8,6 +8,7 @@ import {
   type PromoDiscountGuest,
   type PromoDiscountResult,
 } from "@/lib/pricing";
+import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 type PromoUsageClient = typeof prisma | Prisma.TransactionClient;
@@ -15,6 +16,9 @@ type PromoUsageClient = typeof prisma | Prisma.TransactionClient;
 export interface PromoValidationResult {
   valid: boolean;
   error?: string;
+  requiresGuestSelection?: boolean;
+  selectableGuestIndexes?: number[];
+  selectedGuestIndexes?: number[];
   promoCode?: {
     id: string;
     code: string;
@@ -29,6 +33,7 @@ export interface PromoValidationResult {
     maxGuestsPerBooking: number | null;
     maxNightlyValueCents: number | null;
     memberGuestsOnly: boolean;
+    assignedMembersOnlyOwnNights: boolean;
   };
   discountCents?: number;
   promoAdjustmentCents?: number;
@@ -95,18 +100,50 @@ export interface PromoApplicationSubject extends PromoRuleSubject {
   maxGuestsPerBooking: number | null;
   maxNightlyValueCents: number | null;
   memberGuestsOnly: boolean;
+  assignedMembersOnlyOwnNights?: boolean | null;
 }
 
 export interface PromoApplicationResult {
   error?: string;
+  requiresGuestSelection?: boolean;
+  selectableGuestIndexes?: number[];
   discount?: PromoDiscountResult;
   beneficiaryMemberIds: string[];
   remainingFreeNights?: number;
   remainingFreeNightsByMemberId?: Record<string, number>;
+  selectedGuestIndexes?: number[];
 }
 
 function hasAssignedMembers(assignedMemberIds: string[] | null | undefined) {
   return Boolean(assignedMemberIds && assignedMemberIds.length > 0);
+}
+
+function assignedMembersOnlyOwnNights(
+  promoCode: { assignedMembersOnlyOwnNights?: boolean | null }
+) {
+  return promoCode.assignedMembersOnlyOwnNights ?? true;
+}
+
+function scopedAssignmentMemberIds(
+  promoCode: { assignedMembersOnlyOwnNights?: boolean | null },
+  assignedMemberIds: string[] | null | undefined
+) {
+  return assignedMembersOnlyOwnNights(promoCode) ? assignedMemberIds : null;
+}
+
+function assignmentRequiresGuestSelection(
+  promoCode: { assignedMembersOnlyOwnNights?: boolean | null },
+  assignedMemberIds: string[] | null | undefined
+) {
+  return hasAssignedMembers(assignedMemberIds) && !assignedMembersOnlyOwnNights(promoCode);
+}
+
+function storedPromoDateKey(value: Date | null | undefined) {
+  return value ? formatDateOnly(value) : null;
+}
+
+function nzDateKey(value: Date) {
+  return formatDateOnlyForTimeZone(value);
 }
 
 function scopeGuestsForAssignedMembers(
@@ -117,6 +154,44 @@ function scopeGuestsForAssignedMembers(
 
   const assigned = new Set(assignedMemberIds);
   return guests.filter((guest) => Boolean(guest.memberId && assigned.has(guest.memberId)));
+}
+
+function selectablePromoGuestIndexes(
+  promo: { memberGuestsOnly?: boolean | null },
+  guests: PromoDiscountGuest[]
+) {
+  return guests
+    .map((guest, index) => ({ guest, index }))
+    .filter(({ guest }) => guest.perNightRates.length > 0)
+    .filter(({ guest }) => !promo.memberGuestsOnly || guest.isMember)
+    .map(({ index }) => index);
+}
+
+function normalizeSelectedGuestIndexes(
+  selectedGuestIndexes: number[] | undefined,
+  guestCount: number
+): { indexes: number[]; error?: string } {
+  if (!selectedGuestIndexes) {
+    return { indexes: [] };
+  }
+
+  const indexes: number[] = [];
+  const seen = new Set<number>();
+  for (const index of selectedGuestIndexes) {
+    if (!Number.isInteger(index) || index < 0 || index >= guestCount) {
+      return { indexes: [], error: "Selected promo guest is not on this booking" };
+    }
+    if (!seen.has(index)) {
+      seen.add(index);
+      indexes.push(index);
+    }
+  }
+  indexes.sort((a, b) => a - b);
+  return { indexes };
+}
+
+function filterGuestsByIndexes(guests: PromoDiscountGuest[], indexes: number[]) {
+  return indexes.map((index) => guests[index]).filter(Boolean);
 }
 
 function normalizeAllocations(
@@ -440,6 +515,7 @@ export async function getAssignedPromoCodeSummariesForMember(
       validUntil: promoCode.validUntil,
       bookingStartFrom: promoCode.bookingStartFrom,
       bookingStartUntil: promoCode.bookingStartUntil,
+      assignedMembersOnlyOwnNights: promoCode.assignedMembersOnlyOwnNights,
       maxRedemptionsTotal: promoCode.maxRedemptionsTotal,
       currentRedemptions: promoCode.currentRedemptions,
       maxUsesPerMember: promoCode.maxUsesPerMember,
@@ -469,8 +545,11 @@ function getAssignedPromoCodeStatusReason(
 ) {
   if (!promoCode.active) return "Inactive";
   if (promoCode.archivedAt) return "Archived";
-  if (promoCode.validFrom && now < promoCode.validFrom) return "Not valid yet";
-  if (promoCode.validUntil && now >= promoCode.validUntil) return "Expired";
+  const currentDateKey = nzDateKey(now);
+  const validFromKey = storedPromoDateKey(promoCode.validFrom);
+  const validUntilKey = storedPromoDateKey(promoCode.validUntil);
+  if (validFromKey && currentDateKey < validFromKey) return "Not valid yet";
+  if (validUntilKey && currentDateKey > validUntilKey) return "Expired";
   if (
     promoCode.maxRedemptionsTotal !== null &&
     promoCode.currentRedemptions >= promoCode.maxRedemptionsTotal
@@ -514,6 +593,7 @@ export interface PromoRuleSubject {
   type?: PromoCodeType;
   freeNightsPerIndividual?: number | null;
   lifetimeFreeNightsCap?: number | null;
+  assignedMembersOnlyOwnNights?: boolean | null;
 }
 
 export interface PromoRuleCounts {
@@ -550,19 +630,25 @@ export function validatePromoCodeRules(
     return "This promo code is no longer active";
   }
 
-  if (promoCode.validFrom && now < promoCode.validFrom) {
+  const currentDateKey = nzDateKey(now);
+  const validFromKey = storedPromoDateKey(promoCode.validFrom);
+  const validUntilKey = storedPromoDateKey(promoCode.validUntil);
+  if (validFromKey && currentDateKey < validFromKey) {
     return "This promo code is not yet valid";
   }
 
-  if (promoCode.validUntil && now >= promoCode.validUntil) {
+  if (validUntilKey && currentDateKey > validUntilKey) {
     return "This promo code has expired";
   }
 
   if (bookingDetails.bookingCheckIn) {
-    if (promoCode.bookingStartFrom && bookingDetails.bookingCheckIn < promoCode.bookingStartFrom) {
+    const checkInKey = nzDateKey(bookingDetails.bookingCheckIn);
+    const bookingStartFromKey = storedPromoDateKey(promoCode.bookingStartFrom);
+    const bookingStartUntilKey = storedPromoDateKey(promoCode.bookingStartUntil);
+    if (bookingStartFromKey && checkInKey < bookingStartFromKey) {
       return "This promo code is not valid for your booking dates";
     }
-    if (promoCode.bookingStartUntil && bookingDetails.bookingCheckIn >= promoCode.bookingStartUntil) {
+    if (bookingStartUntilKey && checkInKey >= bookingStartUntilKey) {
       return "This promo code is not valid for your booking dates";
     }
   }
@@ -648,6 +734,7 @@ export async function validateAndCalculatePromoDiscount(
     excludeBookingId?: string;
     db?: PromoUsageClient;
     now?: Date;
+    selectedGuestIndexes?: number[];
   } = {}
 ): Promise<PromoApplicationResult> {
   if (!promoCode) {
@@ -658,6 +745,58 @@ export async function validateAndCalculatePromoDiscount(
   }
 
   const db = options.db ?? prisma;
+  const requiresGuestSelection = assignmentRequiresGuestSelection(promoCode, assignedMemberIds);
+  const selectableGuestIndexes = requiresGuestSelection
+    ? selectablePromoGuestIndexes(promoCode, bookingDetails.guests)
+    : undefined;
+  const selectedGuestIndexes = normalizeSelectedGuestIndexes(
+    options.selectedGuestIndexes,
+    bookingDetails.guests.length
+  );
+  if (selectedGuestIndexes.error) {
+    return {
+      error: selectedGuestIndexes.error,
+      beneficiaryMemberIds: [],
+    };
+  }
+  if (requiresGuestSelection) {
+    if (!options.selectedGuestIndexes || selectedGuestIndexes.indexes.length === 0) {
+      return {
+        error: "Choose which guests should receive this promo code",
+        requiresGuestSelection: true,
+        selectableGuestIndexes,
+        beneficiaryMemberIds: [],
+      };
+    }
+    const selectable = new Set(selectableGuestIndexes ?? []);
+    if (selectedGuestIndexes.indexes.some((index) => !selectable.has(index))) {
+      return {
+        error: "One or more selected guests cannot use this promo code",
+        requiresGuestSelection: true,
+        selectableGuestIndexes,
+        beneficiaryMemberIds: [],
+      };
+    }
+    if (
+      promoCode.maxGuestsPerBooking !== null &&
+      promoCode.maxGuestsPerBooking !== undefined &&
+      selectedGuestIndexes.indexes.length > promoCode.maxGuestsPerBooking
+    ) {
+      return {
+        error: `Choose no more than ${promoCode.maxGuestsPerBooking} guest${promoCode.maxGuestsPerBooking === 1 ? "" : "s"} for this promo code`,
+        requiresGuestSelection: true,
+        selectableGuestIndexes,
+        beneficiaryMemberIds: [],
+      };
+    }
+  }
+  const guestsForPromo = requiresGuestSelection
+    ? filterGuestsByIndexes(bookingDetails.guests, selectedGuestIndexes.indexes)
+    : bookingDetails.guests;
+  const assignedGuestScopeMemberIds = scopedAssignmentMemberIds(
+    promoCode,
+    assignedMemberIds
+  );
   const initialBeneficiaryMemberIds = getPromoBeneficiaryMemberIds(
     {
       type: promoCode.type,
@@ -671,9 +810,16 @@ export async function validateAndCalculatePromoDiscount(
       memberGuestsOnly: promoCode.memberGuestsOnly,
     },
     bookingDetails.memberId,
-    bookingDetails.guests,
-    assignedMemberIds
+    guestsForPromo,
+    assignedGuestScopeMemberIds
   );
+
+  if (hasAssignedMembers(assignedGuestScopeMemberIds) && initialBeneficiaryMemberIds.length === 0) {
+    return {
+      error: "This promo code only applies when an assigned member is staying on the booking",
+      beneficiaryMemberIds: [],
+    };
+  }
 
   const beneficiaryUsage = await getPromoBeneficiaryUsage(
     promoCode.id,
@@ -690,7 +836,7 @@ export async function validateAndCalculatePromoDiscount(
   // their per-member caps (redemptions or lifetime free nights). The promo
   // still applies for the remaining beneficiaries; only if every beneficiary
   // is exhausted do we reject the code.
-  const assignedScoped = hasAssignedMembers(assignedMemberIds);
+  const assignedScoped = hasAssignedMembers(assignedGuestScopeMemberIds);
   const isMemberExhausted = (memberId: string) => {
     const usage = beneficiaryUsage[memberId] ?? { redemptionCount: 0, freeNightsUsed: 0 };
     if (
@@ -756,7 +902,7 @@ export async function validateAndCalculatePromoDiscount(
       requestedNewUniqueMemberCount,
       allBeneficiariesExhausted,
     },
-    assignedMemberIds
+    requiresGuestSelection ? assignedMemberIds : null
   );
 
   if (validationError) {
@@ -793,7 +939,9 @@ export async function validateAndCalculatePromoDiscount(
   // Effective assigned-member list passed to pricing: filtered to those with
   // remaining budget so exhausted members' guest rows are excluded from the
   // discount candidates.
-  const effectiveAssignedMemberIds = assignedScoped ? beneficiaryMemberIds : assignedMemberIds;
+  const effectiveGuestScopeMemberIds = assignedScoped
+    ? beneficiaryMemberIds
+    : assignedGuestScopeMemberIds;
 
   const discount = calculatePromoDiscountForGuestRates(
     {
@@ -809,8 +957,8 @@ export async function validateAndCalculatePromoDiscount(
     },
     bookingDetails.totalPriceCents,
     bookingDetails.memberId,
-    bookingDetails.guests,
-    effectiveAssignedMemberIds,
+    guestsForPromo,
+    effectiveGuestScopeMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId
   );
@@ -820,6 +968,7 @@ export async function validateAndCalculatePromoDiscount(
     beneficiaryMemberIds,
     remainingFreeNights,
     remainingFreeNightsByMemberId,
+    selectedGuestIndexes: requiresGuestSelection ? selectedGuestIndexes.indexes : undefined,
   };
 }
 
@@ -877,6 +1026,7 @@ export async function validatePromoCodeFull(
       maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
       maxNightlyValueCents: promoCode.maxNightlyValueCents,
       memberGuestsOnly: promoCode.memberGuestsOnly,
+      assignedMembersOnlyOwnNights: promoCode.assignedMembersOnlyOwnNights,
     },
     discountCents: result.discountCents,
     promoAdjustmentCents: result.priceAdjustmentCents,
@@ -884,6 +1034,7 @@ export async function validatePromoCodeFull(
     eligibleGuestCount: result.eligibleGuestCount,
     remainingFreeNights: application.remainingFreeNights,
     allocations: result.allocations,
+    selectedGuestIndexes: application.selectedGuestIndexes,
   };
 }
 
@@ -900,7 +1051,8 @@ export async function redeemPromoCode(
   priceAdjustmentCents: number,
   freeNightsUsed?: number,
   eligibleGuestCount?: number,
-  allocations?: PromoBeneficiaryAllocation[]
+  allocations?: PromoBeneficiaryAllocation[],
+  targetBookingGuestIds?: string[]
 ): Promise<void> {
   const redemption = await tx.promoRedemption.create({
     data: {
@@ -937,6 +1089,15 @@ export async function redeemPromoCode(
       })),
     });
   }
+  if (targetBookingGuestIds && targetBookingGuestIds.length > 0) {
+    await tx.promoRedemptionGuestTarget.createMany({
+      data: [...new Set(targetBookingGuestIds)].map((bookingGuestId) => ({
+        promoRedemptionId: redemption.id,
+        bookingId,
+        bookingGuestId,
+      })),
+    });
+  }
 
   await tx.promoCode.update({
     where: { id: promoCodeId },
@@ -953,7 +1114,8 @@ export async function replacePromoRedemptionAllocations(
   priceAdjustmentCents: number,
   freeNightsUsed?: number,
   eligibleGuestCount?: number,
-  allocations?: PromoBeneficiaryAllocation[]
+  allocations?: PromoBeneficiaryAllocation[],
+  targetBookingGuestIds?: string[]
 ): Promise<void> {
   const existingAllocationCount = await tx.promoRedemptionAllocation.count({
     where: { promoRedemptionId: redemption.id },
@@ -991,6 +1153,20 @@ export async function replacePromoRedemptionAllocations(
         freeNightsUsed: allocation.freeNightsUsed,
       })),
     });
+  }
+  if (targetBookingGuestIds !== undefined) {
+    await tx.promoRedemptionGuestTarget.deleteMany({
+      where: { promoRedemptionId: redemption.id },
+    });
+    if (targetBookingGuestIds.length > 0) {
+      await tx.promoRedemptionGuestTarget.createMany({
+        data: [...new Set(targetBookingGuestIds)].map((bookingGuestId) => ({
+          promoRedemptionId: redemption.id,
+          bookingId: redemption.bookingId,
+          bookingGuestId,
+        })),
+      });
+    }
   }
 
   const delta = allocationData.length - existingAllocationCount;

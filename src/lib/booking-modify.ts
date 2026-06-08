@@ -97,6 +97,7 @@ export type BatchModifyInput = {
     stayEnd?: string | null;
   }>;
   promoCode?: string;
+  promoGuestIndexes?: number[];
   removePromoCode?: boolean;
   memberReviewJustification?: string;
   settlementMethod?: BookingModificationSettlementMethod;
@@ -115,6 +116,7 @@ export type BookingModificationSettlementOptions = {
 };
 
 type ProposedGuestPricingInput = {
+  bookingGuestId?: string | null;
   ageTier: AgeTier;
   isMember: boolean;
   memberId: string | null;
@@ -195,6 +197,7 @@ export type LoadedPromoRedemption = PromoRedemption & {
   promoCode: PromoCode & {
     assignments: Array<{ memberId: string }>;
   };
+  guestTargets?: Array<{ bookingGuestId: string }>;
 };
 
 export type LoadedBookingForModify = Booking & {
@@ -470,6 +473,7 @@ export async function prepareGuestPlan(
 
   const guestsForPricing = [
     ...proposedRemainingGuests.map((entry) => ({
+      bookingGuestId: entry.guest.id,
       ageTier: entry.guest.ageTier as AgeTier,
       isMember: entry.guest.isMember,
       memberId: entry.guest.memberId ?? null,
@@ -477,6 +481,7 @@ export async function prepareGuestPlan(
       stayEnd: entry.stayEnd,
     })),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
+      bookingGuestId: null,
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
@@ -658,6 +663,7 @@ export type PricingResult = {
     guests: Array<{ priceCents: number; perNightCents: number[] }>;
   };
   guestNightRates: Array<{
+    bookingGuestId?: string | null;
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
@@ -688,6 +694,7 @@ export async function calculateModifiedPricing(
     normalizedAddGuests: BookingGuestInput[] | undefined;
     removeGuestIds: string[] | undefined;
     guestsForPricing: Array<{
+      bookingGuestId?: string | null;
       ageTier: AgeTier;
       isMember: boolean;
       memberId: string | null;
@@ -768,6 +775,7 @@ export async function calculateModifiedPricing(
     ? []
     : guestsForPricing.map((guest, index) => ({
         memberId: guest.memberId ?? null,
+        bookingGuestId: guest.bookingGuestId ?? null,
         isMember: guest.isMember,
         perNightRates: priceBreakdown.guests[index]?.perNightCents ?? [],
       }));
@@ -787,6 +795,40 @@ export type PromoChangeResult = {
   promoChanged: boolean;
 };
 
+function promoRequiresStoredGuestTargets(
+  promo: PromoCode & { assignments: Array<{ memberId: string }> }
+) {
+  return promo.assignments.length > 0 && promo.assignedMembersOnlyOwnNights === false;
+}
+
+function selectedIndexesForStoredGuestTargets(
+  redemption: LoadedPromoRedemption,
+  guestNightRates: Array<{ bookingGuestId?: string | null }>
+) {
+  if (!promoRequiresStoredGuestTargets(redemption.promoCode)) {
+    return undefined;
+  }
+
+  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
+  if (targetIds.size === 0) {
+    return guestNightRates.map((_, index) => index);
+  }
+
+  return guestNightRates
+    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
+    .filter((index) => index >= 0);
+}
+
+function targetBookingGuestIdsForSelectedIndexes(
+  guestNightRates: Array<{ bookingGuestId?: string | null }>,
+  selectedGuestIndexes: number[] | undefined
+) {
+  if (!selectedGuestIndexes) return undefined;
+  return selectedGuestIndexes
+    .map((index) => guestNightRates[index]?.bookingGuestId)
+    .filter((id): id is string => Boolean(id));
+}
+
 export async function applyPromoCodeChanges(
   tx: Prisma.TransactionClient,
   {
@@ -805,6 +847,7 @@ export async function applyPromoCodeChanges(
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
+      bookingGuestId?: string | null;
       memberId: string | null;
       isMember: boolean;
       perNightRates: number[];
@@ -855,7 +898,11 @@ export async function applyPromoCodeChanges(
         guests: guestNightRates,
       },
       assignedMemberIds,
-      { excludeBookingId: bookingId, db: tx },
+      {
+        excludeBookingId: bookingId,
+        db: tx,
+        selectedGuestIndexes: input.promoGuestIndexes,
+      },
     );
     if (application.error || !application.discount) {
       throw new ApiError(application.error ?? "Promo code could not be applied", 400);
@@ -876,6 +923,10 @@ export async function applyPromoCodeChanges(
         promoResult.freeNightsUsed,
         promoResult.eligibleGuestCount,
         promoResult.allocations,
+        targetBookingGuestIdsForSelectedIndexes(
+          guestNightRates,
+          application.selectedGuestIndexes
+        ),
       );
     }
     promoChanged = true;
@@ -885,6 +936,10 @@ export async function applyPromoCodeChanges(
     booking.promoRedemption?.promoCode
   ) {
     const promo = booking.promoRedemption.promoCode;
+    const selectedGuestIndexes = selectedIndexesForStoredGuestTargets(
+      booking.promoRedemption,
+      guestNightRates
+    );
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
@@ -896,7 +951,7 @@ export async function applyPromoCodeChanges(
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      { excludeBookingId: bookingId, db: tx },
+      { excludeBookingId: bookingId, db: tx, selectedGuestIndexes },
     );
 
     if (application.error || !application.discount) {
@@ -915,6 +970,10 @@ export async function applyPromoCodeChanges(
         promoResult.freeNightsUsed,
         promoResult.eligibleGuestCount,
         promoResult.allocations,
+        targetBookingGuestIdsForSelectedIndexes(
+          guestNightRates,
+          application.selectedGuestIndexes
+        ),
       );
     }
   }
