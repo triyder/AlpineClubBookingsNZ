@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
@@ -16,6 +17,22 @@ vi.mock("@/components/admin-booking-calendar", () => ({
   AdminBookingCalendar: () => null,
 }));
 
+vi.mock("@/lib/module-settings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  return {
+    ...actual,
+    loadEffectiveModuleFlags: vi.fn().mockResolvedValue({
+      kiosk: true,
+      chores: true,
+      financeDashboard: true,
+      waitlist: true,
+      xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
+    }),
+  };
+});
+
 import AdminBookingsPage, {
   formatAdminBookingGuestCount,
 } from "@/app/(admin)/admin/bookings/page";
@@ -23,11 +40,23 @@ import {
   adminBookingsQuerySchema,
   listAdminBookings,
 } from "@/lib/admin-bookings-service";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
+
+const effectiveModulesOn = {
+  kiosk: true,
+  chores: true,
+  financeDashboard: true,
+  waitlist: true,
+  xeroIntegration: true,
+  bedAllocation: true,
+  internetBankingPayments: true,
+};
 
 describe("AdminBookingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue(effectiveModulesOn);
     vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroObjectLink.findMany).mockResolvedValue([]);
@@ -273,6 +302,68 @@ describe("AdminBookingsPage", () => {
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-unallocated"]);
     expect(result.bookings[0].operational.bedState).toBe("unallocated");
     expect(result.bookings[0].operational.pendingChangeRequest).toBe(true);
+  });
+
+  it("ignores bed allocation filters when the module is disabled", async () => {
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      makeBooking({
+        id: "booking-clean",
+        guests: [
+          {
+            id: "guest-1",
+            firstName: "Tama",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+            stayStart: new Date("2026-07-01T00:00:00.000Z"),
+            stayEnd: new Date("2026-07-03T00:00:00.000Z"),
+          },
+        ],
+      }),
+    ] as any);
+
+    const result = await listAdminBookings(
+      adminBookingsQuerySchema.parse({ bedState: "unallocated" }),
+      { bedAllocationEnabled: false }
+    );
+
+    expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-clean"]);
+    expect(result.bookings[0].operational.expectedGuestNights).toBe(0);
+  });
+
+  it("hides bed allocation booking UI when the effective module is disabled", async () => {
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValueOnce({
+      ...effectiveModulesOn,
+      bedAllocation: false,
+    });
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      makeBooking({
+        guests: [
+          {
+            id: "guest-1",
+            firstName: "Tama",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+            stayStart: new Date("2026-07-01T00:00:00.000Z"),
+            stayEnd: new Date("2026-07-03T00:00:00.000Z"),
+          },
+        ],
+      }),
+    ] as any);
+
+    const element = await AdminBookingsPage({
+      searchParams: Promise.resolve({ bedState: "unallocated" }),
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("All Bookings");
+    expect(html).toContain("Aroha Ngata");
+    expect(html).toContain("Changes");
+    expect(html).not.toContain("/admin/bed-allocation");
+    expect(html).not.toContain("bedState=unallocated");
+    expect(html).not.toContain(">Beds<");
+    expect(html).not.toContain("Unallocated");
   });
 
   it("formats total guests with non-member guests in brackets", () => {

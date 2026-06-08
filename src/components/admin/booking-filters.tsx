@@ -8,7 +8,11 @@ import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { bookingFilterDateRangePresets } from "@/lib/date-range-presets";
 import { bookingStatusLabel } from "@/lib/status-colors";
 
-export function BookingFilters() {
+interface BookingFiltersProps {
+  showBedAllocation?: boolean;
+}
+
+export function BookingFilters({ showBedAllocation = true }: BookingFiltersProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -22,7 +26,9 @@ export function BookingFilters() {
   const [deleted, setDeleted] = useState(searchParams.get("deleted") || "hide");
   const [paymentSource, setPaymentSource] = useState(searchParams.get("paymentSource") || "all");
   const [xeroState, setXeroState] = useState(searchParams.get("xeroState") || "all");
-  const [bedState, setBedState] = useState(searchParams.get("bedState") || "all");
+  const [bedState, setBedState] = useState(
+    showBedAllocation ? searchParams.get("bedState") || "all" : "all"
+  );
   const [changeState, setChangeState] = useState(searchParams.get("changeState") || "all");
   const sortBy = searchParams.get("sortBy") || searchParams.get("sort") || "updatedAt";
   const sortDir = searchParams.get("sortDir") || "desc";
@@ -53,7 +59,7 @@ export function BookingFilters() {
     if (deleted !== "hide") params.set("deleted", deleted);
     if (paymentSource !== "all") params.set("paymentSource", paymentSource);
     if (xeroState !== "all") params.set("xeroState", xeroState);
-    if (bedState !== "all") params.set("bedState", bedState);
+    if (showBedAllocation && bedState !== "all") params.set("bedState", bedState);
     if (changeState !== "all") params.set("changeState", changeState);
     router.push(`/admin/bookings?${params.toString()}`);
   }
@@ -144,20 +150,22 @@ export function BookingFilters() {
           <option value="operationPending">Pending activity</option>
         </select>
       </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Beds</label>
-        <select
-          value={bedState}
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setBedState(e.target.value)}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
-        >
-          <option value="all">All bed states</option>
-          <option value="unallocated">Unallocated</option>
-          <option value="partial">Partial</option>
-          <option value="complete">Complete</option>
-          <option value="warning">Warning</option>
-        </select>
-      </div>
+      {showBedAllocation ? (
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-gray-500">Beds</label>
+          <select
+            value={bedState}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setBedState(e.target.value)}
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+          >
+            <option value="all">All bed states</option>
+            <option value="unallocated">Unallocated</option>
+            <option value="partial">Partial</option>
+            <option value="complete">Complete</option>
+            <option value="warning">Warning</option>
+          </select>
+        </div>
+      ) : null}
       <div className="space-y-1">
         <label className="text-xs font-medium text-gray-500">Changes</label>
         <select

@@ -110,6 +110,10 @@ export interface AdminBookingsResult {
   sortDir: SortDir;
 }
 
+export interface AdminBookingsOptions {
+  bedAllocationEnabled?: boolean;
+}
+
 function parseDateStart(value: string) {
   return new Date(`${value}T00:00:00`);
 }
@@ -380,7 +384,10 @@ function buildBedWarnings(
   return warnings;
 }
 
-function deriveBedState(booking: BookingCandidate): Pick<
+function deriveBedState(
+  booking: BookingCandidate,
+  bedAllocationEnabled = true
+): Pick<
   AdminBookingOperationalState,
   | "bedState"
   | "expectedGuestNights"
@@ -388,6 +395,16 @@ function deriveBedState(booking: BookingCandidate): Pick<
   | "unapprovedBedAllocations"
   | "bedWarningCount"
 > {
+  if (!bedAllocationEnabled) {
+    return {
+      bedState: "complete",
+      expectedGuestNights: 0,
+      allocatedGuestNights: 0,
+      unapprovedBedAllocations: 0,
+      bedWarningCount: 0,
+    };
+  }
+
   const expectedGuestNightKeys = new Set(
     booking.guests.flatMap((guest) => guestNightKeys(guest))
   );
@@ -458,7 +475,8 @@ function matchesChangeStateFilter(
 function deriveBookingOperationalState(
   booking: BookingCandidate,
   activityByRecord: Map<string, XeroActivitySummary>,
-  invoiceLinkedPaymentIds: Set<string>
+  invoiceLinkedPaymentIds: Set<string>,
+  options: AdminBookingsOptions = {}
 ): AdminBookingOperationalState {
   const paymentSource = (booking.payment?.source ?? "NONE") as PaymentSourceFilter;
   const activity = mergeXeroActivitySummaries([
@@ -501,7 +519,7 @@ function deriveBookingOperationalState(
     xeroActivity: activity,
     invoiceLinked,
     invoiceExpected,
-    ...deriveBedState(booking),
+    ...deriveBedState(booking, options.bedAllocationEnabled ?? true),
     hasPerGuestDates,
     guestDateRanges,
     requiresReview:
@@ -567,9 +585,13 @@ async function loadXeroStateInputs(bookings: BookingCandidate[]) {
   };
 }
 
-export async function listAdminBookings(query: AdminBookingsQuery): Promise<AdminBookingsResult> {
+export async function listAdminBookings(
+  query: AdminBookingsQuery,
+  options: AdminBookingsOptions = {}
+): Promise<AdminBookingsResult> {
   const sortBy = getAdminBookingSortBy(query);
   const sortDir = query.sortDir ?? getDefaultAdminBookingSortDir(sortBy);
+  const bedAllocationEnabled = options.bedAllocationEnabled ?? true;
   const candidates = await loadBookingCandidates(buildBookingWhere(query));
   const { activityByRecord, invoiceLinkedPaymentIds } = await loadXeroStateInputs(candidates);
 
@@ -579,7 +601,8 @@ export async function listAdminBookings(query: AdminBookingsQuery): Promise<Admi
       operational: deriveBookingOperationalState(
         booking,
         activityByRecord,
-        invoiceLinkedPaymentIds
+        invoiceLinkedPaymentIds,
+        { bedAllocationEnabled }
       ),
     }))
     .filter((booking) => {
@@ -589,7 +612,10 @@ export async function listAdminBookings(query: AdminBookingsQuery): Promise<Admi
       if (!matchesXeroStateFilter(booking.operational.xeroState, query.xeroState)) {
         return false;
       }
-      if (!matchesBedStateFilter(booking.operational.bedState, query.bedState)) {
+      if (
+        bedAllocationEnabled &&
+        !matchesBedStateFilter(booking.operational.bedState, query.bedState)
+      ) {
         return false;
       }
       if (!matchesChangeStateFilter(booking.operational, query.changeState)) {

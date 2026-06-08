@@ -16,6 +16,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -54,22 +55,27 @@ export default async function AdminBookingsPage({
   const params = await searchParams;
   const parsedQuery = adminBookingsQuerySchema.safeParse(params);
   const query = parsedQuery.success ? parsedQuery.data : adminBookingsQuerySchema.parse({});
-  const { bookings, total, sortBy, sortDir } = await listAdminBookings(query);
-  const currentSearchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (typeof value === "string" && value) {
-      currentSearchParams.set(key, value);
+  const effectiveModules = await loadEffectiveModuleFlags();
+  const showBedAllocation = effectiveModules.bedAllocation;
+  const { bookings, total, sortBy, sortDir } = await listAdminBookings(query, {
+    bedAllocationEnabled: showBedAllocation,
+  });
+
+  function visibleSearchParams() {
+    const currentSearchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === "string" && value && (showBedAllocation || key !== "bedState")) {
+        currentSearchParams.set(key, value);
+      }
     }
+
+    return currentSearchParams;
   }
+  const currentSearchParams = visibleSearchParams();
   const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentSearchParams);
 
   function sortHref(column: BookingSortBy) {
-    const nextParams = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) {
-      if (typeof value === "string" && value) {
-        nextParams.set(key, value);
-      }
-    }
+    const nextParams = visibleSearchParams();
 
     const nextDir: SortDir = sortBy === column
       ? sortDir === "asc" ? "desc" : "asc"
@@ -205,7 +211,7 @@ export default async function AdminBookingsPage({
         </Link>
       </div>
 
-      <BookingFilters />
+      <BookingFilters showBedAllocation={showBedAllocation} />
 
       <AdminBookingCalendar />
 
@@ -232,7 +238,9 @@ export default async function AdminBookingsPage({
                   <SortHeader column="status">Status</SortHeader>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Xero</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Beds</th>
+                  {showBedAllocation ? (
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Beds</th>
+                  ) : null}
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Changes</th>
                 </tr>
               </thead>
@@ -339,35 +347,37 @@ export default async function AdminBookingsPage({
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm">
-                        <div className="space-y-1">
-                          <Link href={bedAllocationHref(booking)} className="inline-flex">
-                            <Badge
-                              variant="secondary"
-                              className={`${bedStateClass(booking.operational.bedState)} cursor-pointer`}
-                            >
-                              {bedStateLabel(booking)}
-                            </Badge>
-                          </Link>
-                          {booking.operational.unapprovedBedAllocations > 0 ? (
-                            <p className="text-xs text-amber-700">
-                              {booking.operational.unapprovedBedAllocations} awaiting approval
-                            </p>
-                          ) : null}
-                          {booking.operational.hasPerGuestDates ? (
-                            <div className="space-y-0.5">
-                              <Badge variant="outline" className="text-xs">
-                                Per-guest dates
+                      {showBedAllocation ? (
+                        <td className="px-4 py-3 text-sm">
+                          <div className="space-y-1">
+                            <Link href={bedAllocationHref(booking)} className="inline-flex">
+                              <Badge
+                                variant="secondary"
+                                className={`${bedStateClass(booking.operational.bedState)} cursor-pointer`}
+                              >
+                                {bedStateLabel(booking)}
                               </Badge>
-                              {booking.operational.guestDateRanges.slice(0, 2).map((guestRange) => (
-                                <p key={guestRange.guestId} className="text-xs text-gray-500">
-                                  {guestRange.guestName}: {guestRange.stayStart} to {guestRange.stayEnd}
-                                </p>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      </td>
+                            </Link>
+                            {booking.operational.unapprovedBedAllocations > 0 ? (
+                              <p className="text-xs text-amber-700">
+                                {booking.operational.unapprovedBedAllocations} awaiting approval
+                              </p>
+                            ) : null}
+                            {booking.operational.hasPerGuestDates ? (
+                              <div className="space-y-0.5">
+                                <Badge variant="outline" className="text-xs">
+                                  Per-guest dates
+                                </Badge>
+                                {booking.operational.guestDateRanges.slice(0, 2).map((guestRange) => (
+                                  <p key={guestRange.guestId} className="text-xs text-gray-500">
+                                    {guestRange.guestName}: {guestRange.stayStart} to {guestRange.stayEnd}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </td>
+                      ) : null}
                       <td className="px-4 py-3 text-sm">
                         <div className="flex flex-wrap gap-1">
                           {booking.operational.pendingChangeRequest ? (
