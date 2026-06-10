@@ -35,6 +35,7 @@ import {
   Puzzle,
   UserX,
   BedDouble,
+  FilePenLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -56,17 +57,29 @@ interface NavSection {
 const navSections: NavSection[] = [
   {
     items: [
-      { href: "/admin/dashboard", label: "Admin Dashboard", icon: LayoutDashboard },
+      {
+        href: "/admin/dashboard",
+        label: "Admin Dashboard",
+        icon: LayoutDashboard,
+      },
     ],
   },
   {
     label: "Bookings & Payments",
     items: [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
-      { href: "/admin/booking-requests", label: "Booking Requests", icon: ClipboardList },
+      {
+        href: "/admin/booking-requests",
+        label: "Booking Requests",
+        icon: ClipboardList,
+      },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
-      { href: "/admin/refund-requests", label: "Refunds & Credits", icon: RotateCcw },
+      {
+        href: "/admin/refund-requests",
+        label: "Refunds & Credits",
+        icon: RotateCcw,
+      },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
     ],
   },
@@ -76,18 +89,34 @@ const navSections: NavSection[] = [
       { href: "/admin/roster", label: "Roster", icon: ClipboardList },
       { href: "/admin/chores", label: "Chores", icon: CheckSquare },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
-      { href: "/admin/bed-allocation", label: "Bed Allocation", icon: BedDouble },
+      {
+        href: "/admin/bed-allocation",
+        label: "Bed Allocation",
+        icon: BedDouble,
+      },
       { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
     ],
   },
   {
     label: "Members",
     items: [
-      { href: "/admin/member-applications", label: "Applications", icon: ClipboardList },
+      {
+        href: "/admin/member-applications",
+        label: "Applications",
+        icon: ClipboardList,
+      },
       { href: "/admin/members", label: "Members", icon: Users },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
-      { href: "/admin/family-suggestions", label: "Family Suggestions", icon: Users },
-      { href: "/admin/membership-cancellations", label: "Cancellations", icon: UserX },
+      {
+        href: "/admin/family-suggestions",
+        label: "Family Suggestions",
+        icon: Users,
+      },
+      {
+        href: "/admin/membership-cancellations",
+        label: "Cancellations",
+        icon: UserX,
+      },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
       { href: "/admin/communications", label: "Communications", icon: Mail },
     ],
@@ -97,10 +126,19 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
-      { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
+      {
+        href: "/admin/seasons",
+        label: "Hut Fees & Seasons",
+        icon: CalendarRange,
+      },
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
-      { href: "/admin/booking-policies", label: "Booking Policies", icon: XCircle },
+      {
+        href: "/admin/booking-policies",
+        label: "Booking Policies",
+        icon: XCircle,
+      },
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
+      { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
       { href: "/admin/xero", label: "Xero", icon: RefreshCw },
     ],
@@ -111,20 +149,24 @@ const navSections: NavSection[] = [
       { href: "/admin/notifications", label: "Notifications", icon: Bell },
       { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
       { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
-      { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
+      {
+        href: "/admin/deletion-requests",
+        label: "Deletion Requests",
+        icon: Trash2,
+      },
       { href: "/admin/health", label: "System Health", icon: Activity },
     ],
   },
 ];
 
 export function getVisibleAdminNavSections(
-  features: FeatureFlags
+  features: FeatureFlags,
 ): NavSection[] {
   return navSections
     .map((section) => ({
       ...section,
       items: section.items.filter((item) =>
-        isFeatureHrefVisible(item.href, features)
+        isFeatureHrefVisible(item.href, features),
       ),
     }))
     .filter((section) => section.items.length > 0);
@@ -143,7 +185,9 @@ function usePendingFamilyRequests(): number {
         }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
   return count;
 }
@@ -205,10 +249,12 @@ function usePendingBookingRequests(): number {
     let cancelled = false;
 
     Promise.all([
-      fetch("/api/admin/booking-reviews?status=PENDING&pageSize=1")
-        .then((response) => (response.ok ? response.json() : null)),
-      fetch("/api/admin/booking-change-requests?status=REQUESTED&pageSize=1")
-        .then((response) => (response.ok ? response.json() : null)),
+      fetch("/api/admin/booking-reviews?status=PENDING&pageSize=1").then(
+        (response) => (response.ok ? response.json() : null),
+      ),
+      fetch(
+        "/api/admin/booking-change-requests?status=REQUESTED&pageSize=1",
+      ).then((response) => (response.ok ? response.json() : null)),
     ])
       .then(([reviewData, changeData]) => {
         if (!cancelled) {
@@ -258,10 +304,12 @@ function usePendingMembershipCancellations(): number {
     let cancelled = false;
 
     Promise.all([
-      fetch("/api/admin/membership-cancellation-requests?status=REQUESTED&pageSize=1")
-        .then((response) => (response.ok ? response.json() : null)),
-      fetch("/api/admin/member-lifecycle-action-requests?action=ARCHIVE&status=REQUESTED&pageSize=1")
-        .then((response) => (response.ok ? response.json() : null)),
+      fetch(
+        "/api/admin/membership-cancellation-requests?status=REQUESTED&pageSize=1",
+      ).then((response) => (response.ok ? response.json() : null)),
+      fetch(
+        "/api/admin/member-lifecycle-action-requests?action=ARCHIVE&status=REQUESTED&pageSize=1",
+      ).then((response) => (response.ok ? response.json() : null)),
     ])
       .then(([cancellationData, archiveData]) => {
         if (!cancelled) {
@@ -354,18 +402,23 @@ function SidebarLinks({
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   active
                     ? "app-nav-link-active"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )}
               >
                 <Icon
                   className={cn(
                     "h-4 w-4 shrink-0",
-                    active ? "text-current" : "text-muted-foreground"
+                    active ? "text-current" : "text-muted-foreground",
                   )}
                 />
                 <span className="flex-1">{label}</span>
                 {badgeCount != null && badgeCount > 0 && (
-                  <span className={cn("ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold", badgeClasses)}>
+                  <span
+                    className={cn(
+                      "ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold",
+                      badgeClasses,
+                    )}
+                  >
                     {badgeCount > 99 ? "99+" : badgeCount}
                   </span>
                 )}

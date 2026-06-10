@@ -28,16 +28,20 @@ interface CommitteeMember {
 
 interface ContactPageClientProps {
   club: ClubIdentity;
+  showHero?: boolean;
 }
 
-export function ContactPageClient({ club }: ContactPageClientProps) {
+export function ContactPageClient({
+  club,
+  showHero = true,
+}: ContactPageClientProps) {
   const facebookUrl = club.socialLinks.facebook ?? club.publicUrl;
   const searchParams = useSearchParams();
   const initialRecipient = searchParams.get("recipient") || "general";
   const [form, setForm] = useState({ name: "", email: "", message: "" });
   const [recipient, setRecipient] = useState(initialRecipient);
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
-    "idle"
+    "idle",
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [members, setMembers] = useState<CommitteeMember[]>([]);
@@ -52,7 +56,10 @@ export function ContactPageClient({ club }: ContactPageClientProps) {
         const validKeys = data.members
           .filter((m: CommitteeMember) => m.contactKey)
           .map((m: CommitteeMember) => m.contactKey);
-        if (initialRecipient !== "general" && !validKeys.includes(initialRecipient)) {
+        if (
+          initialRecipient !== "general" &&
+          !validKeys.includes(initialRecipient)
+        ) {
           setRecipient("general");
         }
       })
@@ -99,26 +106,27 @@ export function ContactPageClient({ club }: ContactPageClientProps) {
     } catch (err) {
       setStatus("error");
       setErrorMessage(
-        err instanceof Error ? err.message : "Failed to send message"
+        err instanceof Error ? err.message : "Failed to send message",
       );
     }
   }
 
   return (
     <>
-      {/* Header */}
-      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <span className="website-eyebrow mb-4">Get in touch</span>
-          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
-            Contact Us
-          </h1>
-          <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
-            Have a question about the club, the lodge, or booking a stay? Get in
-            touch and we&apos;ll get back to you.
-          </p>
-        </div>
-      </section>
+      {showHero ? (
+        <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <span className="website-eyebrow mb-4">Get in touch</span>
+            <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
+              Contact Us
+            </h1>
+            <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
+              Have a question about the club, the lodge, or booking a stay? Get
+              in touch and we&apos;ll get back to you.
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       {/* Content */}
       <section className="bg-brand-snow py-16 sm:py-20">

@@ -1616,6 +1616,24 @@ model EmailTemplateOverride {
   @@index([updatedByMemberId])
 }
 
+model PageContent {
+  id                String   @id @default(cuid())
+  slug              String   @unique
+  path              String   @unique
+  caption           String   @default("")
+  menuTitle         String   @default("")
+  title             String
+  headerText        String   @default("")
+  sortOrder         Int      @default(100)
+  contentHtml       String
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([sortOrder])
+  @@index([updatedByMemberId])
+}
+
 enum NotificationDeliveryMode {
   ALWAYS
   CONTENT_ONLY
