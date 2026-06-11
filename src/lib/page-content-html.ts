@@ -161,6 +161,7 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
   }
 
   const safeContentHtml = sanitizePageContentHtml(record.contentHtml);
+  const safeHeaderText = sanitizePageContentHtml(record.headerText);
 
   return {
     id: record.id,
@@ -168,7 +169,7 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
     caption: record.caption,
     menuTitle: record.menuTitle,
     title: record.title,
-    headerText: record.headerText,
+    headerText: safeHeaderText,
     path: record.path,
     sortOrder: record.sortOrder,
     contentHtml: safeContentHtml,

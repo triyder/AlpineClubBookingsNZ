@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ClipboardCheck, MailCheck, UserPlus } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
 import { Button } from "@/components/ui/button";
 import {
