@@ -100,6 +100,8 @@ export async function POST(request: NextRequest) {
 
   const path = toPagePath(slug);
 
+  const safeHeaderText = sanitizePageContentHtml(parsed.data.headerText);
+
   const existing = await prisma.pageContent.findFirst({
     where: {
       OR: [{ slug }, { path }],
@@ -121,7 +123,7 @@ export async function POST(request: NextRequest) {
       caption: parsed.data.caption,
       menuTitle: parsed.data.menuTitle,
       title: parsed.data.title,
-      headerText: parsed.data.headerText,
+      headerText: safeHeaderText,
       sortOrder: parsed.data.sortOrder,
       contentHtml: "",
       updatedByMemberId: guard.session.user.id,
@@ -275,7 +277,7 @@ export async function PUT(request: NextRequest) {
         caption: parsed.data.caption,
         menuTitle: parsed.data.menuTitle,
         title: parsed.data.title,
-        headerText: parsed.data.headerText,
+        headerText: safeHeaderText,
         sortOrder: parsed.data.sortOrder,
         previousLength: existing?.contentHtml.length ?? 0,
         nextLength: safeContentHtml.length,

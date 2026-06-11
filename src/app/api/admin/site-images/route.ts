@@ -13,6 +13,11 @@ const IMAGE_EXTENSIONS = new Set([
   ".avif",
 ]);
 
+// Only expose the deployed branding/content image folder to the picker,
+// not the whole public/ tree. This endpoint lists repo-committed files
+// only; there is no upload capability.
+const SITE_IMAGES_DIR = "branding";
+
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
@@ -62,12 +67,17 @@ export async function GET() {
   }
 
   try {
-    const publicDir = path.join(process.cwd(), "public");
-    const images = await listImagesRecursively(publicDir);
+    const imagesDir = path.join(process.cwd(), "public", SITE_IMAGES_DIR);
+    const images = await listImagesRecursively(imagesDir);
     images.sort((a, b) => a.localeCompare(b));
 
-    return NextResponse.json({ images });
+    return NextResponse.json({
+      images: images.map((webPath) => `/${SITE_IMAGES_DIR}${webPath}`),
+    });
   } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return NextResponse.json({ images: [] });
+    }
     console.error("Failed to list site images", error);
     return NextResponse.json(
       { error: "Failed to list site images" },

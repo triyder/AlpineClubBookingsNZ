@@ -4,13 +4,32 @@ import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
-import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import {
+  getSanitizedPageContentByPath,
+  pageContentHtmlToPlainText,
+} from "@/lib/page-content-html";
+import { isReservedPageSlug, isValidPageSlug } from "@/lib/page-content";
 
 type DynamicPageProps = {
   params: Promise<{
-    slug: string;
+    slug: string[];
   }>;
 };
+
+// Resolves the catch-all segments to a PageContent path. Static routes
+// always win over this catch-all, so code-backed pages are unaffected.
+// Reserved names are rejected in every segment position so database pages
+// can never sit underneath application route prefixes.
+async function getPageForParams(props: DynamicPageProps) {
+  const params = await props.params;
+  const slug = params.slug.join("/");
+
+  if (!isValidPageSlug(slug) || isReservedPageSlug(slug)) {
+    return null;
+  }
+
+  return getSanitizedPageContentByPath(`/${slug}`);
+}
 
 const EMBED_TOKEN_REGEX =
   /\{\{\s*(committee-members-cards|member-application-form|contact-form)\s*\}\}/gi;
@@ -55,8 +74,7 @@ function buildEmbeddedBody(contentHtml: string) {
 export async function generateMetadata(
   props: DynamicPageProps,
 ): Promise<Metadata> {
-  const params = await props.params;
-  const page = await getSanitizedPageContentByPath(`/${params.slug}`);
+  const page = await getPageForParams(props);
 
   if (!page) {
     return {
@@ -67,13 +85,13 @@ export async function generateMetadata(
   return {
     title: page.title,
     description:
-      page.headerText || `${page.title} information for ${CLUB_NAME}.`,
+      pageContentHtmlToPlainText(page.headerText) ||
+      `${page.title} information for ${CLUB_NAME}.`,
   };
 }
 
 export default async function DynamicWebsitePage(props: DynamicPageProps) {
-  const params = await props.params;
-  const page = await getSanitizedPageContentByPath(`/${params.slug}`);
+  const page = await getPageForParams(props);
 
   if (!page) {
     notFound();

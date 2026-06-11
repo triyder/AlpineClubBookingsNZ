@@ -23,6 +23,9 @@ fork for another organisation. See `NOTICE.md`.
 - Admin tools for members, CSV import, bookings, bed allocation, payments,
   seasons, policies, reports, email, audit logs, issue reports, waitlist,
   lodge, Xero operations, and hut leaders
+- Admin-editable public website pages with sanitised HTML content, embed
+  tokens for interactive sections, and a menu generated from page settings
+  (see `CONFIGURATION.md`, "Website Page Content")
 - Lodge kiosk with PIN access, arrivals/departures, chores, and issue reporting
 - Xero integrations for operational accounting plus a separate finance Xero
   boundary and finance reports
