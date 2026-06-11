@@ -1,6 +1,6 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
-  DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
+  DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
   NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
   NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
   AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}
@@ -36,6 +36,7 @@ x-app-environment: &app-environment
   CRON_SECRET: ${CRON_SECRET}
   SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
   SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+  SEED_LODGE_PASSWORD: ${SEED_LODGE_PASSWORD:-}
   LEGACY_DASHBOARD_EXPORT_TOKEN: ${LEGACY_DASHBOARD_EXPORT_TOKEN:-}
   CRON_ENABLED: ${CRON_ENABLED:-true}
   BACKUP_ENABLED: ${BACKUP_ENABLED:-false}
@@ -101,7 +102,7 @@ services:
         max-file: "5"
     environment:
       POSTGRES_USER: tac
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       POSTGRES_DB: tacbookings
       TZ: Pacific/Auckland
       PGTZ: Pacific/Auckland
@@ -182,7 +183,7 @@ services:
         condition: service_healthy
     environment:
       TZ: Pacific/Auckland
-      DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings
+      DATABASE_URL: postgresql://tac:${DB_PASSWORD:?DB_PASSWORD is required}@postgres:5432/tacbookings
     command: ./node_modules/.bin/prisma migrate deploy
 
 volumes:

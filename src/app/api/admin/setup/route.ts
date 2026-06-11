@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import {
   buildSetupReadiness,
   normalizeSetupProgress,
@@ -109,16 +108,8 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
 }
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const [database, progressRecord] = await Promise.all([
     getSetupDatabaseSnapshot(),
     prisma.setupProgress.findUnique({ where: { id: "default" } }),

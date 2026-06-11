@@ -62,8 +62,8 @@ fork for another organisation. See `NOTICE.md`.
    `FEATURE_XERO_INTEGRATION`, `FEATURE_BED_ALLOCATION`, and
    `FEATURE_INTERNET_BANKING_PAYMENTS`. Only the literal value `true` makes a
    module available to the deployment.
-5. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
-   change the seeded admin password on first login.
+5. Set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and `SEED_LODGE_PASSWORD`,
+   run the seed command, then change the seeded admin password on first login.
 6. After sign-in, use **Admin > Modules** to set club-level activation for
    optional modules. Optional modules are active only when both the `.env`
    capability and the Admin Modules activation are enabled.
@@ -102,8 +102,8 @@ npm run setup:check
 
 Edit `.env` before running the app. For a local database-backed setup, set at
 least `DATABASE_URL`, `DB_PASSWORD`, `AUTH_SECRET`, `NEXTAUTH_SECRET`,
-`NEXTAUTH_URL`, `CRON_SECRET`, `SEED_ADMIN_EMAIL`, and
-`SEED_ADMIN_PASSWORD`. External integrations can use test/demo credentials or
+`NEXTAUTH_URL`, `CRON_SECRET`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and
+`SEED_LODGE_PASSWORD`. External integrations can use test/demo credentials or
 remain blank unless the feature under test requires them.
 
 For a Docker-only local boot using example config, use the staging Compose
@@ -120,7 +120,8 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 ```
 
 The seed data creates the first admin account from those `SEED_ADMIN_*`
-variables and marks it for password change on first login. Change that password
+variables and marks it for password change on first login, and the shared
+lodge kiosk account from `SEED_LODGE_PASSWORD`. Change those passwords
 immediately in any shared or persistent environment.
 
 The Docker-only app listens on `http://localhost:3001` by default.
@@ -132,6 +133,7 @@ If you prefer `npm run dev`, run a local PostgreSQL server that matches
 npm run db:migrate
 SEED_ADMIN_EMAIL=admin@example.org \
 SEED_ADMIN_PASSWORD=replace-with-a-local-password \
+SEED_LODGE_PASSWORD=replace-with-a-local-kiosk-password \
   npm run db:seed
 npm run dev
 ```

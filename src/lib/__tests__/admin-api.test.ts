@@ -60,6 +60,9 @@ const mockedAuth = vi.mocked(auth);
 describe("Admin Subscriptions API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequireAdmin.mockImplementation(async () =>
+      (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock()
+    );
     vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
     vi.mocked(prisma.member.findMany).mockResolvedValue([] as any);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
@@ -648,6 +651,9 @@ describe("Admin Audit Log API", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequireAdmin.mockImplementation(async () =>
+      (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock()
+    );
     vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
   });
 

@@ -1,40 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 
 const querySchema = z.object({
   status: z.enum(["OPEN", "RESOLVED", "ALL"]).optional().default("OPEN"),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
-
-async function requireAdmin() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      session: null,
-    };
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return { response: inactiveResponse, session: null };
-  }
-
-  if (session.user.role !== "ADMIN") {
-    return {
-      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-      session: null,
-    };
-  }
-
-  return { response: null, session };
-}
 
 function summarizeReport(report: {
   id: string;
@@ -85,7 +60,7 @@ function summarizeReport(report: {
 
 export async function GET(request: NextRequest) {
   const admin = await requireAdmin();
-  if (admin.response) {
+  if (!admin.ok) {
     return admin.response;
   }
 
@@ -144,7 +119,7 @@ export async function GET(request: NextRequest) {
 
     logAudit({
       action: "issue_report.admin_listed",
-      memberId: admin.session!.user.id,
+      memberId: admin.session.user.id,
       details: JSON.stringify({ status, page, pageSize }),
       ipAddress:
         request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",

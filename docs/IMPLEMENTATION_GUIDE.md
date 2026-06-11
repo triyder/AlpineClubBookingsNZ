@@ -66,6 +66,7 @@ Set at least these values in `.env` before running a database-backed app:
 - `CRON_SECRET`
 - `SEED_ADMIN_EMAIL`
 - `SEED_ADMIN_PASSWORD`
+- `SEED_LODGE_PASSWORD`
 
 External integrations can stay disabled or use test/demo credentials while you
 bring up the core app.

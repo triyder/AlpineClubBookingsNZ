@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { handleXeroCallback } from "@/lib/xero";
 import logger from "@/lib/logger";
 import {
@@ -36,13 +35,15 @@ export async function GET(request: NextRequest) {
   const requestState = incomingUrl.searchParams.get("state");
   const cookieState = request.cookies.get(XERO_OAUTH_STATE_COOKIE)?.value;
 
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.redirect(new URL("/login", baseUrl));
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
+  // Browser-facing OAuth callback: send unauthenticated/non-admin users to
+  // the login page instead of returning a JSON error.
+  const loginRedirect = () => NextResponse.redirect(new URL("/login", baseUrl));
+  const guard = await requireAdmin({
+    unauthenticatedResponse: loginRedirect,
+    forbiddenResponse: loginRedirect,
+  });
+  if (!guard.ok) {
+    return guard.response;
   }
 
   try {

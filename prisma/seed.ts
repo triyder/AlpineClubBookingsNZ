@@ -35,7 +35,9 @@ function seedAgeTierSettings() {
   }));
 }
 
-function requireSeedEnv(name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD") {
+function requireSeedEnv(
+  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD"
+) {
   const value = process.env[name]?.trim();
   if (!value) {
     throw new Error(`${name} is required before running prisma/seed.ts`);
@@ -283,7 +285,10 @@ async function main() {
   });
 
   if (!existingLodge) {
-    const lodgePasswordHash = await bcrypt.hash("lodge123", 12);
+    const lodgePasswordHash = await bcrypt.hash(
+      requireSeedEnv("SEED_LODGE_PASSWORD"),
+      12
+    );
     await prisma.member.create({
       data: {
         email: lodgeAccountEmail,
@@ -296,7 +301,7 @@ async function main() {
         forcePasswordChange: false,
       },
     });
-    console.log(`Lodge account seeded: ${lodgeAccountEmail} / lodge123`);
+    console.log(`Lodge account seeded: ${lodgeAccountEmail}`);
   }
 
   // Seed Winter 2026 season (June - September) with rates

@@ -3,8 +3,7 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
@@ -132,15 +131,9 @@ function normalizeImportDateField(
  * Bulk import members from CSV data.
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
   // Rate limit: 5 imports per hour
   const rateLimitResponse = applyRateLimit(
     { id: "member-import", limit: 5, windowSeconds: 60 * 60 },

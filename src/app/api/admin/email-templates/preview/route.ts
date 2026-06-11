@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import {
   EMAIL_TEMPLATE_KEY_SET,
   getEmailTemplateDefinition,
@@ -9,7 +8,7 @@ import {
   renderEmailTemplatePreview,
   validateEmailTemplateContent,
 } from "@/lib/email-message-renderer";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 
 const previewSchema = z
   .object({
@@ -19,20 +18,9 @@ const previewSchema = z
   })
   .strict();
 
-async function requireAdmin() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  return requireActiveSessionUser(session.user.id);
-}
-
 export async function POST(request: NextRequest) {
-  const inactiveResponse = await requireAdmin();
-  if (inactiveResponse) return inactiveResponse;
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
 
   let body: unknown;
   try {

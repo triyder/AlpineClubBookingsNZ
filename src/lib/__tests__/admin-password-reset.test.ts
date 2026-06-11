@@ -72,10 +72,10 @@ describe("Admin Send Password Reset API", () => {
     expect(body.error).toBe("Unauthorized");
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
     const res = await POST(makeReq({ memberIds: ["m1"] }));
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("returns 422 for empty memberIds array", async () => {

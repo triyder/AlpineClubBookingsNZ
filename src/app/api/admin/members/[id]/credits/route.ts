@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 import {
   getMemberCreditBalance,
@@ -20,15 +19,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const inactiveResponse = await requireActiveSessionUser(session.user.id);
-    if (inactiveResponse) {
-      return inactiveResponse;
-    }
-
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
     const { id } = await params;
 
     const [balanceCents, history, pendingRequests] = await Promise.all([
@@ -62,15 +54,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await auth();
-    if (!session?.user || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const inactiveResponse = await requireActiveSessionUser(session.user.id);
-    if (inactiveResponse) {
-      return inactiveResponse;
-    }
-
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
+    const session = guard.session;
     const { id } = await params;
     const body = await request.json();
     const parsed = adjustmentSchema.safeParse(body);
