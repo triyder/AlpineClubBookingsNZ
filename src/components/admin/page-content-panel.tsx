@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { EditablePageRecord } from "@/lib/page-content";
+import { Label } from "../ui/label";
 
 function stripHtml(html: string): string {
   return html
@@ -58,6 +59,13 @@ function formatUpdatedAt(value: string | null): string {
     timeStyle: "short",
   });
 }
+
+const HOME_EMBED_TOKENS = [
+  "committee-members-cards",
+  "member-application-form",
+  "contact-form",
+  "join-apply-form",
+] as const;
 
 type WysiwygEditorHandle = {
   getHtml: () => string;
@@ -494,6 +502,17 @@ const WysiwygEditor = forwardRef<
           className={`${editorClassName} overflow-y-auto rounded-md border border-slate-300 bg-white p-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400 [&_a]:text-blue-700 [&_a]:underline [&_a]:decoration-blue-400 [&_b]:font-bold [&_blockquote]:my-3 [&_blockquote]:border-l-4 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:italic [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_em]:italic [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-bold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-xl [&_h3]:font-semibold [&_hr]:my-4 [&_hr]:border-slate-300 [&_i]:italic [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-100 [&_pre]:p-3 [&_pre]:font-mono [&_strong]:font-bold [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_u]:underline [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6`}
         />
       )}
+
+      <div className="space-y-2">
+        <Label>Tokens</Label>
+        <div className="flex flex-wrap gap-2">
+          {HOME_EMBED_TOKENS.map((token) => (
+            <Badge key={token} variant="outline">
+              {`{{${token}}}`}
+            </Badge>
+          ))}
+        </div>
+      </div>
 
       <Dialog open={imagePickerOpen} onOpenChange={setImagePickerOpen}>
         <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
