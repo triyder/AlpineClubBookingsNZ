@@ -7,7 +7,6 @@ import {
   BedDouble,
   Check,
   LoaderCircle,
-  Plus,
   RefreshCw,
   Save,
   Trash2,
@@ -35,7 +34,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 
 interface DashboardBed {
   id: string;
@@ -119,19 +117,6 @@ interface DashboardPayload {
   warnings: DashboardWarning[];
 }
 
-interface RoomDraft {
-  name: string;
-  sortOrder: string;
-  active: boolean;
-  notes: string;
-}
-
-interface BedDraft {
-  name: string;
-  sortOrder: string;
-  active: boolean;
-}
-
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -159,23 +144,6 @@ function allocationKey(bookingGuestId: string, stayDate: string) {
   return `${bookingGuestId}:${stayDate}`;
 }
 
-function roomEditFromRoom(room: DashboardRoom): RoomDraft {
-  return {
-    name: room.name,
-    sortOrder: String(room.sortOrder),
-    active: room.active,
-    notes: room.notes ?? "",
-  };
-}
-
-function bedEditFromBed(bed: DashboardBed): BedDraft {
-  return {
-    name: bed.name,
-    sortOrder: String(bed.sortOrder),
-    active: bed.active,
-  };
-}
-
 export default function AdminBedAllocationPage() {
   const searchParams = useSearchParams();
   const requestedFrom = searchParams.get("from");
@@ -190,15 +158,6 @@ export default function AdminBedAllocationPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [autoAllocationEnabled, setAutoAllocationEnabled] = useState(true);
-  const [roomDraft, setRoomDraft] = useState<RoomDraft>({
-    name: "",
-    sortOrder: "0",
-    active: true,
-    notes: "",
-  });
-  const [roomEdits, setRoomEdits] = useState<Record<string, RoomDraft>>({});
-  const [bedDrafts, setBedDrafts] = useState<Record<string, BedDraft>>({});
-  const [bedEdits, setBedEdits] = useState<Record<string, BedDraft>>({});
   const [selectedBeds, setSelectedBeds] = useState<Record<string, string>>({});
 
   const activeBedOptions = useMemo(() => {
@@ -232,16 +191,6 @@ export default function AdminBedAllocationPage() {
       const data = (await response.json()) as DashboardPayload;
       setPayload(data);
       setAutoAllocationEnabled(data.settings.autoAllocationEnabled);
-      setRoomEdits(
-        Object.fromEntries(data.rooms.map((room) => [room.id, roomEditFromRoom(room)])),
-      );
-      setBedEdits(
-        Object.fromEntries(
-          data.rooms.flatMap((room) =>
-            room.beds.map((bed) => [bed.id, bedEditFromBed(bed)]),
-          ),
-        ),
-      );
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -278,41 +227,6 @@ export default function AdminBedAllocationPage() {
     }
   }
 
-  function updateRoomEdit(roomId: string, patch: Partial<RoomDraft>) {
-    setRoomEdits((current) => ({
-      ...current,
-      [roomId]: {
-        ...(current[roomId] ?? {
-          name: "",
-          sortOrder: "0",
-          active: true,
-          notes: "",
-        }),
-        ...patch,
-      },
-    }));
-  }
-
-  function updateBedDraft(roomId: string, patch: Partial<BedDraft>) {
-    setBedDrafts((current) => ({
-      ...current,
-      [roomId]: {
-        ...(current[roomId] ?? { name: "", sortOrder: "0", active: true }),
-        ...patch,
-      },
-    }));
-  }
-
-  function updateBedEdit(bedId: string, patch: Partial<BedDraft>) {
-    setBedEdits((current) => ({
-      ...current,
-      [bedId]: {
-        ...(current[bedId] ?? { name: "", sortOrder: "0", active: true }),
-        ...patch,
-      },
-    }));
-  }
-
   async function saveSettings() {
     await mutate(
       "settings",
@@ -323,87 +237,6 @@ export default function AdminBedAllocationPage() {
           body: JSON.stringify({ autoAllocationEnabled }),
         }),
       "Bed allocation mode saved",
-    );
-  }
-
-  async function createRoom() {
-    await mutate(
-      "room-new",
-      () =>
-        fetch("/api/admin/bed-allocation/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: roomDraft.name,
-            sortOrder: Number(roomDraft.sortOrder || 0),
-            active: roomDraft.active,
-            notes: roomDraft.notes || null,
-          }),
-        }),
-      "Room created",
-    );
-    setRoomDraft({ name: "", sortOrder: "0", active: true, notes: "" });
-  }
-
-  async function saveRoom(roomId: string) {
-    const draft = roomEdits[roomId];
-    if (!draft) return;
-
-    await mutate(
-      `room-${roomId}`,
-      () =>
-        fetch(`/api/admin/bed-allocation/rooms/${roomId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: draft.name,
-            sortOrder: Number(draft.sortOrder || 0),
-            active: draft.active,
-            notes: draft.notes || null,
-          }),
-        }),
-      "Room saved",
-    );
-  }
-
-  async function createBed(roomId: string) {
-    const draft = bedDrafts[roomId] ?? { name: "", sortOrder: "0", active: true };
-
-    await mutate(
-      `bed-new-${roomId}`,
-      () =>
-        fetch("/api/admin/bed-allocation/beds", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            roomId,
-            name: draft.name,
-            sortOrder: Number(draft.sortOrder || 0),
-            active: draft.active,
-          }),
-        }),
-      "Bed created",
-    );
-    updateBedDraft(roomId, { name: "", sortOrder: "0", active: true });
-  }
-
-  async function saveBed(bedId: string) {
-    const draft = bedEdits[bedId];
-    if (!draft) return;
-
-    await mutate(
-      `bed-${bedId}`,
-      () =>
-        fetch(`/api/admin/bed-allocation/beds/${bedId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: draft.name,
-            sortOrder: Number(draft.sortOrder || 0),
-            active: draft.active,
-          }),
-        }),
-      "Bed saved",
     );
   }
 
@@ -583,250 +416,6 @@ export default function AdminBedAllocationPage() {
 
       {payload ? (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Rooms And Beds</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="grid gap-3 md:grid-cols-[2fr_90px_1fr_auto_auto]">
-                <Input
-                  placeholder="Room name"
-                  value={roomDraft.name}
-                  onChange={(event) =>
-                    setRoomDraft((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  type="number"
-                  min="0"
-                  value={roomDraft.sortOrder}
-                  onChange={(event) =>
-                    setRoomDraft((current) => ({
-                      ...current,
-                      sortOrder: event.target.value,
-                    }))
-                  }
-                />
-                <Textarea
-                  placeholder="Notes"
-                  value={roomDraft.notes}
-                  onChange={(event) =>
-                    setRoomDraft((current) => ({
-                      ...current,
-                      notes: event.target.value,
-                    }))
-                  }
-                  className="min-h-9"
-                />
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={roomDraft.active}
-                    onCheckedChange={(checked) =>
-                      setRoomDraft((current) => ({
-                        ...current,
-                        active: checked === true,
-                      }))
-                    }
-                  />
-                  Active
-                </label>
-                <Button
-                  onClick={() => void createRoom()}
-                  disabled={saving === "room-new"}
-                  className="gap-2"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Room
-                </Button>
-              </div>
-
-              {payload.rooms.length === 0 ? (
-                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                  No rooms configured.
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {payload.rooms.map((room) => {
-                    const edit = roomEdits[room.id] ?? roomEditFromRoom(room);
-                    const bedDraft =
-                      bedDrafts[room.id] ?? {
-                        name: "",
-                        sortOrder: "0",
-                        active: true,
-                      };
-
-                    return (
-                      <div key={room.id} className="rounded-md border p-4">
-                        <div className="grid gap-3 md:grid-cols-[2fr_90px_1fr_auto_auto]">
-                          <Input
-                            value={edit.name}
-                            onChange={(event) =>
-                              updateRoomEdit(room.id, { name: event.target.value })
-                            }
-                          />
-                          <Input
-                            type="number"
-                            min="0"
-                            value={edit.sortOrder}
-                            onChange={(event) =>
-                              updateRoomEdit(room.id, {
-                                sortOrder: event.target.value,
-                              })
-                            }
-                          />
-                          <Textarea
-                            value={edit.notes}
-                            onChange={(event) =>
-                              updateRoomEdit(room.id, { notes: event.target.value })
-                            }
-                            className="min-h-9"
-                          />
-                          <label className="flex items-center gap-2 text-sm">
-                            <Checkbox
-                              checked={edit.active}
-                              onCheckedChange={(checked) =>
-                                updateRoomEdit(room.id, {
-                                  active: checked === true,
-                                })
-                              }
-                            />
-                            Active
-                          </label>
-                          <Button
-                            variant="outline"
-                            onClick={() => void saveRoom(room.id)}
-                            disabled={saving === `room-${room.id}`}
-                            className="gap-2"
-                          >
-                            <Save className="h-4 w-4" />
-                            Save
-                          </Button>
-                        </div>
-
-                        <div className="mt-4 space-y-3">
-                          <div className="grid gap-3 md:grid-cols-[2fr_90px_auto_auto]">
-                            <Input
-                              placeholder="Bed name"
-                              value={bedDraft.name}
-                              onChange={(event) =>
-                                updateBedDraft(room.id, {
-                                  name: event.target.value,
-                                })
-                              }
-                            />
-                            <Input
-                              type="number"
-                              min="0"
-                              value={bedDraft.sortOrder}
-                              onChange={(event) =>
-                                updateBedDraft(room.id, {
-                                  sortOrder: event.target.value,
-                                })
-                              }
-                            />
-                            <label className="flex items-center gap-2 text-sm">
-                              <Checkbox
-                                checked={bedDraft.active}
-                                onCheckedChange={(checked) =>
-                                  updateBedDraft(room.id, {
-                                    active: checked === true,
-                                  })
-                                }
-                              />
-                              Active
-                            </label>
-                            <Button
-                              variant="outline"
-                              onClick={() => void createBed(room.id)}
-                              disabled={saving === `bed-new-${room.id}`}
-                              className="gap-2"
-                            >
-                              <Plus className="h-4 w-4" />
-                              Add Bed
-                            </Button>
-                          </div>
-
-                          {room.beds.length === 0 ? (
-                            <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
-                              No beds in this room.
-                            </div>
-                          ) : (
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>Bed</TableHead>
-                                  <TableHead className="w-24">Sort</TableHead>
-                                  <TableHead className="w-24">Active</TableHead>
-                                  <TableHead className="w-28" />
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {room.beds.map((bed) => {
-                                  const bedEdit =
-                                    bedEdits[bed.id] ?? bedEditFromBed(bed);
-
-                                  return (
-                                    <TableRow key={bed.id}>
-                                      <TableCell>
-                                        <Input
-                                          value={bedEdit.name}
-                                          onChange={(event) =>
-                                            updateBedEdit(bed.id, {
-                                              name: event.target.value,
-                                            })
-                                          }
-                                        />
-                                      </TableCell>
-                                      <TableCell>
-                                        <Input
-                                          type="number"
-                                          min="0"
-                                          value={bedEdit.sortOrder}
-                                          onChange={(event) =>
-                                            updateBedEdit(bed.id, {
-                                              sortOrder: event.target.value,
-                                            })
-                                          }
-                                        />
-                                      </TableCell>
-                                      <TableCell>
-                                        <Checkbox
-                                          checked={bedEdit.active}
-                                          onCheckedChange={(checked) =>
-                                            updateBedEdit(bed.id, {
-                                              active: checked === true,
-                                            })
-                                          }
-                                        />
-                                      </TableCell>
-                                      <TableCell>
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => void saveBed(bed.id)}
-                                          disabled={saving === `bed-${bed.id}`}
-                                        >
-                                          Save
-                                        </Button>
-                                      </TableCell>
-                                    </TableRow>
-                                  );
-                                })}
-                              </TableBody>
-                            </Table>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Allocation Board</CardTitle>

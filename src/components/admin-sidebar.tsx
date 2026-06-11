@@ -126,6 +126,7 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
+      { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
       {
         href: "/admin/seasons",
         label: "Hut Fees & Seasons",

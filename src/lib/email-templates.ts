@@ -11,7 +11,7 @@ import {
 } from "@/config/club-identity";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { LODGE_CAPACITY } from "./capacity";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { SUPPORT_EMAIL } from "./email-sender";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
 import { formatNZDate, formatNZDateTime } from "./nzst-date";
@@ -791,15 +791,18 @@ export function adminCapacityWarningTemplate(days: Array<{
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
-}>): string {
+}>, lodgeCapacity = FALLBACK_LODGE_CAPACITY): string {
   const tableRowsHtml = days
     .map((d) => {
-      const pct = Math.round((d.occupiedBeds / LODGE_CAPACITY) * 100);
+      const pct =
+        lodgeCapacity > 0
+          ? Math.round((d.occupiedBeds / lodgeCapacity) * 100)
+          : 0;
       const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : TEXT_COLOR;
       return `
     <tr>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(d.date)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/${LODGE_CAPACITY}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/${lodgeCapacity}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${pct}%</td>
     </tr>`;

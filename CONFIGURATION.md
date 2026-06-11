@@ -40,7 +40,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `socialLinks.facebook` | no | Facebook URL used by public pages/footer. |
 | `beds[].id` | yes | Stable bed or lodge identifier. |
 | `beds[].name` | yes | User-facing bed/lodge name. |
-| `beds[].capacity` | yes | Positive integer capacity. |
+| `beds[].capacity` | yes | Positive integer fallback/import capacity. |
 | `beds[].type` | yes | One of `dormitory`, `private`, or `shared`. |
 | `ageTiers[].id` | yes | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. |
 | `ageTiers[].label` | yes | User-facing age-tier label. |
@@ -52,6 +52,13 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `ageTiers[].nightlyRates.winter.nonMemberCents` | yes | Winter non-member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.summer.memberCents` | yes | Summer member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.summer.nonMemberCents` | yes | Summer non-member nightly rate in integer cents. |
+
+When the bed allocation module is effectively enabled and at least one active
+bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
+active bed count from that configurator. If the module is disabled, or the
+module is enabled but no active beds exist yet, the system falls back to the
+`beds[].capacity` total in `config/club.json`. Use the Rooms & Beds import
+action to seed the configurator from `config/club.json` during transition.
 
 Keep all money values in integer cents.
 

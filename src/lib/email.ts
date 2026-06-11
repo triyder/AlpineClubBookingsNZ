@@ -1146,10 +1146,10 @@ export async function sendAdminCapacityWarningAlert(days: Array<{
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
-}>) {
+}>, lodgeCapacity: number) {
   await sendToAdmins({
     subject: `Capacity Warning: ${days.length} high-occupancy day${days.length > 1 ? "s" : ""} ahead`,
-    html: adminCapacityWarningTemplate(days),
+    html: adminCapacityWarningTemplate(days, lodgeCapacity),
     templateName: "admin-capacity-warning",
     templateData: {
       count: days.length,
@@ -1157,7 +1157,13 @@ export async function sendAdminCapacityWarningAlert(days: Array<{
       date: days.map((day) => formatNZDate(day.date)).join(", "),
       occupiedBeds: days.map((day) => day.occupiedBeds).join(", "),
       availableBeds: days.map((day) => day.availableBeds).join(", "),
-      percent: days.map((day) => String(day.occupiedBeds)).join(", "),
+      percent: days
+        .map((day) =>
+          lodgeCapacity > 0
+            ? String(Math.round((day.occupiedBeds / lodgeCapacity) * 100))
+            : "0",
+        )
+        .join(", "),
     },
     preferenceKey: "adminCapacityWarning",
   });

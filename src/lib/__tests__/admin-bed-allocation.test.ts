@@ -1,12 +1,29 @@
 import { readFileSync } from "fs";
 import path from "path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {},
+}));
+
+vi.mock("@/lib/lodge-capacity", () => ({
+  getLodgeCapacityStatus: vi.fn().mockResolvedValue({
+    capacity: 29,
+    source: "club_config",
+    bedAllocationEnabled: false,
+    activeBedCount: 0,
+    fallbackCapacity: 29,
+  }),
+}));
+
 import {
   BedAllocationAdminError,
   MAX_BED_ALLOCATION_RANGE_NIGHTS,
   buildBedAllocationWarnings,
   parseBedAllocationDateRange,
+  updateBedAllocationBed,
 } from "@/lib/admin-bed-allocation";
+import { parseDateOnly } from "@/lib/date-only";
 
 function readRepoFile(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -89,8 +106,36 @@ describe("admin bed allocation", () => {
 
     expect(featureRoutes).toContain('flag: "bedAllocation"');
     expect(featureRoutes).toContain('"/admin/bed-allocation"');
+    expect(featureRoutes).toContain('"/admin/rooms-beds"');
     expect(featureRoutes).toContain('"/api/admin/bed-allocation"');
     expect(sidebar).toContain('href: "/admin/bed-allocation"');
+    expect(sidebar).toContain('href: "/admin/rooms-beds"');
+  });
+
+  it("blocks deactivating a bed with future allocations", async () => {
+    const update = vi.fn();
+    const db = {
+      bedAllocation: {
+        findMany: vi.fn().mockResolvedValue([
+          { stayDate: parseDateOnly("2026-07-01") },
+          { stayDate: parseDateOnly("2026-07-03") },
+        ]),
+      },
+      lodgeBed: {
+        update,
+      },
+    };
+
+    await expect(
+      updateBedAllocationBed({
+        id: "bed-1",
+        active: false,
+        db: db as never,
+      }),
+    ).rejects.toThrow(
+      "Cannot deactivate this bed while future allocations exist on 2026-07-01, 2026-07-03.",
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("adds persistent admin-only mode settings", () => {

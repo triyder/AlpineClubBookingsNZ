@@ -10,7 +10,7 @@ import {
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
@@ -66,7 +66,7 @@ const createBookingSchema = z.object({
       })
     )
     .min(1)
-    .max(LODGE_CAPACITY),
+    .max(200),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
@@ -214,6 +214,14 @@ export async function POST(request: NextRequest) {
   const today = getTodayDateOnly();
   if (checkIn < today) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+  }
+
+  const lodgeCapacity = await getLodgeCapacity();
+  if (guestInputs.length > lodgeCapacity) {
+    return NextResponse.json(
+      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
+      { status: 400 },
+    );
   }
 
   // Subscription gate for the booking owner. Bypassed when the Xero module

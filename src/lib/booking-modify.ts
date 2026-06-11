@@ -76,7 +76,7 @@ import {
   normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 export type BatchModifyInput = {
   checkIn?: string;
@@ -632,9 +632,10 @@ export async function prepareGuestPlan(
   ];
 
   const totalGuestCount = guestsForPricing.length;
-  if (totalGuestCount > LODGE_CAPACITY) {
+  const lodgeCapacity = await getLodgeCapacity(tx);
+  if (totalGuestCount > lodgeCapacity) {
     throw new ApiError(
-      `A booking cannot exceed ${LODGE_CAPACITY} guests`,
+      `A booking cannot exceed ${lodgeCapacity} guests`,
       400,
     );
   }

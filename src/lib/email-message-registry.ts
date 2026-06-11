@@ -2,6 +2,7 @@ import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
 } from "@/lib/email-message-audit-defaults";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export type EmailTemplateAudience = "member" | "admin" | "system";
 export type NotificationDeliveryModeValue = "always" | "content_only" | "disabled";
@@ -276,7 +277,7 @@ function sampleValue(token: string): string {
   if (token === "SUPPORT_EMAIL" || token === "CONTACT_EMAIL") {
     return "support@example.org";
   }
-  if (token === "LODGE_CAPACITY") return "29";
+  if (token === "LODGE_CAPACITY") return String(FALLBACK_LODGE_CAPACITY);
   if (token.endsWith("Email") || token === "email") return "member@example.org";
   if (token.endsWith("Url") || token.endsWith("URL")) {
     return "https://bookings.example.org/admin";
