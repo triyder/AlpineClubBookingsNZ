@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
 
@@ -100,9 +101,9 @@ export default function PrintRosterPage() {
           >
             Print Roster
           </button>
-          <a href="/admin/roster" className="font-medium text-brand-charcoal hover:underline">
+          <Link href="/admin/roster" className="font-medium text-brand-charcoal hover:underline">
             Back to Roster
-          </a>
+          </Link>
         </div>
 
         {/* Header */}

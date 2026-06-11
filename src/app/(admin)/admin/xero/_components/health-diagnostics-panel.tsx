@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import type { AgeTier } from "@prisma/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -384,7 +385,7 @@ function ContactGroupMismatchPanel({
                 {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${new Date(data.lastRefreshedAt).toLocaleString("en-NZ")}.` : "The shared Xero contact-group cache has not been refreshed yet."}
               </p>
             </div>
-            <a href="/admin/age-tier-settings" className="text-sm text-blue-600 hover:underline">Open Age Group Settings</a>
+            <Link href="/admin/age-tier-settings" className="text-sm text-blue-600 hover:underline">Open Age Group Settings</Link>
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">Refresh Xero contact groups before relying on this audit.</p>

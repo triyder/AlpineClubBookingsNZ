@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -120,7 +121,7 @@ export function MemberLifecycleCard({
                 {formatMemberDateNz(openCancellationRequest.submittedAt)} ({openCancellationRequest.participantStatus.replace(/_/g, " ").toLowerCase()})
               </p>
               <p className="text-xs text-amber-800">
-                Review in the <a href="/admin/membership-cancellations" className="underline">cancellation review queue</a>.
+                Review in the <Link href="/admin/membership-cancellations" className="underline">cancellation review queue</Link>.
               </p>
             </div>
           </div>
