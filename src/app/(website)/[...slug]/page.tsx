@@ -98,6 +98,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
   }
 
   const embeddedBody = buildEmbeddedBody(page.contentHtml);
+  const headerHtml = { __html: page.headerText };
 
   return (
     <>
@@ -107,9 +108,10 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
           <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             {page.title}
           </h1>
+          {/* headerText is returned by getSanitizedPageContentByPath. */}
           <div
             className="mt-4 max-w-2xl text-lg text-brand-snow/80"
-            dangerouslySetInnerHTML={{ __html: page.headerText }}
+            dangerouslySetInnerHTML={headerHtml}
           />
         </div>
       </section>
