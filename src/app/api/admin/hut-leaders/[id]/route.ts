@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -20,15 +19,8 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const { id } = await params;
 
   let body: unknown;
@@ -121,15 +113,8 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const { id } = await params;
 
   const existing = await prisma.hutLeaderAssignment.findUnique({ where: { id } });

@@ -131,7 +131,8 @@ docker compose ps
 
 Create or seed accounts only for the intended environment. The demo seed admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
-`SEED_ADMIN_PASSWORD`; it is for local and staging use and must be changed
+`SEED_ADMIN_PASSWORD`, and the shared lodge kiosk account by
+`SEED_LODGE_PASSWORD`; they are for local and staging use and must be changed
 before any shared environment is exposed.
 
 ## Routine Production Deploy

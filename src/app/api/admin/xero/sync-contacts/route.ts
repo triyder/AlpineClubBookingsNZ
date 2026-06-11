@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { syncContactsFromXero } from "@/lib/xero";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
@@ -19,15 +18,9 @@ const syncContactsSchema = z.object({
  * Returns a detailed SyncReport with categorized results.
  */
 export async function POST(request?: Request) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
   let options: z.infer<typeof syncContactsSchema> = {};
   const contentType = request?.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {

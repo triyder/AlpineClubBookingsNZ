@@ -9,6 +9,12 @@ class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
 }
 
+// bcrypt hash of a random throwaway value. Compared against when no member
+// matches the email so unknown and known accounts take the same time,
+// preventing account enumeration via response timing.
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$vgnj5fAMZNzi.jYdELu0f.rjCvFqb/tgzYxtvBWJu8vCJYVO64SKC";
+
 const SESSION_MEMBER_SECURITY_SELECT = {
   role: true,
   forcePasswordChange: true,
@@ -84,6 +90,7 @@ export const authConfig = {
         });
 
         if (!member || !member.active) {
+          await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
           return null;
         }
 

@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -19,30 +18,6 @@ const actionSchema = z.discriminatedUnion("action", [
     reason: z.string().trim().max(300).optional(),
   }),
 ]);
-
-async function requireAdmin() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      session: null,
-    };
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return { response: inactiveResponse, session: null };
-  }
-
-  if (session.user.role !== "ADMIN") {
-    return {
-      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-      session: null,
-    };
-  }
-
-  return { response: null, session };
-}
 
 function mapReport(report: {
   id: string;
@@ -150,7 +125,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const admin = await requireAdmin();
-  if (admin.response) {
+  if (!admin.ok) {
     return admin.response;
   }
 
@@ -162,7 +137,7 @@ export async function GET(
 
   logAudit({
     action: "issue_report.admin_viewed",
-    memberId: admin.session!.user.id,
+    memberId: admin.session.user.id,
     targetId: id,
     details: JSON.stringify({
       hasScreenshot: Boolean(report.screenshotDataUrl && !report.screenshotDeletedAt),
@@ -181,7 +156,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const admin = await requireAdmin();
-  if (admin.response) {
+  if (!admin.ok) {
     return admin.response;
   }
 
@@ -216,13 +191,13 @@ export async function PATCH(
         where: { id },
         data: {
           resolvedAt: now,
-          resolvedById: admin.session!.user.id,
+          resolvedById: admin.session.user.id,
           resolutionNote: parsed.data.note || null,
         },
       });
       logAudit({
         action: "issue_report.resolved",
-        memberId: admin.session!.user.id,
+        memberId: admin.session.user.id,
         targetId: id,
         details: parsed.data.note || "No note",
         ipAddress:
@@ -241,7 +216,7 @@ export async function PATCH(
       });
       logAudit({
         action: "issue_report.reopened",
-        memberId: admin.session!.user.id,
+        memberId: admin.session.user.id,
         targetId: id,
         ipAddress:
           request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
@@ -254,13 +229,13 @@ export async function PATCH(
         data: {
           screenshotDataUrl: null,
           screenshotDeletedAt: now,
-          screenshotDeletedById: admin.session!.user.id,
+          screenshotDeletedById: admin.session.user.id,
           screenshotDeleteReason: parsed.data.reason || "Deleted by admin",
         },
       });
       logAudit({
         action: "issue_report.screenshot_deleted",
-        memberId: admin.session!.user.id,
+        memberId: admin.session.user.id,
         targetId: id,
         details: parsed.data.reason || "Deleted by admin",
         ipAddress:

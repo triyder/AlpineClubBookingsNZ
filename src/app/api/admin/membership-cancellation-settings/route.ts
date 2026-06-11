@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -10,7 +9,7 @@ import {
   normalizeMembershipCancellationSettings,
 } from "@/lib/membership-cancellation-settings";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 
 function nullableTrimmedString(maxLength: number) {
   return z
@@ -40,30 +39,9 @@ const settingsSchema = z
   })
   .strict();
 
-async function requireAdmin() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      session: null,
-    };
-  }
-  if (session.user.role !== "ADMIN") {
-    return {
-      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-      session: null,
-    };
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return { response: inactiveResponse, session: null };
-  }
-  return { response: null, session };
-}
-
 export async function GET() {
-  const { response } = await requireAdmin();
-  if (response) return response;
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
 
   const persisted = await prisma.membershipCancellationSetting.findUnique({
     where: { id: MEMBERSHIP_CANCELLATION_SETTINGS_ID },
@@ -81,11 +59,9 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const { response, session } = await requireAdmin();
-  if (response) return response;
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   let body: unknown;
   try {

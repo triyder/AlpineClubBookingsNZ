@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
-import { requireActiveSessionUser } from "@/lib/session-guards"
+import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
@@ -20,15 +19,8 @@ const createSchema = z.object({
 })
 
 export async function GET() {
-  const session = await auth()
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const policies = await prisma.minimumStayPolicy.findMany({
     orderBy: { startDate: "desc" },
   })
@@ -37,15 +29,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
   try {
     const body = await request.json()
     const data = createSchema.parse(body)

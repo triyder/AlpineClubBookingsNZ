@@ -34,6 +34,8 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({
+  requireAdmin: async () =>
+    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 

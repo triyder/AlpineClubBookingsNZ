@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { refreshAllMembershipStatuses } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { z } from "zod";
@@ -21,18 +20,8 @@ const syncMembershipsQuerySchema = z.object({
  * - `backfill`: also rechecks locally stale linked members
  */
 export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-  if (session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const parsed = syncMembershipsQuerySchema.safeParse({
     seasonYear: request.nextUrl.searchParams.get("seasonYear") ?? undefined,
     mode: request.nextUrl.searchParams.get("mode") ?? undefined,

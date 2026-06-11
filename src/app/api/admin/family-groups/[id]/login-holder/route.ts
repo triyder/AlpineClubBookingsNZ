@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveEmail } from "@/lib/member-utils";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 
 const SESSION_LAG_WARNING =
@@ -52,15 +51,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
   let body: unknown;
   try {
     body = await req.json();

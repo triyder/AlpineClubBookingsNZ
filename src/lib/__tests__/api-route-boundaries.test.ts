@@ -43,12 +43,9 @@ const issue675MalformedJsonRoutes = [
 ] as const;
 
 function hasAdminGuard(contents: string) {
-  return (
-    /\brequireAdmin\s*\(/.test(contents) ||
-    (/\bauth\s*\(/.test(contents) &&
-      /\brequireActiveSessionUser\s*\(/.test(contents) &&
-      /session\.user\.role\s*(?:!==|===)\s*["']ADMIN["']/.test(contents))
-  );
+  // Admin routes must use the shared requireAdmin helper; inline
+  // auth()/role-check/requireActiveSessionUser sequences are not accepted.
+  return /\brequireAdmin\s*\(/.test(contents);
 }
 
 function hasMemberGuard(contents: string) {

@@ -21,6 +21,8 @@ vi.mock("../logger", () => ({
 }));
 const mockRequireActiveSessionUser = vi.fn(async () => null);
 vi.mock("@/lib/session-guards", () => ({
+  requireAdmin: async () =>
+    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
 
@@ -271,17 +273,17 @@ vi.mock("../audit", () => ({
 import { auth } from "../auth";
 
 describe("GET /api/admin/family-suggestions", () => {
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER" } } as any);
 
     const { GET } = await import("../../app/api/admin/family-suggestions/route");
     const res = await GET();
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 });
 
 describe("POST /api/admin/family-suggestions", () => {
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER" } } as any);
 
     const { POST } = await import("../../app/api/admin/family-suggestions/route");
@@ -291,7 +293,7 @@ describe("POST /api/admin/family-suggestions", () => {
       body: JSON.stringify({ name: "Test", memberIds: ["m1", "m2"] }),
     });
     const res = await POST(req as any);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("validates input", async () => {

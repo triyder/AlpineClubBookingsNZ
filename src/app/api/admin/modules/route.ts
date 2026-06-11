@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -33,29 +32,6 @@ const updateSchema = z
   })
   .strict();
 
-async function requireAdminSession() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      session: null,
-    };
-  }
-  if (session.user.role !== "ADMIN") {
-    return {
-      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-      session: null,
-    };
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return { response: inactiveResponse, session: null };
-  }
-
-  return { response: null, session };
-}
-
 function getChanges(
   before: ModuleSettingsValues,
   after: ModuleSettingsValues,
@@ -68,22 +44,20 @@ function getChanges(
 }
 
 export async function GET() {
-  const { response } = await requireAdminSession();
-  if (response) {
-    return response;
+  const guard = await requireAdmin();
+  if (!guard.ok) {
+    return guard.response;
   }
 
   return NextResponse.json(await loadClubModuleSettings());
 }
 
 export async function PUT(request: Request) {
-  const { response, session } = await requireAdminSession();
-  if (response) {
-    return response;
+  const guard = await requireAdmin();
+  if (!guard.ok) {
+    return guard.response;
   }
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const session = guard.session;
 
   let body: unknown;
   try {

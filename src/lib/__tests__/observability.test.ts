@@ -98,6 +98,8 @@ vi.mock("@/lib/auth", () => ({
 const mockRequireActiveSessionUser = vi.fn(async () => null);
 
 vi.mock("@/lib/session-guards", () => ({
+  requireAdmin: async () =>
+    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: (...args: unknown[]) =>
     mockRequireActiveSessionUser(...args),
 }));
@@ -610,7 +612,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     vi.mocked(auth).mockResolvedValue({
       user: { id: "1", email: "user@test.com", name: "Test", role: "MEMBER", forcePasswordChange: false, isEmailVerified: true },
       expires: "",
@@ -619,7 +621,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     const { GET } = await import("@/app/api/admin/health/route");
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 401 for unauthenticated users", async () => {

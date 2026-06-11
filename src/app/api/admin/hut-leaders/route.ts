@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -25,15 +24,8 @@ const createSchema = z.object({
  * List all hut leader assignments.
  */
 export async function GET() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const assignments = await prisma.hutLeaderAssignment.findMany({
     include: {
       member: {
@@ -61,15 +53,8 @@ export async function GET() {
  * Create a new hut leader assignment.
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   let body: unknown;
   try {
     body = await req.json();

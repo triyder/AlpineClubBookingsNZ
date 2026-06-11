@@ -1,9 +1,8 @@
 import { after, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import logger from "@/lib/logger";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import {
   enqueueXeroSyncOperationRetry,
   processQueuedXeroOperationRetries,
@@ -21,16 +20,9 @@ function scheduleAfterResponse(task: () => Promise<void>) {
 }
 
 export async function POST() {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
   try {
     const failedOperationOverview = await getFailedXeroOperationOverview({ limit: 200 });
     const failedOperations = failedOperationOverview.activeOperations

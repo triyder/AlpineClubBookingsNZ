@@ -1,43 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import { EMAIL_TEMPLATE_KEY_SET } from "@/lib/email-message-registry";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 
 const resetSchema = z.object({
   templateName: z.string().trim().min(1),
 });
 
-async function requireAdmin() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return {
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-      session: null,
-    };
-  }
-  if (session.user.role !== "ADMIN") {
-    return {
-      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-      session: null,
-    };
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) return { response: inactiveResponse, session: null };
-  return { response: null, session };
-}
-
 export async function POST(request: NextRequest) {
-  const { response, session } = await requireAdmin();
-  if (response) return response;
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   let body: unknown;
   try {

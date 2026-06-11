@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
 import {
@@ -51,15 +50,8 @@ function getMaxActiveGuestsInVisibleMonth(booking: {
  * plus per-day availability data.
  */
 export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const calendarMonth = request.nextUrl.searchParams.get("calendarMonth");
   if (!calendarMonth || !/^\d{4}-\d{2}$/.test(calendarMonth)) {
     return NextResponse.json({ error: "calendarMonth parameter required (YYYY-MM)" }, { status: 400 });

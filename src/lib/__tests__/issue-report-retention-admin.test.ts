@@ -17,6 +17,8 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({
+  requireAdmin: async () =>
+    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 
@@ -64,26 +66,32 @@ function memberSession() {
   } as never);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 function reportRecord() {
+  // Dates are relative to the real clock so the unexpired screenshot stays
+  // unexpired; fixed dates here previously turned into a time bomb.
+  const capturedAt = new Date(Date.now() - 30 * DAY_MS);
+  const expiresAt = new Date(Date.now() + 30 * DAY_MS);
   return {
     id: "issue-1",
     pageUrl: "https://tac.example/book",
     pageTitle: "Book",
     description: "Something broke on the booking form.",
     screenshotDataUrl: "data:image/png;base64,cG5n",
-    screenshotCapturedAt: new Date("2026-05-11T00:00:00Z"),
-    screenshotExpiresAt: new Date("2026-06-10T00:00:00Z"),
+    screenshotCapturedAt: capturedAt,
+    screenshotExpiresAt: expiresAt,
     screenshotDeletedAt: null,
     screenshotDeletedById: null,
     screenshotDeleteReason: null,
     browserInfo: "Vitest Browser",
-    browserInfoExpiresAt: new Date("2026-06-10T00:00:00Z"),
+    browserInfoExpiresAt: expiresAt,
     browserInfoDeletedAt: null,
     resolvedAt: null,
     resolvedById: null,
     resolutionNote: null,
-    createdAt: new Date("2026-05-11T00:00:00Z"),
-    updatedAt: new Date("2026-05-11T00:00:00Z"),
+    createdAt: capturedAt,
+    updatedAt: capturedAt,
     member: {
       id: "member-1",
       firstName: "Casey",

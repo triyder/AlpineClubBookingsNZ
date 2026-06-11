@@ -608,10 +608,10 @@ describe("Phase 3: Admin Member Management", () => {
   // ── A3: CSV Export ──
 
   describe("A3 - CSV Export", () => {
-    it("returns 401 for non-admin", async () => {
+    it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
       const res = await exportMembers(new NextRequest("http://localhost/api/admin/members/export"));
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
     });
 
     it("returns CSV with correct headers and filename", async () => {
@@ -721,7 +721,7 @@ describe("Phase 3: Admin Member Management", () => {
   // ── A4: CSV Import ──
 
   describe("A4 - CSV Import", () => {
-    it("returns 401 for non-admin", async () => {
+    it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
       const req = new NextRequest("http://localhost/api/admin/members/import", {
         method: "POST",
@@ -729,7 +729,7 @@ describe("Phase 3: Admin Member Management", () => {
         headers: { "Content-Type": "application/json" },
       });
       const res = await importMembers(req);
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
     });
 
     it("validates required fields", async () => {

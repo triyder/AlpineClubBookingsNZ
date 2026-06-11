@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { importMembersFromXeroGroups, XeroDailyLimitError } from "@/lib/xero";
 import logger from "@/lib/logger";
 
@@ -24,15 +23,8 @@ const importSchema = z.object({
  * Repair mode can fetch only missing cached contact snapshots from Xero.
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   let body: unknown;
   try {
     body = await req.json();

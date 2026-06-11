@@ -18,6 +18,8 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 const mockRequireActiveSessionUser = vi.fn(async () => null);
 vi.mock("@/lib/session-guards", () => ({
+  requireAdmin: async () =>
+    (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
@@ -66,10 +68,10 @@ describe("Committee Admin API - GET /api/admin/committee", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns 403 for unauthenticated requests", async () => {
+  it("returns 401 for unauthenticated requests", async () => {
     mockedAuth.mockResolvedValue(null as any);
     const res = await listMembers();
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it("returns committee members for admin", async () => {

@@ -128,14 +128,19 @@ function makeReq(url: string, method: string, body?: unknown) {
 // Admin Family Groups API
 // =========================================================================
 describe("Admin Family Groups API", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireAdmin.mockImplementation(async () =>
+      (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock()
+    );
+  });
 
   describe("GET /api/admin/family-groups", () => {
-    it("returns 401 for non-admin", async () => {
+    it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
       const { GET } = await import("@/app/api/admin/family-groups/route");
       const res = await GET();
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
     });
 
     it("returns all family groups with members", async () => {
@@ -167,11 +172,11 @@ describe("Admin Family Groups API", () => {
   });
 
   describe("POST /api/admin/family-groups", () => {
-    it("returns 401 for non-admin", async () => {
+    it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
       const { POST } = await import("@/app/api/admin/family-groups/route");
       const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Test", memberIds: ["m1"] }));
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
     });
 
     it("creates a family group and assigns members", async () => {

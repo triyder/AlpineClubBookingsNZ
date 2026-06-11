@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Account } from "xero-node";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requireAdmin } from "@/lib/session-guards";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import {
   type XeroAccount,
@@ -15,15 +14,8 @@ import {
  * Returns { accounts: XeroAccount[] }
  */
 export async function GET(request?: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
   const forceRefresh = request?.nextUrl.searchParams.get("refresh") === "1";
 
   if (!forceRefresh) {

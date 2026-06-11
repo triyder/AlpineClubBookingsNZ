@@ -86,9 +86,11 @@ test/demo mode or disabled:
 | `CRON_SECRET` | Shared secret for cron and deploy status endpoints. |
 | `SEED_ADMIN_EMAIL` | Email for the first seeded admin account. |
 | `SEED_ADMIN_PASSWORD` | Initial password for the first seeded admin account. |
+| `SEED_LODGE_PASSWORD` | Initial password for the seeded shared lodge kiosk account. |
 
-`prisma/seed.ts` fails before seeding if either `SEED_ADMIN_*` value is unset.
-The seeded admin is forced through `/change-password` on first login.
+`prisma/seed.ts` fails before seeding if either `SEED_ADMIN_*` value is unset,
+and fails before creating the lodge kiosk account if `SEED_LODGE_PASSWORD` is
+unset. The seeded admin is forced through `/change-password` on first login.
 
 ## Setup Readiness
 
