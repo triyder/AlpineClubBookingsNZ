@@ -60,6 +60,7 @@ import {
   adminRefundRequestTemplate,
   adminBookingChangeRequestTemplate,
   adminIssueReportTemplate,
+  preArrivalReminderTemplate,
   type XeroReconciliationReportEmail,
 } from "./email-templates";
 import {
@@ -82,6 +83,7 @@ import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import {
   formatEmailFromAddressWithSettings,
+  loadEmailMessageSettings,
 } from "@/lib/email-message-settings";
 import {
   prepareEmailMessage,
@@ -128,6 +130,8 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "membership-application-approved",
   "membership-cancellation-confirmation",
   "hut-leader-assignment",
+  "booking-confirmed",
+  "pre-arrival-reminder",
 ]);
 
 // Failure-alert emails should also skip HTML retention so a broken admin
@@ -467,6 +471,7 @@ export async function sendBookingConfirmedEmail(
   totalCents: number,
   options?: { discountCents?: number; promoAdjustmentCents?: number; promoCode?: string }
 ) {
+  const settings = await loadEmailMessageSettings();
   const promoAdjustmentCents =
     options?.promoAdjustmentCents ??
     (options?.discountCents && options.discountCents > 0
@@ -476,7 +481,11 @@ export async function sendBookingConfirmedEmail(
   await sendEmail({
     to: email,
     subject: `Booking Confirmed - ${CLUB_LODGE_NAME}`,
-    html: bookingConfirmedTemplate(firstName, checkIn, checkOut, guestCount, totalCents, options),
+    html: bookingConfirmedTemplate(firstName, checkIn, checkOut, guestCount, totalCents, {
+      ...options,
+      lodgeTravelNote: settings.lodgeTravelNote,
+      doorCode: settings.doorCode,
+    }),
     templateName: "booking-confirmed",
     templateData: {
       firstName,
@@ -495,6 +504,7 @@ export async function sendBookingConfirmedEmail(
         : "",
       totalPaid: formatMoneyCents(totalCents),
       total: formatMoneyCents(totalCents),
+      doorCode: settings.doorCode ?? "",
     },
   });
 }
@@ -989,6 +999,35 @@ export async function sendCheckinReminderEmail(
         .map((chore) => chore.description ?? "")
         .filter(Boolean)
         .join(", "),
+    },
+  });
+}
+
+export async function sendPreArrivalReminderEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  expectedArrivalTime?: string | null;
+}) {
+  const settings = await loadEmailMessageSettings();
+  await sendEmail({
+    to: params.email,
+    subject: `Pre-arrival Information - ${CLUB_LODGE_NAME}`,
+    html: preArrivalReminderTemplate({
+      ...params,
+      lodgeTravelNote: settings.lodgeTravelNote,
+      doorCode: settings.doorCode,
+    }),
+    templateName: "pre-arrival-reminder",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      expectedArrivalTime: params.expectedArrivalTime ?? "",
+      doorCode: settings.doorCode ?? "",
     },
   });
 }

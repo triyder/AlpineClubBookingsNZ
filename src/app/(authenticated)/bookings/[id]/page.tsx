@@ -34,6 +34,7 @@ import {
 } from "@/lib/booking-payment-state";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
@@ -256,6 +257,13 @@ export default async function BookingDetailPage({
     !isDeleted &&
     booking.status === "CANCELLED" &&
     session.user.role === "ADMIN";
+  const showMemberArrivalInstructions =
+    !isDeleted &&
+    booking.memberId === session.user.id &&
+    ["CONFIRMED", "PAID"].includes(booking.status);
+  const memberArrivalInstructions = showMemberArrivalInstructions
+    ? await loadEmailMessageSettings()
+    : null;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -389,6 +397,29 @@ export default async function BookingDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {memberArrivalInstructions ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>How to Get to the Lodge</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-slate-700">
+            <p className="whitespace-pre-wrap">
+              {memberArrivalInstructions.lodgeTravelNote}
+            </p>
+            {memberArrivalInstructions.doorCode ? (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Door code
+                </p>
+                <p className="mt-1 text-lg font-semibold tracking-wide text-slate-950">
+                  {memberArrivalInstructions.doorCode}
+                </p>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {!isDeleted && isDraft && booking.finalPriceCents === 0 && (

@@ -123,6 +123,17 @@ describe("admin email message APIs", () => {
     expect(mocks.emailTemplateOverrideUpsert).not.toHaveBeenCalled();
   });
 
+  it("blocks non-admin users from updating email settings", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+
+    const response = await putEmailSettings(
+      request("/api/admin/email-settings", { doorCode: "2468" }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.emailMessageSettingUpsert).not.toHaveBeenCalled();
+  });
+
   it("honors inactive-user blocking", async () => {
     mocks.requireActiveSessionUser.mockResolvedValue(
       new Response(JSON.stringify({ error: "Inactive user" }), { status: 403 }),
@@ -211,6 +222,42 @@ describe("admin email message APIs", () => {
         update: expect.objectContaining({
           publicUrl: normalized,
         }),
+      }),
+    );
+  });
+
+  it("saves door code changes without audit logging the code value", async () => {
+    mocks.emailMessageSettingFindUnique.mockResolvedValue({
+      id: "default",
+      doorCode: "1357",
+      lodgeTravelNote: "Old directions",
+    });
+
+    const response = await putEmailSettings(
+      request("/api/admin/email-settings", { doorCode: " 2468 " }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.emailMessageSettingUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          doorCode: "2468",
+        }),
+        update: expect.objectContaining({
+          doorCode: "2468",
+        }),
+      }),
+    );
+
+    const auditPayload = mocks.auditLogCreate.mock.calls.at(-1)?.[0];
+    const serializedAuditPayload = JSON.stringify(auditPayload);
+    expect(serializedAuditPayload).not.toContain("1357");
+    expect(serializedAuditPayload).not.toContain("2468");
+    expect(auditPayload.data.metadata).toEqual(
+      expect.objectContaining({
+        changedKeys: ["doorCode"],
+        previousSettings: expect.objectContaining({ doorCode: "[set]" }),
+        newSettings: expect.objectContaining({ doorCode: "[set]" }),
       }),
     );
   });

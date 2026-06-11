@@ -279,6 +279,12 @@ Total Paid: {{totalPaid}}
 
 Payment has been processed successfully.
 
+How to get to the lodge
+
+{{CLUB_LODGE_TRAVEL_NOTE}}
+
+Door code: {{doorCode}} [only when a door code is set]
+
 You can view your booking details and manage your stay from your account.
 
 View Booking: {{BASE_URL}}/bookings
@@ -508,6 +514,41 @@ Triggers and frequency:
 - Cron job `checkin-reminders`, scheduled daily at 9:00 AM NZST.
 - Sends for paid/operational bookings checking in tomorrow.
 - Skips if a sent `checkin-reminder` email to the same recipient with the same subject exists within the last 48 hours.
+
+### pre-arrival-reminder
+
+Subject:
+
+```text
+Pre-arrival Information - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Upcoming Lodge Stay
+
+Hi {{firstName}}, your lodge stay is coming up.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+Expected arrival: {{expectedArrivalTime}} [only when provided]
+
+How to get to the lodge
+
+{{CLUB_LODGE_TRAVEL_NOTE}}
+
+Door code: {{doorCode}} [only when a door code is set]
+
+View Booking: {{BASE_URL}}/bookings
+```
+
+Triggers and frequency:
+
+- Cron job `pre-arrival-reminders`, run by `POST /api/cron` every 3 hours.
+- Sends once for confirmed or paid bookings checking in within the 3-day NZ date-only reminder window.
+- Claims each booking through `Booking.preArrivalReminderSentAt` before sending to prevent duplicate reminders.
 
 ### chore-roster
 

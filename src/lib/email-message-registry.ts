@@ -123,6 +123,8 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  "booking-confirmed": ["CLUB_LODGE_TRAVEL_NOTE", "doorCode"],
+  "pre-arrival-reminder": ["CLUB_LODGE_TRAVEL_NOTE", "doorCode"],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -235,6 +237,10 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary: "Website contact form submission",
     frequency: "Per contact form submission",
   },
+  "pre-arrival-reminder": {
+    triggerSummary: "Pre-arrival reminder with current lodge access details",
+    frequency: "Once per confirmed or paid booking in the reminder window",
+  },
 };
 
 function titleCaseTemplateKey(key: string): string {
@@ -277,6 +283,8 @@ function sampleValue(token: string): string {
     return "support@example.org";
   }
   if (token === "LODGE_CAPACITY") return "29";
+  if (token === "doorCode") return "1234";
+  if (token === "expectedArrivalTime") return "16:30";
   if (token.endsWith("Email") || token === "email") return "member@example.org";
   if (token.endsWith("Url") || token.endsWith("URL")) {
     return "https://bookings.example.org/admin";
@@ -382,11 +390,13 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "description",
   "details",
   "discount",
+  "doorCode",
   "email",
   "endDate",
   "entityType",
   "errorMessage",
   "errorType",
+  "expectedArrivalTime",
   "expiresAt",
   "expiryLabel",
   "failureCount",

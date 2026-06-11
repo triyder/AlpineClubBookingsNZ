@@ -233,7 +233,7 @@ external scheduler. Auth is the `x-cron-secret` header set to `CRON_SECRET`.
 | Endpoint | Task | Required cadence | Purpose | `CronJobRun.jobName` |
 | -------- | ---- | ---------------- | ------- | -------------------- |
 | `POST /api/cron/payments?task=recovery` | `recovery` | every 5 minutes | Process the durable Stripe payment recovery queue and reap stale `WAITING_PAYMENT` Xero outbox rows. | `payment-recovery` |
-| `POST /api/cron` | pending booking confirmation | every 3 hours at minute 0 | Confirm or bump pending bookings whose non-member holds have expired. | `confirm-pending` |
+| `POST /api/cron` | pending booking confirmation and pre-arrival reminders | every 3 hours at minute 0 | Confirm or bump pending bookings whose non-member holds have expired, then send one pre-arrival directions/door-code reminder for confirmed or paid bookings checking in within 3 NZ date-only days. | `confirm-pending`, `pre-arrival-reminders` |
 | `POST /api/cron/xero?task=memberships` | `memberships` | daily at 02:00 Pacific/Auckland when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` | Refresh Xero-backed membership statuses as an optional safety net. | `xero-membership-refresh` |
 | `POST /api/cron/xero?task=outbox` | `outbox` | every 15 minutes | Process queued outbound Xero operations. | `xero-outbox` |
 | `POST /api/cron/xero?task=retries` | `retries` | every 15 minutes | Replay failed retryable Xero operations. | `xero-operation-replay` |

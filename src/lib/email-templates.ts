@@ -195,6 +195,32 @@ function alertBox(
 </div>`;
 }
 
+function arrivalInstructionsSection({
+  travelNote,
+  doorCode,
+}: {
+  travelNote: string;
+  doorCode?: string | null;
+}): string {
+  const safeTravelNote = travelNote.trim();
+  const safeDoorCode = doorCode?.trim() || null;
+  const doorCodeTable = safeDoorCode
+    ? infoTable([
+        {
+          label: "Door code",
+          value: `<strong style="font-size: 18px; letter-spacing: 1px;">${escapeHtml(safeDoorCode)}</strong>`,
+        },
+      ])
+    : "";
+
+  return `
+    ${paragraph("<strong>How to get to the lodge</strong>")}
+    ${safeTravelNote ? multilineBlock(escapeHtml(safeTravelNote)) : ""}
+    ${doorCodeTable}
+    ${safeDoorCode ? muted("Please keep the door code private and use the current code when you arrive.") : ""}
+  `;
+}
+
 // ---- Exported template functions ----
 
 function formatCents(cents: number): string {
@@ -263,7 +289,13 @@ export function bookingConfirmedTemplate(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  options?: { discountCents?: number; promoAdjustmentCents?: number; promoCode?: string }
+  options?: {
+    discountCents?: number;
+    promoAdjustmentCents?: number;
+    promoCode?: string;
+    lodgeTravelNote?: string;
+    doorCode?: string | null;
+  }
 ): string {
   const promoAdjustmentCents =
     options?.promoAdjustmentCents ??
@@ -296,6 +328,10 @@ export function bookingConfirmedTemplate(
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been confirmed!")}
     ${infoTable(rows)}
     ${alertBox("Payment has been processed successfully.", "success")}
+    ${arrivalInstructionsSection({
+      travelNote: options?.lodgeTravelNote ?? CLUB_LODGE_TRAVEL_NOTE,
+      doorCode: options?.doorCode ?? null,
+    })}
     ${paragraph("You can view your booking details and manage your stay from your account.")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
@@ -585,6 +621,40 @@ export function checkinReminderTemplate(
     ${choreSection}
     ${alertBox("Please ensure you arrive prepared for alpine conditions. Check the weather forecast before departing.", "info")}
     ${paragraph(CLUB_LODGE_TRAVEL_NOTE)}
+    ${button("View Booking", BASE_URL + "/bookings")}
+  `);
+}
+
+export function preArrivalReminderTemplate(params: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  expectedArrivalTime?: string | null;
+  lodgeTravelNote: string;
+  doorCode?: string | null;
+}): string {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Check-in", value: formatNZDate(params.checkIn) },
+    { label: "Check-out", value: formatNZDate(params.checkOut) },
+    { label: "Guests", value: String(params.guestCount) },
+  ];
+
+  if (params.expectedArrivalTime) {
+    rows.push({
+      label: "Expected arrival",
+      value: escapeHtml(params.expectedArrivalTime),
+    });
+  }
+
+  return layout(`
+    ${heading("Upcoming Lodge Stay")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ", your lodge stay is coming up.")}
+    ${infoTable(rows)}
+    ${arrivalInstructionsSection({
+      travelNote: params.lodgeTravelNote,
+      doorCode: params.doorCode,
+    })}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }
