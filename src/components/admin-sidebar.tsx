@@ -82,6 +82,11 @@ const navSections: NavSection[] = [
         icon: RotateCcw,
       },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
+      {
+        href: "/admin/bed-allocation",
+        label: "Bed Allocation",
+        icon: BedDouble,
+      },
     ],
   },
   {
@@ -94,11 +99,6 @@ const navSections: NavSection[] = [
         href: "/admin/lodge-instructions",
         label: "Lodge Instructions",
         icon: BookOpen,
-      },
-      {
-        href: "/admin/bed-allocation",
-        label: "Bed Allocation",
-        icon: BedDouble,
       },
       { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
     ],
