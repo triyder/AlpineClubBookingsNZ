@@ -107,7 +107,7 @@ describe("API route boundary metadata", () => {
     .sort();
 
   it("keeps the public route allowlist exact and backed by real files", () => {
-    expect(routeFiles).toHaveLength(230);
+    expect(routeFiles).toHaveLength(233);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)

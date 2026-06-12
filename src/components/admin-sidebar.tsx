@@ -35,6 +35,7 @@ import {
   Puzzle,
   UserX,
   BedDouble,
+  Hammer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -76,6 +77,7 @@ const navSections: NavSection[] = [
       { href: "/admin/roster", label: "Roster", icon: ClipboardList },
       { href: "/admin/chores", label: "Chores", icon: CheckSquare },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
+      { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       { href: "/admin/bed-allocation", label: "Bed Allocation", icon: BedDouble },
       { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
     ],

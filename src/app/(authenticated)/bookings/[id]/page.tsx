@@ -62,7 +62,15 @@ export default async function BookingDetailPage({
       payment: true,
       promoRedemption: {
         include: {
-          promoCode: { select: { code: true, type: true, description: true } },
+          promoCode: {
+            select: {
+              code: true,
+              type: true,
+              description: true,
+              internal: true,
+              workPartyEvent: { select: { name: true } },
+            },
+          },
         },
       },
       creditsFromCancellation: {
@@ -232,6 +240,8 @@ export default async function BookingDetailPage({
           code: booking.promoRedemption.promoCode.code,
           type: booking.promoRedemption.promoCode.type,
           description: booking.promoRedemption.promoCode.description,
+          workPartyEventName:
+            booking.promoRedemption.promoCode.workPartyEvent?.name ?? null,
         }
       : null,
     hasNonMembers: booking.hasNonMembers,

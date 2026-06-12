@@ -85,6 +85,15 @@ interface AvailabilityNightDetail {
   availableBeds: number;
 }
 
+interface WorkPartyEvent {
+  id: string;
+  name: string;
+  description: string | null;
+  startDate: string;
+  endDate: string;
+  discountPercent: number;
+}
+
 interface SubscriptionStatus {
   status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED" | "NOT_REQUIRED" | "UNKNOWN";
   seasonDisplay: string;
@@ -151,6 +160,11 @@ export default function BookPage() {
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null; lifetimeFreeNightsCap: number | null; fixedNightlyPriceCents: number | null; fixedNightlyMode: string | null }[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
+  const [activeWorkPartyEvents, setActiveWorkPartyEvents] = useState<WorkPartyEvent[]>([]);
+  const [attendingWorkParty, setAttendingWorkParty] = useState(false);
+  const [selectedWorkPartyEventId, setSelectedWorkPartyEventId] = useState<string | null>(null);
+  const [workPartyError, setWorkPartyError] = useState("");
+  const [workPartyClearedNotice, setWorkPartyClearedNotice] = useState<string | null>(null);
   const [guestProfileBlocks, setGuestProfileBlocks] = useState<GuestProfileRequiredMember[]>([]);
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
   const requiresAdminReviewLocal = (() => {
@@ -396,6 +410,9 @@ export default function BookPage() {
     setUseCredit(false);
     setPerGuestDatesEnabled(false);
     setGuests((current) => clearGuestStayRanges(current));
+    setActiveWorkPartyEvents([]);
+    setWorkPartyError("");
+    setWorkPartyClearedNotice(null);
     const ciStr = formatLocalDateOnly(ci);
     const coStr = formatLocalDateOnly(co);
 
@@ -484,6 +501,31 @@ export default function BookPage() {
         .then((r) => r.ok ? r.json() : [])
         .then((codes) => setAvailablePromoCodes(codes))
         .catch(() => {});
+
+      // Fetch active working bee events that overlap these dates
+      fetch(`/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}`)
+        .then((r) => r.ok ? r.json() : { events: [] })
+        .then((data) => {
+          const events: WorkPartyEvent[] = data.events || [];
+          setActiveWorkPartyEvents(events);
+          if (
+            selectedWorkPartyEventId &&
+            !events.some((e) => e.id === selectedWorkPartyEventId)
+          ) {
+            const previous = activeWorkPartyEvents.find(
+              (e) => e.id === selectedWorkPartyEventId
+            );
+            setSelectedWorkPartyEventId(null);
+            setAttendingWorkParty(false);
+            if (previous) {
+              setWorkPartyClearedNotice(previous.name);
+            }
+            setAppliedPromo((current) =>
+              current?.workPartyEvent ? null : current
+            );
+          }
+        })
+        .catch(() => setActiveWorkPartyEvents([]));
     } else {
       const data = await res.json();
       handleBookingApiError(data, "Failed to calculate price");
@@ -520,6 +562,7 @@ export default function BookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         paymentMethod:
@@ -574,6 +617,7 @@ export default function BookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         waitlist: true,
         memberReviewJustification: requiresAdminReviewLocal
@@ -616,6 +660,7 @@ export default function BookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
+        workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,
@@ -712,6 +757,64 @@ export default function BookPage() {
     remainingToPay,
     requiresAdminReviewLocal,
   ]);
+
+  // Apply or refresh the working bee discount preview when a work party
+  // event is selected (or the booking changes while one is selected).
+  useEffect(() => {
+    if (!selectedWorkPartyEventId || !checkIn || !checkOut || !priceQuote) {
+      return;
+    }
+
+    let cancelled = false;
+    setWorkPartyError("");
+
+    fetch("/api/promo-codes/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workPartyEventId: selectedWorkPartyEventId,
+        checkIn: formatLocalDateOnly(checkIn),
+        checkOut: formatLocalDateOnly(checkOut),
+        guests: reviewGuestPayload.map((g) => ({
+          ageTier: g.ageTier,
+          isMember: g.isMember,
+          ...(g.memberId ? { memberId: g.memberId } : {}),
+          ...(g.stayStart ? { stayStart: g.stayStart } : {}),
+          ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
+        })),
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || data.valid === false) {
+          setAppliedPromo(null);
+          setWorkPartyError(data.error || "This working bee event could not be applied");
+          return;
+        }
+        setAppliedPromo({
+          code: data.code,
+          description: data.description,
+          type: data.type,
+          discountCents: data.discountCents,
+          promoAdjustmentCents: data.promoAdjustmentCents,
+          totalPriceCents: data.totalPriceCents,
+          finalPriceCents: data.finalPriceCents,
+          workPartyEvent: data.workPartyEvent,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAppliedPromo(null);
+          setWorkPartyError("Failed to apply the working bee discount");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWorkPartyEventId, checkIn, checkOut, priceQuote, JSON.stringify(reviewGuestPayload)]);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -1069,7 +1172,11 @@ export default function BookPage() {
                     <span>{formatCents(priceQuote.totalPriceCents)}</span>
                   </div>
                   <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
-                    <span>Promo adjustment ({appliedPromo.code})</span>
+                    <span>
+                      {appliedPromo.workPartyEvent
+                        ? `Working bee discount (${appliedPromo.workPartyEvent.name})`
+                        : `Promo adjustment (${appliedPromo.code})`}
+                    </span>
                     <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
                   </div>
                   {appliedCreditCents > 0 && (
@@ -1210,7 +1317,85 @@ export default function BookPage() {
                   onChange={setExpectedArrivalTime}
                 />
               </div>
-              {availablePromoCodes.length > 0 && !appliedPromo && (
+              {activeWorkPartyEvents.length > 0 && (
+                <div className="space-y-3 rounded-md border p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={attendingWorkParty}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setAttendingWorkParty(checked);
+                        setWorkPartyError("");
+                        setWorkPartyClearedNotice(null);
+                        if (!checked) {
+                          setSelectedWorkPartyEventId(null);
+                          setAppliedPromo((current) =>
+                            current?.workPartyEvent ? null : current
+                          );
+                        } else if (activeWorkPartyEvents.length === 1) {
+                          setSelectedWorkPartyEventId(activeWorkPartyEvents[0].id);
+                        }
+                      }}
+                      className="rounded border-input"
+                      disabled={Boolean(appliedPromo && !appliedPromo.workPartyEvent)}
+                    />
+                    I am attending a working bee
+                  </label>
+                  {appliedPromo && !appliedPromo.workPartyEvent && (
+                    <p className="text-sm text-muted-foreground">
+                      Remove your promo code to select a working bee event — a
+                      booking can only use one discount.
+                    </p>
+                  )}
+                  {attendingWorkParty && (
+                    <div className="space-y-2">
+                      {activeWorkPartyEvents.length > 1 && (
+                        <select
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={selectedWorkPartyEventId ?? ""}
+                          onChange={(e) =>
+                            setSelectedWorkPartyEventId(e.target.value || null)
+                          }
+                        >
+                          <option value="">Select an event…</option>
+                          {activeWorkPartyEvents.map((event) => (
+                            <option key={event.id} value={event.id}>
+                              {event.name} ({event.startDate} – {event.endDate})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {selectedWorkPartyEventId && (
+                        (() => {
+                          const event = activeWorkPartyEvents.find(
+                            (e) => e.id === selectedWorkPartyEventId
+                          );
+                          if (!event) return null;
+                          return (
+                            <p className="text-sm text-muted-foreground">
+                              {event.discountPercent}% discount on nights
+                              between {event.startDate} and {event.endDate}
+                              {event.description ? ` — ${event.description}` : ""}.
+                            </p>
+                          );
+                        })()
+                      )}
+                      {workPartyError && (
+                        <p className="text-sm text-red-600">{workPartyError}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {workPartyClearedNotice && (
+                <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                  &ldquo;{workPartyClearedNotice}&rdquo; no longer overlaps your
+                  selected dates, so the working bee discount has been
+                  cleared.
+                </div>
+              )}
+              {availablePromoCodes.length > 0 && !appliedPromo && !attendingWorkParty && (
                 <div className="app-callout-brand p-4">
                   <p className="mb-2 text-sm font-medium text-brand-charcoal">
                     You have promo codes available:
@@ -1234,13 +1419,15 @@ export default function BookPage() {
                   </div>
                 </div>
               )}
-	              <PromoCodeInput
-	                checkIn={checkIn!}
-	                checkOut={checkOut!}
-	                guests={reviewGuestPayload}
-	                onPromoApplied={setAppliedPromo}
-	                appliedPromo={appliedPromo}
-	                prefillCode={prefillPromoCode}
+              <PromoCodeInput
+                checkIn={checkIn!}
+                checkOut={checkOut!}
+                guests={reviewGuestPayload}
+                onPromoApplied={setAppliedPromo}
+                appliedPromo={appliedPromo}
+                prefillCode={prefillPromoCode}
+                disabled={attendingWorkParty}
+                disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."
               />
             </CardContent>
           </Card>
