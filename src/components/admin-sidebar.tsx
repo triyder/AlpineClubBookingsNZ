@@ -91,6 +91,11 @@ const navSections: NavSection[] = [
       { href: "/admin/chores", label: "Chores", icon: CheckSquare },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
       {
+        href: "/admin/lodge-instructions",
+        label: "Lodge Instructions",
+        icon: BookOpen,
+      },
+      {
         href: "/admin/bed-allocation",
         label: "Bed Allocation",
         icon: BedDouble,

@@ -586,6 +586,7 @@ export function hutLeaderAssignmentTemplate(params: {
     ${paragraph("When you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.")}
     ${alertBox("Please keep this PIN private and share it only with the assigned hut leader team for these dates.", "warning")}
     ${paragraph("Responsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.")}
+    ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/lodge-instructions")}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge.`)}
     ${button("Open Lodge View", BASE_URL + "/lodge")}
     ${muted("If you have any issues accessing the kiosk, please contact a club administrator.")}
   `);

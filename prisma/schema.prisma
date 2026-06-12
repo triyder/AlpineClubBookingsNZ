@@ -1877,6 +1877,31 @@ model HutLeaderAssignment {
 }
 
 // ---------------------------------------------------------------------------
+// Lodge Instructions (issue #710)
+//
+// Protected lodge procedure documents for hut leaders (opening, closing, and
+// day-to-day running). Deliberately separate from PageContent: these must
+// never appear in the public website menu or the dynamic public page route.
+// ---------------------------------------------------------------------------
+
+enum LodgeInstructionKey {
+  OPEN
+  CLOSE
+  DAY_TO_DAY
+}
+
+model LodgeInstruction {
+  id                String              @id @default(cuid())
+  key               LodgeInstructionKey @unique
+  contentHtml       String
+  updatedByMemberId String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// ---------------------------------------------------------------------------
 // Guest Chore Token (F10)
 // ---------------------------------------------------------------------------
 
