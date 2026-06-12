@@ -96,6 +96,7 @@ interface BaseInput {
   promoCodeStr?: string;
   promoGuestIndexes?: number[];
   expectedArrivalTime?: string;
+  requestedRoomId?: string;
   groupDiscount?: GroupDiscountConfig;
   memberReviewJustification?: string;
 }
@@ -405,6 +406,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     promoCodeStr,
     promoGuestIndexes,
     expectedArrivalTime,
+    requestedRoomId,
     groupDiscount,
     memberReviewJustification,
   } = input;
@@ -482,6 +484,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         draftExpiresAt,
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
+        requestedRoomId: requestedRoomId || null,
         createdById: isOnBehalf ? sessionUserId : null,
         requiresAdminReview: review.requiresAdminReview,
         adminReviewReason: review.adminReviewReason,
@@ -603,6 +606,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     promoCodeStr,
     promoGuestIndexes,
     expectedArrivalTime,
+    requestedRoomId,
     applyCreditCents,
     groupDiscount,
     status,
@@ -732,6 +736,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           nonMemberHoldUntil,
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
+          requestedRoomId: requestedRoomId || null,
           createdById: isOnBehalf ? sessionUserId : null,
           requiresAdminReview: review.requiresAdminReview,
           adminReviewReason: review.adminReviewReason,
@@ -1020,6 +1025,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     promoCodeStr,
     promoGuestIndexes,
     expectedArrivalTime,
+    requestedRoomId,
     groupDiscount,
     memberReviewJustification,
   } = input;
@@ -1112,6 +1118,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         nonMemberHoldUntil: null,
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
+        requestedRoomId: requestedRoomId || null,
         createdById: isOnBehalf ? sessionUserId : null,
         requiresAdminReview: review.requiresAdminReview,
         adminReviewReason: review.adminReviewReason,

@@ -11,6 +11,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
@@ -67,6 +74,12 @@ interface GuestProfileRequiredMember {
     | "own_login_required"
     | "pending_admin_approval"
     | "contact_admin";
+}
+
+interface RoomOption {
+  id: string;
+  name: string;
+  bedCount: number;
 }
 
 interface PriceQuote {
@@ -143,6 +156,9 @@ export default function BookPage() {
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
+  const [requestedRoomId, setRequestedRoomId] = useState<string | null>(null);
+  const [roomOptions, setRoomOptions] = useState<RoomOption[]>([]);
+  const [roomRequestEnabled, setRoomRequestEnabled] = useState(false);
   const [useCredit, setUseCredit] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
@@ -296,6 +312,19 @@ export default function BookPage() {
         );
       })
       .catch(() => setInternetBankingEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/bookings/rooms")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        setRoomRequestEnabled(Boolean(data?.enabled));
+        setRoomOptions(data?.rooms ?? []);
+      })
+      .catch(() => {
+        setRoomRequestEnabled(false);
+        setRoomOptions([]);
+      });
   }, []);
 
   // Fetch subscription status for the current season
@@ -521,6 +550,7 @@ export default function BookPage() {
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         expectedArrivalTime: expectedArrivalTime || undefined,
+        requestedRoomId: requestedRoomId || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         paymentMethod:
           paymentMethod === "internet_banking" ? paymentMethod : undefined,
@@ -575,6 +605,7 @@ export default function BookPage() {
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         expectedArrivalTime: expectedArrivalTime || undefined,
+        requestedRoomId: requestedRoomId || undefined,
         waitlist: true,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim()
@@ -617,6 +648,7 @@ export default function BookPage() {
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         expectedArrivalTime: expectedArrivalTime || undefined,
+        requestedRoomId: requestedRoomId || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,
         memberReviewJustification: requiresAdminReviewLocal
@@ -1210,6 +1242,33 @@ export default function BookPage() {
                   onChange={setExpectedArrivalTime}
                 />
               </div>
+              {roomRequestEnabled && roomOptions.length > 0 && (
+                <div className="space-y-2">
+                  <Label htmlFor="requested-room">Preferred room (optional)</Label>
+                  <Select
+                    value={requestedRoomId ?? "none"}
+                    onValueChange={(value) =>
+                      setRequestedRoomId(value === "none" ? null : value)
+                    }
+                  >
+                    <SelectTrigger id="requested-room">
+                      <SelectValue placeholder="No preference" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No preference</SelectItem>
+                      {roomOptions.map((room) => (
+                        <SelectItem key={room.id} value={room.id}>
+                          {room.name} ({room.bedCount} {room.bedCount === 1 ? "bed" : "beds"})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    We&apos;ll try to allocate your group to this room, but it
+                    isn&apos;t guaranteed if it&apos;s full.
+                  </p>
+                </div>
+              )}
               {availablePromoCodes.length > 0 && !appliedPromo && (
                 <div className="app-callout-brand p-4">
                   <p className="mb-2 text-sm font-medium text-brand-charcoal">

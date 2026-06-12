@@ -68,6 +68,12 @@ interface DashboardAllocation {
   approvedByName: string | null;
 }
 
+interface DashboardRequestedRoom {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
 interface DashboardGuestNight {
   bookingId: string;
   bookingGuestId: string;
@@ -75,6 +81,7 @@ interface DashboardGuestNight {
   guestAgeTier: string;
   memberName: string;
   stayDate: string;
+  requestedRoom: DashboardRequestedRoom | null;
 }
 
 interface DashboardWarning {
@@ -528,6 +535,15 @@ export default function AdminBedAllocationPage() {
                               <div className="text-xs text-muted-foreground">
                                 {guestNight.memberName}
                               </div>
+                              {guestNight.requestedRoom && (
+                                <div className="mt-1">
+                                  <Badge variant={guestNight.requestedRoom.active ? "secondary" : "warning"}>
+                                    {guestNight.requestedRoom.active
+                                      ? `Requested: ${guestNight.requestedRoom.name}`
+                                      : `Requested room inactive: ${guestNight.requestedRoom.name}`}
+                                  </Badge>
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell>
                               <Select

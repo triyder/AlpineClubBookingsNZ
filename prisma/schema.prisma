@@ -628,6 +628,7 @@ model Booking {
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
   expectedArrivalTime       String?            @db.VarChar(5)
+  requestedRoomId           String?
   preArrivalReminderSentAt  DateTime?
   createdById               String? // Admin who created this booking on behalf of the member
   requiresAdminReview       Boolean            @default(false)
@@ -646,23 +647,24 @@ model Booking {
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
-  member                     Member                      @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  createdBy                  Member?                     @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  deletedBy                  Member?                     @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
-  adminReviewedBy            Member?                     @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
-  guests                     BookingGuest[]
-  payment                    Payment?
-  choreAssignments           ChoreAssignment[]
-  promoRedemption            PromoRedemption?
-  promoRedemptionAllocations PromoRedemptionAllocation[]
+  member                      Member                       @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy                   Member?                      @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy                   Member?                      @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  adminReviewedBy             Member?                      @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
+  requestedRoom               LodgeRoom?                   @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
+  guests                      BookingGuest[]
+  payment                     Payment?
+  choreAssignments            ChoreAssignment[]
+  promoRedemption             PromoRedemption?
+  promoRedemptionAllocations  PromoRedemptionAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
-  modifications              BookingModification[]
-  changeRequests             BookingChangeRequest[]
-  creditsFromCancellation    MemberCredit[]              @relation("CreditSource")
-  creditsApplied             MemberCredit[]              @relation("CreditApplied")
-  refundRequests             RefundRequest[]
-  paymentRecoveryOperations  PaymentRecoveryOperation[]
-  bedAllocations             BedAllocation[]
+  modifications               BookingModification[]
+  changeRequests              BookingChangeRequest[]
+  creditsFromCancellation     MemberCredit[]               @relation("CreditSource")
+  creditsApplied              MemberCredit[]               @relation("CreditApplied")
+  refundRequests              RefundRequest[]
+  paymentRecoveryOperations   PaymentRecoveryOperation[]
+  bedAllocations              BedAllocation[]
 
   @@index([memberId])
   @@index([createdById])
@@ -679,6 +681,7 @@ model Booking {
   @@index([status, preArrivalReminderSentAt, checkIn])
   @@index([adminReviewStatus, createdAt])
   @@index([adminReviewedById])
+  @@index([requestedRoomId])
 }
 
 model BookingGuest {
@@ -723,8 +726,9 @@ model LodgeRoom {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  beds        LodgeBed[]
-  allocations BedAllocation[]
+  beds                LodgeBed[]
+  allocations         BedAllocation[]
+  requestedByBookings Booking[]       @relation("BookingRequestedRoom")
 
   @@unique([name])
   @@index([active, sortOrder])
