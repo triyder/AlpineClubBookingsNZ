@@ -1,24 +1,32 @@
-import Image from "next/image";
 import Link from "next/link";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { WebsiteLogo } from "@/components/website-logo";
 import { CLUB_NAME } from "@/config/club-identity";
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
+import { listWebsiteMenuPages } from "@/lib/page-content-html";
 
 interface WebsiteHeaderProps {
   isAuthenticated: boolean;
+  logoDataUrl?: string | null;
 }
 
-const navLinks = [
-  { href: "/", label: "Home" },
-  { href: "/about", label: "About" },
-  { href: "/join", label: "Join" },
-  { href: "/rules", label: "Rules" },
-  { href: "/committee", label: "Committee" },
-  { href: "/contact", label: "Contact" },
-];
+const staticNavLinks = [{ href: "/contact", label: "Contact" }];
 
-export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
+export async function WebsiteHeader({
+  isAuthenticated,
+  logoDataUrl,
+}: WebsiteHeaderProps) {
+  const dynamicPages = await listWebsiteMenuPages();
+  const dynamicNavLinks = dynamicPages.map((page) => ({
+    href: page.path,
+    label: page.menuTitle.trim(),
+  }));
+  const navLinks = [
+    { href: "/", label: "Home" },
+    ...dynamicNavLinks,
+    ...staticNavLinks,
+  ];
   const bookingsHref = isAuthenticated ? "/book" : buildBookingLoginPath();
   const dashboardHref = isAuthenticated ? "/dashboard" : "/login";
 
@@ -30,13 +38,11 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           href="/"
           className="flex items-center gap-2 font-bold text-brand-snow transition-opacity hover:opacity-85"
         >
-          <Image
-            src="/branding/logo.png"
-            alt={CLUB_NAME}
-            width={140}
-            height={48}
-            className="h-10 w-auto"
-            priority
+          <WebsiteLogo
+            label={CLUB_NAME}
+            logoDataUrl={logoDataUrl}
+            className="max-h-10 max-w-40"
+            textClassName="max-w-48 text-brand-snow"
           />
         </Link>
 
@@ -65,7 +71,11 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
               >
                 <Link href={dashboardHref}>Dashboard</Link>
               </Button>
-              <Button size="sm" asChild className="shadow-lg shadow-brand-gold/20">
+              <Button
+                size="sm"
+                asChild
+                className="shadow-lg shadow-brand-gold/20"
+              >
                 <Link href={bookingsHref}>Book Now</Link>
               </Button>
             </>
@@ -79,7 +89,11 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
               >
                 <Link href="/login">Log In</Link>
               </Button>
-              <Button size="sm" asChild className="shadow-lg shadow-brand-gold/20">
+              <Button
+                size="sm"
+                asChild
+                className="shadow-lg shadow-brand-gold/20"
+              >
                 <Link href={bookingsHref}>Book Now</Link>
               </Button>
             </>
@@ -96,15 +110,14 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           </summary>
           <div className="website-mobile-menu absolute right-0 top-12 w-72 rounded-md border border-brand-ridge/25 bg-brand-charcoal p-5 text-brand-snow shadow-2xl">
             <div className="mb-5">
-              <Image
-                src="/branding/logo.png"
-                alt={CLUB_NAME}
-                width={120}
-                height={40}
-                className="h-8 w-auto"
+              <WebsiteLogo
+                label={CLUB_NAME}
+                logoDataUrl={logoDataUrl}
+                className="max-h-8 max-w-36"
+                textClassName="text-brand-snow"
               />
             </div>
-            <nav className="flex flex-col gap-1">
+            <nav className="flex max-h-72 flex-col gap-1 overflow-y-auto">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
@@ -126,7 +139,11 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                   >
                     <Link href={dashboardHref}>Dashboard</Link>
                   </Button>
-                  <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
+                  <Button
+                    size="sm"
+                    asChild
+                    className="w-full shadow-lg shadow-brand-gold/20"
+                  >
                     <Link href={bookingsHref}>Book Now</Link>
                   </Button>
                 </>
@@ -140,7 +157,11 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                   >
                     <Link href="/login">Log In</Link>
                   </Button>
-                  <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
+                  <Button
+                    size="sm"
+                    asChild
+                    className="w-full shadow-lg shadow-brand-gold/20"
+                  >
                     <Link href={bookingsHref}>Book Now</Link>
                   </Button>
                 </>

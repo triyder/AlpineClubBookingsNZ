@@ -10,13 +10,13 @@ import {
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
-import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -66,7 +66,7 @@ const createBookingSchema = z.object({
       })
     )
     .min(1)
-    .max(LODGE_CAPACITY),
+    .max(200),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
@@ -74,6 +74,7 @@ const createBookingSchema = z.object({
   draft: z.boolean().optional(),
   waitlist: z.boolean().optional(),
   expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
+  requestedRoomId: z.string().min(1).optional(),
   applyCreditCents: z.number().int().min(0).optional(),
   forMemberId: z.string().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
@@ -173,6 +174,7 @@ export async function POST(request: NextRequest) {
     draft,
     waitlist,
     expectedArrivalTime,
+    requestedRoomId,
     memberReviewJustification,
     paymentMethod,
   } = parsed.data;
@@ -180,6 +182,20 @@ export async function POST(request: NextRequest) {
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
+  }
+
+  if (requestedRoomId) {
+    const modules = await loadEffectiveModuleFlags();
+    if (!modules.bedAllocation) {
+      return NextResponse.json({ error: "Room requests are not available." }, { status: 400 });
+    }
+    const requestedRoom = await prisma.lodgeRoom.findUnique({
+      where: { id: requestedRoomId },
+      select: { id: true },
+    });
+    if (!requestedRoom) {
+      return NextResponse.json({ error: "Invalid requested room" }, { status: 400 });
+    }
   }
 
   try {
@@ -218,10 +234,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
   }
 
-  // Subscription gate for the booking owner.
+  const lodgeCapacity = await getLodgeCapacity();
+  if (guestInputs.length > lodgeCapacity) {
+    return NextResponse.json(
+      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
+      { status: 400 },
+    );
+  }
+
+  // Subscription gate for the booking owner. Bypassed when the Xero module
+  // is effectively off, because subscriptions are invoiced through Xero.
   if (
     session.user.role !== "ADMIN" &&
-    await requiresPaidSubscriptionForAgeTierFromSettings(effectiveMemberAgeTier)
+    await requiresPaidSubscriptionForBooking(effectiveMemberAgeTier)
   ) {
     const seasonYear = getSeasonYear(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
@@ -307,6 +332,7 @@ export async function POST(request: NextRequest) {
         promoGuestIndexes,
         workPartyEventId,
         expectedArrivalTime,
+        requestedRoomId,
         groupDiscount,
         memberReviewJustification,
       });
@@ -365,6 +391,7 @@ export async function POST(request: NextRequest) {
       promoGuestIndexes,
       workPartyEventId,
       expectedArrivalTime,
+      requestedRoomId,
       applyCreditCents: parsed.data.applyCreditCents,
       groupDiscount,
       status,
@@ -406,6 +433,7 @@ export async function POST(request: NextRequest) {
         promoGuestIndexes,
         workPartyEventId,
         expectedArrivalTime,
+        requestedRoomId,
         groupDiscount,
         memberReviewJustification,
       });

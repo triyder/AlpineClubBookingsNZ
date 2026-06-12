@@ -100,6 +100,7 @@ interface BaseInput {
   // exclusive with promoCodeStr; resolves to the event's internal promo.
   workPartyEventId?: string;
   expectedArrivalTime?: string;
+  requestedRoomId?: string;
   groupDiscount?: GroupDiscountConfig;
   memberReviewJustification?: string;
 }
@@ -461,6 +462,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     promoGuestIndexes,
     workPartyEventId,
     expectedArrivalTime,
+    requestedRoomId,
     groupDiscount,
     memberReviewJustification,
   } = input;
@@ -545,6 +547,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         draftExpiresAt,
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
+        requestedRoomId: requestedRoomId || null,
         createdById: isOnBehalf ? sessionUserId : null,
         requiresAdminReview: review.requiresAdminReview,
         adminReviewReason: review.adminReviewReason,
@@ -667,6 +670,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     promoGuestIndexes,
     workPartyEventId,
     expectedArrivalTime,
+    requestedRoomId,
     applyCreditCents,
     groupDiscount,
     status,
@@ -803,6 +807,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           nonMemberHoldUntil,
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
+          requestedRoomId: requestedRoomId || null,
           createdById: isOnBehalf ? sessionUserId : null,
           requiresAdminReview: review.requiresAdminReview,
           adminReviewReason: review.adminReviewReason,
@@ -1104,6 +1109,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     promoGuestIndexes,
     workPartyEventId,
     expectedArrivalTime,
+    requestedRoomId,
     groupDiscount,
     memberReviewJustification,
   } = input;
@@ -1206,6 +1212,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         nonMemberHoldUntil: null,
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
+        requestedRoomId: requestedRoomId || null,
         createdById: isOnBehalf ? sessionUserId : null,
         requiresAdminReview: review.requiresAdminReview,
         adminReviewReason: review.adminReviewReason,

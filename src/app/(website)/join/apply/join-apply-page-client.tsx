@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ClipboardCheck, MailCheck, UserPlus } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,29 +50,6 @@ type FieldErrors = Partial<
   >
 >;
 
-function buildSteps(clubName: string) {
-  return [
-  {
-    title: "Enter details",
-    description:
-      `Tell us about yourself, your household members, and the two current ${clubName} members who are nominating you.`,
-    icon: UserPlus,
-  },
-  {
-    title: "Nominators confirm",
-    description:
-      "We email both nominators. They sign in and confirm they are happy to nominate you.",
-    icon: MailCheck,
-  },
-  {
-    title: "Committee reviews",
-    description:
-      "Once both nominations are confirmed, the application goes to the admin panel for committee approval.",
-    icon: ClipboardCheck,
-  },
-  ];
-}
-
 let nextFamilyMemberId = 1;
 
 function emptyFamilyMember(): FamilyMemberForm {
@@ -87,10 +63,13 @@ function emptyFamilyMember(): FamilyMemberForm {
 
 interface JoinApplyPageClientProps {
   club: ClubIdentity;
+  showHero?: boolean;
 }
 
-export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
-  const steps = buildSteps(club.name);
+export function JoinApplyPageClient({
+  club,
+  showHero = true,
+}: JoinApplyPageClientProps) {
   const [form, setForm] = useState<ApplicationFormData>({
     applicantFirstName: "",
     applicantLastName: "",
@@ -122,7 +101,9 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  function updateField(field: keyof Omit<ApplicationFormData, "familyMembers">) {
+  function updateField(
+    field: keyof Omit<ApplicationFormData, "familyMembers">,
+  ) {
     return (event: React.ChangeEvent<HTMLInputElement>) => {
       setForm((prev) => ({ ...prev, [field]: event.target.value }));
       setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
@@ -136,12 +117,12 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
   function updateFamilyMember(
     index: number,
     field: keyof FamilyMemberForm,
-    value: string
+    value: string,
   ) {
     setForm((prev) => ({
       ...prev,
       familyMembers: prev.familyMembers.map((member, memberIndex) =>
-        memberIndex === index ? { ...member, [field]: value } : member
+        memberIndex === index ? { ...member, [field]: value } : member,
       ),
     }));
     setFieldErrors((prev) => ({
@@ -160,7 +141,9 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
   function removeFamilyMember(index: number) {
     setForm((prev) => ({
       ...prev,
-      familyMembers: prev.familyMembers.filter((_, memberIndex) => memberIndex !== index),
+      familyMembers: prev.familyMembers.filter(
+        (_, memberIndex) => memberIndex !== index,
+      ),
     }));
     setFieldErrors((prev) => {
       const next = { ...prev };
@@ -262,7 +245,13 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
           postalPostalCode: form.postalPostalCode || null,
           postalCountry: form.postalCountry || null,
           postalSameAsPhysical: sameAsPhysical,
-          familyMembers: form.familyMembers.map(({ firstName, lastName, dateOfBirth }) => ({ firstName, lastName, dateOfBirth })),
+          familyMembers: form.familyMembers.map(
+            ({ firstName, lastName, dateOfBirth }) => ({
+              firstName,
+              lastName,
+              dateOfBirth,
+            }),
+          ),
           nominator1Email: form.nominator1Email,
           nominator2Email: form.nominator2Email,
         }),
@@ -278,7 +267,9 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
           });
           setFieldErrors(nextErrors);
         } else {
-          setError(data.error || "Could not submit your application right now.");
+          setError(
+            data.error || "Could not submit your application right now.",
+          );
         }
         return;
       }
@@ -332,41 +323,21 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
 
   return (
     <>
-      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-14 text-brand-snow sm:py-18">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
-          <span className="website-eyebrow mb-4">Membership Application</span>
-          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
-            Apply for Membership
-          </h1>
-          <p className="mt-4 max-w-3xl text-lg text-brand-snow/80">
-            Enter your details, nominate two current {club.name} members, and we will
-            move your application through nomination confirmation and committee
-            approval.
-          </p>
-        </div>
-      </section>
-
-      <section className="bg-brand-snow py-10">
-        <div className="mx-auto grid max-w-6xl gap-4 px-4 sm:px-6 lg:grid-cols-3 lg:px-8">
-          {steps.map((step) => (
-            <Card key={step.title} className="border-brand-ridge/20 bg-white/90">
-              <CardContent className="flex gap-3 pt-6">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-gold/25 text-brand-charcoal">
-                  <step.icon className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="font-heading text-lg font-semibold text-brand-charcoal">
-                    {step.title}
-                  </h2>
-                  <p className="mt-1 text-sm text-brand-deep/75">
-                    {step.description}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
+      {showHero ? (
+        <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-14 text-brand-snow sm:py-18">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <span className="website-eyebrow mb-4">Membership Application</span>
+            <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
+              Apply for Membership
+            </h1>
+            <p className="mt-4 max-w-3xl text-lg text-brand-snow/80">
+              Enter your details, nominate two current {club.name} members, and
+              we will move your application through nomination confirmation and
+              committee approval.
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       <section className="bg-brand-mist/40 pb-16 pt-6 sm:pb-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
@@ -377,8 +348,8 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
               </CardTitle>
               <CardDescription className="text-base text-brand-deep/75">
                 This form creates a membership application only. It does not
-                create a {club.name} login until nominators and the committee approve
-                it.
+                create a {club.name} login until nominators and the committee
+                approve it.
               </CardDescription>
             </CardHeader>
 
@@ -434,9 +405,7 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="applicantDateOfBirth">
-                      Date of birth
-                    </Label>
+                    <Label htmlFor="applicantDateOfBirth">Date of birth</Label>
                     <Input
                       id="applicantDateOfBirth"
                       type="date"
@@ -502,7 +471,11 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
                         Add any household members included in this application.
                       </p>
                     </div>
-                    <Button type="button" variant="outline" onClick={addFamilyMember}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={addFamilyMember}
+                    >
                       Add Household Member
                     </Button>
                   </div>
@@ -534,51 +507,87 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
 
                           <div className="grid gap-4 sm:grid-cols-2">
                             <div className="space-y-2">
-                              <Label htmlFor={`family-first-name-${index}`}>First name</Label>
+                              <Label htmlFor={`family-first-name-${index}`}>
+                                First name
+                              </Label>
                               <Input
                                 id={`family-first-name-${index}`}
                                 value={familyMember.firstName}
                                 onChange={(event) =>
-                                  updateFamilyMember(index, "firstName", event.target.value)
+                                  updateFamilyMember(
+                                    index,
+                                    "firstName",
+                                    event.target.value,
+                                  )
                                 }
                               />
-                              {fieldErrors[`familyMembers.${index}.firstName`] && (
+                              {fieldErrors[
+                                `familyMembers.${index}.firstName`
+                              ] && (
                                 <p className="text-xs text-destructive">
-                                  {fieldErrors[`familyMembers.${index}.firstName`]}
+                                  {
+                                    fieldErrors[
+                                      `familyMembers.${index}.firstName`
+                                    ]
+                                  }
                                 </p>
                               )}
                             </div>
 
                             <div className="space-y-2">
-                              <Label htmlFor={`family-last-name-${index}`}>Last name</Label>
+                              <Label htmlFor={`family-last-name-${index}`}>
+                                Last name
+                              </Label>
                               <Input
                                 id={`family-last-name-${index}`}
                                 value={familyMember.lastName}
                                 onChange={(event) =>
-                                  updateFamilyMember(index, "lastName", event.target.value)
+                                  updateFamilyMember(
+                                    index,
+                                    "lastName",
+                                    event.target.value,
+                                  )
                                 }
                               />
-                              {fieldErrors[`familyMembers.${index}.lastName`] && (
+                              {fieldErrors[
+                                `familyMembers.${index}.lastName`
+                              ] && (
                                 <p className="text-xs text-destructive">
-                                  {fieldErrors[`familyMembers.${index}.lastName`]}
+                                  {
+                                    fieldErrors[
+                                      `familyMembers.${index}.lastName`
+                                    ]
+                                  }
                                 </p>
                               )}
                             </div>
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor={`family-dob-${index}`}>Date of birth</Label>
+                            <Label htmlFor={`family-dob-${index}`}>
+                              Date of birth
+                            </Label>
                             <Input
                               id={`family-dob-${index}`}
                               type="date"
                               value={familyMember.dateOfBirth}
                               onChange={(event) =>
-                                updateFamilyMember(index, "dateOfBirth", event.target.value)
+                                updateFamilyMember(
+                                  index,
+                                  "dateOfBirth",
+                                  event.target.value,
+                                )
                               }
                             />
-                            {fieldErrors[`familyMembers.${index}.dateOfBirth`] && (
+                            {fieldErrors[
+                              `familyMembers.${index}.dateOfBirth`
+                            ] && (
                               <p className="text-xs text-destructive">
-                                {fieldErrors[`familyMembers.${index}.dateOfBirth`]}
+                                {
+                                  fieldErrors[
+                                    `familyMembers.${index}.dateOfBirth`
+                                  ]
+                                }
                               </p>
                             )}
                           </div>
@@ -594,13 +603,16 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
                       Nominators
                     </h2>
                     <p className="text-sm text-brand-deep/70">
-                      Enter the email addresses of two active, paid-up {club.name}
+                      Enter the email addresses of two active, paid-up{" "}
+                      {club.name}
                       members who have agreed to nominate you.
                     </p>
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="nominator1Email">First nominator email</Label>
+                    <Label htmlFor="nominator1Email">
+                      First nominator email
+                    </Label>
                     <Input
                       id="nominator1Email"
                       type="email"
@@ -615,7 +627,9 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="nominator2Email">Second nominator email</Label>
+                    <Label htmlFor="nominator2Email">
+                      Second nominator email
+                    </Label>
                     <Input
                       id="nominator2Email"
                       type="email"
@@ -639,7 +653,9 @@ export function JoinApplyPageClient({ club }: JoinApplyPageClientProps) {
                 )}
 
                 <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Submitting application..." : "Submit membership application"}
+                  {loading
+                    ? "Submitting application..."
+                    : "Submit membership application"}
                 </Button>
 
                 <p className="text-center text-xs leading-relaxed text-muted-foreground">

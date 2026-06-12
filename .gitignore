@@ -63,3 +63,5 @@ review-fixes.log
 /public/branding/snowboarder.jpg
 /public/branding/sunset.jpg
 /seeds/tokoroa/
+.vscode/
+.github/agents/
