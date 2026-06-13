@@ -479,7 +479,11 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
-  // --- issue #708: flag, partial bump, fallback, request-origin, idempotency ---
+  // --- issue #737: no partial bump or reduced members-only charge at hold
+  // expiry. Members pay up front, so a PENDING booking that no longer fits is
+  // bumped whole (the bump-on-no-capacity safety). The synchronous
+  // most-recent-first / partial bump in bumping.ts is unchanged (#708) and
+  // covered in bumping.test.ts. ---
 
   function makeMixedPendingBooking(
     opts: {
@@ -525,19 +529,6 @@ describe("Cron: Confirm Pending Bookings", () => {
     return { ...base, cancelIfGuestsBumped };
   }
 
-  function partialResultFor(booking: ReturnType<typeof makeMixedPendingBooking>, finalCents: number) {
-    return {
-      kind: "partial" as const,
-      removedGuests: [booking.guests[1]],
-      remainingGuests: [booking.guests[0]],
-      newTotalPriceCents: finalCents,
-      newDiscountCents: 0,
-      newPromoAdjustmentCents: 0,
-      newFinalPriceCents: finalCents,
-      promoRemoved: false,
-    };
-  }
-
   it("cancels the whole booking when the cancel-if-guests-bumped flag is set", async () => {
     const booking = makeMixedPendingBooking({ cancelIfGuestsBumped: true });
     mockBookingFindMany.mockResolvedValue([booking]);
@@ -560,97 +551,55 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
   });
 
-  it("partial-bumps and charges the reduced amount by default", async () => {
+  it("whole-bumps a mixed booking at hold expiry without charging a reduced members-only amount", async () => {
     const booking = makeMixedPendingBooking({ finalPriceCents: 18000 });
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacityForGuestRanges
-      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
-      .mockResolvedValueOnce({ available: true, minAvailable: 5, nightDetails: [] });
-    mockApplyPartialBump.mockResolvedValue(partialResultFor(booking, 8000));
-    mockChargePaymentMethod.mockResolvedValue({
-      id: "pi_partial",
-      status: "succeeded",
-      amount: 8000,
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [],
     });
-    mockPaymentUpdate.mockResolvedValue({});
 
     const result = await confirmPendingBookings();
 
-    expect(mockApplyPartialBump).toHaveBeenCalled();
-    expect(mockChargePaymentMethod).toHaveBeenCalledWith(
-      expect.objectContaining({ amountCents: 8000, idempotencyKey: "pending_charge_b1" })
-    );
-    expect(result.partialBumpedBookingIds).toEqual(["b1"]);
-    expect(result.confirmedBookingIds).toEqual(["b1"]);
-    expect(mockSendGuestsRemovedEmail).toHaveBeenCalledWith(
-      "b1@example.com",
-      "Test",
-      booking.checkIn,
-      booking.checkOut,
-      1,
-      8000
-    );
-    expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+    // No partial bump and no reduced members-only charge (issue #737).
+    expect(mockApplyPartialBump).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(result.partialBumpedBookingIds).toEqual([]);
+    expect(result.confirmedBookingIds).toEqual([]);
+    expect(result.bumpedBookingIds).toEqual(["b1"]);
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "BUMPED" },
+    });
+    // A regular (unflagged) bump sends the bumped email, not guests-cancelled.
+    expect(mockSendBumpedEmail).toHaveBeenCalled();
+    expect(mockSendGuestsCancelledEmail).not.toHaveBeenCalled();
   });
 
-  it("falls back to a whole bump when members alone still don't fit", async () => {
-    const booking = makeMixedPendingBooking();
+  it("whole-bumps a no-card mixed booking at hold expiry instead of repricing it", async () => {
+    const booking = makeMixedPendingBooking({ hasPaymentMethod: false, finalPriceCents: 18000 });
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacityForGuestRanges
-      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
-      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] });
-    mockApplyPartialBump.mockResolvedValue(partialResultFor(booking, 8000));
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [],
+    });
 
     const result = await confirmPendingBookings();
 
     expect(result.bumpedBookingIds).toEqual(["b1"]);
     expect(result.partialBumpedBookingIds).toEqual([]);
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    // Never routed to PAYMENT_PENDING (the old reprice-and-owe path is gone).
+    expect(mockBookingUpdateMany).not.toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "PAYMENT_PENDING" },
+    });
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "b1", status: "PENDING" },
       data: { status: "BUMPED" },
     });
-    expect(mockSendBumpedEmail).toHaveBeenCalled();
-    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
-  });
-
-  it("moves a no-card booking to payment-owed without charging after partial bump", async () => {
-    const booking = makeMixedPendingBooking({ hasPaymentMethod: false, finalPriceCents: 8000 });
-    mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacityForGuestRanges
-      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
-      .mockResolvedValueOnce({ available: true, minAvailable: 5, nightDetails: [] });
-    mockApplyPartialBump.mockResolvedValue(partialResultFor(booking, 8000));
-
-    const result = await confirmPendingBookings();
-
-    expect(result.partialBumpedBookingIds).toEqual(["b1"]);
-    expect(result.confirmedBookingIds).toEqual([]);
-    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
-    // Routed to payment-owed (not left stranded in PENDING with a cleared hold).
-    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
-      where: { id: "b1", status: "PENDING" },
-      data: { status: "PAYMENT_PENDING" },
-    });
-    expect(mockSendGuestsRemovedEmail).toHaveBeenCalled();
-  });
-
-  it("skips when the partial-bump claim was already processed (idempotent)", async () => {
-    const booking = makeMixedPendingBooking();
-    mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacityForGuestRanges.mockResolvedValueOnce({
-      available: false,
-      minAvailable: 0,
-      nightDetails: [],
-    });
-    mockApplyPartialBump.mockResolvedValue({ kind: "already-processed" });
-
-    const result = await confirmPendingBookings();
-
-    expect(result.confirmedBookingIds).toEqual([]);
-    expect(result.bumpedBookingIds).toEqual([]);
-    expect(result.partialBumpedBookingIds).toEqual([]);
-    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
-    expect(mockSendGuestsRemovedEmail).not.toHaveBeenCalled();
   });
 
   it("extends the hold and alerts admins for a request-origin booking, never charging it (#707)", async () => {

@@ -153,9 +153,11 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 
 1. A member selects check-in and check-out dates.
 2. Capacity is calculated as lodge beds minus capacity-holding guests per
-   night. `PENDING`, `PAID`, and `COMPLETED` bookings hold beds because the
-   daily completion job marks stays completed from check-in day while the
-   guests are still operationally in the lodge.
+   night. Only bookings with money committed hold beds: `PAID`, `COMPLETED`,
+   `CONFIRMED` (pay-on-account school groups), and `AWAITING_REVIEW` (a bed is
+   reserved while an admin decides). `PENDING` does not hold capacity; it is a
+   provisional non-member hold. The single source of truth is
+   `CAPACITY_HOLDING_BOOKING_STATUSES` in `src/lib/booking-status.ts`.
 3. Minimum-stay, booking-window, age-tier, membership, group-discount, fixed or
    percentage promo, and account-credit rules are applied.
 4. If all guests are members, or check-in is within the non-member hold window,

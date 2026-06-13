@@ -9,7 +9,6 @@ import {
 import {
   sendBookingConfirmedEmail,
   sendBookingBumpedEmail,
-  sendBookingGuestsRemovedEmail,
   sendBookingGuestsCancelledEmail,
   sendAdminPaymentFailureAlert,
   sendAdminBookingRequestHoldExpiredEmail,
@@ -20,7 +19,6 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
-import { applyPartialBumpInTransaction } from "@/lib/partial-bump";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 
@@ -30,8 +28,9 @@ const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
 export interface CronConfirmResult {
   confirmedBookingIds: string[];
   bumpedBookingIds: string[];
-  // Bookings whose non-member guests were dropped at hold expiry (the new
-  // default) but kept their member guests and continued.
+  // Retained for response-shape stability. The cron no longer partial-bumps at
+  // hold expiry (issue #737): members pay up front, so there is no reduced
+  // members-only amount to settle here. Always empty.
   partialBumpedBookingIds: string[];
   failedBookingIds: string[];
 }
@@ -43,11 +42,16 @@ export interface CronConfirmResult {
  * 1. Re-check bed availability for the booking's date range
  * 2. If beds available AND saved payment method exists:
  *    - Charge the saved PaymentMethod via Stripe
- *    - Set status to CONFIRMED
+ *    - Set status to PAID
  *    - Send confirmation email
  * 3. If beds NOT available:
- *    - Set status to BUMPED
- *    - Send bumped notification email
+ *    - Whole-bump the booking (status -> BUMPED) and send the bumped/cancelled
+ *      notification email. This is the bump-on-no-capacity safety.
+ *
+ * Note (issue #737): there is no partial bump or "charge reduced members-only
+ * amount" at hold expiry any more. Capacity is held only by PAID/CONFIRMED/
+ * AWAITING_REVIEW bookings, and members pay their share up front, so a PENDING
+ * booking that no longer fits is bumped whole rather than repriced and charged.
  */
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   const now = new Date();
@@ -165,14 +169,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   for (const booking of pendingBookings) {
     let chargeAttempted = false;
     let paymentSucceeded = false;
-    // Set when the default partial bump has dropped this booking's non-member
-    // guests and the remaining member booking still fits — the charge/confirm
-    // logic below then settles the reduced amount and sends the "guests didn't
-    // fit, your booking continues" email instead of the standard confirmation.
-    let isPartialBump = false;
 
     try {
-      // Check capacity (excluding this booking since it's already counted as PENDING)
+      // Check capacity (excluding this booking; PENDING no longer holds
+      // capacity, but excludeBookingId keeps the check robust to any future
+      // re-counting and matches the synchronous claim semantics).
       const capacityCheck = await checkCapacityForGuestRanges(
         booking.checkIn,
         booking.checkOut,
@@ -181,9 +182,16 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       );
 
       if (!capacityCheck.available) {
-        // Request-origin bookings (#707) are never partially bumped: they pay
-        // via a tokenised PaymentLink and have no member guest to keep. Whole-
-        // cancel and revoke the link so it can't be paid after the bump.
+        // Bump-on-no-capacity safety (issue #737): a PENDING booking that no
+        // longer fits is bumped whole. There is no partial bump or reduced
+        // members-only charge at hold expiry — members pay their share up
+        // front, so there is nothing left to settle here.
+        //
+        // Request-origin bookings (#707) additionally have a tokenised
+        // PaymentLink revoked so the bumped booking can't be paid for.
+        // `cancelIfGuestsBumped` only changes which email the member receives
+        // (it never applies to request-origin bookings, which have no member
+        // guest to keep).
         if (booking.originBookingRequest) {
           const bumped = await bumpWholeBookingAtHoldExpiry(booking, {
             flagged: false,
@@ -194,127 +202,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           continue;
         }
 
-        const nonMemberGuests = booking.guests.filter((g) => !g.isMember);
-        const memberGuests = booking.guests.filter((g) => g.isMember);
-
-        // Flagged ("only book if my guests can come"), or no member/non-member
-        // split to keep => whole-booking cancellation. Otherwise partial bump.
-        const wholeCancel =
-          booking.cancelIfGuestsBumped ||
-          nonMemberGuests.length === 0 ||
-          memberGuests.length === 0;
-
-        if (wholeCancel) {
-          await bumpWholeBookingAtHoldExpiry(booking, {
-            flagged: booking.cancelIfGuestsBumped,
-          });
-          continue;
-        }
-
-        // Default: drop the non-member guests, keep the members, reprice.
-        const partial = await prisma.$transaction((tx) =>
-          applyPartialBumpInTransaction({ tx, booking })
-        );
-
-        if (partial.kind !== "partial") {
-          // already-processed, or (defensively) nothing to partially keep.
-          if (partial.kind === "already-processed") {
-            logger.info(
-              { bookingId: booking.id, job: "confirmPendingBookings" },
-              "Booking already processed by another handler"
-            );
-            continue;
-          }
-          await bumpWholeBookingAtHoldExpiry(booking, { flagged: false });
-          continue;
-        }
-
-        // Re-check capacity for the reduced, members-only booking.
-        const reducedCapacity = await checkCapacityForGuestRanges(
-          booking.checkIn,
-          booking.checkOut,
-          partial.remainingGuests,
-          booking.id
-        );
-
-        if (!reducedCapacity.available) {
-          // Members alone still don't fit => fall back to a whole-booking bump.
-          await bumpWholeBookingAtHoldExpiry(booking, { flagged: false });
-          continue;
-        }
-
-        // The reduced booking fits and continues. Update the in-memory booking
-        // so the charge/confirm logic below settles the reduced amount.
-        booking.totalPriceCents = partial.newTotalPriceCents;
-        booking.discountCents = partial.newDiscountCents;
-        booking.promoAdjustmentCents = partial.newPromoAdjustmentCents;
-        booking.finalPriceCents = partial.newFinalPriceCents;
-        booking.guests = partial.remainingGuests;
-        booking.hasNonMembers = false;
-        booking.nonMemberHoldUntil = null;
-        if (partial.promoRemoved) {
-          booking.promoRedemption = null;
-        }
-        isPartialBump = true;
-        result.partialBumpedBookingIds.push(booking.id);
-
-        // No saved payment method (e.g. request-origin bookings, #707): never
-        // charge them here. Move the members-only booking to PAYMENT_PENDING
-        // (mirroring the admin "confirm pending guests" path) so it is routed
-        // to payment-owed rather than stranded in PENDING with its hold cleared
-        // — the cron filters on nonMemberHoldUntil, so a null-hold PENDING row
-        // would never be revisited. Idempotent via the status-claim.
-        if (
-          booking.finalPriceCents > 0 &&
-          (!booking.payment?.stripePaymentMethodId ||
-            !booking.payment?.stripeCustomerId)
-        ) {
-          const claimedPaymentOwed = await prisma.booking.updateMany({
-            where: { id: booking.id, status: BookingStatus.PENDING },
-            data: { status: BookingStatus.PAYMENT_PENDING },
-          });
-          if (claimedPaymentOwed.count === 0) {
-            logger.info(
-              { bookingId: booking.id, job: "confirmPendingBookings" },
-              "Booking already processed by another handler"
-            );
-            continue;
-          }
-          booking.status = BookingStatus.PAYMENT_PENDING;
-
-          try {
-            await sendBookingGuestsRemovedEmail(
-              booking.member.email,
-              booking.member.firstName,
-              booking.checkIn,
-              booking.checkOut,
-              booking.guests.length,
-              booking.finalPriceCents
-            );
-          } catch (emailErr) {
-            logger.error(
-              { err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" },
-              "Failed to send guests-removed email"
-            );
-          }
-
-          // Non-member beds were freed; let the waitlist take them.
-          processWaitlistForDates({
-            checkIn: booking.checkIn,
-            checkOut: booking.checkOut,
-          }).catch((err) =>
-            logger.error(
-              { err, bookingId: booking.id },
-              "Failed to process waitlist after cron partial bump"
-            )
-          );
-
-          continue;
-        }
-
-        // Otherwise fall through to the $0 / saved-card charge logic, which
-        // confirms the reduced booking and (because isPartialBump) sends the
-        // guests-removed email.
+        await bumpWholeBookingAtHoldExpiry(booking, {
+          flagged: booking.cancelIfGuestsBumped,
+        });
+        continue;
       }
 
       // Zero-dollar booking: skip Stripe, just confirm with a SUCCEEDED Payment
@@ -362,32 +253,21 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         }
 
         try {
-          if (isPartialBump) {
-            await sendBookingGuestsRemovedEmail(
-              booking.member.email,
-              booking.member.firstName,
-              booking.checkIn,
-              booking.checkOut,
-              booking.guests.length,
-              booking.finalPriceCents
-            );
-          } else {
-            await sendBookingConfirmedEmail(
-              booking.member.email,
-              booking.member.firstName,
-              booking.checkIn,
-              booking.checkOut,
-              booking.guests.length,
-              booking.finalPriceCents,
-              booking.promoRedemption?.promoCode
-                ? {
-                    discountCents: booking.discountCents,
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode: booking.promoRedemption.promoCode.code,
-                  }
-                : undefined
-            );
-          }
+          await sendBookingConfirmedEmail(
+            booking.member.email,
+            booking.member.firstName,
+            booking.checkIn,
+            booking.checkOut,
+            booking.guests.length,
+            booking.finalPriceCents,
+            booking.promoRedemption?.promoCode
+              ? {
+                  discountCents: booking.discountCents,
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode: booking.promoRedemption.promoCode.code,
+                }
+              : undefined
+          );
         } catch (emailErr) {
           logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send confirmation email for $0 booking");
         }
@@ -399,9 +279,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       if (!booking.payment?.stripePaymentMethodId || !booking.payment?.stripeCustomerId) {
         if (booking.originBookingRequest) {
           // Request-origin bookings (#707) pay via a tokenised PaymentLink, not
-          // a saved card - never auto-charge them. Extend the hold so the
-          // booking stays PENDING (capacity-protected) and alert admins to
-          // follow up with the requester.
+          // a saved card - never auto-charge them. Extend the hold and alert
+          // admins to follow up with the requester. (PENDING no longer holds
+          // capacity per #737, so this is a follow-up window, not a bed
+          // reservation; the booking only secures beds once it is paid.)
           const extendedHoldUntil = new Date(
             now.getTime() + REQUEST_HOLD_EXTENSION_MS
           );
@@ -499,32 +380,21 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         }
 
         try {
-          if (isPartialBump) {
-            await sendBookingGuestsRemovedEmail(
-              booking.member.email,
-              booking.member.firstName,
-              booking.checkIn,
-              booking.checkOut,
-              booking.guests.length,
-              booking.finalPriceCents
-            );
-          } else {
-            await sendBookingConfirmedEmail(
-              booking.member.email,
-              booking.member.firstName,
-              booking.checkIn,
-              booking.checkOut,
-              booking.guests.length,
-              booking.finalPriceCents,
-              booking.promoRedemption?.promoCode
-                ? {
-                    discountCents: booking.discountCents,
-                    promoAdjustmentCents: booking.promoAdjustmentCents,
-                    promoCode: booking.promoRedemption.promoCode.code,
-                  }
-                : undefined
-            );
-          }
+          await sendBookingConfirmedEmail(
+            booking.member.email,
+            booking.member.firstName,
+            booking.checkIn,
+            booking.checkOut,
+            booking.guests.length,
+            booking.finalPriceCents,
+            booking.promoRedemption?.promoCode
+              ? {
+                  discountCents: booking.discountCents,
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode: booking.promoRedemption.promoCode.code,
+                }
+              : undefined
+          );
         } catch (emailErr) {
           logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send confirmation email");
         }

@@ -100,7 +100,11 @@ describe("paid legacy CONFIRMED booking repair", () => {
 
   it("keeps status helper semantics aligned with the paid repair", () => {
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(BookingStatus.PAID);
-    expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(BookingStatus.PENDING);
+    // PENDING no longer holds capacity (issue #737): only bookings with money
+    // committed reserve beds, and members pay up front so they land on PAID.
+    expect(CAPACITY_HOLDING_BOOKING_STATUSES).not.toContain(
+      BookingStatus.PENDING
+    );
     expect(CAPACITY_HOLDING_BOOKING_STATUSES).toContain(
       BookingStatus.COMPLETED
     );
@@ -188,6 +192,26 @@ describe("paid legacy CONFIRMED booking repair", () => {
       4,
       4,
     ]);
+  });
+
+  it("excludes PENDING bookings from the capacity-holding query (issue #737)", async () => {
+    prismaMocks.bookingFindMany.mockResolvedValueOnce([]);
+
+    await checkCapacity(dateOnly(2026, 6, 10), dateOnly(2026, 6, 12), 1);
+
+    const call = prismaMocks.bookingFindMany.mock.calls[0][0] as {
+      where: { status: { in: BookingStatus[] } };
+    };
+    const queriedStatuses = call.where.status.in;
+    expect(queriedStatuses).not.toContain(BookingStatus.PENDING);
+    expect(queriedStatuses).toEqual(
+      expect.arrayContaining([
+        BookingStatus.PAID,
+        BookingStatus.COMPLETED,
+        BookingStatus.CONFIRMED,
+        BookingStatus.AWAITING_REVIEW,
+      ])
+    );
   });
 
   it("uses PAID operational bookings for lodge guest lookup and roster validation", async () => {
