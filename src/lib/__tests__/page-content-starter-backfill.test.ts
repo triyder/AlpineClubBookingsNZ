@@ -16,6 +16,14 @@ const INSERT_MIGRATION_PATH = join(
   "migration.sql",
 );
 
+const BACKFILL_404_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20260614110000_backfill_404_page_content",
+  "migration.sql",
+);
+
 const HOME_UPDATE_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
@@ -40,13 +48,15 @@ function sqlQuote(value: string) {
 
 describe("starter page content backfill migration", () => {
   const insertSql = readFileSync(INSERT_MIGRATION_PATH, "utf8");
+  const backfill404Sql = readFileSync(BACKFILL_404_MIGRATION_PATH, "utf8");
   const updateSql = readFileSync(HOME_UPDATE_MIGRATION_PATH, "utf8");
-  const combinedSql = `${insertSql}\n${updateSql}`;
+  const allInsertSql = `${insertSql}\n${backfill404Sql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
-    const insertedIds = [...insertSql.matchAll(/'starter-page-([a-z-]+)'/g)].map(
-      (match) => match[1],
-    );
+    const insertedIds = [
+      ...allInsertSql.matchAll(/'starter-page-([a-z0-9-]+)'/g),
+    ].map((match) => match[1]);
     const expectedIds = starterPageContent.map((page) =>
       page.slug.replace(/\//g, "-"),
     );
@@ -75,9 +85,9 @@ describe("starter page content backfill migration", () => {
   });
 
   it("never overwrites existing rows in the initial backfill", () => {
-    expect(insertSql).toContain("ON CONFLICT DO NOTHING");
-    expect(insertSql).not.toMatch(/DO UPDATE/i);
-    expect(insertSql).not.toMatch(/\b(UPDATE|DELETE)\b/);
+    expect(allInsertSql).toContain("ON CONFLICT DO NOTHING");
+    expect(allInsertSql).not.toMatch(/DO UPDATE/i);
+    expect(allInsertSql).not.toMatch(/\b(UPDATE|DELETE)\b/);
   });
 
   it("covers the routes that hard-404 without a record", () => {

@@ -33,49 +33,51 @@ function openImagePicker() {
 
 describe("WysiwygEditor image picker", () => {
   beforeEach(() => {
-    global.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      const method = init?.method ?? "GET";
+    global.fetch = vi.fn(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const method = init?.method ?? "GET";
 
-      if (url.startsWith("/api/admin/site-images")) {
-        return jsonResponse({ images: ["/branding/logo.png"] });
-      }
-
-      if (url.startsWith("/api/admin/image-library/")) {
-        if (method === "DELETE") {
-          return jsonResponse({ success: true, referencedBySlugs: [] });
+        if (url.startsWith("/api/admin/site-images")) {
+          return jsonResponse({ images: ["/branding/logo.example.png"] });
         }
-      }
 
-      if (url.startsWith("/api/admin/image-library")) {
-        if (method === "POST") {
-          return jsonResponse(
-            {
-              image: {
-                id: "img-new",
-                filename: "new_upload.png",
-                url: "/api/images/img-new",
-                contentType: "image/png",
-                byteSize: 100,
-                altText: null,
-                width: 10,
-                height: 10,
-                createdAt: "2026-06-13T00:00:00.000Z",
+        if (url.startsWith("/api/admin/image-library/")) {
+          if (method === "DELETE") {
+            return jsonResponse({ success: true, referencedBySlugs: [] });
+          }
+        }
+
+        if (url.startsWith("/api/admin/image-library")) {
+          if (method === "POST") {
+            return jsonResponse(
+              {
+                image: {
+                  id: "img-new",
+                  filename: "new_upload.png",
+                  url: "/api/images/img-new",
+                  contentType: "image/png",
+                  byteSize: 100,
+                  altText: null,
+                  width: 10,
+                  height: 10,
+                  createdAt: "2026-06-13T00:00:00.000Z",
+                },
               },
-            },
-            201,
-          );
+              201,
+            );
+          }
+          return jsonResponse({
+            images: [UPLOADED_IMAGE],
+            total: 1,
+            page: 1,
+            pageSize: 100,
+          });
         }
-        return jsonResponse({
-          images: [UPLOADED_IMAGE],
-          total: 1,
-          page: 1,
-          pageSize: 100,
-        });
-      }
 
-      return new Response("not found", { status: 404 });
-    }) as unknown as typeof fetch;
+        return new Response("not found", { status: 404 });
+      },
+    ) as unknown as typeof fetch;
   });
 
   it("merges uploaded images with the existing branding picker", async () => {
@@ -85,7 +87,7 @@ describe("WysiwygEditor image picker", () => {
 
     await waitFor(() => {
       expect(screen.getByText("photo.png")).toBeTruthy();
-      expect(screen.getByText("/branding/logo.png")).toBeTruthy();
+      expect(screen.getByText("logo.example.png")).toBeTruthy();
     });
 
     expect(screen.getByText("Uploaded")).toBeTruthy();
@@ -103,7 +105,7 @@ describe("WysiwygEditor image picker", () => {
     });
 
     expect(screen.queryByText("photo.png")).toBeNull();
-    expect(screen.getByText("/branding/logo.png")).toBeTruthy();
+    expect(screen.getByText("logo.example.png")).toBeTruthy();
   });
 
   it("uploads a new image inline and selects it for insertion", async () => {
@@ -149,7 +151,7 @@ describe("WysiwygEditor image picker", () => {
       "/api/admin/image-library/img-1",
       expect.objectContaining({ method: "DELETE" }),
     );
-    expect(screen.getAllByText("/branding/logo.png").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("logo.example.png").length).toBeGreaterThan(0);
   });
 
   it("supports keyboard activation of picker items via Enter/Space", async () => {
@@ -158,14 +160,14 @@ describe("WysiwygEditor image picker", () => {
     openImagePicker();
     await waitFor(() => expect(screen.getByText("photo.png")).toBeTruthy());
 
-    const brandingButton = screen
-      .getByText("/branding/logo.png")
-      .closest("button");
+    const brandingButton = screen.getByRole("button", {
+      name: "logo.example.png",
+    });
     expect(brandingButton).not.toBeNull();
-    brandingButton?.focus();
+    brandingButton.focus();
     expect(document.activeElement).toBe(brandingButton);
 
-    fireEvent.click(brandingButton as HTMLButtonElement);
+    fireEvent.click(brandingButton);
 
     await waitFor(() => {
       const insertButton = screen.getByRole("button", {

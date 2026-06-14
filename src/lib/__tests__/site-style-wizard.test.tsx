@@ -24,30 +24,35 @@ describe("site style wizard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     global.fetch = fetchMock as typeof fetch;
-    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body ?? "{}")) as ClubThemeValues & {
-        completeSetup?: boolean;
-      };
-      return {
-        ok: true,
-        json: async () =>
-          responseTheme(
-            {
-              brandGold: body.brandGold,
-              brandCharcoal: body.brandCharcoal,
-              brandDeep: body.brandDeep,
-              brandRidge: body.brandRidge,
-              brandMist: body.brandMist,
-              brandSnow: body.brandSnow,
-              brandSafety: body.brandSafety,
-              headingFontKey: body.headingFontKey,
-              bodyFontKey: body.bodyFontKey,
-              logoDataUrl: body.logoDataUrl,
-            },
-            body.completeSetup ? "2026-06-11T12:00:00.000Z" : null,
-          ),
-      };
-    });
+    fetchMock.mockImplementation(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(
+          String(init?.body ?? "{}"),
+        ) as ClubThemeValues & {
+          completeSetup?: boolean;
+        };
+        return {
+          ok: true,
+          json: async () =>
+            responseTheme(
+              {
+                brandGold: body.brandGold,
+                brandCharcoal: body.brandCharcoal,
+                brandDeep: body.brandDeep,
+                brandRidge: body.brandRidge,
+                brandMist: body.brandMist,
+                brandSnow: body.brandSnow,
+                brandSafety: body.brandSafety,
+                headingFontKey: body.headingFontKey,
+                bodyFontKey: body.bodyFontKey,
+                logoDataUrl: body.logoDataUrl,
+                rawCss: body.rawCss ?? "",
+              },
+              body.completeSetup ? "2026-06-11T12:00:00.000Z" : null,
+            ),
+        };
+      },
+    );
   });
 
   it("saves each step and finishes setup", async () => {
@@ -65,6 +70,9 @@ describe("site style wizard", () => {
     await screen.findByText("Fonts");
 
     fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
+    await screen.findByText("Raw CSS");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
     await screen.findByText("Logo");
 
     fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
@@ -79,6 +87,6 @@ describe("site style wizard", () => {
       String(fetchMock.mock.calls.at(-1)?.[1]?.body ?? "{}"),
     );
     expect(lastCallBody.completeSetup).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   }, 15_000);
 });
