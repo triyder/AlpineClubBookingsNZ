@@ -242,7 +242,9 @@ export async function createPaymentIntentForPaymentLink(
 
     const freshBooking = await tx.booking.findUnique({
       where: { id: booking.id },
-      include: { guests: true },
+      // Load per-night sets (issue #713) so a non-contiguous booking is
+      // capacity-checked on the nights it actually occupies.
+      include: { guests: { include: { nights: true } } },
     });
 
     if (

@@ -739,11 +739,34 @@ model BookingGuest {
   choreTokens      GuestChoreToken[]
   bedAllocations   BedAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
+  // Per-night stay records (issue #713). A guest may stay non-contiguous
+  // nights within one booking; each included night is one BookingGuestNight
+  // row. stayStart/stayEnd above remain the derived min/max envelope, kept in
+  // sync on every write. Reads outside the creation + manage-guests editing
+  // flows keep using the envelope.
+  nights           BookingGuestNight[]
 
   @@index([bookingId])
   @@index([bookingId, stayStart, stayEnd])
   @@index([stayStart, stayEnd])
   @@index([memberId])
+}
+
+// Per-night stay record for a booking guest (issue #713). One row per night
+// the guest is actually staying, with that night's price in integer cents.
+// Non-contiguous stays are represented as a sparse set of these rows; the
+// guest's stayStart/stayEnd envelope is the min/max of the set.
+model BookingGuestNight {
+  id             String   @id @default(cuid())
+  bookingGuestId String
+  stayDate       DateTime @db.Date
+  priceCents     Int
+  createdAt      DateTime @default(now())
+
+  bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingGuestId, stayDate])
+  @@index([stayDate])
 }
 
 // ---------------------------------------------------------------------------

@@ -88,6 +88,8 @@ interface PriceQuote {
     isMember: boolean;
     nights: number;
     priceCents: number;
+    perNightCents?: number[];
+    nightDates?: string[];
   }[];
   totalPriceCents: number;
   availableCreditCents?: number;
@@ -138,6 +140,14 @@ function clearGuestStayRanges(guestList: GuestData[]): GuestData[] {
   });
 }
 
+function clearGuestNights(guestList: GuestData[]): GuestData[] {
+  return guestList.map((guest) => {
+    const nextGuest = { ...guest };
+    delete nextGuest.nights;
+    return nextGuest;
+  });
+}
+
 export default function BookPage() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -163,6 +173,8 @@ export default function BookPage() {
   const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
   const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AvailabilityNightDetail[]>([]);
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
+  // Issue #713 — per-guest non-contiguous night grid.
+  const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [requestedRoomId, setRequestedRoomId] = useState<string | null>(null);
@@ -220,11 +232,17 @@ export default function BookPage() {
   }
 
   function buildGuestPayload(): GuestData[] {
-    if (!perGuestDatesEnabled) {
+    if (multiDateRangesEnabled) {
+      // Send the explicit night set per guest (issue #713); drop the contiguous
+      // range so the server prices/holds only the selected nights. A guest with
+      // no toggles (nights undefined) stays the whole range.
       return clearGuestStayRanges(guests);
     }
+    if (!perGuestDatesEnabled) {
+      return clearGuestNights(clearGuestStayRanges(guests));
+    }
 
-    return withDefaultGuestStayRanges(guests);
+    return clearGuestNights(withDefaultGuestStayRanges(guests));
   }
 
   function handlePerGuestDatesEnabledChange(enabled: boolean) {
@@ -237,6 +255,20 @@ export default function BookPage() {
     );
   }
 
+  function handleMultiDateRangesEnabledChange(enabled: boolean) {
+    setMultiDateRangesEnabled(enabled);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    if (enabled) {
+      // Multiple date ranges supersedes the simple per-guest date inputs.
+      setPerGuestDatesEnabled(false);
+      setGuests((current) => clearGuestStayRanges(current));
+    } else {
+      setGuests((current) => clearGuestNights(current));
+    }
+  }
+
   function handleGuestsChange(nextGuests: GuestData[]) {
     setGuests(nextGuests);
     setAppliedPromo(null);
@@ -245,7 +277,7 @@ export default function BookPage() {
   }
 
   function validateGuestStayRanges(guestList: GuestData[]): string | null {
-    if (!perGuestDatesEnabled) {
+    if (multiDateRangesEnabled || !perGuestDatesEnabled) {
       return null;
     }
 
@@ -519,6 +551,7 @@ export default function BookPage() {
           memberId: g.memberId,
           stayStart: g.stayStart,
           stayEnd: g.stayEnd,
+          nights: g.nights,
         })),
       }),
     });
@@ -1139,6 +1172,16 @@ export default function BookPage() {
               bookingCheckOut={checkOut ? formatLocalDateOnly(checkOut) : undefined}
               perGuestDatesEnabled={perGuestDatesEnabled}
               onPerGuestDatesEnabledChange={handlePerGuestDatesEnabledChange}
+              multiDateRangesEnabled={multiDateRangesEnabled}
+              onMultiDateRangesEnabledChange={handleMultiDateRangesEnabledChange}
+              nightlyPriceForGuest={(guestIndex, nightKey) => {
+                const g = priceQuote?.guests[guestIndex];
+                if (!g?.perNightCents || !g?.nightDates) return null;
+                const idx = g.nightDates.findIndex(
+                  (d) => d.slice(0, 10) === nightKey,
+                );
+                return idx >= 0 ? g.perNightCents[idx] : null;
+              }}
             />
             <div className="flex justify-between pt-4">
               <Button variant="outline" onClick={() => setStep("dates")}>

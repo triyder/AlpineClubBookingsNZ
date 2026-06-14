@@ -80,7 +80,7 @@ export async function markBookingPaymentSucceeded({
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
-        guests: true,
+        guests: { include: { nights: true } }, // per-night sets (issue #713)
         member: true,
       },
     });

@@ -42,6 +42,8 @@ const quoteSchema = z.object({
       memberId: z.string().min(1).optional(),
       stayStart: z.string().optional(),
       stayEnd: z.string().optional(),
+      // Explicit included nights for a multi date range stay (issue #713).
+      nights: z.array(z.string()).max(370).optional(),
     })
   ).min(1),
   forMemberId: z.string().optional(),

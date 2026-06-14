@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
+import { GuestNightGrid } from "@/components/guest-night-grid";
 
 export interface GuestData {
   firstName: string;
@@ -15,6 +16,10 @@ export interface GuestData {
   memberId?: string;
   stayStart?: string;
   stayEnd?: string;
+  // Explicit included nights as `yyyy-mm-dd` keys (issue #713). Present only in
+  // "Multiple date ranges" mode; undefined means the guest stays the whole
+  // booking range.
+  nights?: string[];
 }
 
 interface GuestFormProps {
@@ -25,12 +30,29 @@ interface GuestFormProps {
   bookingCheckOut?: string;
   perGuestDatesEnabled?: boolean;
   onPerGuestDatesEnabledChange?: (enabled: boolean) => void;
+  // Multiple date ranges / per-guest night grid (issue #713).
+  multiDateRangesEnabled?: boolean;
+  onMultiDateRangesEnabledChange?: (enabled: boolean) => void;
+  // Optional nightly price (cents) for a guest on a night, from the live quote.
+  nightlyPriceForGuest?: (guestIndex: number, nightKey: string) => number | null;
 }
 
 function shiftDateOnly(date: string, days: number): string {
   const parsed = new Date(`${date}T00:00:00.000Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
+}
+
+/** All night keys (yyyy-mm-dd) from checkIn (inclusive) to checkOut (exclusive). */
+function eachNightKey(checkIn: string, checkOut: string): string[] {
+  const keys: string[] = [];
+  let current = checkIn;
+  // Guard against a malformed range producing an infinite loop.
+  for (let i = 0; current < checkOut && i < 1000; i++) {
+    keys.push(current);
+    current = shiftDateOnly(current, 1);
+  }
+  return keys;
 }
 
 export function GuestForm({
@@ -41,15 +63,51 @@ export function GuestForm({
   bookingCheckOut,
   perGuestDatesEnabled = false,
   onPerGuestDatesEnabledChange,
+  multiDateRangesEnabled = false,
+  onMultiDateRangesEnabledChange,
+  nightlyPriceForGuest,
 }: GuestFormProps) {
   const ageTierOptions = useAgeTierOptions();
   const showPerGuestDatesToggle = Boolean(
     bookingCheckIn &&
     bookingCheckOut &&
     guests.length > 1 &&
-    onPerGuestDatesEnabledChange
+    onPerGuestDatesEnabledChange &&
+    !multiDateRangesEnabled
   );
+  const showMultiDateRangesToggle = Boolean(
+    bookingCheckIn &&
+    bookingCheckOut &&
+    guests.length >= 1 &&
+    onMultiDateRangesEnabledChange
+  );
+  const gridNights =
+    multiDateRangesEnabled && bookingCheckIn && bookingCheckOut
+      ? eachNightKey(bookingCheckIn, bookingCheckOut)
+      : [];
   const latestStayStart = bookingCheckOut ? shiftDateOnly(bookingCheckOut, -1) : undefined;
+
+  // In the grid, an undefined `nights` means the guest stays every night.
+  function isNightOn(guestIndex: number, nightKey: string): boolean {
+    const guestNights = guests[guestIndex]?.nights;
+    return guestNights ? guestNights.includes(nightKey) : true;
+  }
+
+  function toggleGuestNight(guestIndex: number, nightKey: string) {
+    const current = guests[guestIndex]?.nights ?? gridNights;
+    const next = current.includes(nightKey)
+      ? current.filter((key) => key !== nightKey)
+      : [...current, nightKey].sort();
+    // A guest must stay at least one night; ignore turning off the last one.
+    if (next.length === 0) return;
+    onGuestsChange(
+      guests.map((g, i) => (i === guestIndex ? { ...g, nights: next } : g)),
+    );
+  }
+
+  function handleMultiDateRangesChange(enabled: boolean) {
+    onMultiDateRangesEnabledChange?.(enabled);
+  }
 
   function addGuest() {
     if (guests.length >= maxGuests) return;
@@ -108,6 +166,34 @@ export function GuestForm({
           <Label htmlFor="per-guest-booking-dates" className="cursor-pointer">
             Per guest booking dates
           </Label>
+        </div>
+      )}
+
+      {showMultiDateRangesToggle && (
+        <div className="space-y-3 rounded-md border p-3">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="multiple-date-ranges"
+              checked={multiDateRangesEnabled}
+              onCheckedChange={(checked) => handleMultiDateRangesChange(checked === true)}
+            />
+            <Label htmlFor="multiple-date-ranges" className="cursor-pointer">
+              Multiple date ranges
+            </Label>
+          </div>
+          {multiDateRangesEnabled && (
+            <GuestNightGrid
+              guestLabels={guests.map((g, i) =>
+                `${g.firstName} ${g.lastName}`.trim() || `Guest ${i + 1}`,
+              )}
+              nights={gridNights}
+              isNightOn={isNightOn}
+              priceForNight={nightlyPriceForGuest}
+              onToggle={toggleGuestNight}
+              arrivalLabel={bookingCheckIn}
+              departureLabel={bookingCheckOut}
+            />
+          )}
         </div>
       )}
 
@@ -175,7 +261,7 @@ export function GuestForm({
               ? "Linked family members keep their member details and member pricing."
               : "Typed-in guests are treated as non-members and charged at non-member rates."}
           </p>
-          {perGuestDatesEnabled && bookingCheckIn && bookingCheckOut && (
+          {perGuestDatesEnabled && !multiDateRangesEnabled && bookingCheckIn && bookingCheckOut && (
             <div className="grid grid-cols-1 gap-3 border-t pt-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor={`guest-${index}-stay-start`}>Date In</Label>

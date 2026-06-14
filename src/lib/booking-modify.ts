@@ -72,6 +72,8 @@ import {
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
 import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
   formatDateOnly,
   normalizeDateOnlyForTimeZone,
   parseDateOnly,
@@ -89,12 +91,16 @@ export type BatchModifyInput = {
     memberId?: string;
     stayStart?: string | null;
     stayEnd?: string | null;
+    // Explicit included nights for a non-contiguous stay (issue #713).
+    nights?: ReadonlyArray<string> | null;
   }>;
   removeGuestIds?: string[];
   guestStayRanges?: Array<{
     guestId: string;
     stayStart?: string | null;
     stayEnd?: string | null;
+    // Explicit included nights for a non-contiguous stay (issue #713).
+    nights?: ReadonlyArray<string> | null;
   }>;
   guestUpdates?: Array<{
     guestId: string;
@@ -127,17 +133,20 @@ type ProposedGuestPricingInput = {
   memberId: string | null;
   stayStart: Date;
   stayEnd: Date;
+  nights?: Date[];
 };
 
 type ProposedRemainingGuest = {
   guest: BookingGuest;
   stayStart: Date;
   stayEnd: Date;
+  nights?: Date[];
 };
 
 type StayRangeInput = {
   stayStart?: string | null;
   stayEnd?: string | null;
+  nights?: ReadonlyArray<string | Date> | null;
 };
 
 function hasStayRangeValue(value: string | null | undefined): boolean {
@@ -145,7 +154,11 @@ function hasStayRangeValue(value: string | null | undefined): boolean {
 }
 
 function hasStayRangeInput(input: StayRangeInput): boolean {
-  return hasStayRangeValue(input.stayStart) || hasStayRangeValue(input.stayEnd);
+  return (
+    hasStayRangeValue(input.stayStart) ||
+    hasStayRangeValue(input.stayEnd) ||
+    (input.nights != null && input.nights.length > 0)
+  );
 }
 
 function hasGuestStayRangeInputs(input: BatchModifyInput): boolean {
@@ -156,7 +169,11 @@ function hasGuestStayRangeInputs(input: BatchModifyInput): boolean {
 }
 
 function normalizeRangeOrApiError(
-  input: { stayStart?: string | Date | null; stayEnd?: string | Date | null },
+  input: {
+    stayStart?: string | Date | null;
+    stayEnd?: string | Date | null;
+    nights?: ReadonlyArray<string | Date> | null;
+  },
   booking: { checkIn: Date; checkOut: Date },
   index: number
 ) {
@@ -206,7 +223,9 @@ export type LoadedPromoRedemption = PromoRedemption & {
 };
 
 export type LoadedBookingForModify = Booking & {
-  guests: BookingGuest[];
+  // Guests carry their explicit night set (issue #713) so an edit preserves the
+  // gaps of guests that are not being changed and re-syncs only edited guests.
+  guests: Array<BookingGuest & { nights?: { stayDate: Date }[] }>;
   payment: Payment | null;
   member: Member;
   promoRedemption: LoadedPromoRedemption | null;
@@ -562,6 +581,7 @@ export async function prepareGuestPlan(
         ...guest,
         stayStart: input.addGuests?.[index]?.stayStart ?? null,
         stayEnd: input.addGuests?.[index]?.stayEnd ?? null,
+        nights: input.addGuests?.[index]?.nights ?? null,
       }))
     : undefined;
 
@@ -582,14 +602,24 @@ export async function prepareGuestPlan(
     newCheckIn.getTime() !== new Date(booking.checkIn).getTime() ||
     newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
   const existingRangeInputs = getGuestStayRangeInputMap(input);
+  // Preserve an unedited guest's existing night set (issue #713) so editing
+  // one guest (or only names/notes/promo) never collapses another guest's gaps.
+  const existingNightsFor = (guest: BookingGuest & { nights?: { stayDate: Date }[] }) =>
+    guest.nights && guest.nights.length > 0
+      ? guest.nights.map((night) => night.stayDate)
+      : undefined;
+
   const proposedRemainingGuests: ProposedRemainingGuest[] = remainingGuests.map((guest, index) => {
     if (!hasRangeInputs) {
+      // A booking date change resets each guest to the full new range (existing
+      // behaviour); otherwise keep the guest exactly as stored, gaps included.
       return datesChanged
         ? { guest, stayStart: newCheckIn, stayEnd: newCheckOut }
         : {
             guest,
             stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
             stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+            nights: existingNightsFor(guest),
           };
     }
 
@@ -600,6 +630,7 @@ export async function prepareGuestPlan(
         : {
             stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
             stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+            nights: existingNightsFor(guest),
           };
 
     return { guest, ...normalizedRange };
@@ -620,6 +651,7 @@ export async function prepareGuestPlan(
       memberId: entry.guest.memberId ?? null,
       stayStart: entry.stayStart,
       stayEnd: entry.stayEnd,
+      nights: entry.nights,
     })),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
       bookingGuestId: null,
@@ -628,6 +660,7 @@ export async function prepareGuestPlan(
       memberId: g.memberId ?? null,
       stayStart: g.stayStart,
       stayEnd: g.stayEnd,
+      nights: g.nights,
     })),
   ];
 
@@ -802,15 +835,43 @@ export type PricingResult = {
   newTotalPriceCents: number;
   priceBreakdown: {
     totalPriceCents: number;
-    guests: Array<{ priceCents: number; perNightCents: number[] }>;
+    guests: Array<{ priceCents: number; perNightCents: number[]; nightDates: Date[] }>;
   };
   guestNightRates: Array<{
     bookingGuestId?: string | null;
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
+    nightDates?: Date[];
   }>;
 };
+
+/**
+ * Build a per-night breakdown for a contiguous range by splitting the total
+ * evenly across the nights, with any integer-cent remainder on the earliest
+ * nights so the per-night sum equals the total exactly. Used by the
+ * in-progress edit plan, which prices guests as scalar totals (issue #713).
+ */
+function splitContiguousNights(
+  stayStart: Date,
+  stayEnd: Date,
+  totalCents: number
+): { priceCents: number; perNightCents: number[]; nightDates: Date[] } {
+  const nightDates = eachDateOnlyInRange(
+    normalizeDateOnlyForTimeZone(stayStart),
+    normalizeDateOnlyForTimeZone(stayEnd)
+  );
+  const count = nightDates.length;
+  const perNightCents: number[] = [];
+  if (count > 0) {
+    const base = Math.floor(totalCents / count);
+    const remainder = totalCents - base * count;
+    for (let i = 0; i < count; i++) {
+      perNightCents.push(base + (i < remainder ? 1 : 0));
+    }
+  }
+  return { priceCents: totalCents, perNightCents, nightDates };
+}
 
 export async function calculateModifiedPricing(
   tx: Prisma.TransactionClient,
@@ -842,6 +903,7 @@ export async function calculateModifiedPricing(
       memberId: string | null;
       stayStart?: Date | null;
       stayEnd?: Date | null;
+      nights?: Date[];
     }>;
     skipBookingLifecycleRules: boolean;
     seasonRateData: SeasonRateData[];
@@ -897,14 +959,12 @@ export async function calculateModifiedPricing(
       ? {
           totalPriceCents: inProgressPlan.newTotalPriceCents,
           guests: [
-            ...inProgressPlan.proposedExistingGuests.map((entry) => ({
-              priceCents: entry.priceCents,
-              perNightCents: [] as number[],
-            })),
-            ...inProgressPlan.proposedAddedGuests.map((entry) => ({
-              priceCents: entry.priceCents,
-              perNightCents: [] as number[],
-            })),
+            ...inProgressPlan.proposedExistingGuests.map((entry) =>
+              splitContiguousNights(entry.stayStart, entry.stayEnd, entry.priceCents)
+            ),
+            ...inProgressPlan.proposedAddedGuests.map((entry) =>
+              splitContiguousNights(entry.stayStart, entry.stayEnd, entry.priceCents)
+            ),
           ],
         }
       : calculateBookingPrice(newCheckIn, newCheckOut, guestsForPricing, seasonRateData);
@@ -921,8 +981,9 @@ export async function calculateModifiedPricing(
         isMember: guest.isMember,
         perNightRates: priceBreakdown.guests[index]?.perNightCents ?? [],
         // Dates the positional rates so internal work-party promos restrict
-        // the discount to the event's night window.
+        // the discount to the event's night window — correct for gaps too.
         firstNight: guest.stayStart ?? newCheckIn,
+        nightDates: priceBreakdown.guests[index]?.nightDates ?? [],
       }));
 
   return {
@@ -1185,9 +1246,46 @@ export async function applyGuestChanges(
     (guestNameUpdates ?? []).map((update) => [update.guestId, update]),
   );
 
+  type BreakdownGuest = { nightDates: Date[]; perNightCents: number[] };
+
+  // Re-sync a guest's BookingGuestNight rows to the priced nights (issue #713),
+  // and return the matching stayStart/stayEnd envelope. Called on every guest
+  // write so a guest's gaps are persisted and stale nights never linger.
+  const syncGuestNights = async (
+    bookingGuestId: string,
+    bg: BreakdownGuest | undefined,
+    fallbackStart: Date,
+    fallbackEnd: Date,
+  ): Promise<{ stayStart: Date; stayEnd: Date }> => {
+    await tx.bookingGuestNight.deleteMany({ where: { bookingGuestId } });
+    const nightDates = bg?.nightDates ?? [];
+    if (nightDates.length > 0) {
+      await tx.bookingGuestNight.createMany({
+        data: nightDates.map((stayDate, k) => ({
+          bookingGuestId,
+          stayDate,
+          priceCents: bg?.perNightCents[k] ?? 0,
+        })),
+      });
+      return {
+        stayStart: nightDates[0],
+        stayEnd: addDaysDateOnly(nightDates[nightDates.length - 1], 1),
+      };
+    }
+    return { stayStart: fallbackStart, stayEnd: fallbackEnd };
+  };
+
   if (inProgressPlan) {
-    for (const entry of inProgressPlan.proposedExistingGuests) {
+    const existingCount = inProgressPlan.proposedExistingGuests.length;
+    for (let e = 0; e < existingCount; e++) {
+      const entry = inProgressPlan.proposedExistingGuests[e];
       const nameUpdate = nameUpdatesByGuestId.get(entry.guest.id);
+      const envelope = await syncGuestNights(
+        entry.guest.id,
+        priceBreakdown.guests[e],
+        entry.stayStart,
+        entry.stayEnd,
+      );
       await tx.bookingGuest.update({
         where: { id: entry.guest.id },
         data: {
@@ -1197,14 +1295,15 @@ export async function applyGuestChanges(
                 lastName: nameUpdate.lastName,
               }
             : {}),
-          stayStart: entry.stayStart,
-          stayEnd: entry.stayEnd,
+          stayStart: envelope.stayStart,
+          stayEnd: envelope.stayEnd,
           priceCents: entry.priceCents,
         },
       });
     }
 
-    for (const entry of inProgressPlan.proposedAddedGuests) {
+    for (let a = 0; a < inProgressPlan.proposedAddedGuests.length; a++) {
+      const entry = inProgressPlan.proposedAddedGuests[a];
       const g = entry.guest;
       const guest = await tx.bookingGuest.create({
         data: {
@@ -1219,6 +1318,21 @@ export async function applyGuestChanges(
           priceCents: entry.priceCents,
         },
       });
+      const envelope = await syncGuestNights(
+        guest.id,
+        priceBreakdown.guests[existingCount + a],
+        entry.stayStart,
+        entry.stayEnd,
+      );
+      if (
+        envelope.stayStart.getTime() !== guest.stayStart.getTime() ||
+        envelope.stayEnd.getTime() !== guest.stayEnd.getTime()
+      ) {
+        await tx.bookingGuest.update({
+          where: { id: guest.id },
+          data: { stayStart: envelope.stayStart, stayEnd: envelope.stayEnd },
+        });
+      }
       createdGuests.push(guest);
     }
 
@@ -1229,6 +1343,7 @@ export async function applyGuestChanges(
     await tx.choreAssignment.deleteMany({
       where: { bookingGuestId: guest.id },
     });
+    // BookingGuestNight rows cascade-delete with the guest.
     await tx.bookingGuest.delete({ where: { id: guest.id } });
   }
 
@@ -1237,6 +1352,7 @@ export async function applyGuestChanges(
   for (let i = 0; i < addList.length; i++) {
     const g = addList[i];
     const guestPriceIndex = addedGuestStartIndex + i;
+    const bg = priceBreakdown.guests[guestPriceIndex];
     const guest = await tx.bookingGuest.create({
       data: {
         bookingId,
@@ -1247,15 +1363,36 @@ export async function applyGuestChanges(
         memberId: g.memberId || null,
         stayStart: g.stayStart ?? newCheckIn,
         stayEnd: g.stayEnd ?? newCheckOut,
-        priceCents: priceBreakdown.guests[guestPriceIndex].priceCents,
+        priceCents: bg.priceCents,
       },
     });
+    const envelope = await syncGuestNights(
+      guest.id,
+      bg,
+      newCheckIn,
+      newCheckOut,
+    );
+    if (
+      envelope.stayStart.getTime() !== guest.stayStart.getTime() ||
+      envelope.stayEnd.getTime() !== guest.stayEnd.getTime()
+    ) {
+      await tx.bookingGuest.update({
+        where: { id: guest.id },
+        data: { stayStart: envelope.stayStart, stayEnd: envelope.stayEnd },
+      });
+    }
     createdGuests.push(guest);
   }
 
   for (let i = 0; i < remainingGuests.length; i++) {
     const proposedRange = proposedRemainingGuests[i];
     const nameUpdate = nameUpdatesByGuestId.get(remainingGuests[i].id);
+    const envelope = await syncGuestNights(
+      remainingGuests[i].id,
+      priceBreakdown.guests[i],
+      proposedRange?.stayStart ?? newCheckIn,
+      proposedRange?.stayEnd ?? newCheckOut,
+    );
     await tx.bookingGuest.update({
       where: { id: remainingGuests[i].id },
       data: {
@@ -1265,8 +1402,8 @@ export async function applyGuestChanges(
               lastName: nameUpdate.lastName,
             }
           : {}),
-        stayStart: proposedRange?.stayStart ?? newCheckIn,
-        stayEnd: proposedRange?.stayEnd ?? newCheckOut,
+        stayStart: envelope.stayStart,
+        stayEnd: envelope.stayEnd,
         priceCents: priceBreakdown.guests[i].priceCents,
       },
     });

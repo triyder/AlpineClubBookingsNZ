@@ -17,6 +17,7 @@ interface Guest {
   memberId?: string | null;
   stayStart?: string | null;
   stayEnd?: string | null;
+  nights?: string[] | null;
   priceCents: number;
 }
 

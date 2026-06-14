@@ -1,7 +1,10 @@
 import type { AgeTier, FixedNightlyMode, PromoCodeType, SeasonType } from "@prisma/client";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "../date-only";
-import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
+import {
+  countActiveGuestsForNight,
+  type GuestNightInput,
+} from "@/lib/booking-guest-stay-ranges";
 
 export interface SeasonRateData {
   seasonId: string;
@@ -26,6 +29,10 @@ export interface GuestInput {
   isMember: boolean;
   stayStart?: Date | null;
   stayEnd?: Date | null;
+  // Explicit included nights (issue #713). When present and non-empty, the
+  // guest is priced for exactly these nights (which may be non-contiguous);
+  // otherwise pricing falls back to the contiguous stayStart/stayEnd envelope.
+  nights?: ReadonlyArray<GuestNightInput> | null;
 }
 
 export interface PriceBreakdown {
@@ -35,6 +42,10 @@ export interface PriceBreakdown {
     nights: number;
     priceCents: number;
     perNightCents: number[];
+    // The actual nights priced, in chronological order and parallel to
+    // perNightCents. Callers use these to persist BookingGuestNight rows, build
+    // Xero line items per contiguous run, and date the work-party promo window.
+    nightDates: Date[];
   }[];
   totalPriceCents: number;
 }
@@ -117,6 +128,48 @@ export function getStayNights(checkIn: Date, checkOut: Date): Date[] {
   }
 
   return nights;
+}
+
+/**
+ * Convert one explicit night entry (Date, `yyyy-mm-dd` string, or a
+ * BookingGuestNight relation row) into a normalized booking date.
+ */
+function normalizeNightEntry(entry: GuestNightInput): Date {
+  if (typeof entry === "string") {
+    return normalizeBookingDate(parseDateOnly(entry));
+  }
+  if (entry instanceof Date) {
+    return normalizeBookingDate(entry);
+  }
+  return normalizeNightEntry(entry.stayDate);
+}
+
+/**
+ * The chronological list of nights to price for a guest. When the guest has an
+ * explicit night set (issue #713) those nights are used (deduped, sorted),
+ * allowing non-contiguous stays; otherwise the contiguous stayStart/stayEnd
+ * envelope is expanded into nights exactly as before.
+ */
+function getGuestPricedNights(
+  guest: GuestInput,
+  bookingRange: { checkIn: Date; checkOut: Date }
+): Date[] {
+  if (guest.nights && guest.nights.length > 0) {
+    const byKey = new Map<string, Date>();
+    for (const entry of guest.nights) {
+      const night = normalizeNightEntry(entry);
+      byKey.set(formatDateOnly(night), night);
+    }
+    return [...byKey.values()].sort((a, b) => a.getTime() - b.getTime());
+  }
+
+  const guestStayStart = guest.stayStart
+    ? normalizeBookingDate(guest.stayStart)
+    : bookingRange.checkIn;
+  const guestStayEnd = guest.stayEnd
+    ? normalizeBookingDate(guest.stayEnd)
+    : bookingRange.checkOut;
+  return getStayNights(guestStayStart, guestStayEnd);
 }
 
 /**
@@ -234,13 +287,7 @@ export function calculateBookingPrice(
   };
 
   const guestBreakdowns = guests.map((guest) => {
-    const guestStayStart = guest.stayStart
-      ? normalizeBookingDate(guest.stayStart)
-      : bookingRange.checkIn;
-    const guestStayEnd = guest.stayEnd
-      ? normalizeBookingDate(guest.stayEnd)
-      : bookingRange.checkOut;
-    const nights = getStayNights(guestStayStart, guestStayEnd);
+    const nights = getGuestPricedNights(guest, bookingRange);
     const perNightCents: number[] = [];
     let guestTotal = 0;
 
@@ -267,6 +314,7 @@ export function calculateBookingPrice(
       nights: nights.length,
       priceCents: guestTotal,
       perNightCents,
+      nightDates: nights,
     };
   });
 

@@ -81,7 +81,7 @@ export async function POST(
 
     const freshBooking = await tx.booking.findUnique({
       where: { id },
-      include: { guests: true },
+      include: { guests: { include: { nights: true } } }, // per-night sets (issue #713)
     });
 
     if (!freshBooking || freshBooking.status !== BookingStatus.DRAFT) {

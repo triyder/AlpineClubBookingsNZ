@@ -296,6 +296,7 @@ export async function modifyBookingDates({
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: priceBreakdown.guests[index].perNightCents,
+      nightDates: priceBreakdown.guests[index].nightDates,
       // Guests are priced over the full new range here, so the first rate
       // is the new check-in night. Dates the rates so internal work-party
       // promos restrict the discount to the event's night window.

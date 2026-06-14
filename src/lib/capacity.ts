@@ -93,7 +93,10 @@ export async function getAvailability(
       status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
     },
     include: {
-      guests: true,
+      // Load each guest's explicit night set (issue #713) so non-contiguous
+      // stays are counted only on the nights they actually occupy. Guests
+      // without night rows fall back to the stayStart/stayEnd envelope.
+      guests: { include: { nights: true } },
     },
   });
 
@@ -132,7 +135,10 @@ export async function checkCapacity(
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
-      guests: true,
+      // Load each guest's explicit night set (issue #713) so non-contiguous
+      // stays are counted only on the nights they actually occupy. Guests
+      // without night rows fall back to the stayStart/stayEnd envelope.
+      guests: { include: { nights: true } },
     },
   });
 
@@ -180,7 +186,10 @@ export async function checkCapacityForGuestRanges(
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
-      guests: true,
+      // Load each guest's explicit night set (issue #713) so non-contiguous
+      // stays are counted only on the nights they actually occupy. Guests
+      // without night rows fall back to the stayStart/stayEnd envelope.
+      guests: { include: { nights: true } },
     },
   });
 
@@ -224,7 +233,10 @@ export async function getMonthAvailability(
       status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
     },
     include: {
-      guests: true,
+      // Load each guest's explicit night set (issue #713) so non-contiguous
+      // stays are counted only on the nights they actually occupy. Guests
+      // without night rows fall back to the stayStart/stayEnd envelope.
+      guests: { include: { nights: true } },
     },
   });
 

@@ -117,11 +117,40 @@ async function loadBookingForBedAllocation(
           ageTier: true,
           stayStart: true,
           stayEnd: true,
+          // Explicit night set (issue #713): allocations are pruned/created per
+          // included night, so non-contiguous stays only hold beds on the
+          // nights the guest actually stays.
+          nights: { select: { stayDate: true } },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
     },
   });
+}
+
+/**
+ * The dates a guest actually stays within a date range (issue #713). Uses the
+ * explicit night set when present; otherwise the contiguous stayStart/stayEnd
+ * range clamped to the range — the pre-#713 behaviour.
+ */
+function getGuestNightDatesInRange(
+  guest: { stayStart: Date; stayEnd: Date; nights?: { stayDate: Date }[] },
+  range: BedAllocationLifecycleRange
+): Date[] {
+  const rangeStartKey = formatDateOnly(range.checkIn);
+  const rangeEndKey = formatDateOnly(range.checkOut); // exclusive
+  if (guest.nights && guest.nights.length > 0) {
+    return guest.nights
+      .map((night) => night.stayDate)
+      .filter((stayDate) => {
+        const key = formatDateOnly(stayDate);
+        return key >= rangeStartKey && key < rangeEndKey;
+      })
+      .sort((a, b) => a.getTime() - b.getTime());
+  }
+  const clamped = clampRange(guest.stayStart, guest.stayEnd, range);
+  if (!clamped) return [];
+  return eachDateOnlyInRange(clamped.checkIn, clamped.checkOut);
 }
 
 async function pruneAllocationsForBooking(
@@ -147,16 +176,27 @@ async function pruneAllocationsForBooking(
   ];
 
   for (const guest of booking.guests) {
-    staleGuestNightClauses.push(
-      {
+    const nightDates = guest.nights?.map((night) => night.stayDate) ?? [];
+    if (nightDates.length > 0) {
+      // Prune any allocation on a night the guest no longer stays — this covers
+      // gaps in a non-contiguous stay and nights switched off in the grid
+      // (issue #713), not just the range edges.
+      staleGuestNightClauses.push({
         bookingGuestId: guest.id,
-        stayDate: { lt: guest.stayStart },
-      },
-      {
-        bookingGuestId: guest.id,
-        stayDate: { gte: guest.stayEnd },
-      },
-    );
+        stayDate: { notIn: nightDates },
+      });
+    } else {
+      staleGuestNightClauses.push(
+        {
+          bookingGuestId: guest.id,
+          stayDate: { lt: guest.stayStart },
+        },
+        {
+          bookingGuestId: guest.id,
+          stayDate: { gte: guest.stayEnd },
+        },
+      );
+    }
   }
 
   const deleted = await db.bedAllocation.deleteMany({
@@ -214,6 +254,7 @@ async function autoAllocateMissingBedNights({
             ageTier: true,
             stayStart: true,
             stayEnd: true,
+            nights: { select: { stayDate: true } },
           },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
@@ -254,13 +295,10 @@ async function autoAllocateMissingBedNights({
       const guests: BedAllocationBooking["guests"] = [];
 
       for (const guest of booking.guests) {
-        const clamped = clampRange(guest.stayStart, guest.stayEnd, range);
-        if (!clamped) continue;
-
-        for (const stayDate of eachDateOnlyInRange(
-          clamped.checkIn,
-          clamped.checkOut,
-        )) {
+        // Allocate only the nights the guest actually stays (issue #713):
+        // a non-contiguous stay gets beds on its included nights, not the
+        // whole envelope.
+        for (const stayDate of getGuestNightDatesInRange(guest, range)) {
           const stayDateKey = formatDateOnly(stayDate);
           if (allocatedGuestNights.has(`${guest.id}:${stayDateKey}`)) {
             continue;

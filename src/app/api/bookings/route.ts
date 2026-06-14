@@ -63,6 +63,10 @@ const createBookingSchema = z.object({
         memberId: z.string().min(1).optional(),
         stayStart: z.string().optional(),
         stayEnd: z.string().optional(),
+        // Explicit included nights for a multi date range stay (issue #713).
+        // When present, the guest stays exactly these nights (may be
+        // non-contiguous) and the booking range auto-expands to cover them.
+        nights: z.array(dateOnlyString).max(370).optional(),
       })
     )
     .min(1)

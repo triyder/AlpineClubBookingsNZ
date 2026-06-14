@@ -49,7 +49,9 @@ export async function getOccupiedBedsPerNight(
         ? { id: { notIn: excludeBookingIds } }
         : {}),
     },
-    include: { guests: true },
+    // Per-night sets (issue #713) so non-contiguous holders are counted only
+    // on the nights they occupy; guests without rows use the envelope.
+    include: { guests: { include: { nights: true } } },
   });
 
   const occupiedMap = new Map<string, number>();

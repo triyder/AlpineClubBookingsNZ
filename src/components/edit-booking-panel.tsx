@@ -10,6 +10,24 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
+import { GuestNightGrid } from "@/components/guest-night-grid";
+
+function shiftDateKey(date: string, days: number): string {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+/** All night keys (yyyy-mm-dd) from checkIn (inclusive) to checkOut (exclusive). */
+function eachNightKey(checkIn: string, checkOut: string): string[] {
+  const keys: string[] = [];
+  let current = checkIn;
+  for (let i = 0; current < checkOut && i < 1000; i++) {
+    keys.push(current);
+    current = shiftDateKey(current, 1);
+  }
+  return keys;
+}
 
 interface Guest {
   id: string;
@@ -20,6 +38,7 @@ interface Guest {
   memberId?: string | null;
   stayStart?: string | null;
   stayEnd?: string | null;
+  nights?: string[] | null;
   priceCents: number;
 }
 
@@ -70,6 +89,8 @@ interface NewGuest {
   memberId?: string;
   stayStart?: string;
   stayEnd?: string;
+  // Explicit included nights (issue #713), set in the multi date range grid.
+  nights?: string[];
 }
 
 interface ItemizedChange {
@@ -161,6 +182,34 @@ export function EditBookingPanel({
           stayStart: guest.stayStart ?? booking.checkIn,
           stayEnd: guest.stayEnd ?? booking.checkOut,
         },
+      ])
+    )
+  );
+  // Multiple date ranges / per-guest night grid (issue #713). Enabled by default
+  // when an existing guest already has a non-contiguous stay so the gaps show.
+  const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(() =>
+    booking.guests.some((guest) => {
+      const span = eachNightKey(
+        guest.stayStart ?? booking.checkIn,
+        guest.stayEnd ?? booking.checkOut
+      ).length;
+      return Boolean(guest.nights && guest.nights.length < span);
+    })
+  );
+  // Per existing-guest night set (keyed by guest id), seeded from stored nights
+  // or the contiguous range so toggling the grid never wipes a guest's gaps.
+  const [existingGuestNights, setExistingGuestNights] = useState<
+    Record<string, string[]>
+  >(() =>
+    Object.fromEntries(
+      booking.guests.map((guest) => [
+        guest.id,
+        guest.nights && guest.nights.length > 0
+          ? [...guest.nights].sort()
+          : eachNightKey(
+              guest.stayStart ?? booking.checkIn,
+              guest.stayEnd ?? booking.checkOut
+            ),
       ])
     )
   );
@@ -358,12 +407,29 @@ export function EditBookingPanel({
     ]
   );
   const guestNamesChanged = guestNameUpdates.length > 0;
+  // A night toggle in the grid (issue #713) is a change even when it leaves the
+  // guest's overall envelope unchanged (e.g. switching off a middle night).
+  const guestNightsChanged =
+    multiDateRangesEnabled &&
+    !isInProgressEdit &&
+    remainingGuests.some((guest) => {
+      const original =
+        guest.nights && guest.nights.length > 0
+          ? [...guest.nights].sort()
+          : eachNightKey(
+              guest.stayStart ?? booking.checkIn,
+              guest.stayEnd ?? booking.checkOut
+            );
+      const current = existingGuestNights[guest.id] ?? original;
+      return current.join(",") !== original.join(",");
+    });
   const hasChanges =
     checkIn !== booking.checkIn ||
     checkOut !== booking.checkOut ||
     removedGuestIds.size > 0 ||
     addedGuests.length > 0 ||
     guestRangesChanged ||
+    guestNightsChanged ||
     guestNamesChanged ||
     promoAction.type !== "keep";
 
@@ -372,7 +438,8 @@ export function EditBookingPanel({
 
   const buildModificationPayload = useCallback(() => {
     const body: Record<string, unknown> = {};
-    const rangeMode = perGuestDatesEnabled && !isInProgressEdit;
+    const gridMode = multiDateRangesEnabled && !isInProgressEdit;
+    const rangeMode = perGuestDatesEnabled && !isInProgressEdit && !gridMode;
     let effectiveCheckIn = checkIn;
     let effectiveCheckOut = checkOut;
     let rangeAwareAddedGuests: Array<{
@@ -383,6 +450,7 @@ export function EditBookingPanel({
       memberId?: string;
       stayStart?: string;
       stayEnd?: string;
+      nights?: string[];
     }> = addedGuests.map((g) => ({
       firstName: g.firstName,
       lastName: g.lastName,
@@ -391,7 +459,37 @@ export function EditBookingPanel({
       memberId: g.memberId,
     }));
 
-    if (rangeMode) {
+    if (gridMode) {
+      // Multi date range mode (issue #713): send each guest's explicit night
+      // set; the server reprices, re-allocates and recomputes the envelope.
+      const existingRanges = remainingGuests.map((guest) => ({
+        guestId: guest.id,
+        nights:
+          existingGuestNights[guest.id] ??
+          eachNightKey(
+            guest.stayStart ?? booking.checkIn,
+            guest.stayEnd ?? booking.checkOut
+          ),
+      }));
+      rangeAwareAddedGuests = addedGuests.map((g) => ({
+        firstName: g.firstName,
+        lastName: g.lastName,
+        ageTier: g.ageTier,
+        isMember: g.isMember,
+        memberId: g.memberId,
+        nights: g.nights ?? eachNightKey(checkIn, checkOut),
+      }));
+      const allNights = [
+        ...existingRanges.flatMap((range) => range.nights),
+        ...rangeAwareAddedGuests.flatMap((guest) => guest.nights ?? []),
+      ].filter(Boolean);
+      if (allNights.length > 0) {
+        effectiveCheckIn = allNights.reduce((a, b) => (b < a ? b : a), allNights[0]);
+        const lastNight = allNights.reduce((a, b) => (b > a ? b : a), allNights[0]);
+        effectiveCheckOut = shiftDateKey(lastNight, 1);
+      }
+      body.guestStayRanges = existingRanges;
+    } else if (rangeMode) {
       const existingRanges = remainingGuests.map((guest) => ({
         guestId: guest.id,
         ...getExistingGuestRange(guest),
@@ -459,6 +557,8 @@ export function EditBookingPanel({
     guestNameUpdates,
     isInProgressEdit,
     perGuestDatesEnabled,
+    multiDateRangesEnabled,
+    existingGuestNights,
     promoAction,
     remainingGuests,
     removedGuestIds,
@@ -760,7 +860,7 @@ export function EditBookingPanel({
             </div>
           )}
 
-          {canEditPerGuestDates ? (
+          {canEditPerGuestDates && !multiDateRangesEnabled ? (
             <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
               <input
                 type="checkbox"
@@ -770,6 +870,76 @@ export function EditBookingPanel({
               />
               <span className="font-medium">Per guest booking dates</span>
             </label>
+          ) : null}
+
+          {!isInProgressEdit ? (
+            <div className="space-y-3 rounded-md border p-3 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={multiDateRangesEnabled}
+                  onChange={(e) => {
+                    setMultiDateRangesEnabled(e.target.checked);
+                    if (e.target.checked) setPerGuestDatesEnabled(false);
+                  }}
+                  className="h-4 w-4"
+                />
+                <span className="font-medium">Multiple date ranges</span>
+              </label>
+              {multiDateRangesEnabled ? (
+                <GuestNightGrid
+                  guestLabels={[
+                    ...remainingGuests.map(
+                      (g) => `${g.firstName} ${g.lastName}`.trim(),
+                    ),
+                    ...addedGuests.map(
+                      (g, i) =>
+                        `${g.firstName} ${g.lastName}`.trim() ||
+                        `New guest ${i + 1}`,
+                    ),
+                  ]}
+                  nights={eachNightKey(checkIn, checkOut)}
+                  isNightOn={(rowIndex, nightKey) => {
+                    if (rowIndex < remainingGuests.length) {
+                      const guest = remainingGuests[rowIndex];
+                      const set = existingGuestNights[guest.id];
+                      return set ? set.includes(nightKey) : true;
+                    }
+                    const added = addedGuests[rowIndex - remainingGuests.length];
+                    return added?.nights ? added.nights.includes(nightKey) : true;
+                  }}
+                  onToggle={(rowIndex, nightKey) => {
+                    const toggle = (current: string[]) =>
+                      current.includes(nightKey)
+                        ? current.filter((key) => key !== nightKey)
+                        : [...current, nightKey].sort();
+                    if (rowIndex < remainingGuests.length) {
+                      const guest = remainingGuests[rowIndex];
+                      setExistingGuestNights((prev) => {
+                        const base =
+                          prev[guest.id] ?? eachNightKey(checkIn, checkOut);
+                        const next = toggle(base);
+                        if (next.length === 0) return prev;
+                        return { ...prev, [guest.id]: next };
+                      });
+                    } else {
+                      const addedIndex = rowIndex - remainingGuests.length;
+                      setAddedGuests((prev) =>
+                        prev.map((g, i) => {
+                          if (i !== addedIndex) return g;
+                          const base = g.nights ?? eachNightKey(checkIn, checkOut);
+                          const next = toggle(base);
+                          if (next.length === 0) return g;
+                          return { ...g, nights: next };
+                        }),
+                      );
+                    }
+                  }}
+                  arrivalLabel={checkIn}
+                  departureLabel={checkOut}
+                />
+              ) : null}
+            </div>
           ) : null}
 
           {/* Existing guests */}

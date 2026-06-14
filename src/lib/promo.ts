@@ -94,6 +94,11 @@ export interface AssignedPromoCodeSummary extends AvailablePromoCode {
  */
 export interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
   firstNight?: Date | null;
+  // Actual dates of each entry in perNightRates (issue #713), parallel to that
+  // array. Used to restrict an internal work-party promo to its night window
+  // correctly when the guest stays non-contiguous nights. Falls back to
+  // positional dates from firstNight when omitted.
+  nightDates?: Date[] | null;
 }
 
 export interface BookingDetailsForPromo {
@@ -778,7 +783,8 @@ export async function validateAndCalculatePromoDiscount(
           ? restrictPerNightRatesToWindow(
               guest.perNightRates,
               guest.firstNight,
-              nightWindow
+              nightWindow,
+              guest.nightDates
             )
           : [],
       }));
