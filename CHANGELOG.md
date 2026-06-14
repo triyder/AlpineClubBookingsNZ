@@ -2,6 +2,155 @@
 
 All notable public reference-release changes should be recorded here.
 
+## 0.8.0 - 2026-06-15
+
+- Release classification: minor public reference release. The change set since
+  `0.7.0` adds major booking, content-management, public-request, lodge
+  operations, and payment-link capabilities without an intentional public API or
+  deployment-contract break that would justify `1.0.0`.
+- Added admin-managed public website content, replacing hard-coded public pages
+  with database-backed `PageContent` records, dynamic website routing, rich
+  HTML editing, starter page backfills for deploy-only environments, and a
+  first-class 404 content row.
+- Added the page-content editor and image-picker workflow so admins can manage
+  home, about, join, rules, contact, committee, membership-application, and 404
+  content from the admin app while keeping special blocks such as member
+  applications, contact forms, and committee cards available in managed pages.
+- Added database-backed image management with upload APIs, public image
+  delivery, image-library admin views, deletion coverage, metadata, alt text,
+  and persistent storage that survives Docker redeploys instead of relying on
+  ephemeral container filesystem paths.
+- Added the site style wizard and theme storage with editable brand colours,
+  heading/body font choices, logo data, raw CSS support, and seeded defaults
+  that preserve an existing deployment's completed theme while giving new
+  adopters generic starter branding.
+- Added public non-member booking requests, including quote discovery, email
+  verification tokens, admin review/pricing/approval/decline flows, conversion
+  into bookings, admin notifications, and public payment links that do not
+  require a member login.
+- Added school group booking requests with school-name capture, teacher
+  snapshots, school-specific public request routes, admin review support, and
+  conversion paths that can create the required booking/member records for
+  supervised school stays.
+- Added secure public payment-link pages with token-hash storage, expiry,
+  refresh and PaymentIntent creation routes, booking/payment narrative display,
+  and shared member/non-member booking status copy.
+- Changed booking capacity rules so only paid or confirmed bookings hold
+  capacity, members pay up front, and provisional non-member records can expire
+  cleanly without holding beds indefinitely.
+- Added linked mixed-party booking handling: mixed member/non-member stays can
+  split into a paid member parent booking plus a provisional non-member child
+  booking, keeping member capacity and payment state separate from guests who
+  still need to confirm or pay.
+- Added cron-driven provisional non-member hold expiry with booking events,
+  parent/child booking handling, payment-link revocation, and visible admin
+  narratives when holds expire.
+- Added durable `BookingEvent` records and a shared booking/payment-link
+  narrative layer so created, paid, confirmed, bumped, cancelled, refunded, and
+  credited events survive audit-log pruning and show consistently across
+  booking and payment-link views.
+- Added multi-date-range stays with a per-guest night grid, persisted
+  `BookingGuestNight` rows, per-night integer-cent pricing, non-contiguous
+  night support, booking creation/editing support, quote validation, Xero
+  invoice line grouping, bed allocation support, and reporting compatibility.
+- Added default partial-bump handling for capacity-constrained member bookings:
+  members can keep their own paid stay while non-member guests are dropped and
+  repriced unless the new "only book if my guests can come" flag asks for the
+  whole booking to be cancelled.
+- Added admin override and follow-up actions for pending guests, including
+  confirm-pending-guests routes, UI controls, tests, and payment/narrative
+  updates for the revised capacity model.
+- Added preferred room requests at booking time, admin editing for requested
+  rooms, route coverage, and auto-allocation support so the bed allocator tries
+  the requested room before falling back to family-aware first-fit allocation.
+- Reworked bed allocation into a drag-and-drop board with per-night guest
+  chips, bucket views, room/bed tables, allocation chips, requested-room badges,
+  and support for the new per-guest night model.
+- Moved rooms and beds into admin configuration with import-from-config support
+  so lodge inventory is managed through the app instead of requiring source-code
+  changes.
+- Added work party/working bee events with date ranges, admin CRUD, internal
+  auto-applied promo codes, active public work-party discovery, CodeQL-safe code
+  generation, and promo validation for volunteer discount stays.
+- Expanded promo scope handling with assigned-member own-night restrictions,
+  per-guest redemption targets, configurable fixed-nightly group promo pricing,
+  hidden internal promo codes for work parties, and stronger promo route tests.
+- Added protected lodge instructions for hut leaders, including open, close, and
+  day-to-day documents stored separately from public page content, admin editing
+  APIs, hut-leader/authenticated views, and kiosk display support.
+- Added rolling door-code pre-arrival reminders with email-template support,
+  per-booking sent timestamps, cron coverage, and subject-line hardening so
+  sensitive door codes cannot be exposed in email subjects.
+- Genericised seed data and first-run defaults for public adopters, including
+  starter page content, account/default subscription rows, explicit member
+  import no-op results, and setup/subscription handling when Xero is disabled.
+- Hardened admin API boundaries with consolidated `requireAdmin` guard usage,
+  query validation coverage, removed brittle exact API route counts, safer
+  Prisma migration whitespace handling, and more focused tests for changed
+  routes.
+- Fixed admin daily revenue reports dropping the final day across DST and
+  continued the release-wide NZ date-only hardening so booking/report dates do
+  not drift through browser-local or timezone-sensitive parsing.
+- Fixed migration drift by adding a follow-up migration that drops DB-level
+  defaults from `@updatedAt` columns now managed by Prisma Client.
+- Updated dependency and security posture with an npm minor/patch dependency
+  refresh, an `esbuild` advisory fix, and release-follow-up changes for GitHub
+  Actions/static-analysis failures.
+- Migration/deployment notes:
+  - `20260607171000_add_promo_assignment_scope` adds
+    `PromoCode.assignedMembersOnlyOwnNights` with a default of `true`; deploy
+    during low promo-booking traffic and review assigned-member promo behaviour
+    before enabling new scoped promotions.
+  - `20260608103000_add_promo_redemption_guest_targets` creates
+    `PromoRedemptionGuestTarget` so redemptions can be tied to individual guest
+    nights; deploy before using own-night promo enforcement.
+  - `20260611100000_add_page_content`,
+    `20260611101500_backfill_starter_page_content`, and
+    `20260614110000_backfill_404_page_content` add and seed database-backed
+    public pages for environments that run migrations without the seed.
+  - `20260611120000_add_door_code_pre_arrival_reminders` adds
+    `Booking.preArrivalReminderSentAt`, `EmailMessageSetting.doorCode`, and a
+    booking status/reminder/check-in index for the new cron reminder path.
+  - `20260611123000_add_club_theme` and
+    `20260614100000_add_club_theme_raw_css` add the singleton theme record,
+    fonts, logo storage, colours, and raw CSS customisation used by the style
+    wizard.
+  - `20260611150000_add_lodge_instructions` creates the protected lodge
+    instruction documents and backfills open, close, and day-to-day rows.
+  - `20260612090000_add_booking_requested_room` adds a nullable
+    `Booking.requestedRoomId` foreign key into lodge-room inventory; run during
+    low booking traffic.
+  - `20260612100000_add_work_party_events` adds hidden internal promo support
+    and `WorkPartyEvent` records; create work-party events only after the new
+    runtime is serving traffic.
+  - `20260612110000_add_media_image` stores uploaded images in Postgres; verify
+    database storage/backups are sized for image uploads before opening the
+    admin image manager broadly.
+  - `20260612120000_add_cancel_if_guests_bumped` adds the member opt-in
+    whole-booking cancellation flag for capacity bump handling.
+  - `20260612130000_add_booking_request_flow` creates booking request,
+    payment-link, settings, verification, and notification structures used by
+    the public non-member request flow.
+  - `20260613090000_add_school_booking_request` adds the `SCHOOL` request type
+    and school-specific request columns.
+  - `20260613090000_update_starter_home_page_content` updates only untouched
+    starter home-page copy; admin-edited rows are left unchanged.
+  - `20260613100000_add_booking_group_link` adds
+    `Booking.parentBookingId` for linked member/non-member bookings; run during
+    low booking traffic and let the deploy guard stop on lock timeout.
+  - `20260614090000_add_booking_guest_night` backfills one
+    `BookingGuestNight` row per historical guest night and splits existing
+    integer-cent guest totals exactly across nights. Run during low booking
+    traffic, avoid booking/guest writes during migration and cutover, and
+    verify every active guest has night rows before enabling multi-date ranges.
+  - `20260614153000_add_booking_event` creates the durable booking event store;
+    no historical event backfill is attempted, so narratives become complete
+    from the first runtime write after deployment.
+  - `20260615090000_drop_updatedat_column_defaults` reconciles database defaults
+    with Prisma `@updatedAt` semantics for `BedAllocationSettings` and
+    `ClubTheme`; it is intended to clear migration-drift checks without
+    changing application behaviour.
+
 ## 0.7.0 - 2026-06-08
 
 - Added room and bed allocation management with admin room/bed inventory,
