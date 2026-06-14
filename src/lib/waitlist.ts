@@ -91,7 +91,7 @@ export async function processWaitlistForDates(freedDates: {
           checkOut: { gt: freedDates.checkIn },
         },
         include: {
-          guests: true,
+          guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
         },
         orderBy: { createdAt: "asc" },
@@ -225,7 +225,7 @@ export async function confirmWaitlistOffer(
 
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { guests: true },
+        include: { guests: { include: { nights: true } } }, // per-night sets (issue #713)
       });
 
       if (!booking) {

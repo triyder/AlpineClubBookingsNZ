@@ -66,21 +66,30 @@ export function workPartyWindowOverlapsStay(
 }
 
 /**
- * Restrict a guest's positional per-night rates to the nights inside the
- * event window. `firstNight` is the date of perNightRates[0] (the guest's
- * effective stay start used when the rates were priced). Out-of-window
- * nights are dropped so they contribute nothing to the discount while the
- * booking total still charges them in full.
+ * Restrict a guest's per-night rates to the nights inside the event window.
+ * Out-of-window nights are dropped so they contribute nothing to the discount
+ * while the booking total still charges them in full.
+ *
+ * `nightDates` (issue #713) are the actual dates of each rate, parallel to
+ * perNightRates. When provided they are used directly, which is correct for
+ * non-contiguous stays. When omitted, dates are derived positionally from
+ * `firstNight` (the date of perNightRates[0]) assuming a contiguous run — the
+ * pre-#713 behaviour, preserved for any caller that does not supply dates.
  */
 export function restrictPerNightRatesToWindow(
   perNightRates: number[],
   firstNight: Date,
-  window: WorkPartyNightWindow
+  window: WorkPartyNightWindow,
+  nightDates?: ReadonlyArray<Date> | null
 ): number[] {
   const startKey = formatDateOnly(window.startDate);
   const endKey = formatDateOnly(window.endDate);
   return perNightRates.filter((_, index) => {
-    const nightKey = formatDateOnly(addDaysDateOnly(firstNight, index));
+    const nightDate =
+      nightDates && nightDates[index]
+        ? nightDates[index]
+        : addDaysDateOnly(firstNight, index);
+    const nightKey = formatDateOnly(nightDate);
     return nightKey >= startKey && nightKey <= endKey;
   });
 }

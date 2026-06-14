@@ -47,7 +47,7 @@ describe("normalizeGuestStayRanges", () => {
     ).toThrow(BookingGuestStayRangeValidationError);
   });
 
-  it("rejects empty, inverted, and out-of-booking ranges", () => {
+  it("rejects empty and inverted ranges", () => {
     expect(() =>
       normalizeGuestStayRanges(
         [
@@ -61,19 +61,24 @@ describe("normalizeGuestStayRanges", () => {
         booking
       )
     ).toThrow("Date Out must be after Date In");
+  });
 
-    expect(() =>
-      normalizeGuestStayRanges(
-        [
-          {
-            ageTier: "ADULT" as const,
-            isMember: true,
-            stayStart: "2026-07-09",
-            stayEnd: "2026-07-11",
-          },
-        ],
-        booking
-      )
-    ).toThrow("guest dates must stay within");
+  it("accepts a range outside the booking dates so it can auto-expand (issue #713)", () => {
+    // Previously this threw "guest dates must stay within ...". The booking
+    // range now auto-expands to cover guest dates instead of rejecting them.
+    const guests = normalizeGuestStayRanges(
+      [
+        {
+          ageTier: "ADULT" as const,
+          isMember: true,
+          stayStart: "2026-07-09",
+          stayEnd: "2026-07-11",
+        },
+      ],
+      booking
+    );
+
+    expect(formatDateOnly(guests[0].stayStart)).toBe("2026-07-09");
+    expect(formatDateOnly(guests[0].stayEnd)).toBe("2026-07-11");
   });
 });

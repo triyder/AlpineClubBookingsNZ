@@ -65,6 +65,7 @@ const modifyQuoteSchema = z.object({
         memberId: z.string().min(1).optional(),
         stayStart: z.string().optional(),
         stayEnd: z.string().optional(),
+        nights: z.array(z.string()).max(370).optional(),
       })
     )
     .optional(),
@@ -75,6 +76,7 @@ const modifyQuoteSchema = z.object({
         guestId: z.string().min(1),
         stayStart: z.string().optional(),
         stayEnd: z.string().optional(),
+        nights: z.array(z.string()).max(370).optional(),
       })
     )
     .optional(),
@@ -94,6 +96,7 @@ const modifyQuoteSchema = z.object({
 type StayRangeInput = {
   stayStart?: string | null;
   stayEnd?: string | null;
+  nights?: ReadonlyArray<string> | null;
 };
 
 type NormalizedAddGuest = {
@@ -104,6 +107,7 @@ type NormalizedAddGuest = {
   memberId?: string;
   stayStart?: string | null;
   stayEnd?: string | null;
+  nights?: ReadonlyArray<string> | null;
 };
 
 type NormalizedAddGuestWithRange = Omit<NormalizedAddGuest, "stayStart" | "stayEnd"> & {
@@ -149,7 +153,11 @@ function hasStayRangeValue(value: string | null | undefined): boolean {
 }
 
 function hasStayRangeInput(input: StayRangeInput): boolean {
-  return hasStayRangeValue(input.stayStart) || hasStayRangeValue(input.stayEnd);
+  return (
+    hasStayRangeValue(input.stayStart) ||
+    hasStayRangeValue(input.stayEnd) ||
+    (input.nights != null && input.nights.length > 0)
+  );
 }
 
 function minDate(values: Date[]): Date {
@@ -178,7 +186,8 @@ export async function POST(
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
-      guests: true,
+      // Per-night sets (issue #713): preserve unedited guests' gaps in the quote.
+      guests: { include: { nights: { select: { stayDate: true } } } },
       payment: true,
       promoRedemption: {
         include: {
@@ -277,6 +286,7 @@ export async function POST(
           ...guest,
           stayStart: addGuests[index]?.stayStart ?? null,
           stayEnd: addGuests[index]?.stayEnd ?? null,
+          nights: addGuests[index]?.nights ?? null,
         }))
       : undefined;
   } catch (error) {
@@ -434,10 +444,15 @@ export async function POST(
     guest: (typeof remainingGuests)[number];
     stayStart: Date;
     stayEnd: Date;
+    nights?: Date[];
   }>;
   let normalizedAddGuestsWithRanges: NormalizedAddGuestWithRange[] | undefined;
   try {
     proposedRemainingGuests = remainingGuests.map((guest, index) => {
+      const existingNights =
+        guest.nights && guest.nights.length > 0
+          ? guest.nights.map((night) => night.stayDate)
+          : undefined;
       if (!hasRangeInputs) {
         return targetDatesChanged
           ? { guest, stayStart: newCheckIn, stayEnd: newCheckOut }
@@ -445,6 +460,7 @@ export async function POST(
               guest,
               stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
               stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+              nights: existingNights,
             };
       }
 
@@ -455,6 +471,7 @@ export async function POST(
           : {
               stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
               stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+              nights: existingNights,
             };
 
       return { guest, ...normalizedRange };
@@ -480,6 +497,7 @@ export async function POST(
       memberId: entry.guest.memberId ?? null,
       stayStart: entry.stayStart,
       stayEnd: entry.stayEnd,
+      nights: entry.nights,
     })),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
       bookingGuestId: null,
@@ -488,6 +506,7 @@ export async function POST(
       memberId: g.memberId ?? null,
       stayStart: g.stayStart,
       stayEnd: g.stayEnd,
+      nights: g.nights,
     })),
   ];
 
@@ -602,7 +621,7 @@ export async function POST(
   let newTotalPriceCents: number;
   let priceBreakdown: {
     totalPriceCents: number;
-    guests: Array<{ priceCents: number; perNightCents: number[] }>;
+    guests: Array<{ priceCents: number; perNightCents: number[]; nightDates: Date[] }>;
   } | null = null;
   try {
     if (inProgressPlan) {
@@ -812,6 +831,7 @@ export async function POST(
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: priceBreakdown?.guests[index]?.perNightCents ?? [],
+      nightDates: priceBreakdown?.guests[index]?.nightDates ?? [],
       // Dates the positional rates so internal work-party promos restrict
       // the discount to the event's night window.
       firstNight: guest.stayStart ?? newCheckIn,

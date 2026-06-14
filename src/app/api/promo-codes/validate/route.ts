@@ -196,6 +196,7 @@ export async function POST(req: NextRequest) {
       memberId: guests[index].memberId ?? null,
       isMember: g.isMember,
       perNightRates: g.perNightCents,
+      nightDates: g.nightDates,
       // Dates the positional rates so internal work-party promos restrict
       // the discount to the event's night window.
       firstNight: guests[index].stayStart ?? checkIn,

@@ -33,7 +33,7 @@ export async function POST(
 
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { guests: true, member: true, promoRedemption: { include: { promoCode: true } } },
+        include: { guests: { include: { nights: true } }, member: true, promoRedemption: { include: { promoCode: true } } },
       });
 
       if (!booking) {

@@ -117,6 +117,7 @@ export async function applyPartialBumpInTransaction({
     memberId: guest.memberId ?? null,
     isMember: guest.isMember,
     perNightRates: priceBreakdown.guests[index].perNightCents,
+    nightDates: priceBreakdown.guests[index].nightDates,
     // Guests are priced across the full booking range, so the first rate is
     // the check-in night. Dating the rates lets an internal work-party promo
     // restrict its discount to the event's night window.

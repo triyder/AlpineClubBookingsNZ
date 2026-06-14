@@ -32,7 +32,8 @@ const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
 
 const pendingBookingInclude = {
   member: true,
-  guests: true,
+  // Per-night sets (issue #713) for accurate capacity re-check at the hold window.
+  guests: { include: { nights: true } },
   payment: true,
   parentBooking: {
     include: {

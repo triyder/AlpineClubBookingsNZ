@@ -295,6 +295,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       update: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined),
     },
+    // Per-night stay rows (issue #713) re-synced on every guest write.
+    bookingGuestNight: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod_1" }),
     },

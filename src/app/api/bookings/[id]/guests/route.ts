@@ -368,6 +368,7 @@ export async function POST(
         memberId: guest.memberId ?? null,
         isMember: guest.isMember,
         perNightRates: fullPriceBreakdown.guests[index].perNightCents,
+        nightDates: fullPriceBreakdown.guests[index].nightDates,
         // Guests are priced over the full booking range here, so the first
         // rate is the check-in night. Dates the rates so internal
         // work-party promos restrict the discount to the event's window.

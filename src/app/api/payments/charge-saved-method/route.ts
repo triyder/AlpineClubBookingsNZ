@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { payment: true, member: true, guests: true },
+      include: { payment: true, member: true, guests: { include: { nights: true } } }, // per-night sets (issue #713)
     });
 
     if (!booking) {

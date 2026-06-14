@@ -69,6 +69,12 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  normalizeDateOnlyForTimeZone,
+} from "@/lib/date-only";
+import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 
 type BookingWithGuests = Booking & { guests: BookingGuest[] };
 
@@ -80,6 +86,10 @@ export interface BookingGuestInput {
   memberId?: string;
   stayStart?: Date | null;
   stayEnd?: Date | null;
+  // Explicit included nights (issue #713). When present, the guest stays
+  // exactly these nights (which may be non-contiguous) and stayStart/stayEnd
+  // are the derived min/max envelope.
+  nights?: ReadonlyArray<GuestNightInput> | null;
 }
 
 interface BaseInput {
@@ -300,6 +310,7 @@ async function resolvePromoInTransaction(
     guests: BookingGuestInput[];
     totalPriceCents: number;
     perNightCentsByGuest: number[][];
+    nightDatesByGuest?: Date[][];
     promoGuestIndexes?: number[];
     allowInternal?: boolean;
   },
@@ -311,6 +322,7 @@ async function resolvePromoInTransaction(
     guests,
     totalPriceCents,
     perNightCentsByGuest,
+    nightDatesByGuest,
     promoGuestIndexes,
     allowInternal,
   } = options;
@@ -340,6 +352,7 @@ async function resolvePromoInTransaction(
     isMember: guest.isMember,
     perNightRates: perNightCentsByGuest[index],
     firstNight: guest.stayStart ?? checkIn,
+    nightDates: nightDatesByGuest?.[index],
   }));
   const application = await validateAndCalculatePromoDiscount(
     promoCode,
@@ -409,17 +422,50 @@ async function resolveEffectivePromoSource(
   return null;
 }
 
-function buildGuestCreateData(guests: BookingGuestInput[], price: { guests: { priceCents: number }[] }, checkIn: Date, checkOut: Date) {
-  return guests.map((g, i) => ({
-    firstName: g.firstName,
-    lastName: g.lastName,
-    ageTier: g.ageTier,
-    isMember: g.isMember,
-    memberId: g.memberId || null,
-    stayStart: g.stayStart ?? checkIn,
-    stayEnd: g.stayEnd ?? checkOut,
-    priceCents: price.guests[i].priceCents,
-  }));
+type PricedGuest = {
+  priceCents: number;
+  perNightCents: number[];
+  nightDates: Date[];
+};
+
+/**
+ * Build the nested guest create payload, including one BookingGuestNight row
+ * per included night (issue #713). The guest's stayStart/stayEnd envelope is
+ * derived from the priced nights (min night, last night + 1 day); a guest with
+ * no priced nights falls back to the booking range. Every guest — contiguous or
+ * not — gets per-night rows so the data model is uniform.
+ */
+function buildGuestCreateData(
+  guests: BookingGuestInput[],
+  price: { guests: PricedGuest[] },
+  checkIn: Date,
+  checkOut: Date
+) {
+  return guests.map((g, i) => {
+    const priced = price.guests[i];
+    const nightDates = priced.nightDates ?? [];
+    const hasNights = nightDates.length > 0;
+    const stayStart = hasNights ? nightDates[0] : (g.stayStart ?? checkIn);
+    const stayEnd = hasNights
+      ? addDaysDateOnly(nightDates[nightDates.length - 1], 1)
+      : (g.stayEnd ?? checkOut);
+    return {
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+      memberId: g.memberId || null,
+      stayStart,
+      stayEnd,
+      priceCents: priced.priceCents,
+      nights: {
+        create: nightDates.map((stayDate, k) => ({
+          stayDate,
+          priceCents: priced.perNightCents[k] ?? 0,
+        })),
+      },
+    };
+  });
 }
 
 /**
@@ -450,7 +496,68 @@ function getCapacityGuestRanges(
   return guests.map((guest) => ({
     stayStart: guest.stayStart ?? checkIn,
     stayEnd: guest.stayEnd ?? checkOut,
+    // Pass the explicit night set through so capacity counts a non-contiguous
+    // guest only on the nights they actually stay (issue #713).
+    nights: guest.nights ?? undefined,
   }));
+}
+
+/**
+ * Resolve the booking's effective date envelope from its guests (issue #713).
+ *
+ * Creation is expand-only: the range never shrinks below the member's stated
+ * checkIn/checkOut, but auto-expands to cover any guest night that falls
+ * outside it. In single-range mode (no explicit night sets, guest dates within
+ * the stated range) the result equals the stated range exactly, so existing
+ * behaviour is unchanged. Manage-guests editing recomputes the envelope from
+ * the night sets directly (allowing shrink) on its own path.
+ */
+function resolveBookingDateEnvelope(
+  guests: BookingGuestInput[],
+  checkIn: Date,
+  checkOut: Date
+): { checkIn: Date; checkOut: Date } {
+  let minKey = formatDateOnly(checkIn);
+  let maxNightKey = formatDateOnly(addDaysDateOnly(checkOut, -1));
+
+  const consider = (start: Date, lastNight: Date) => {
+    const startKey = formatDateOnly(start);
+    const lastKey = formatDateOnly(lastNight);
+    if (startKey < minKey) minKey = startKey;
+    if (lastKey > maxNightKey) maxNightKey = lastKey;
+  };
+
+  for (const guest of guests) {
+    if (guest.nights && guest.nights.length > 0) {
+      for (const entry of guest.nights) {
+        const night = normalizeNightEntryDate(entry);
+        consider(night, night);
+      }
+    } else if (guest.stayStart && guest.stayEnd) {
+      consider(
+        normalizeDateOnlyForTimeZone(guest.stayStart),
+        addDaysDateOnly(normalizeDateOnlyForTimeZone(guest.stayEnd), -1)
+      );
+    }
+  }
+
+  return {
+    checkIn: normalizeDateOnlyForTimeZone(new Date(`${minKey}T00:00:00.000Z`)),
+    checkOut: addDaysDateOnly(
+      normalizeDateOnlyForTimeZone(new Date(`${maxNightKey}T00:00:00.000Z`)),
+      1
+    ),
+  };
+}
+
+function normalizeNightEntryDate(entry: GuestNightInput): Date {
+  if (typeof entry === "string") {
+    return normalizeDateOnlyForTimeZone(new Date(`${entry}T00:00:00.000Z`));
+  }
+  if (entry instanceof Date) {
+    return normalizeDateOnlyForTimeZone(entry);
+  }
+  return normalizeNightEntryDate(entry.stayDate);
 }
 
 function getCapacityFullNights(
@@ -472,8 +579,8 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     effectiveMemberId,
     isOnBehalf,
     sessionUserId,
-    checkIn,
-    checkOut,
+    checkIn: inputCheckIn,
+    checkOut: inputCheckOut,
     guests,
     notes,
     promoCodeStr,
@@ -485,6 +592,13 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     groupDiscount,
     memberReviewJustification,
   } = input;
+  // Auto-expand (issue #713): the persisted range covers every guest night,
+  // never shrinking below the member's stated range.
+  const { checkIn, checkOut } = resolveBookingDateEnvelope(
+    guests,
+    inputCheckIn,
+    inputCheckOut
+  );
 
   const review = resolveAdminReviewFields({
     guests,
@@ -536,6 +650,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         guests,
         totalPriceCents: price.totalPriceCents,
         perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
+        nightDatesByGuest: price.guests.map((g) => g.nightDates),
         promoGuestIndexes,
       });
       discountCents = resolved.discountCents;
@@ -682,8 +797,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     effectiveMemberId,
     isOnBehalf,
     sessionUserId,
-    checkIn,
-    checkOut,
+    checkIn: inputCheckIn,
+    checkOut: inputCheckOut,
     guests,
     notes,
     promoCodeStr,
@@ -700,6 +815,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     paymentMethod = DEFAULT_BOOKING_PAYMENT_METHOD,
     memberReviewJustification,
   } = input;
+  // Auto-expand (issue #713): cover every guest night (members + non-members)
+  // so the member booking and any linked non-member child share one range.
+  const { checkIn, checkOut } = resolveBookingDateEnvelope(
+    guests,
+    inputCheckIn,
+    inputCheckOut
+  );
 
   const review = resolveAdminReviewFields({
     guests,
@@ -812,6 +934,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           guests: primaryGuests,
           totalPriceCents: price.totalPriceCents,
           perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
+          nightDatesByGuest: price.guests.map((g) => g.nightDates),
           promoGuestIndexes: primaryPromoGuestIndexes,
         });
         discountCents = resolved.discountCents;
@@ -1199,8 +1322,8 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     effectiveMemberId,
     isOnBehalf,
     sessionUserId,
-    checkIn,
-    checkOut,
+    checkIn: inputCheckIn,
+    checkOut: inputCheckOut,
     guests,
     notes,
     promoCodeStr,
@@ -1212,6 +1335,13 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     groupDiscount,
     memberReviewJustification,
   } = input;
+  // Auto-expand (issue #713): the persisted range covers every guest night,
+  // never shrinking below the member's stated range.
+  const { checkIn, checkOut } = resolveBookingDateEnvelope(
+    guests,
+    inputCheckIn,
+    inputCheckOut
+  );
 
   // Throws BookingReviewJustificationRequiredError if the rule trips on a
   // member-created booking with no justification supplied. WAITLISTED is
@@ -1265,6 +1395,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       isMember: guest.isMember,
       perNightRates: price.guests[index].perNightCents,
       firstNight: guest.stayStart ?? checkIn,
+      nightDates: price.guests[index].nightDates,
     }));
     const application = await validateAndCalculatePromoDiscount(
       promoCode,

@@ -71,6 +71,40 @@ export interface UpdateXeroBookingInvoiceOptions
  *   age tier, membership status, and the booking's season type.
  * @param itemCode - Legacy single item code applied to all guests (used when itemCodeMap is empty).
  */
+/**
+ * Group a guest's included nights into contiguous runs (issue #713). Each run
+ * becomes one Xero line item, so a non-contiguous stay reads as e.g. two lines
+ * "2 nights — 6 Jun – 8 Jun" and "2 nights — 13 Jun – 15 Jun". A fully
+ * contiguous guest yields exactly one run, so existing invoices are unchanged.
+ */
+function groupNightsIntoRuns(
+  nights: Array<{ stayDate: Date; priceCents: number }>
+): Array<{ startDate: Date; endExclusive: Date; nightCount: number; totalCents: number }> {
+  const sorted = [...nights].sort(
+    (a, b) => a.stayDate.getTime() - b.stayDate.getTime()
+  );
+  const runs: Array<{ startDate: Date; endExclusive: Date; nightCount: number; totalCents: number }> = [];
+  for (const night of sorted) {
+    const last = runs[runs.length - 1];
+    const dayAfterLast = last
+      ? formatDate(new Date(last.endExclusive))
+      : null;
+    if (last && dayAfterLast === formatDate(night.stayDate)) {
+      last.endExclusive = new Date(night.stayDate.getTime() + 24 * 60 * 60 * 1000);
+      last.nightCount += 1;
+      last.totalCents += night.priceCents;
+    } else {
+      runs.push({
+        startDate: night.stayDate,
+        endExclusive: new Date(night.stayDate.getTime() + 24 * 60 * 60 * 1000),
+        nightCount: 1,
+        totalCents: night.priceCents,
+      });
+    }
+  }
+  return runs;
+}
+
 export function buildInvoiceLineItems(
   guests: Array<{
     firstName: string;
@@ -78,6 +112,10 @@ export function buildInvoiceLineItems(
     ageTier: string;
     isMember: boolean;
     priceCents: number;
+    // Per-night rows (issue #713). When present, line items are emitted per
+    // contiguous run; otherwise the guest is billed as one line over the whole
+    // booking range, the pre-#713 behaviour.
+    nights?: Array<{ stayDate: Date; priceCents: number }> | null;
   }>,
   checkIn: Date,
   checkOut: Date,
@@ -88,22 +126,7 @@ export function buildInvoiceLineItems(
   itemCodeMap?: Map<string, string>,
   seasonType?: string | null,
 ): LineItem[] {
-  return guests.map((guest) => {
-    const perNightCents = nights > 0 ? Math.round(guest.priceCents / nights) : guest.priceCents;
-    const description = [
-      `${guest.firstName} ${guest.lastName}`,
-      `(${guest.ageTier}${guest.isMember ? ", Member" : ", Non-member"})`,
-      `${nights} night${nights !== 1 ? "s" : ""}`,
-      `${formatDate(checkIn)} - ${formatDate(checkOut)}`,
-    ].join(" - ");
-
-    const lineItem: LineItem = {
-      description,
-      quantity: nights,
-      unitAmount: perNightCents / 100, // Xero uses dollars, not cents
-      taxType: "OUTPUT2", // GST on Income (NZ)
-    };
-
+  const applyCodes = (lineItem: LineItem, guest: { ageTier: string; isMember: boolean }) => {
     // Resolve item code: prefer per-guest granular mapping, fall back to legacy flat code
     const guestItemCode = (itemCodeMap && seasonType)
       ? (itemCodeMap.get(`${guest.ageTier}_${seasonType}_${guest.isMember}`) ?? null)
@@ -120,8 +143,46 @@ export function buildInvoiceLineItems(
     if (!guestItemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
       lineItem.accountCode = accountCode;
     }
-
     return lineItem;
+  };
+
+  return guests.flatMap((guest) => {
+    const guestNights = guest.nights ?? [];
+
+    // No per-night detail: one line over the whole booking range (legacy path).
+    if (guestNights.length === 0) {
+      const perNightCents = nights > 0 ? Math.round(guest.priceCents / nights) : guest.priceCents;
+      const description = [
+        `${guest.firstName} ${guest.lastName}`,
+        `(${guest.ageTier}${guest.isMember ? ", Member" : ", Non-member"})`,
+        `${nights} night${nights !== 1 ? "s" : ""}`,
+        `${formatDate(checkIn)} - ${formatDate(checkOut)}`,
+      ].join(" - ");
+      return [applyCodes({
+        description,
+        quantity: nights,
+        unitAmount: perNightCents / 100, // Xero uses dollars, not cents
+        taxType: "OUTPUT2", // GST on Income (NZ)
+      }, guest)];
+    }
+
+    // One line item per contiguous run of nights.
+    return groupNightsIntoRuns(guestNights).map((run) => {
+      const perNightCents =
+        run.nightCount > 0 ? Math.round(run.totalCents / run.nightCount) : run.totalCents;
+      const description = [
+        `${guest.firstName} ${guest.lastName}`,
+        `(${guest.ageTier}${guest.isMember ? ", Member" : ", Non-member"})`,
+        `${run.nightCount} night${run.nightCount !== 1 ? "s" : ""}`,
+        `${formatDate(run.startDate)} - ${formatDate(run.endExclusive)}`,
+      ].join(" - ");
+      return applyCodes({
+        description,
+        quantity: run.nightCount,
+        unitAmount: perNightCents / 100,
+        taxType: "OUTPUT2",
+      }, guest);
+    });
   });
 }
 
@@ -132,7 +193,9 @@ export async function createXeroInvoiceForBooking(
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
-      guests: true,
+      // Per-night rows (issue #713) so non-contiguous stays produce one line
+      // item per contiguous run.
+      guests: { include: { nights: true } },
       payment: true,
       promoRedemption: { include: { promoCode: true } },
     },
@@ -196,6 +259,7 @@ export async function createXeroInvoiceForBooking(
       ageTier: g.ageTier,
       isMember: g.isMember,
       priceCents: g.priceCents,
+      nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
     })),
     checkIn,
     checkOut,
@@ -590,7 +654,7 @@ export async function updateXeroBookingInvoiceForBooking(
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
-      guests: true,
+      guests: { include: { nights: true } }, // per-night rows (issue #713)
       payment: true,
     },
   });
@@ -641,6 +705,7 @@ export async function updateXeroBookingInvoiceForBooking(
       ageTier: g.ageTier,
       isMember: g.isMember,
       priceCents: g.priceCents,
+      nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
     })),
     checkIn,
     checkOut,

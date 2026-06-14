@@ -62,7 +62,7 @@ export default async function BookingDetailPage({
   const booking = await prisma.booking.findUnique({
     where: { id },
     include: {
-      guests: true,
+      guests: { include: { nights: { select: { stayDate: true } } } },
       payment: true,
       requestedRoom: {
         select: { id: true, name: true, active: true },
@@ -252,6 +252,7 @@ export default async function BookingDetailPage({
       stayStart: g.stayStart.toISOString().slice(0, 10),
       stayEnd: g.stayEnd.toISOString().slice(0, 10),
       priceCents: g.priceCents,
+      nights: g.nights.map((n) => n.stayDate.toISOString().slice(0, 10)),
     })),
     bookingMemberId: booking.memberId,
     viewerRole: session.user.role,

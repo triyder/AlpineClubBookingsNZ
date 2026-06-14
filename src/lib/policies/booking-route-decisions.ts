@@ -8,7 +8,10 @@ import {
   type PriceBreakdown,
   type SeasonRateData,
 } from "@/lib/pricing";
-import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
+import {
+  countActiveGuestsForNight,
+  type GuestNightInput,
+} from "@/lib/booking-guest-stay-ranges";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -40,6 +43,9 @@ export interface GuestPricingSource {
   isMember: boolean;
   stayStart?: Date | null;
   stayEnd?: Date | null;
+  // Explicit included nights (issue #713). Passed through to pricing so a
+  // guest with a non-contiguous stay is priced for exactly those nights.
+  nights?: ReadonlyArray<GuestNightInput> | null;
 }
 
 export function toGroupDiscountConfig(
@@ -76,6 +82,7 @@ export function toGuestPricingInputs(guests: GuestPricingSource[]): GuestInput[]
     isMember: guest.isMember,
     stayStart: guest.stayStart ?? undefined,
     stayEnd: guest.stayEnd ?? undefined,
+    nights: guest.nights ?? undefined,
   }));
 }
 

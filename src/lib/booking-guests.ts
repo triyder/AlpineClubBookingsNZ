@@ -11,6 +11,9 @@ export type BookingGuestPricingInput = {
   memberId?: string;
   stayStart?: Date | string | null;
   stayEnd?: Date | string | null;
+  // Explicit included nights (issue #713). When present, the guest stays
+  // exactly these nights; stayStart/stayEnd become the derived envelope.
+  nights?: ReadonlyArray<Date | string> | null;
 };
 
 export type BookingGuestInput = BookingGuestPricingInput & {
