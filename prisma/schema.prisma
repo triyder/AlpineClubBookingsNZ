@@ -645,6 +645,13 @@ model Booking {
   // bump (drop the non-members, keep the members). Both happen pre-charge.
   cancelIfGuestsBumped      Boolean            @default(false)
   nonMemberHoldUntil        DateTime?
+  // Split-booking group link (issue #738). A mixed member/non-member party is
+  // stored as two bookings: a member booking that is paid up front and holds
+  // capacity (the parent, parentBookingId = null) plus a provisional
+  // non-member booking that holds nothing (the child, parentBookingId = the
+  // member booking). Pure parties and the flagged "only book if my guests can
+  // come" path stay a single booking with parentBookingId = null.
+  parentBookingId           String?
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
   expectedArrivalTime       String?            @db.VarChar(5)
@@ -672,6 +679,8 @@ model Booking {
   deletedBy                   Member?                      @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   adminReviewedBy             Member?                      @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
   requestedRoom               LodgeRoom?                   @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
+  parentBooking               Booking?                     @relation("BookingGroup", fields: [parentBookingId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  linkedBookings              Booking[]                    @relation("BookingGroup")
   guests                      BookingGuest[]
   payment                     Payment?
   choreAssignments            ChoreAssignment[]
@@ -705,6 +714,7 @@ model Booking {
   @@index([adminReviewStatus, createdAt])
   @@index([adminReviewedById])
   @@index([requestedRoomId])
+  @@index([parentBookingId])
 }
 
 model BookingGuest {

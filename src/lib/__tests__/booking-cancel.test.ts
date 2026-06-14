@@ -30,6 +30,9 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       findUnique: mocks.bookingFindUnique,
       update: mocks.bookingUpdate,
+      // Split-booking cascade (#738) looks for linked provisional children
+      // after a successful cancel; none here.
+      findMany: vi.fn().mockResolvedValue([]),
     },
     payment: {
       update: mocks.paymentUpdate,

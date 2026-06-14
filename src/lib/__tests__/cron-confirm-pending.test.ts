@@ -213,6 +213,20 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
   });
 
+  it("excludes split-booking children (parentBookingId set) from the pending query", async () => {
+    // Split children (#738) are the provisional non-member half of a mixed
+    // party; their window is resolved in R3, not by this cron.
+    mockBookingFindMany.mockResolvedValue([]);
+
+    await confirmPendingBookings();
+
+    expect(mockBookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ parentBookingId: null }),
+      })
+    );
+  });
+
   it("confirms a booking when capacity is available and payment succeeds", async () => {
     const booking = makePendingBooking("b1");
     const expectedIdempotencyKey = ["pending", "charge", "b1"].join("_");

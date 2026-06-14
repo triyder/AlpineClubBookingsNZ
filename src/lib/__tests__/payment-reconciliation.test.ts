@@ -166,4 +166,67 @@ describe("markBookingPaymentSucceeded", () => {
       data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
     });
   });
+
+  // Regression for the R1 overbooking carried into #738: a lodge full of
+  // committed (PAID) bookings plus an overlapping PENDING booking (which holds
+  // no capacity and so is not in the occupancy query) must not let an
+  // all-member booking pay into a non-existent bed by bumping the PENDING hold.
+  // It must be cancelled-and-refunded instead.
+  it("cancels-and-refunds an all-member booking that does not fit, never bumping a PENDING hold into room", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: parseDateOnly("2026-04-10"),
+      checkOut: parseDateOnly("2026-04-12"),
+      finalPriceCents: 10000,
+      guests: [
+        {
+          id: "guest-1",
+          isMember: true,
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        },
+      ],
+      member: { firstName: "Alice", lastName: "Member", email: "alice@example.com" },
+    });
+
+    // The capacity query filters to capacity-holding statuses, so the
+    // overlapping PENDING booking is intentionally absent here — only the
+    // committed PAID booking that fills the lodge is returned.
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "committed-full",
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        guests: Array.from({ length: LODGE_CAPACITY }, (_, index) => ({
+          id: `committed-${index}`,
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        })),
+      },
+    ]);
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_overbook",
+      amountCents: 10000,
+      paymentMethodId: "pm_123",
+    });
+
+    expect(result.outcome).toBe("cancelled_refunded");
+    expect(result.bumpedBookingIds).toEqual([]);
+    // The booking is cancelled and the payment refunded — never marked PAID.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: { status: BookingStatus.CANCELLED, draftExpiresAt: null },
+    });
+    expect(mocks.bookingUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: BookingStatus.PAID }) })
+    );
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
+    // No synchronous bump is attempted, so no PENDING booking is bumped to fake room.
+    expect(mocks.bumpPendingBookings).not.toHaveBeenCalled();
+  });
 });

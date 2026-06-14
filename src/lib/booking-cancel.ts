@@ -51,10 +51,20 @@ async function reconcileCancelledBookingBedAllocations(
   });
 }
 
+type CancelBookingResponse =
+  | { status: 401; error: string }
+  | { status: 403; error: string }
+  | { status: 404; error: string }
+  | { status: 400; error: string }
+  | { status: 200; data: CancelBookingResult };
+
 /**
  * Shared cancellation service used by both cancel routes.
- * Handles: PENDING cancel, CONFIRMED without payment, CONFIRMED with refund
- * (Stripe + Xero credit note), promo cleanup, audit logging, email.
+ *
+ * Split bookings (#738): cancelling the member (parent) booking also cancels
+ * its linked provisional non-member child (PENDING, holds nothing, no payment),
+ * so a family is cancelled as one. Cancelling the non-member child on its own
+ * leaves the member booking intact.
  */
 export async function cancelBooking(
   bookingId: string,
@@ -62,13 +72,93 @@ export async function cancelBooking(
   sessionUserRole: string,
   ipAddress: string,
   refundMethod: "card" | "credit" = "card"
-): Promise<
-  | { status: 401; error: string }
-  | { status: 403; error: string }
-  | { status: 404; error: string }
-  | { status: 400; error: string }
-  | { status: 200; data: CancelBookingResult }
-> {
+): Promise<CancelBookingResponse> {
+  const result = await performBookingCancellation(
+    bookingId,
+    sessionUserId,
+    sessionUserRole,
+    ipAddress,
+    refundMethod
+  );
+
+  if (result.status === 200) {
+    await cancelLinkedProvisionalChildBookings(bookingId, sessionUserId, ipAddress);
+  }
+
+  return result;
+}
+
+/**
+ * Cancel any provisional non-member child bookings linked to a cancelled
+ * member booking. Children are always PENDING (uncharged) so this mirrors the
+ * no-payment cancel path: status flip, bed-allocation reconcile, promo cleanup,
+ * payment-link revocation, audit and a cancellation email.
+ */
+async function cancelLinkedProvisionalChildBookings(
+  parentBookingId: string,
+  sessionUserId: string,
+  ipAddress: string
+) {
+  const children = await prisma.booking.findMany({
+    where: {
+      parentBookingId,
+      status: "PENDING",
+      deletedAt: null,
+    },
+    include: { member: true },
+  });
+
+  for (const child of children) {
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: child.id },
+        data: { status: "CANCELLED" },
+      });
+      await reconcileCancelledBookingBedAllocations(child, tx);
+      await revokePaymentLinksForBooking(child.id, tx);
+    });
+    await cleanupPromoRedemption(child.id);
+
+    logBookingCancellationAudit({
+      booking: child,
+      bookingId: child.id,
+      sessionUserId,
+      details:
+        "Linked provisional non-member booking cancelled with its member booking",
+      ipAddress,
+      metadata: { linkedParentBookingId: parentBookingId, paymentTaken: false },
+    });
+
+    sendBookingCancelledEmail(
+      child.member.email,
+      child.member.firstName,
+      child.checkIn,
+      child.checkOut,
+      0
+    ).catch((err) =>
+      logger.error(
+        { err, bookingId: child.id },
+        "Failed to send cancellation email for linked provisional booking"
+      )
+    );
+
+    processWaitlistForDates({ checkIn: child.checkIn, checkOut: child.checkOut }).catch(
+      (err) =>
+        logger.error(
+          { err, bookingId: child.id },
+          "Failed to process waitlist after linked provisional cancellation"
+        )
+    );
+  }
+}
+
+async function performBookingCancellation(
+  bookingId: string,
+  sessionUserId: string,
+  sessionUserRole: string,
+  ipAddress: string,
+  refundMethod: "card" | "credit" = "card"
+): Promise<CancelBookingResponse> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { payment: true, member: true },

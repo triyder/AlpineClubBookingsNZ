@@ -5,11 +5,6 @@ import {
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import {
-  bumpPendingBookings,
-  sendBumpedNotifications,
-  sendPartialBumpNotifications,
-} from "@/lib/bumping";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -39,10 +34,6 @@ const PAYABLE_SUCCESS_STATUSES = new Set<string>([
   BookingStatus.PENDING,
   BookingStatus.DRAFT,
 ]);
-
-function isAllMemberBooking(booking: ReconciliationBooking) {
-  return booking.guests.every((guest) => guest.isMember);
-}
 
 async function alertRefundFailure({
   booking,
@@ -151,23 +142,12 @@ export async function markBookingPaymentSucceeded({
       tx
     );
 
-    let capacityRestored = capacity.available;
-    let bumpedBookingIds: string[] = [];
-    let partiallyBumpedBookingIds: string[] = [];
-
-    if (!capacityRestored && isAllMemberBooking(booking)) {
-      const bumpResult = await bumpPendingBookings(
-        booking.checkIn,
-        booking.checkOut,
-        booking.guests,
-        tx
-      );
-      capacityRestored = bumpResult.capacityRestored;
-      bumpedBookingIds = bumpResult.bumpedBookingIds;
-      partiallyBumpedBookingIds = bumpResult.partiallyBumpedBookingIds;
-    }
-
-    if (!capacityRestored) {
+    // Since #737/#738 a PENDING booking holds no capacity, so there is no
+    // synchronous bump that could free a real bed. An all-member booking that
+    // does not fit against committed bookings is cancelled-and-refunded here,
+    // never bumped into a full lodge (issue #738, carried over from R1). The
+    // non-member portion of a mixed party is now its own provisional booking.
+    if (!capacity.available) {
       await tx.booking.update({
         where: { id: booking.id },
         data: {
@@ -214,8 +194,7 @@ export async function markBookingPaymentSucceeded({
       outcome: "paid" as const,
       booking,
       paymentId: payment.id,
-      bumpedBookingIds,
-      partiallyBumpedBookingIds,
+      bumpedBookingIds: [] as string[],
     };
   });
 
@@ -258,32 +237,6 @@ export async function markBookingPaymentSucceeded({
           refundError instanceof Error ? refundError.message : String(refundError),
       };
     }
-  }
-
-  if (reconciliation.bumpedBookingIds.length > 0) {
-    const triggeringName = `${reconciliation.booking.member.firstName} ${reconciliation.booking.member.lastName}`;
-    sendBumpedNotifications(
-      reconciliation.bumpedBookingIds,
-      triggeringName
-    ).catch((err) =>
-      logger.error(
-        { err, bookingId, bumpedBookingIds: reconciliation.bumpedBookingIds },
-        "Failed to send bump notifications after payment capacity claim"
-      )
-    );
-  }
-
-  if (
-    reconciliation.outcome === "paid" &&
-    reconciliation.partiallyBumpedBookingIds.length > 0
-  ) {
-    sendPartialBumpNotifications(reconciliation.partiallyBumpedBookingIds).catch(
-      (err) =>
-        logger.error(
-          { err, bookingId },
-          "Failed to send partial-bump notifications after payment capacity claim"
-        )
-    );
   }
 
   return {

@@ -40,6 +40,15 @@ export function BucketBoard({
     (booking) => (groupsByBooking.get(booking.id)?.length ?? 0) > 0,
   );
 
+  // Split-booking grouping (#738): a mixed party is two linked bookings — a
+  // member booking and a provisional non-member child. Label both so the board
+  // reads them as one party.
+  const memberBookingIdsWithChildren = new Set(
+    bookings
+      .map((booking) => booking.parentBookingId)
+      .filter((id): id is string => Boolean(id)),
+  );
+
   return (
     <div
       ref={setNodeRef}
@@ -72,6 +81,15 @@ export function BucketBoard({
                 <span className="text-xs text-muted-foreground">
                   {booking.checkIn} – {booking.checkOut}
                 </span>
+                {booking.parentBookingId ? (
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800">
+                    Linked party · provisional non-member guests
+                  </span>
+                ) : memberBookingIdsWithChildren.has(booking.id) ? (
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800">
+                    Linked party · member booking
+                  </span>
+                ) : null}
                 {booking.requestedRoom &&
                   (booking.requestedRoom.active ? (
                     <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
