@@ -56,6 +56,9 @@ export interface DashboardBookingSummary {
   // Preferred room requested at booking time (#706). Inactive rooms are
   // surfaced as a warning chip rather than treated as a preference.
   requestedRoom: DashboardRequestedRoom | null;
+  // Split-booking group link (#738). Set on the provisional non-member child;
+  // null on the member booking and on un-split bookings.
+  parentBookingId: string | null;
 }
 
 export interface DashboardWarning {

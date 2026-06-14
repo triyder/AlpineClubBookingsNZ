@@ -1510,24 +1510,28 @@ export default function BookPage() {
             <div className="space-y-3">
               <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
                 <strong>Note:</strong> This booking includes non-member guests.
-                {" Your booking may be held as PENDING until closer to check-in. Members have priority \u2014 your booking may be bumped if the lodge fills up."}
+                {guests.some((g) => g.isMember)
+                  ? " By default your own place is booked and paid for now to hold it, while your non-member guests are held provisionally as a linked booking \u2014 no beds are reserved for them until they are confirmed and paid for closer to check-in. Members have priority if the lodge fills up."
+                  : " Your booking is held provisionally until closer to check-in. Members have priority \u2014 no beds are reserved until your booking is confirmed and paid."}
               </div>
-              <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={cancelIfGuestsBumped}
-                  onChange={(e) => setCancelIfGuestsBumped(e.target.checked)}
-                />
-                <span>
-                  <strong>Only book if my guests can come.</strong> By default, if
-                  the lodge fills up we keep your booking and just remove the
-                  non-member guests (repricing for the remaining guests). Tick
-                  this to cancel the whole booking instead if your non-member
-                  guests can&apos;t be accommodated. Either way, nothing is
-                  charged until your booking is confirmed.
-                </span>
-              </label>
+              {guests.some((g) => g.isMember) && (
+                <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={cancelIfGuestsBumped}
+                    onChange={(e) => setCancelIfGuestsBumped(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Only book if my guests can come.</strong> Tick this
+                    and we&apos;ll keep your whole party together as a single
+                    provisional booking instead of booking your place now:{" "}
+                    <strong>no beds are held and nothing is charged up front</strong>
+                    , and we only confirm \u2014 and take payment \u2014 once your guests
+                    are confirmed closer to your stay.
+                  </span>
+                </label>
+              )}
             </div>
           )}
 

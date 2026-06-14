@@ -123,6 +123,20 @@ export default async function BookingDetailPage({
       adminReviewedBy: {
         select: { firstName: true, lastName: true },
       },
+      // Split-booking group (#738): the member booking links to its provisional
+      // non-member child(ren); the child links back to its member booking.
+      parentBooking: {
+        select: { id: true, status: true, finalPriceCents: true },
+      },
+      linkedBookings: {
+        select: {
+          id: true,
+          status: true,
+          finalPriceCents: true,
+          hasNonMembers: true,
+          guests: { select: { id: true } },
+        },
+      },
     },
   });
 
@@ -284,6 +298,22 @@ export default async function BookingDetailPage({
     ? await loadEmailMessageSettings()
     : null;
 
+  // Split-booking group presentation (#738).
+  const linkedProvisionalChildren = booking.linkedBookings.filter(
+    (linked) => linked.status === "PENDING"
+  );
+  const provisionalChildGuestCount = linkedProvisionalChildren.reduce(
+    (total, linked) => total + linked.guests.length,
+    0
+  );
+  const hasProvisionalChildren = provisionalChildGuestCount > 0;
+  const isProvisionalChild = Boolean(booking.parentBooking);
+  const isFlaggedProvisional =
+    !booking.parentBookingId &&
+    booking.status === "PENDING" &&
+    booking.cancelIfGuestsBumped &&
+    booking.hasNonMembers;
+
   return (
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center justify-between">
@@ -316,6 +346,51 @@ export default async function BookingDetailPage({
           {booking.deletedReason ? (
             <p className="mt-1">Reason: {booking.deletedReason}</p>
           ) : null}
+        </div>
+      ) : null}
+
+      {hasProvisionalChildren ? (
+        <div className="space-y-1 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          <p className="font-medium">
+            {provisionalChildGuestCount} non-member guest
+            {provisionalChildGuestCount === 1 ? "" : "s"} held provisionally
+          </p>
+          <p>
+            Your own place is confirmed once you pay for this booking. Your
+            non-member guests are held in a linked provisional booking —{" "}
+            <strong>no beds are reserved for them</strong> until they are
+            confirmed and paid for closer to your stay. We&apos;ll be in touch
+            before then.
+          </p>
+        </div>
+      ) : null}
+
+      {isProvisionalChild ? (
+        <div className="space-y-1 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          <p className="font-medium">Provisional non-member guests</p>
+          <p>
+            This is the non-member portion of your party, linked to your{" "}
+            <Link
+              href={`/bookings/${booking.parentBooking!.id}`}
+              className="font-medium underline"
+            >
+              member booking
+            </Link>
+            . <strong>No beds are held</strong> for these guests until they are
+            confirmed and paid for — nothing has been charged yet.
+          </p>
+        </div>
+      ) : null}
+
+      {isFlaggedProvisional ? (
+        <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-medium">Provisional booking — no beds held yet</p>
+          <p>
+            You asked us to only confirm this booking if your guests can come,
+            so <strong>no beds are held and nothing has been charged</strong>.
+            We&apos;ll confirm the whole party — you and your guests — once your
+            guests are confirmed and paid for closer to your stay.
+          </p>
         </div>
       ) : null}
 

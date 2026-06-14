@@ -56,11 +56,18 @@ export interface CronConfirmResult {
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   const now = new Date();
 
-  // Find all PENDING bookings past their hold deadline
+  // Find all PENDING bookings past their hold deadline.
+  //
+  // Split-booking children (#738, parentBookingId set) are deliberately
+  // excluded: they are the provisional non-member half of a mixed party that is
+  // confirmed/charged or bumped at the window in R3, not auto-charged here (they
+  // carry no saved payment method, so this cron would only mark them failed).
+  // R3 owns their window resolution.
   const pendingBookings = await prisma.booking.findMany({
     where: {
       status: BookingStatus.PENDING,
       nonMemberHoldUntil: { lte: now },
+      parentBookingId: null,
     },
     include: {
       member: true,

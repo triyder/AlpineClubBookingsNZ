@@ -18,6 +18,14 @@ export default async function MyBookingsPage() {
     orderBy: { checkIn: "desc" },
   });
 
+  // Split-booking grouping (#738): a mixed party is a member booking plus a
+  // linked provisional non-member booking. Label both so a family reads as one.
+  const memberBookingIdsWithLinkedGuests = new Set(
+    bookings
+      .map((booking) => booking.parentBookingId)
+      .filter((id): id is string => Boolean(id)),
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -56,6 +64,15 @@ export default async function MyBookingsPage() {
                       {booking.guests.length} guest{booking.guests.length !== 1 ? "s" : ""} &middot;{" "}
                       {formatCents(booking.finalPriceCents)}
                     </p>
+                    {booking.parentBookingId ? (
+                      <p className="text-xs text-sky-700">
+                        Provisional non-member guests · linked to your member booking
+                      </p>
+                    ) : memberBookingIdsWithLinkedGuests.has(booking.id) ? (
+                      <p className="text-xs text-sky-700">
+                        Includes linked provisional non-member guests
+                      </p>
+                    ) : null}
                   </div>
                   <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
                     {bookingStatusLabel(booking.status)}

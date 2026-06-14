@@ -83,6 +83,8 @@ interface DashboardBooking {
   memberName: string;
   guests: DashboardGuest[];
   requestedRoom: DashboardRequestedRoom | null;
+  // Split-booking group link (#738): set on the provisional non-member child.
+  parentBookingId: string | null;
 }
 
 interface DashboardGuest {
@@ -534,6 +536,7 @@ async function loadBookingRecords(
       checkIn: true,
       checkOut: true,
       requestedRoomId: true,
+      parentBookingId: true,
       requestedRoom: {
         select: {
           id: true,
@@ -655,6 +658,7 @@ function serializeBookings(
       stayEnd: formatDateOnly(guest.stayEnd),
     })),
     requestedRoom: booking.requestedRoom,
+    parentBookingId: booking.parentBookingId,
   }));
 }
 

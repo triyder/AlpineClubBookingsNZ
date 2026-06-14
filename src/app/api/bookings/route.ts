@@ -401,7 +401,6 @@ export async function POST(request: NextRequest) {
       status,
       shouldBePending,
       holdDays,
-      allMembers: !hasNonMembers,
       paymentMethod,
       memberReviewJustification,
     });

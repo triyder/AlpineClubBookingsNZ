@@ -44,11 +44,6 @@ import {
 } from "@/lib/promo";
 import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import {
-  bumpPendingBookings,
-  sendBumpedNotifications,
-  sendPartialBumpNotifications,
-} from "@/lib/bumping";
-import {
   sendAdminNewBookingAlert,
   sendBookingConfirmedEmail,
   sendBookingPendingEmail,
@@ -116,7 +111,6 @@ export interface ConfirmedBookingInput extends BaseInput {
   status: BookingStatus;
   shouldBePending: boolean;
   holdDays: number;
-  allMembers: boolean;
   paymentMethod?: BookingPaymentMethod;
 }
 
@@ -428,6 +422,26 @@ function buildGuestCreateData(guests: BookingGuestInput[], price: { guests: { pr
   }));
 }
 
+/**
+ * Remap promo-target guest indexes (which point into the full party guest list)
+ * onto a subset of that list. Used when a mixed party is split so the promo,
+ * which is applied to the member booking, targets the right member guests.
+ * Indexes pointing at guests outside the subset (e.g. non-members) are dropped.
+ */
+function remapPromoIndexesToSubset(
+  indexes: number[] | undefined,
+  allGuests: BookingGuestInput[],
+  subset: BookingGuestInput[]
+): number[] | undefined {
+  if (!indexes) return undefined;
+  const subsetIndexByGuest = new Map(subset.map((guest, index) => [guest, index]));
+  const remapped = indexes
+    .map((index) => allGuests[index])
+    .map((guest) => (guest ? subsetIndexByGuest.get(guest) : undefined))
+    .filter((index): index is number => index !== undefined);
+  return remapped.length > 0 ? remapped : undefined;
+}
+
 function getCapacityGuestRanges(
   guests: BookingGuestInput[],
   checkIn: Date,
@@ -683,32 +697,73 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     status,
     shouldBePending,
     holdDays,
-    allMembers,
     paymentMethod = DEFAULT_BOOKING_PAYMENT_METHOD,
     memberReviewJustification,
   } = input;
 
-  const hasNonMembers = guests.some((g) => !g.isMember);
   const review = resolveAdminReviewFields({
     guests,
     isOnBehalf,
     sessionUserId,
     memberReviewJustification,
   });
+
+  // Split-booking decision (#738). A mixed member/non-member party that is not
+  // flagged becomes two linked bookings: the member portion is charged up front
+  // and holds capacity (the parent), while the non-member portion is a
+  // provisional PENDING child that holds nothing (resolved at the hold window
+  // in R3). The flagged "only book if my guests can come" path stays a single
+  // provisional PENDING booking holding nothing, nothing charged up front.
+  // Pure parties stay a single booking. Bookings held for admin review are
+  // never split — the whole party waits in AWAITING_REVIEW until an admin
+  // decides.
+  const memberGuests = guests.filter((g) => g.isMember);
+  const nonMemberGuests = guests.filter((g) => !g.isMember);
+  const hasMemberGuests = memberGuests.length > 0;
+  const hasNonMemberGuests = nonMemberGuests.length > 0;
+  const flaggedProvisional =
+    (cancelIfGuestsBumped ?? false) && hasNonMemberGuests && !review.blockForReview;
+  const splitBooking =
+    hasMemberGuests &&
+    hasNonMemberGuests &&
+    !flaggedProvisional &&
+    !review.blockForReview;
+
+  // The primary (returned) booking. For a split it carries only the member
+  // guests; the non-member guests become the linked child created in the same
+  // transaction. Promo selection indexes are remapped onto the member subset.
+  const primaryGuests = splitBooking ? memberGuests : guests;
+  const primaryHasNonMembers = primaryGuests.some((g) => !g.isMember);
+  const primaryPromoGuestIndexes = splitBooking
+    ? remapPromoIndexesToSubset(promoGuestIndexes, guests, primaryGuests)
+    : promoGuestIndexes;
+
   // A member-created youth-only booking lands in AWAITING_REVIEW regardless
   // of the caller's requested status — payment is intentionally blocked
   // until an admin approves.
   const internetBankingPaymentSelected =
     paymentMethod === "internet_banking" && !review.blockForReview;
-  const requestedStatus = internetBankingPaymentSelected
-    ? BookingStatus.PAYMENT_PENDING
-    : status;
+  // Status of the primary booking. A split member booking is always charged up
+  // front (a pure-member booking never holds as PENDING). The flagged path is
+  // forced PENDING. Otherwise use the status the route computed for the party.
+  const requestedStatus = flaggedProvisional
+    ? BookingStatus.PENDING
+    : splitBooking
+      ? BookingStatus.PAYMENT_PENDING
+      : internetBankingPaymentSelected
+        ? BookingStatus.PAYMENT_PENDING
+        : status;
   const effectiveStatus = review.blockForReview
     ? BookingStatus.AWAITING_REVIEW
     : requestedStatus;
+  // A split member booking holds capacity and is never a provisional hold; the
+  // flagged path is always a provisional hold.
+  const primaryShouldBePending = flaggedProvisional
+    ? true
+    : splitBooking
+      ? false
+      : shouldBePending;
 
-  let bumpedBookingIds: string[] = [];
-  let partiallyBumpedBookingIds: string[] = [];
   let isZeroDollarConfirmed = false;
   let capacityFullNights: string[] | null = null;
 
@@ -717,7 +772,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     booking = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-      const capacityGuestRanges = getCapacityGuestRanges(guests, checkIn, checkOut);
+      const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
       const capacityCheck = await checkCapacityForGuestRanges(
         checkIn,
         checkOut,
@@ -731,7 +786,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         include: { rates: true },
       });
       const seasonData = toSeasonRateData(seasons);
-      const guestInputs = toGuestPricingInputs(guests);
+      const guestInputs = toGuestPricingInputs(primaryGuests);
       const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
 
       let discountCents = 0;
@@ -754,10 +809,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           allowInternal: promoSource.allowInternal,
           effectiveMemberId,
           checkIn,
-          guests,
+          guests: primaryGuests,
           totalPriceCents: price.totalPriceCents,
           perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
-          promoGuestIndexes,
+          promoGuestIndexes: primaryPromoGuestIndexes,
         });
         discountCents = resolved.discountCents;
         promoAdjustmentCents = resolved.promoAdjustmentCents;
@@ -797,7 +852,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         throw new Error("CAPACITY_EXCEEDED_SENTINEL");
       }
 
-      const nonMemberHoldUntil = shouldBePending && !internetBankingPaymentSelected
+      const nonMemberHoldUntil = primaryShouldBePending && !internetBankingPaymentSelected
         ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
         : null;
 
@@ -811,7 +866,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           discountCents,
           promoAdjustmentCents,
           finalPriceCents,
-          hasNonMembers,
+          hasNonMembers: primaryHasNonMembers,
           nonMemberHoldUntil,
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
@@ -825,7 +880,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           adminReviewNotes: review.adminReviewNotes,
           adminReviewedById: review.adminReviewedById,
           adminReviewedAt: review.adminReviewedAt,
-          guests: { create: buildGuestCreateData(guests, price, checkIn, checkOut) },
+          guests: { create: buildGuestCreateData(primaryGuests, price, checkIn, checkOut) },
         },
         include: { guests: true },
       });
@@ -866,24 +921,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           tx
         );
         if (!finalCapacityCheck.available) {
-          if (!allMembers) {
-            capacityFullNights = getCapacityFullNights(finalCapacityCheck.nightDetails);
-            throw new Error("CAPACITY_EXCEEDED_SENTINEL");
-          }
-
-          const bumpResult = await bumpPendingBookings(
-            checkIn,
-            checkOut,
-            capacityGuestRanges,
-            tx
-          );
-          if (!bumpResult.capacityRestored) {
-            capacityFullNights = getCapacityFullNights(finalCapacityCheck.nightDetails);
-            throw new Error("CAPACITY_EXCEEDED_SENTINEL");
-          }
-
-          bumpedBookingIds = bumpResult.bumpedBookingIds;
-          partiallyBumpedBookingIds = bumpResult.partiallyBumpedBookingIds;
+          // Since #737/#738 a PENDING booking holds no capacity, so there is no
+          // synchronous bump to fall back on: a $0 all-member booking that does
+          // not fit against committed bookings is rejected with the
+          // capacity-exceeded response, never bumped into a full lodge
+          // (issue #738, carried over from R1).
+          capacityFullNights = getCapacityFullNights(finalCapacityCheck.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
         }
 
         isZeroDollarConfirmed = true;
@@ -931,6 +975,58 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         db: tx,
       });
 
+      // Split booking (#738): create the linked provisional non-member booking
+      // in the same transaction. It is PENDING and holds no capacity (it does
+      // not run the capacity check or take payment in R2 — confirmed/charged or
+      // bumped at the hold window in R3). It carries no promo/credit; those stay
+      // with the member booking that is charged up front.
+      if (splitBooking) {
+        const childGuestInputs = toGuestPricingInputs(nonMemberGuests);
+        const childPrice = priceBookingGuests({
+          checkIn,
+          checkOut,
+          guests: childGuestInputs,
+          seasons: seasonData,
+          groupDiscount,
+        });
+        const childHoldUntil = new Date(
+          checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000
+        );
+        const childBooking = await tx.booking.create({
+          data: {
+            memberId: effectiveMemberId,
+            checkIn,
+            checkOut,
+            status: BookingStatus.PENDING,
+            totalPriceCents: childPrice.totalPriceCents,
+            discountCents: 0,
+            promoAdjustmentCents: 0,
+            finalPriceCents: childPrice.totalPriceCents,
+            hasNonMembers: true,
+            nonMemberHoldUntil: childHoldUntil,
+            parentBookingId: newBooking.id,
+            notes: notes || null,
+            expectedArrivalTime: expectedArrivalTime || null,
+            requestedRoomId: requestedRoomId || null,
+            cancelIfGuestsBumped: false,
+            createdById: isOnBehalf ? sessionUserId : null,
+            guests: {
+              create: buildGuestCreateData(
+                nonMemberGuests,
+                childPrice,
+                checkIn,
+                checkOut
+              ),
+            },
+          },
+          include: { guests: true },
+        });
+        await reconcileBedAllocationsForBooking({
+          bookingId: childBooking.id,
+          db: tx,
+        });
+      }
+
       return newBooking;
     });
   } catch (err) {
@@ -956,11 +1052,12 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       onBehalf: isOnBehalf,
       checkIn: checkIn.toISOString(),
       checkOut: checkOut.toISOString(),
-      guestCount: guests.length,
-      hasNonMembers,
+      guestCount: primaryGuests.length,
+      hasNonMembers: primaryHasNonMembers,
       finalPriceCents: booking.finalPriceCents,
       zeroDollarConfirmed: isZeroDollarConfirmed,
       paymentMethod,
+      split: splitBooking,
     },
   });
 
@@ -980,28 +1077,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         status: booking.status,
         checkIn: checkIn.toISOString(),
         checkOut: checkOut.toISOString(),
-        guestCount: guests.length,
-        hasNonMembers,
+        guestCount: primaryGuests.length,
+        hasNonMembers: primaryHasNonMembers,
         finalPriceCents: booking.finalPriceCents,
         paymentMethod,
+        split: splitBooking,
       },
     });
-  }
-
-  if (bumpedBookingIds.length > 0) {
-    const triggeringMember = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
-    const triggeringName = triggeringMember
-      ? `${triggeringMember.firstName} ${triggeringMember.lastName}`
-      : "Unknown";
-    sendBumpedNotifications(bumpedBookingIds, triggeringName).catch((err) =>
-      logger.error({ err }, "Failed to send bump notifications"),
-    );
-  }
-
-  if (partiallyBumpedBookingIds.length > 0) {
-    sendPartialBumpNotifications(partiallyBumpedBookingIds).catch((err) =>
-      logger.error({ err }, "Failed to send partial-bump notifications"),
-    );
   }
 
   if (isZeroDollarConfirmed) {
@@ -1103,7 +1185,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     }).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
   }
 
-  return { type: "created", booking, bumpedBookingIds, isZeroDollarConfirmed };
+  return { type: "created", booking, bumpedBookingIds: [], isZeroDollarConfirmed };
 }
 
 /**
