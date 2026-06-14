@@ -5,6 +5,7 @@ import path from "path";
 
 const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
 
+// SVG excluded — see upload/route.ts comment.
 const ALLOWED_EXTS = new Set([
   ".jpg",
   ".jpeg",
@@ -12,7 +13,6 @@ const ALLOWED_EXTS = new Set([
   ".gif",
   ".webp",
   ".avif",
-  ".svg",
 ]);
 
 function safeResolve(rel: string): string | null {

@@ -171,7 +171,7 @@ export const clubThemeUpdateSchema = z
     logoDataUrl: z
       .union([logoDataUrlSchema, z.literal(""), z.null()])
       .transform((value) => value || null),
-    rawCss: z.string().max(50_000).default(""),
+    rawCss: z.string().max(50_000).default("").transform(sanitiseRawCss),
     completeSetup: z.boolean().optional(),
   })
   .strict();
@@ -192,6 +192,16 @@ export function fontCssVariable(fontKey: ClubThemeFontKey): string {
     fontOption(DEFAULT_CLUB_THEME_VALUES.bodyFontKey)?.cssVariable ??
     "--font-theme-inter"
   );
+}
+
+// Strip any </style...> closing-tag sequence (case-insensitive). This is
+// the only HTML breakout vector from inside a <style> element — browsers use
+// rawtext mode and close the element on </style regardless of nesting. No
+// valid CSS ever contains that sequence, so silent removal is safe and lossless.
+export function sanitiseRawCss(value: string): string {
+  // Match </style, then consume any non-'>' characters and the closing '>'
+  // so the entire tag token is removed rather than leaving a stray '>'.
+  return value.replace(/<\/style[^>]*>/gi, "");
 }
 
 export function sanitiseThemeColour(
@@ -235,7 +245,8 @@ export function normaliseThemeValues(
       DEFAULT_CLUB_THEME_VALUES.bodyFontKey,
     ),
     logoDataUrl: sanitiseLogoDataUrl(value?.logoDataUrl),
-    rawCss: typeof value?.rawCss === "string" ? value.rawCss : "",
+    rawCss:
+      typeof value?.rawCss === "string" ? sanitiseRawCss(value.rawCss) : "",
   };
 }
 

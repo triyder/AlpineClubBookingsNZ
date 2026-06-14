@@ -177,4 +177,21 @@ describe("API route boundary metadata", () => {
 
     expect(violations).toEqual([]);
   });
+
+  it("does not allow SVG uploads through the static image-manager route (stored XSS)", () => {
+    // SVG is an XML dialect that can carry inline <script> and event-handler
+    // attributes.  Files under public/images/ are served by Next.js/Caddy
+    // without a restrictive CSP, so an SVG opened directly would execute JS
+    // in the site origin (session/cookie theft).  The upload and list routes
+    // must never include SVG in their allowlists.
+    const uploadContents = routeContents(
+      "src/app/api/admin/image-manager/upload/route.ts",
+    );
+    const listContents = routeContents(
+      "src/app/api/admin/image-manager/images/route.ts",
+    );
+
+    expect(uploadContents).not.toContain("svg");
+    expect(listContents).not.toContain("svg");
+  });
 });

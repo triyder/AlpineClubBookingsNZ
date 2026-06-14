@@ -5,13 +5,16 @@ import path from "path";
 
 const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
 
+// SVG is intentionally excluded: it is an XML dialect that can embed inline
+// <script> and event-handler attributes.  Files under public/images/ are
+// served directly by Next.js/Caddy with no restrictive CSP, so an uploaded
+// SVG opened in-browser would execute in the site origin (stored XSS).
 const ALLOWED_MIME = new Set([
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
   "image/avif",
-  "image/svg+xml",
 ]);
 
 const ALLOWED_EXTS = new Set([
@@ -21,7 +24,6 @@ const ALLOWED_EXTS = new Set([
   ".gif",
   ".webp",
   ".avif",
-  ".svg",
 ]);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
