@@ -1,0 +1,5 @@
+# Prisma migrations are generated, immutable, and checksummed by Prisma.
+# Their bytes must stay identical across the public repo and downstream forks,
+# so git must not flag (or try to auto-fix) whitespace in them — e.g. a
+# trailing blank line at EOF would otherwise trip `git diff --check` on merge.
+prisma/migrations/**/*.sql -whitespace
