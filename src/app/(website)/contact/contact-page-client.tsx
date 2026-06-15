@@ -52,16 +52,18 @@ export function ContactPageClient({
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
         setMembers(data.members);
-        // Validate initial recipient against loaded data
+        // Sync the dropdown to ?recipient= against loaded data. This effect
+        // re-runs when initialRecipient changes, so same-route navigations
+        // (e.g. a "Send a message" link to /contact?recipient=<key>) update
+        // the selection rather than leaving it on its first-mount value.
         const validKeys = data.members
           .filter((m: CommitteeMember) => m.contactKey)
           .map((m: CommitteeMember) => m.contactKey);
-        if (
-          initialRecipient !== "general" &&
-          !validKeys.includes(initialRecipient)
-        ) {
-          setRecipient("general");
-        }
+        setRecipient(
+          initialRecipient !== "general" && validKeys.includes(initialRecipient)
+            ? initialRecipient
+            : "general",
+        );
       })
       .catch(() => setMembers([]))
       .finally(() => setLoadingMembers(false));
