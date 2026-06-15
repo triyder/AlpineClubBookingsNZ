@@ -66,8 +66,16 @@ interface SetupReadiness {
   generatedAt: string;
 }
 
+interface SetupProgressState {
+  completedStepIds: string[];
+  skippedStepIds: string[];
+  completedAt: string | null;
+  completedByMemberId: string | null;
+}
+
 interface SetupResponse {
   readiness: SetupReadiness;
+  progress: SetupProgressState;
 }
 
 interface ProviderTestResult {
@@ -117,6 +125,7 @@ function progressLabel(progress: ProgressStatus) {
 
 export default function SetupPage() {
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
+  const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingStep, setSavingStep] = useState<string | null>(null);
@@ -137,6 +146,7 @@ export default function SetupPage() {
         throw new Error(responseErrorMessage(body, "Failed to load setup readiness"));
       }
       setReadiness(body.readiness);
+      setProgress(body.progress);
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -167,6 +177,8 @@ export default function SetupPage() {
   ).length;
   const completionPercent =
     allChecks.length > 0 ? Math.round((completedSteps / allChecks.length) * 100) : 0;
+  const setupCompleted = Boolean(progress?.completedAt);
+  const overallStatus = setupCompleted ? "complete" : readiness?.status ?? "not_started";
 
   async function updateProgress(
     action: "complete" | "skip" | "reopen",
@@ -284,10 +296,16 @@ export default function SetupPage() {
           </Button>
           <Button
             onClick={finishSetup}
-            disabled={finishing || requiredBlockers.length > 0 || !readiness}
+            disabled={
+              finishing || setupCompleted || requiredBlockers.length > 0 || !readiness
+            }
           >
-            {finishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Mark Setup Complete
+            {finishing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {setupCompleted ? "Setup Complete" : "Mark Setup Complete"}
           </Button>
         </div>
       </div>
@@ -298,16 +316,22 @@ export default function SetupPage() {
         </div>
       ) : null}
 
+      {setupCompleted ? (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+          Setup has been marked complete.
+        </div>
+      ) : null}
+
       {readiness ? (
         <>
           <div className="grid gap-3 md:grid-cols-4">
             <div className="rounded-md border bg-white p-4">
               <div className="flex items-center gap-2">
-                <StatusIcon status={readiness.status} />
+                <StatusIcon status={overallStatus} />
                 <p className="text-sm font-medium text-slate-700">Overall</p>
               </div>
               <p className="mt-2 text-2xl font-semibold capitalize text-slate-900">
-                {readiness.status.replace("_", " ")}
+                {overallStatus.replace("_", " ")}
               </p>
             </div>
             <div className="rounded-md border bg-white p-4">

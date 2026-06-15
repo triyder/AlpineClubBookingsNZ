@@ -341,6 +341,16 @@ function applyProgress(
   };
 }
 
+function isResolvedByProgress(check: SetupStepCheck): boolean {
+  return check.progress === "completed" || check.progress === "skipped";
+}
+
+function unresolvedStatuses(checks: SetupStepCheck[]): SetupStatus[] {
+  return checks
+    .filter((check) => !isResolvedByProgress(check))
+    .map((check) => check.status);
+}
+
 function buildClubConfigCheck(
   club: ClubConfigReadResult,
   progress: SetupProgressState,
@@ -1041,21 +1051,21 @@ export function buildSetupReadiness(input: {
     return {
       id,
       ...CATEGORY_META[id],
-      status: worstStatus(checks.map((check) => check.status)),
+      status: worstStatus(unresolvedStatuses(checks)),
       checks,
     };
   });
   const allChecks = categories.flatMap((category) => category.checks);
   const skipped = allChecks.filter((check) => check.progress === "skipped").length;
-  const complete = allChecks.filter((check) => check.status === "complete").length;
-  const warning = allChecks.filter((check) => check.status === "warning").length;
-  const blocked = allChecks.filter((check) => check.status === "blocked").length;
-  const activeStatuses = allChecks
-    .filter((check) => check.progress !== "skipped")
-    .map((check) => check.status);
+  const complete = allChecks.filter(
+    (check) => check.status === "complete" || check.progress === "completed",
+  ).length;
+  const unresolved = allChecks.filter((check) => !isResolvedByProgress(check));
+  const warning = unresolved.filter((check) => check.status === "warning").length;
+  const blocked = unresolved.filter((check) => check.status === "blocked").length;
 
   return {
-    status: worstStatus(activeStatuses),
+    status: worstStatus(unresolved.map((check) => check.status)),
     summary: {
       total: allChecks.length,
       complete,
