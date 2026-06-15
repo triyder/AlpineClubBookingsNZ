@@ -225,6 +225,24 @@ function parsePaymentCreditNoteRetryInput(
   };
 }
 
+function parseMembershipCancellationCreditNoteRetryInput(
+  operation: Pick<RetryableOperation, "requestPayload">
+): { requestId: string; participantId: string } | null {
+  const payload = asRecord(operation.requestPayload);
+  if (!payload) {
+    return null;
+  }
+
+  const requestId = readString(payload.requestId);
+  const participantId = readString(payload.participantId);
+
+  if (!requestId || !participantId) {
+    return null;
+  }
+
+  return { requestId, participantId };
+}
+
 function parseAllocationRetryInput(
   operation: Pick<RetryableOperation, "requestPayload">
 ): { creditNoteId: string; invoiceId: string; amountCents: number } | null {
@@ -543,6 +561,14 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
       return { supported: true, reason: null };
     }
 
+    if (
+      operation.localModel === "MemberSubscription" &&
+      operation.localId &&
+      parseMembershipCancellationCreditNoteRetryInput(operation)
+    ) {
+      return { supported: true, reason: null };
+    }
+
     return {
       supported: false,
       reason: "This credit note retry path is not supported by the current replay helper.",
@@ -839,6 +865,27 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
       });
       return { message: "Retried Xero modification credit note creation." };
+    }
+
+    if (operation.localModel === "MemberSubscription") {
+      const retryInput = parseMembershipCancellationCreditNoteRetryInput(operation);
+      if (!retryInput) {
+        throw new XeroOperationRetryError(
+          "Stored membership cancellation credit note payload is incomplete."
+        );
+      }
+
+      const { createXeroMembershipCancellationCreditNote } = await import(
+        "@/lib/membership-cancellation-xero"
+      );
+      await createXeroMembershipCancellationCreditNote({
+        subscriptionId: operation.localId!,
+        requestId: retryInput.requestId,
+        participantId: retryInput.participantId,
+        createdByMemberId,
+        syncOperationId: operation.id,
+      });
+      return { message: "Retried Xero membership cancellation credit note creation." };
     }
   }
 

@@ -391,6 +391,8 @@ export async function createXeroMembershipCancellationCreditNote(
   );
   let creditOperationId = operationId;
   const requestPayload = {
+    queueType: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+    subscriptionId: subscription.id,
     creditNotes: [buildCreditNote()],
     allocation: {
       invoiceId,

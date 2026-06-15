@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   createXeroRefundPaymentForInvoice: vi.fn(),
   allocateCreditNoteToInvoice: vi.fn(),
   checkMembershipStatus: vi.fn(),
+  createXeroMembershipCancellationCreditNote: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -61,6 +62,10 @@ vi.mock("@/lib/xero", () => ({
   createXeroRefundPaymentForInvoice: mocks.createXeroRefundPaymentForInvoice,
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
   checkMembershipStatus: mocks.checkMembershipStatus,
+}));
+
+vi.mock("@/lib/membership-cancellation-xero", () => ({
+  createXeroMembershipCancellationCreditNote: mocks.createXeroMembershipCancellationCreditNote,
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
@@ -157,6 +162,43 @@ describe("getXeroOperationRetryMeta", () => {
     expect(result).toEqual({
       supported: true,
       reason: null,
+    });
+  });
+
+  it("marks failed membership cancellation credit note operations as retryable", () => {
+    const result = getXeroOperationRetryMeta(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "MemberSubscription",
+        localId: "sub_123",
+        requestPayload: {
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      })
+    );
+
+    expect(result).toEqual({
+      supported: true,
+      reason: null,
+    });
+  });
+
+  it("rejects membership cancellation credit note retries with an incomplete stored payload", () => {
+    const result = getXeroOperationRetryMeta(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "MemberSubscription",
+        localId: "sub_123",
+        requestPayload: { requestId: "request_1" },
+      })
+    );
+
+    expect(result).toEqual({
+      supported: false,
+      reason: "This credit note retry path is not supported by the current replay helper.",
     });
   });
 
@@ -801,6 +843,35 @@ describe("retryXeroSyncOperation", () => {
         createdByMemberId: "admin_1",
       }
     );
+  });
+
+  it("replays membership cancellation credit note creation using the stored request payload", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "MemberSubscription",
+        localId: "sub_123",
+        requestPayload: {
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Retried Xero membership cancellation credit note creation.",
+    });
+
+    expect(mocks.createXeroMembershipCancellationCreditNote).toHaveBeenCalledWith({
+      subscriptionId: "sub_123",
+      requestId: "request_1",
+      participantId: "participant_1",
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_123",
+    });
   });
 
   it("throws a typed retry error for unsupported operations", async () => {
