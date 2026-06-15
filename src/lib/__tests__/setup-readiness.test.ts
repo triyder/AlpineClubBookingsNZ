@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  SETUP_STEP_IDS,
   buildSetupReadiness,
   normalizeSetupProgress,
   renderSetupCheckReport,
@@ -210,6 +211,30 @@ describe("setup-readiness", () => {
     );
     expect(report).toContain("Finance dashboard Admin Modules activation: disabled");
     expect(report).toContain("Finance dashboard is inactive by env capability or Admin Modules activation.");
+  });
+
+  it("treats acknowledged not-started checks as resolved for overall readiness", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        operationalXeroConnected: false,
+        operationalXeroTokenExpiresAt: null,
+        financeXeroConnected: false,
+        financeXeroTokenExpiresAt: null,
+      },
+      progress: {
+        completedStepIds: [...SETUP_STEP_IDS],
+        skippedStepIds: [],
+      },
+    });
+
+    expect(readiness.status).toBe("complete");
+    expect(readiness.summary.complete).toBe(readiness.summary.total);
+    expect(readiness.summary.blocked).toBe(0);
+    expect(readiness.summary.warning).toBe(0);
+    expect(readiness.summary.skipped).toBe(0);
   });
 
   it("normalizes progress to known setup step ids", () => {
