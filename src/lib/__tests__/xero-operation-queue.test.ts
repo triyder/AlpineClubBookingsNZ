@@ -59,7 +59,9 @@ vi.mock("@/lib/xero-operation-retry", () => {
 });
 
 import {
+  buildXeroOperationRequeueCorrelationKey,
   enqueueXeroSyncOperationRetry,
+  parseXeroOperationRequeueOriginalId,
   processQueuedXeroOperationRetries,
   XERO_OPERATION_REQUEUE_TYPE,
 } from "@/lib/xero-operation-queue";
@@ -142,6 +144,26 @@ describe("enqueueXeroSyncOperationRetry", () => {
   });
 });
 
+describe("parseXeroOperationRequeueOriginalId", () => {
+  it("round-trips the original operation id through the correlation key", () => {
+    const originalOperationId = "cmqdxeu50002101n22w2ivcas";
+    const correlationKey = buildXeroOperationRequeueCorrelationKey(originalOperationId);
+
+    expect(parseXeroOperationRequeueOriginalId(correlationKey)).toBe(originalOperationId);
+  });
+
+  it("returns null for non-requeue or empty correlation keys", () => {
+    expect(parseXeroOperationRequeueOriginalId(null)).toBeNull();
+    expect(parseXeroOperationRequeueOriginalId(undefined)).toBeNull();
+    expect(
+      parseXeroOperationRequeueOriginalId(
+        "member-subscription:sub_1:membership-cancellation-credit:part_1:v1"
+      )
+    ).toBeNull();
+    expect(parseXeroOperationRequeueOriginalId("xero-operation:requeue:")).toBeNull();
+  });
+});
+
 describe("processQueuedXeroOperationRetries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -183,6 +205,33 @@ describe("processQueuedXeroOperationRetries", () => {
         }),
       })
     );
+  });
+
+  it("recovers the original operation id from the correlation key when the payload copy was redacted", async () => {
+    // An operation id containing a phone-like run of digits gets rewritten to
+    // "[REDACTED]" in the stored payload, but the correlation key is intact.
+    const originalOperationId = "cmqdxeu50002101n22w2ivcas";
+    mocks.findManyQueued.mockResolvedValue([
+      makeQueuedOperation({
+        correlationKey: buildXeroOperationRequeueCorrelationKey(originalOperationId),
+        requestPayload: { originalOperationId: "[REDACTED]" },
+      }),
+    ]);
+    mocks.retryXeroSyncOperation.mockResolvedValue({
+      message: "Retried Xero membership cancellation credit note creation.",
+    });
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.retryXeroSyncOperation).toHaveBeenCalledWith(originalOperationId, {
+      createdByMemberId: "admin_1",
+    });
   });
 
   it("fails queued retries with malformed payloads", async () => {

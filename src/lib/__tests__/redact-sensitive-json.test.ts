@@ -63,6 +63,33 @@ describe("redact-sensitive-json", () => {
     });
   });
 
+  it("preserves identifiers that merely contain a run of digits", () => {
+    // cuids embed digit runs; e.g. "cmqdxeu50002101n22w2ivcas" contains
+    // "50002101". These must not be treated as phone numbers, because they are
+    // load-bearing in persisted payloads (e.g. a requeue's originalOperationId).
+    expect(
+      redactSensitiveJson({
+        originalOperationId: "cmqdxeu50002101n22w2ivcas",
+        bookingId: "cmp20vk3t00q12345678npunsc",
+      })
+    ).toEqual({
+      originalOperationId: "cmqdxeu50002101n22w2ivcas",
+      bookingId: "cmp20vk3t00q12345678npunsc",
+    });
+    expect(redactSensitiveText("cmqdxeu50002101n22w2ivcas")).toBe(
+      "cmqdxeu50002101n22w2ivcas"
+    );
+  });
+
+  it("still redacts standalone phone-like numbers on generic fields", () => {
+    expect(redactSensitiveJson({ note: "call 021234567 today" })).toEqual({
+      note: "[REDACTED]",
+    });
+    expect(redactSensitiveJson({ ref: "+64211234567" })).toEqual({
+      ref: "[REDACTED]",
+    });
+  });
+
   it("redacts email and phone fields in structured payloads", () => {
     expect(
       redactSensitiveJson({
