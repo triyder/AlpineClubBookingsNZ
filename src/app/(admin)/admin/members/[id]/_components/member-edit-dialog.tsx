@@ -454,6 +454,19 @@ export function MemberEditDialog({
             />
             <Label htmlFor="edit-forcePasswordChange">Force Password Change on Next Login</Label>
           </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="edit-requiresInduction"
+              checked={form.requiresInduction}
+              onChange={(e) => onChangeForm((f) => ({ ...f, requiresInduction: e.target.checked }))}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <Label htmlFor="edit-requiresInduction">Requires Induction</Label>
+            <p className="text-xs text-muted-foreground ml-2">
+              Flag this member as needing to complete a lodge induction (outside the automatic new-member process).
+            </p>
+          </div>
           {!form.canLogin && (
             <div className="space-y-2">
               <Label htmlFor="edit-inheritEmailSearch">Notification Email Recipient (optional)</Label>

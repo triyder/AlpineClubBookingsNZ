@@ -4,6 +4,7 @@ const { prismaMock, emailMock, xeroMock, xeroOutboxMock } = vi.hoisted(() => ({
   prismaMock: {
     member: {
       findFirst: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     memberApplication: {
       findFirst: vi.fn(),
@@ -30,6 +31,7 @@ const { prismaMock, emailMock, xeroMock, xeroOutboxMock } = vi.hoisted(() => ({
   },
   emailMock: {
     sendNominationRequestEmail: vi.fn().mockResolvedValue(undefined),
+    sendInductionSignOffRequestEmail: vi.fn().mockResolvedValue(undefined),
     sendAdminMembershipApplicationPendingEmail: vi.fn().mockResolvedValue(
       undefined
     ),
@@ -84,6 +86,10 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
+}));
+
+vi.mock("@/lib/induction", () => ({
+  createMemberInduction: vi.fn().mockResolvedValue({ id: "induction-1" }),
 }));
 
 // @ts-expect-error Vitest supports virtual mocks for modules that only exist in Next.js runtime.

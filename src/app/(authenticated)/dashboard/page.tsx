@@ -21,6 +21,7 @@ import {
   Wallet,
   CreditCard,
   TicketPercent,
+  ClipboardCheck,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { CLUB_NAME } from "@/config/club-identity";
@@ -152,6 +153,32 @@ export default async function DashboardPage() {
 
   const nextStay = upcomingBookings[0] ?? null;
   const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
+
+  // Lodge induction status for the member-portal card.
+  const inductionInfo = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: {
+      requiresInduction: true,
+      inductions: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          status: true,
+          requiredSignOffs: true,
+          _count: { select: { signOffs: true } },
+        },
+      },
+    },
+  });
+  const latestInduction = inductionInfo?.inductions[0] ?? null;
+  const inductionComplete = latestInduction?.status === "COMPLETED";
+  const inductionStatusText = inductionComplete
+    ? "Complete"
+    : latestInduction
+      ? `In progress · ${latestInduction._count.signOffs}/${latestInduction.requiredSignOffs} signed`
+      : "Not started";
+  const inductionNeedsAction =
+    Boolean(inductionInfo?.requiresInduction) && !inductionComplete;
 
   return (
     <div className="space-y-8">
@@ -313,6 +340,29 @@ export default async function DashboardPage() {
             </CardDescription>
             <Button asChild size="sm" className="w-full">
               <Link href="/book">Book Now</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Lodge Induction</CardTitle>
+            <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-lg font-semibold">{inductionStatusText}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {inductionNeedsAction
+                ? "Your induction is required — please complete it."
+                : "View your induction and sign off others."}
+            </p>
+            <Button
+              asChild
+              size="sm"
+              variant={inductionNeedsAction ? "default" : "outline"}
+              className="mt-4 w-full"
+            >
+              <Link href="/induction">Open Induction</Link>
             </Button>
           </CardContent>
         </Card>

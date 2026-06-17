@@ -114,6 +114,7 @@ export interface MemberDetail {
   joinedDate: string | null
   createdAt: string
   canLogin: boolean
+  requiresInduction: boolean
   cancelledAt: string | null
   cancelledReason: string | null
   archivedAt: string | null
@@ -194,6 +195,7 @@ export interface EditForm {
   active: boolean
   canLogin: boolean
   forcePasswordChange: boolean
+  requiresInduction: boolean
   inheritEmailFromId: string | null
   streetAddressLine1: string
   streetAddressLine2: string

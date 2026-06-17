@@ -296,6 +296,7 @@ model Member {
   detailsConfirmedByMemberId          String?
   onboardingConfirmedAt               DateTime?
   joinedDate                          DateTime? // Membership start date, sourced from Xero first invoice
+  requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   cancelledAt                         DateTime?
   cancelledReason                     String?
   cancelledViaRequestId               String?
@@ -373,6 +374,9 @@ model Member {
   lifecycleActionRequestsRequested           MemberLifecycleActionRequest[]             @relation("MemberLifecycleActionRequester")
   lifecycleActionRequestsReviewed            MemberLifecycleActionRequest[]             @relation("MemberLifecycleActionReviewer")
   bookingsDeleted                            Booking[]                                  @relation("BookingsDeletedBy")
+  inductions                                 MemberInduction[]                          @relation("MemberInductions")
+  inductionSignOffs                          MemberInductionSignOff[]                   @relation("InductionSignOffSigner")
+  assignedInductionSigners                   MemberInductionAssignedSigner[]            @relation("AssignedInductionSigners")
 
   @@index([email])
   @@index([xeroContactId])
@@ -453,6 +457,7 @@ model MemberApplication {
   updatedAt             DateTime          @updatedAt
 
   nominationTokens NominationToken[]
+  induction        MemberInduction?
 
   // Pending-application uniqueness is enforced by the manual partial unique index
   // MemberApplication_pending_applicantEmail_unique in Prisma migrations.
@@ -2518,4 +2523,194 @@ model CommitteeMember {
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Lodge Induction Sign-Off (induction checklist + nomination eligibility gate)
+//
+// A versioned competency checklist (sourced from the club's 2008 Induction
+// Sheet) recorded per member. A member becomes eligible to nominate new members
+// only once their own induction is signed off AND they meet a minimum
+// membership tenure and minimum nights stayed (admin-configurable). Existing
+// members who joined before the gate's effective date are grandfathered.
+// ---------------------------------------------------------------------------
+
+enum InductionStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  VOIDED
+}
+
+enum InductionKind {
+  NEW_MEMBER
+  YOUTH_TO_FULL
+  RE_INDUCTION
+}
+
+enum InductionSignerRole {
+  NOMINATOR
+  HUT_LEADER
+  ADMIN
+}
+
+enum InductionCompletionSource {
+  SIGN_OFFS
+  ADMIN_OVERRIDE
+}
+
+enum InductionItemResultValue {
+  YES
+  NO
+  NOT_APPLICABLE
+}
+
+enum InductionSectionPriority {
+  EMERGENCY
+  SECURITY
+  STARTUP
+  SHUTDOWN
+  GENERAL
+}
+
+model InductionChecklistTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  version     String
+  sourceLabel String?
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sections   InductionChecklistSection[]
+  inductions MemberInduction[]
+
+  @@index([isActive])
+}
+
+model InductionChecklistSection {
+  id          String                   @id @default(cuid())
+  templateId  String
+  title       String
+  description String?
+  priority    InductionSectionPriority
+  sortOrder   Int                      @default(0)
+
+  template InductionChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items    InductionChecklistItem[]
+
+  @@index([templateId])
+}
+
+model InductionChecklistItem {
+  id                    String  @id @default(cuid())
+  sectionId             String
+  label                 String
+  competencyPrompt      String?
+  notesPrompt           String?
+  isMandatory           Boolean @default(false)
+  requiresDemonstration Boolean @default(false)
+  sortOrder             Int     @default(0)
+  legacySourceText      String?
+
+  section InductionChecklistSection   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  results MemberInductionItemResult[]
+
+  @@index([sectionId])
+}
+
+model MemberInduction {
+  id                String                     @id @default(cuid())
+  memberId          String
+  templateId        String
+  applicationId     String?                    @unique
+  kind              InductionKind              @default(NEW_MEMBER)
+  status            InductionStatus            @default(IN_PROGRESS)
+  requiredSignOffs  Int                        @default(2)
+  inductionDate     DateTime?
+  completedAt       DateTime?
+  completionSource  InductionCompletionSource?
+  finalComments     String?
+  voidedReason       String?
+  createdByMemberId  String?
+  selfAssessedAt     DateTime?
+  selfAssessmentJson String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  member          Member                             @relation("MemberInductions", fields: [memberId], references: [id], onDelete: Cascade)
+  template        InductionChecklistTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  application     MemberApplication?                 @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  itemResults     MemberInductionItemResult[]
+  signOffs        MemberInductionSignOff[]
+  assignedSigners MemberInductionAssignedSigner[]
+
+  @@index([memberId])
+  @@index([templateId])
+  @@index([status])
+  @@index([kind])
+}
+
+model MemberInductionItemResult {
+  id                    String                   @id @default(cuid())
+  inductionId           String
+  itemId                String
+  result                InductionItemResultValue
+  explanationProvided   Boolean                  @default(false)
+  demonstrationProvided Boolean                  @default(false)
+  notes                 String?
+  recordedByMemberId    String?
+  completedAt           DateTime?
+
+  induction MemberInduction        @relation(fields: [inductionId], references: [id], onDelete: Cascade)
+  item      InductionChecklistItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([inductionId, itemId])
+  @@index([inductionId])
+  @@index([itemId])
+}
+
+model MemberInductionSignOff {
+  id                  String              @id @default(cuid())
+  inductionId         String
+  signerMemberId      String?
+  signerName          String
+  signerRole          InductionSignerRole
+  declarationAccepted Boolean             @default(false)
+  comments            String?
+  signedAt            DateTime            @default(now())
+
+  induction MemberInduction @relation(fields: [inductionId], references: [id], onDelete: Cascade)
+  signer    Member?         @relation("InductionSignOffSigner", fields: [signerMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([inductionId, signerMemberId])
+  @@index([inductionId])
+  @@index([signerMemberId])
+}
+
+model MemberInductionAssignedSigner {
+  id          String    @id @default(cuid())
+  inductionId String
+  memberId    String
+  emailSentAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  induction MemberInduction @relation(fields: [inductionId], references: [id], onDelete: Cascade)
+  member    Member          @relation("AssignedInductionSigners", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([inductionId, memberId])
+  @@index([inductionId])
+  @@index([memberId])
+}
+
+model MembershipNominationSettings {
+  id                      String    @id @default("default")
+  gateEnabled             Boolean   @default(false)
+  minimumMembershipMonths Int       @default(12)
+  minimumNights           Int       @default(6)
+  requiredSignOffs        Int       @default(2)
+  gateEffectiveFrom       DateTime?
+  updatedByMemberId       String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 }

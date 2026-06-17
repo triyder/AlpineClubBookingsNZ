@@ -15,6 +15,7 @@ import {
   emailVerificationTemplate,
   emailChangeVerificationTemplate,
   emailChangeNotificationTemplate,
+  inductionSignOffRequestTemplate,
   nominationRequestTemplate,
   adminMembershipApplicationPendingTemplate,
   membershipApplicationApprovedTemplate,
@@ -805,6 +806,34 @@ export async function sendNominationRequestEmail(params: {
       reviewUrl,
       familyMemberCount: params.familyMemberCount,
       expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendInductionSignOffRequestEmail(params: {
+  email: string;
+  signerName: string;
+  inducteeName: string;
+  signerRoleLabel: string;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const inductionUrl = `${baseUrl}/induction`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Lodge induction sign-off for ${params.inducteeName} — ${CLUB_NAME}`,
+    html: inductionSignOffRequestTemplate({
+      signerName: params.signerName,
+      inducteeName: params.inducteeName,
+      signerRoleLabel: params.signerRoleLabel,
+      inductionUrl,
+    }),
+    templateName: "induction-sign-off-request",
+    templateData: {
+      signerName: params.signerName,
+      inducteeName: params.inducteeName,
+      signerRoleLabel: params.signerRoleLabel,
+      inductionUrl,
     },
   });
 }

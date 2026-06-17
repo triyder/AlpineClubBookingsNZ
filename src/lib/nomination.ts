@@ -9,12 +9,15 @@ import { logAudit } from "@/lib/audit";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import {
   sendAdminMembershipApplicationPendingEmail,
+  sendInductionSignOffRequestEmail,
   sendMembershipApplicationApprovedEmail,
   sendMembershipApplicationRejectedEmail,
   sendNominationRequestEmail,
 } from "@/lib/email";
+import { createMemberInduction } from "@/lib/induction";
 import logger from "@/lib/logger";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
+import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import {
@@ -267,6 +270,8 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
       email: true,
       firstName: true,
       lastName: true,
+      joinedDate: true,
+      createdAt: true,
       subscriptions: {
         where: {
           seasonYear,
@@ -281,6 +286,23 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
   if (!nominator || nominator.subscriptions.length === 0) {
     throw new MembershipApplicationError(
       `${normalizedEmail} is not an active, paid-up ${CLUB_NAME} member`,
+      422
+    );
+  }
+
+  // Nomination eligibility gate: a member can only nominate once their own
+  // induction is signed off and they meet the minimum tenure / nights stayed
+  // (admin-configurable). Existing members who predate the gate are grandfathered.
+  const eligibility = await checkNominatorEligibility({
+    id: nominator.id,
+    joinedDate: nominator.joinedDate,
+    createdAt: nominator.createdAt,
+  });
+
+  if (!eligibility.eligible) {
+    const reasonText = eligibility.reasons.join("; and ");
+    throw new MembershipApplicationError(
+      `${nominator.firstName} ${nominator.lastName} is not yet eligible to nominate a new member because ${reasonText}.`,
       422
     );
   }
@@ -949,6 +971,56 @@ export async function approveMemberApplication(
   } catch (err) {
     logger.error({ err, applicationId }, "Failed to send approved membership email");
     warnings.push("The approval email could not be sent automatically");
+  }
+
+  // Create the new member's lodge induction record and ask their nominators to
+  // sign it off. Non-fatal: failures become warnings, like the Xero sync above.
+  try {
+    await createMemberInduction({
+      memberId: approved.applicantMember.id,
+      kind: "NEW_MEMBER",
+      applicationId,
+      createdByMemberId: adminMemberId,
+    });
+
+    const nominatorIds = [
+      approved.application.nominator1Id,
+      approved.application.nominator2Id,
+    ].filter((value): value is string => Boolean(value));
+
+    if (nominatorIds.length > 0) {
+      const nominators = await prisma.member.findMany({
+        where: { id: { in: nominatorIds } },
+        select: { id: true, email: true, firstName: true },
+      });
+      const inducteeName =
+        `${approved.applicantMember.firstName} ${approved.applicantMember.lastName}`.trim();
+
+      await Promise.all(
+        nominators.map((nominator) =>
+          sendInductionSignOffRequestEmail({
+            email: nominator.email,
+            signerName: nominator.firstName,
+            inducteeName,
+            signerRoleLabel: "Nominator",
+          }).catch((err) => {
+            logger.error(
+              { err, applicationId, nominatorId: nominator.id },
+              "Failed to send induction sign-off request email"
+            );
+            warnings.push(
+              `Could not email induction sign-off request to ${nominator.email}`
+            );
+          })
+        )
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, applicationId },
+      "Failed to create induction for approved application"
+    );
+    warnings.push("The induction record could not be created automatically");
   }
 
   logAudit({

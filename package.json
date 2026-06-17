@@ -87,6 +87,7 @@
   },
   "overrides": {
     "@hono/node-server": "1.19.13",
+    "hono": "4.12.25",
     "axios": "1.16.1",
     "dompurify": "3.4.1",
     "follow-redirects": "1.16.0",
