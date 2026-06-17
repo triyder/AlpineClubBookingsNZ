@@ -14,6 +14,13 @@
 		# Caddy's `?` prefix means "set if not already present" so it never intersects with Next's policy.
 		?Content-Security-Policy "default-src 'self'"
 	}
+	# Rewrite legacy /images/* requests to the runtime-serving API route so
+	# uploaded images are served correctly without restarting containers.
+	handle /images/* {
+		uri strip_prefix /images
+		rewrite * /api/images/uploaded{path}
+		import /etc/caddy/deploy/tacbookings-active.caddy
+	}
 	handle /finance-legacy* {
 		forward_auth app:3000 {
 			uri /api/finance/legacy-dashboard/auth

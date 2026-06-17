@@ -12,5 +12,12 @@
 		# style-src intentionally keeps 'unsafe-inline' there while Tailwind/Radix runtime styles are audited.
 	}
 
+	# Rewrite legacy /images/* requests to the runtime-serving API route.
+	handle /images/* {
+		uri strip_prefix /images
+		rewrite * /api/images/uploaded{path}
+		reverse_proxy app:3000
+	}
+
 	reverse_proxy app:3000
 }
