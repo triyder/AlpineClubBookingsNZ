@@ -11,6 +11,7 @@ import {
   Clock,
   Tag,
   CheckSquare,
+  ClipboardCheck,
   ClipboardList,
   XCircle,
   BarChart2,
@@ -115,6 +116,7 @@ const navSections: NavSection[] = [
         icon: ClipboardList,
       },
       { href: "/admin/members", label: "Members", icon: Users },
+      { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
       {
         href: "/admin/family-suggestions",

@@ -71,6 +71,7 @@ export const updateMemberSchema = z.object({
   active: z.boolean().optional(),
   canLogin: z.boolean().optional(),
   forcePasswordChange: z.boolean().optional(),
+  requiresInduction: z.boolean().optional(),
   inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
   joinedDate: z
     .string()
@@ -115,6 +116,7 @@ const ADMIN_MEMBER_AUDIT_FIELDS = [
   "active",
   "canLogin",
   "forcePasswordChange",
+  "requiresInduction",
   "inheritEmailFromId",
 ] as const;
 const ADMIN_MEMBER_ACCESS_FIELDS = [
@@ -267,6 +269,7 @@ export async function getAdminMemberDetail(params: {
         },
         xeroContactId: true,
         joinedDate: true,
+        requiresInduction: true,
         cancelledAt: true,
         cancelledReason: true,
         archivedAt: true,
@@ -607,6 +610,7 @@ export async function updateAdminMember(params: {
   if (data.active !== undefined) updateData.active = data.active;
   if (data.canLogin !== undefined) updateData.canLogin = data.canLogin;
   if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
+  if (data.requiresInduction !== undefined) updateData.requiresInduction = data.requiresInduction;
   if (data.inheritEmailFromId !== undefined) {
     updateData.inheritEmailFromId = data.inheritEmailFromId?.trim() || null;
   }
@@ -702,6 +706,7 @@ export async function updateAdminMember(params: {
           inheritEmailFromId: true,
           xeroContactId: true,
           joinedDate: true,
+          requiresInduction: true,
           createdAt: true,
           streetAddressLine1: true,
           streetAddressLine2: true,

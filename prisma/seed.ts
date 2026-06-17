@@ -17,6 +17,7 @@ import {
   TOKOROA_CLUB_THEME_VALUES,
   isValidLogoDataUrl,
 } from "../src/lib/club-theme-schema";
+import { DEFAULT_INDUCTION_TEMPLATE } from "../src/lib/induction-checklist-template";
 import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
@@ -161,6 +162,56 @@ async function createMissingSeasonRates(
       },
     });
   }
+}
+
+// Seed the default Lodge Induction checklist template (create-if-missing). The
+// template is only created when no template with this version exists, so admin
+// edits and new versions survive a re-run. It is marked active only when no
+// other active template is present.
+async function seedInductionChecklistTemplate() {
+  const existing = await prisma.inductionChecklistTemplate.findFirst({
+    where: { version: DEFAULT_INDUCTION_TEMPLATE.version },
+    select: { id: true },
+  });
+  if (existing) {
+    console.log("Induction checklist template already present; skipping");
+    return;
+  }
+
+  const activeCount = await prisma.inductionChecklistTemplate.count({
+    where: { isActive: true },
+  });
+
+  await prisma.inductionChecklistTemplate.create({
+    data: {
+      name: DEFAULT_INDUCTION_TEMPLATE.name,
+      version: DEFAULT_INDUCTION_TEMPLATE.version,
+      sourceLabel: DEFAULT_INDUCTION_TEMPLATE.sourceLabel,
+      isActive: activeCount === 0,
+      sections: {
+        create: DEFAULT_INDUCTION_TEMPLATE.sections.map((section, sectionIndex) => ({
+          title: section.title,
+          description: section.description ?? null,
+          priority: section.priority,
+          sortOrder: sectionIndex,
+          items: {
+            create: section.items.map((item, itemIndex) => ({
+              label: item.label,
+              competencyPrompt: item.competencyPrompt ?? null,
+              notesPrompt: item.notesPrompt ?? null,
+              isMandatory: item.isMandatory ?? false,
+              requiresDemonstration: item.requiresDemonstration ?? false,
+              sortOrder: itemIndex,
+              legacySourceText: item.legacySourceText ?? null,
+            })),
+          },
+        })),
+      },
+    },
+  });
+  console.log(
+    `Induction checklist template seeded: ${DEFAULT_INDUCTION_TEMPLATE.name} v${DEFAULT_INDUCTION_TEMPLATE.version}`,
+  );
 }
 
 async function main() {
@@ -344,6 +395,8 @@ async function main() {
   }
 
   await seedClubTheme();
+
+  await seedInductionChecklistTemplate();
 
   console.log("Seeding complete!");
 }

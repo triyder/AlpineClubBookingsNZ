@@ -555,6 +555,28 @@ export function nominationRequestTemplate(params: {
   `);
 }
 
+export function inductionSignOffRequestTemplate(params: {
+  signerName: string;
+  inducteeName: string;
+  signerRoleLabel: string;
+  inductionUrl: string;
+}): string {
+  return layout(`
+    ${heading("Lodge Induction Sign-Off Request")}
+    ${paragraph("Hi " + escapeHtml(params.signerName) + ",")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(params.inducteeName) +
+        `</strong> needs their ${escapeHtml(CLUB_NAME)} lodge induction signed off, and you can do this as their ` +
+        escapeHtml(params.signerRoleLabel.toLowerCase()) +
+        "."
+    )}
+    ${paragraph("Once you have taken them through the lodge induction checklist and you are satisfied they are competent, please sign in and confirm the sign-off on your induction page.")}
+    ${alertBox("You will need to sign in before you can complete the sign-off.", "info")}
+    ${button("Open My Induction Page", params.inductionUrl)}
+  `);
+}
+
 export function emailChangeVerificationTemplate(
   newEmail: string,
   verifyUrl: string,
