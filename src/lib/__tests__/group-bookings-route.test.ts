@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   resolveGroupBookingByCode: vi.fn(),
   closeGroupBooking: vi.fn(),
   reopenGroupBooking: vi.fn(),
+  joinGroupBookingAsMember: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -21,6 +22,7 @@ vi.mock("@/lib/rate-limit", () => ({
   rateLimiters: {
     groupBookingCreate: {},
     groupBookingLookup: {},
+    groupBookingJoin: {},
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -38,11 +40,13 @@ vi.mock("@/lib/group-booking", async () => {
     resolveGroupBookingByCode: mocks.resolveGroupBookingByCode,
     closeGroupBooking: mocks.closeGroupBooking,
     reopenGroupBooking: mocks.reopenGroupBooking,
+    joinGroupBookingAsMember: mocks.joinGroupBookingAsMember,
   };
 });
 
 import { POST } from "@/app/api/group-bookings/route";
 import { GET, PATCH } from "@/app/api/group-bookings/[code]/route";
+import { POST as joinPOST } from "@/app/api/group-bookings/[code]/join/route";
 import { GroupBookingError } from "@/lib/group-booking";
 
 function postRequest(body: unknown) {
@@ -202,5 +206,90 @@ describe("PATCH /api/group-bookings/[code]", () => {
     expect(res.status).toBe(422);
     expect(mocks.closeGroupBooking).not.toHaveBeenCalled();
     expect(mocks.reopenGroupBooking).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/group-bookings/[code]/join", () => {
+  function joinRequest(body: unknown) {
+    return new NextRequest("http://localhost/api/group-bookings/ABCD2345/join", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const validBody = {
+    guests: [
+      { firstName: "Jo", lastName: "Member", ageTier: "ADULT", isMember: true },
+    ],
+  };
+
+  it("rejects an unauthenticated caller with 401", async () => {
+    mocks.auth.mockResolvedValueOnce(null);
+    const res = await joinPOST(joinRequest(validBody), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(401);
+    expect(mocks.joinGroupBookingAsMember).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty guest list with 422", async () => {
+    const res = await joinPOST(joinRequest({ guests: [] }), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(422);
+    expect(mocks.joinGroupBookingAsMember).not.toHaveBeenCalled();
+  });
+
+  it("joins and returns the created booking", async () => {
+    mocks.joinGroupBookingAsMember.mockResolvedValueOnce({
+      bookingId: "booking-9",
+      status: "PAYMENT_PENDING",
+      isZeroDollarConfirmed: false,
+      finalPriceCents: 4500,
+      requiresPayment: true,
+    });
+    const res = await joinPOST(joinRequest(validBody), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      bookingId: "booking-9",
+      requiresPayment: true,
+    });
+    expect(mocks.joinGroupBookingAsMember).toHaveBeenCalledWith(
+      { code: "ABCD2345", guests: validBody.guests },
+      "member-1",
+      "MEMBER"
+    );
+  });
+
+  it("maps a capacity-exceeded error to 409 with its code and details", async () => {
+    mocks.joinGroupBookingAsMember.mockRejectedValueOnce(
+      new GroupBookingError("The lodge is full for these dates", 409, {
+        code: "CAPACITY_EXCEEDED",
+        details: { fullNights: ["2026-07-01"] },
+      })
+    );
+    const res = await joinPOST(joinRequest(validBody), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "CAPACITY_EXCEEDED",
+      details: { fullNights: ["2026-07-01"] },
+    });
+  });
+
+  it("maps an organiser-pays group to 409 (not yet supported)", async () => {
+    mocks.joinGroupBookingAsMember.mockRejectedValueOnce(
+      new GroupBookingError(
+        "Joining an organiser-pays group is not available yet",
+        409
+      )
+    );
+    const res = await joinPOST(joinRequest(validBody), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(409);
   });
 });

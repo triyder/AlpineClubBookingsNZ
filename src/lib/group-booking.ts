@@ -26,11 +26,25 @@
  */
 import { randomInt } from "crypto";
 import {
+  BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { createConfirmedBooking } from "@/lib/booking-create";
+import {
+  assertLinkedBookingMembersCanBeBooked,
+  normalizeBookingGuestInputs,
+  resolveLinkedBookingMembers,
+  type BookingGuestInput,
+} from "@/lib/booking-guests";
+import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
+import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
+import { calculateBookingHoldDecision, toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getSeasonYear } from "@/lib/utils";
+import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -49,11 +63,21 @@ const CODE_GENERATION_ATTEMPTS = 5;
 
 export class GroupBookingError extends Error {
   status: number;
+  /** Optional machine-readable code mirrored from the bookings route gates. */
+  code?: string;
+  /** Optional extra payload (e.g. capacity-exceeded nights, unpaid members). */
+  details?: unknown;
 
-  constructor(message: string, status = 400) {
+  constructor(
+    message: string,
+    status = 400,
+    options?: { code?: string; details?: unknown }
+  ) {
     super(message);
     this.name = "GroupBookingError";
     this.status = status;
+    this.code = options?.code;
+    this.details = options?.details;
   }
 }
 
@@ -313,4 +337,265 @@ export async function resolveGroupBookingByCode(
     return null;
   }
   return toGroupBookingSummary(group);
+}
+
+// ---------------------------------------------------------------------------
+// Member self-add (join)
+// ---------------------------------------------------------------------------
+
+export interface JoinGroupBookingResult {
+  bookingId: string;
+  status: BookingStatus;
+  isZeroDollarConfirmed: boolean;
+  finalPriceCents: number;
+  requiresPayment: boolean;
+}
+
+/**
+ * A logged-in member adds themselves (and their own member guests) to a group.
+ *
+ * EACH_PAYS_OWN only for now: the joiner's beds become their own child booking
+ * linked to the organiser booking via parentBookingId, created through
+ * createConfirmedBooking so capacity (advisory lock), pricing, the $0
+ * auto-confirm and the payment flow are all reused. The same eligibility gates
+ * as POST /api/bookings are enforced (owner + guest subscriptions, minimum stay,
+ * linked-member rules). ORGANISER_PAYS uses a different shared-draft flow and is
+ * not handled here yet.
+ *
+ * Non-member friends use the public join-request path, so every guest here must
+ * be a member; a non-member guest is rejected with a clear message.
+ */
+export async function joinGroupBookingAsMember(
+  input: { code: string; guests: BookingGuestInput[] },
+  sessionUserId: string,
+  sessionRole: string
+): Promise<JoinGroupBookingResult> {
+  const code = normaliseJoinCode(input.code);
+  const group = code
+    ? await prisma.groupBooking.findUnique({
+        where: { joinCode: code },
+        select: {
+          id: true,
+          status: true,
+          joinDeadline: true,
+          paymentMode: true,
+          maxJoiners: true,
+          organiserMemberId: true,
+          organiserBooking: {
+            select: {
+              id: true,
+              checkIn: true,
+              checkOut: true,
+              status: true,
+              deletedAt: true,
+            },
+          },
+        },
+      })
+    : null;
+
+  if (!group) {
+    throw new GroupBookingError("Group booking not found", 404);
+  }
+  if (!isGroupJoinable(group)) {
+    throw new GroupBookingError("This group is not accepting joins", 409);
+  }
+  if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
+    throw new GroupBookingError(
+      "Joining an organiser-pays group is not available yet",
+      409
+    );
+  }
+  if (
+    group.organiserBooking.deletedAt ||
+    !(ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
+      group.organiserBooking.status
+    )
+  ) {
+    throw new GroupBookingError("This group's booking is no longer active", 409);
+  }
+  if (group.organiserMemberId === sessionUserId) {
+    throw new GroupBookingError("You are the organiser of this group", 409);
+  }
+
+  // One active join per member.
+  const existingJoin = await prisma.groupBookingJoin.findFirst({
+    where: {
+      groupBookingId: group.id,
+      joinerMemberId: sessionUserId,
+      booking: {
+        is: {
+          deletedAt: null,
+          status: { notIn: [BookingStatus.CANCELLED, BookingStatus.BUMPED] },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  if (existingJoin) {
+    throw new GroupBookingError("You have already joined this group", 409);
+  }
+
+  // Optional organiser cap on headcount, independent of lodge capacity.
+  if (group.maxJoiners != null) {
+    const joinCount = await prisma.groupBookingJoin.count({
+      where: { groupBookingId: group.id, bookingId: { not: null } },
+    });
+    if (joinCount >= group.maxJoiners) {
+      throw new GroupBookingError("This group is full", 409);
+    }
+  }
+
+  const { checkIn, checkOut } = group.organiserBooking;
+
+  const joiner = await prisma.member.findUnique({
+    where: { id: sessionUserId },
+    select: { ageTier: true },
+  });
+  if (!joiner) {
+    throw new GroupBookingError("Member not found", 404);
+  }
+
+  // Resolve and normalise guests against the joiner; members only here (non-member
+  // friends join via the public path). Reuses the same helpers as the route.
+  const linkedMembers = await resolveLinkedBookingMembers(
+    prisma,
+    sessionUserId,
+    input.guests.map((g) => g.memberId)
+  );
+  await assertLinkedBookingMembersCanBeBooked(
+    prisma,
+    linkedMembers,
+    sessionUserId,
+    { actorRole: sessionRole, onBehalfOfMemberId: null }
+  );
+  const guests = normalizeBookingGuestInputs(input.guests, linkedMembers);
+  if (guests.length === 0) {
+    throw new GroupBookingError("Add at least one guest", 400);
+  }
+  if (guests.some((g) => !g.isMember)) {
+    throw new GroupBookingError(
+      "Only members can be added here. Non-member guests should use the public join link.",
+      400
+    );
+  }
+
+  const lodgeCapacity = await getLodgeCapacity();
+  if (guests.length > lodgeCapacity) {
+    throw new GroupBookingError(
+      `A booking cannot exceed ${lodgeCapacity} guests`,
+      400
+    );
+  }
+
+  // Same eligibility gates as POST /api/bookings (skipped for admins).
+  if (sessionRole !== "ADMIN") {
+    if (await requiresPaidSubscriptionForBooking(joiner.ageTier)) {
+      const seasonYear = getSeasonYear(checkIn);
+      const paidSub = await prisma.memberSubscription.findFirst({
+        where: { memberId: sessionUserId, seasonYear, status: "PAID" },
+        select: { id: true },
+      });
+      if (!paidSub) {
+        throw new GroupBookingError(
+          `Your membership subscription for the ${seasonYear}/${seasonYear + 1} season is not paid. Please contact the club to arrange payment before joining.`,
+          403,
+          { code: "SUBSCRIPTION_REQUIRED" }
+        );
+      }
+    }
+
+    const unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
+      bookingMemberId: sessionUserId,
+      checkIn,
+      guests,
+    });
+    if (unpaidMemberGuests.length > 0) {
+      throw new GroupBookingError(
+        `The following member guests have unpaid subscriptions: ${unpaidMemberGuests
+          .map((m) => m.name)
+          .join(", ")}.`,
+        403,
+        { code: "GUEST_SUBSCRIPTION_REQUIRED", details: unpaidMemberGuests }
+      );
+    }
+
+    const { validateMinimumStay, formatViolationsDetail } = await import(
+      "@/lib/booking-policies"
+    );
+    const stay = await validateMinimumStay(checkIn, checkOut);
+    if (!stay.valid) {
+      throw new GroupBookingError(
+        "Booking does not meet the minimum stay requirement",
+        400,
+        {
+          code: "MINIMUM_STAY_VIOLATION",
+          details: formatViolationsDetail(stay.violations),
+        }
+      );
+    }
+  }
+
+  const gds = await prisma.groupDiscountSetting.findUnique({
+    where: { id: "default" },
+  });
+  const groupDiscount = toGroupDiscountConfig(gds);
+
+  // All-member booking: no non-member hold; charged up front (PAYMENT_PENDING)
+  // or auto-confirmed at $0 inside createConfirmedBooking.
+  const hold = calculateBookingHoldDecision({
+    hasNonMembers: false,
+    checkIn,
+    holdDays: 0,
+  });
+
+  const outcome = await createConfirmedBooking({
+    effectiveMemberId: sessionUserId,
+    isOnBehalf: false,
+    sessionUserId,
+    checkIn,
+    checkOut,
+    // Map to the booking-create guest shape. v1 joins use the organiser's dates
+    // with no per-guest night selection, so only the scalar fields carry over.
+    guests: guests.map((g) => ({
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+      memberId: g.memberId,
+    })),
+    groupDiscount,
+    status: hold.status,
+    shouldBePending: hold.shouldBePending,
+    holdDays: 0,
+    parentBookingId: group.organiserBooking.id,
+  });
+
+  if (outcome.type === "capacityExceeded") {
+    throw new GroupBookingError("The lodge is full for these dates", 409, {
+      code: "CAPACITY_EXCEEDED",
+      details: { fullNights: outcome.fullNights },
+    });
+  }
+
+  const booking = outcome.booking;
+  await prisma.groupBookingJoin.create({
+    data: {
+      groupBookingId: group.id,
+      bookingId: booking.id,
+      joinerMemberId: sessionUserId,
+      isMember: true,
+      verifiedAt: new Date(),
+    },
+  });
+
+  return {
+    bookingId: booking.id,
+    status: booking.status,
+    isZeroDollarConfirmed: outcome.isZeroDollarConfirmed,
+    finalPriceCents: booking.finalPriceCents,
+    requiresPayment:
+      booking.status === BookingStatus.PAYMENT_PENDING &&
+      booking.finalPriceCents > 0,
+  };
 }
