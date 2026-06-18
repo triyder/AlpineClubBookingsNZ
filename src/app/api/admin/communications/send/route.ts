@@ -1,7 +1,7 @@
 /**
  * N-09: Bulk Member Communication
  * POST /api/admin/communications/send
- * Admin-only. Rate limited to 1 bulk send per hour.
+ * Admin-only. Rate limited to BULK_SENDMAIL_LIMIT sends per hour.
  * Respects marketingEmails notification preference.
  * Sanitises input to prevent HTML/header injection.
  */
@@ -14,9 +14,19 @@ import { bulkCommunicationTemplate } from "@/lib/email-templates";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 
+const DEFAULT_BULK_SENDMAIL_LIMIT = 1;
+
+function resolveBulkSendMailLimit() {
+  const parsed = Number.parseInt(process.env.BULK_SENDMAIL_LIMIT ?? "", 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_BULK_SENDMAIL_LIMIT;
+}
+
 const bulkSendRateLimit: RateLimitConfig = {
   id: "bulk-communication",
-  limit: 1,
+  limit: resolveBulkSendMailLimit(),
   windowSeconds: 60 * 60, // 1 hour
 };
 
@@ -34,20 +44,32 @@ const sendSchema = z.object({
   memberIds: z.array(z.string()).optional(),
 });
 
+export async function GET() {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  return NextResponse.json({
+    limit: bulkSendRateLimit.limit,
+    windowSeconds: bulkSendRateLimit.windowSeconds,
+  });
+}
+
 export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;
-  // Rate limit: 1 bulk send per hour (keyed by "admin" since it's a global limit)
+  // Rate limit is keyed by "admin" since this is a global communication action.
   const rlResult = checkRateLimit(bulkSendRateLimit, "admin-global");
   if (!rlResult.success) {
     const retryAfter = Math.ceil((rlResult.resetAt - Date.now()) / 1000);
     return NextResponse.json(
-      { error: "Rate limit exceeded. Maximum 1 bulk send per hour." },
+      {
+        error: `Rate limit exceeded. Maximum ${bulkSendRateLimit.limit} bulk send per hour.`,
+      },
       {
         status: 429,
         headers: { "Retry-After": String(retryAfter) },
-      }
+      },
     );
   }
 
@@ -62,11 +84,16 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  const { subject, body: messageBody, recipientFilter, memberIds } = parsed.data;
+  const {
+    subject,
+    body: messageBody,
+    recipientFilter,
+    memberIds,
+  } = parsed.data;
 
   // Build recipient query
   const whereClause: Record<string, unknown> = { active: true };
@@ -78,7 +105,7 @@ export async function POST(request: Request) {
     if (!memberIds || memberIds.length === 0) {
       return NextResponse.json(
         { error: "memberIds required for custom filter" },
-        { status: 400 }
+        { status: 400 },
       );
     }
     whereClause.id = { in: memberIds };
@@ -99,7 +126,7 @@ export async function POST(request: Request) {
   // Filter out members who have marketingEmails: false
   // Default (no preference record) is marketingEmails: false, so exclude those too
   const eligibleRecipients = recipients.filter(
-    (r) => r.notificationPreference?.marketingEmails === true
+    (r) => r.notificationPreference?.marketingEmails === true,
   );
 
   // Generate the email HTML (using escapeHtml inside the template)
@@ -130,7 +157,7 @@ export async function POST(request: Request) {
       } catch (err) {
         logger.error(
           { err, email: recipient.email },
-          "Failed to send bulk communication email"
+          "Failed to send bulk communication email",
         );
       }
       // Pause between batches to avoid overwhelming SMTP

@@ -42,10 +42,25 @@ export default function CommunicationsPage() {
   } | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [bulkSendLimit, setBulkSendLimit] = useState<number>(1);
 
   useEffect(() => {
+    fetchRateLimit();
     fetchHistory();
   }, []);
+
+  async function fetchRateLimit() {
+    try {
+      const res = await fetch("/api/admin/communications/send");
+      if (!res.ok) return;
+      const data = (await res.json()) as { limit?: number };
+      if (typeof data.limit === "number" && data.limit > 0) {
+        setBulkSendLimit(data.limit);
+      }
+    } catch {
+      // ignore and keep fallback value
+    }
+  }
 
   async function fetchHistory() {
     try {
@@ -87,7 +102,10 @@ export default function CommunicationsPage() {
         setResult({ success: false, message: data.error });
       }
     } catch {
-      setResult({ success: false, message: "Failed to send. Please try again." });
+      setResult({
+        success: false,
+        message: "Failed to send. Please try again.",
+      });
     } finally {
       setSending(false);
     }
@@ -108,7 +126,8 @@ export default function CommunicationsPage() {
           <CardTitle>Compose Message</CardTitle>
           <CardDescription>
             Only members who have opted in to marketing emails will receive this
-            message. Rate limited to 1 send per hour.
+            message. Rate limited to {bulkSendLimit} send
+            {bulkSendLimit === 1 ? "" : "s"} per hour.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -157,8 +176,8 @@ export default function CommunicationsPage() {
                 required
               />
               <p className="text-xs text-slate-400 mt-1">
-                {body.length}/10,000 characters. Plain text only — HTML is escaped
-                for security.
+                {body.length}/10,000 characters. Plain text only — HTML is
+                escaped for security.
               </p>
             </div>
 
@@ -214,9 +233,7 @@ export default function CommunicationsPage() {
                           dateStyle: "medium",
                         })}
                       </td>
-                      <td className="py-2 pr-4 font-medium">
-                        {entry.subject}
-                      </td>
+                      <td className="py-2 pr-4 font-medium">{entry.subject}</td>
                       <td className="py-2 pr-4 text-slate-600">
                         {entry.recipientFilter}
                       </td>
