@@ -309,16 +309,19 @@ describe("#23: Cron Prisma startup check and health error display", () => {
   it("health page has expandable error component", async () => {
     const fs = await import("fs");
     const path = await import("path");
-    const healthPath = path.resolve(
+    // CronError now lives in the shared health components module after the
+    // System Health page was split into per-section routes.
+    const sharedPath = path.resolve(
       process.cwd(),
       "src",
       "app",
       "(admin)",
       "admin",
       "health",
-      "page.tsx"
+      "_components",
+      "shared.tsx"
     );
-    const content = fs.readFileSync(healthPath, "utf-8");
+    const content = fs.readFileSync(sharedPath, "utf-8");
     expect(content).toContain("CronError");
     expect(content).toContain("show more");
     // Should not have truncate class on error display anymore

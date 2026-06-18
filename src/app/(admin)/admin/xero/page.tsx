@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { buildPathWithSearch } from "@/lib/internal-return-path"
@@ -9,13 +10,12 @@ import {
   ContactSyncPanel,
   HealthAndDiagnosticsPanels,
   InboundEventsPanel,
-  MappingsPanel,
   MembershipSyncPanel,
   OperationsPanel,
-  SetupPanels,
   SyncResultsPanel,
   UsagePanel,
 } from "./_components/panels"
+import { Message } from "./_components/message"
 import { SECTION_DEFAULTS, type SectionKey, type SyncResult } from "./_components/types"
 import { useXeroConnection } from "./_hooks/use-xero-connection"
 
@@ -62,7 +62,7 @@ export default function XeroPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <h1 className="mb-4 text-2xl font-bold">Xero Integration</h1>
+        <h1 className="mb-4 text-2xl font-bold">Xero Sync</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
     )
@@ -70,9 +70,19 @@ export default function XeroPage() {
 
   return (
     <div className="max-w-6xl p-6">
-      <h1 className="mb-2 text-2xl font-bold">Xero Integration</h1>
-      <p className="mb-6 text-muted-foreground">
-        Connect to Xero for automatic invoice creation, membership verification, and contact sync.
+      <h1 className="mb-2 text-2xl font-bold">Xero Sync</h1>
+      <p className="mb-2 text-muted-foreground">
+        Monitor the Xero connection, run contact and membership syncs, and review operations and usage.
+      </p>
+      <p className="mb-6 text-sm">
+        Account mappings and initial setup live on the{" "}
+        <Link
+          href="/admin/xero/setup"
+          className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+        >
+          Xero Setup
+        </Link>{" "}
+        page.
       </p>
 
       {error && <Message tone="error" message={error} onDismiss={() => setError("")} />}
@@ -136,37 +146,8 @@ export default function XeroPage() {
           />
           <SyncResultsPanel syncResult={syncResult} currentXeroPath={currentXeroPath} />
           <UsagePanel connected={connected} open={sectionOpen.usage} onToggle={setSectionState} refreshToken={usageRefreshToken} />
-          <MappingsPanel connected={connected} open={sectionOpen.mappings} onToggle={setSectionState} clubName={club.name} />
-          <SetupPanels
-            connected={connected}
-            open={sectionOpen.setup}
-            onToggle={setSectionState}
-            clubName={club.name}
-            bookingsName={club.bookingsName}
-            syncing={syncing}
-            setSyncing={setSyncing}
-            setSyncResult={setSyncResult}
-            onMessage={publishMessage}
-            onRefreshOperations={refreshOperations}
-            onRefreshDiagnostics={refreshDiagnostics}
-          />
         </>
       )}
-    </div>
-  )
-}
-
-function Message({ tone, message, onDismiss }: { tone: "error" | "success"; message: string; onDismiss: () => void }) {
-  const className =
-    tone === "error"
-      ? "mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-      : "mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700"
-  return (
-    <div className={className}>
-      {message}
-      <button onClick={onDismiss} className="ml-2 underline">
-        Dismiss
-      </button>
     </div>
   )
 }
