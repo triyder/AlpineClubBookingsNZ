@@ -119,6 +119,11 @@ interface BaseInput {
   // joiner's stay is grouped with the event. Existing callers leave this
   // undefined, which persists null exactly as before.
   parentBookingId?: string;
+  // Group booking, ORGANISER_PAYS mode: when true the created booking is
+  // flagged organiserSettled, so the joiner is never billed for it and cannot
+  // pay it themselves; the organiser settles the group total. Only the
+  // group-join path sets this; everyone else leaves it undefined (false).
+  organiserSettled?: boolean;
 }
 
 export type DraftBookingInput = BaseInput;
@@ -829,6 +834,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     paymentMethod = DEFAULT_BOOKING_PAYMENT_METHOD,
     memberReviewJustification,
     parentBookingId,
+    organiserSettled,
   } = input;
   // Auto-expand (issue #713): cover every guest night (members + non-members)
   // so the member booking and any linked non-member child share one range.
@@ -1015,6 +1021,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           // column defaults to null, matching the create-payload assertions in
           // booking-split.test.ts.
           ...(parentBookingId != null ? { parentBookingId } : {}),
+          // ORGANISER_PAYS joins flag the booking so the joiner is never billed
+          // and the organiser settles it. Omitted entirely otherwise so the
+          // column defaults to false and the create-payload assertions in
+          // booking-split.test.ts stay unchanged.
+          ...(organiserSettled ? { organiserSettled: true } : {}),
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
           requestedRoomId: requestedRoomId || null,

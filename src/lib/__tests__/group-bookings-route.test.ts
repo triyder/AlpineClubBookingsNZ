@@ -268,6 +268,7 @@ describe("POST /api/group-bookings/[code]/join", () => {
       isZeroDollarConfirmed: false,
       finalPriceCents: 4500,
       requiresPayment: true,
+      organiserSettled: false,
     });
     const res = await joinPOST(joinRequest(validBody), {
       params: Promise.resolve({ code: "ABCD2345" }),
@@ -301,17 +302,24 @@ describe("POST /api/group-bookings/[code]/join", () => {
     });
   });
 
-  it("maps an organiser-pays group to 409 (not yet supported)", async () => {
-    mocks.joinGroupBookingAsMember.mockRejectedValueOnce(
-      new GroupBookingError(
-        "Joining an organiser-pays group is not available yet",
-        409
-      )
-    );
+  it("joins an organiser-pays group with the joiner billed nothing", async () => {
+    mocks.joinGroupBookingAsMember.mockResolvedValueOnce({
+      bookingId: "booking-10",
+      status: "PAYMENT_PENDING",
+      isZeroDollarConfirmed: false,
+      finalPriceCents: 4500,
+      requiresPayment: false,
+      organiserSettled: true,
+    });
     const res = await joinPOST(joinRequest(validBody), {
       params: Promise.resolve({ code: "ABCD2345" }),
     });
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      bookingId: "booking-10",
+      requiresPayment: false,
+      organiserSettled: true,
+    });
   });
 });
 

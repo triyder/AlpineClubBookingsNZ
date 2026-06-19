@@ -374,18 +374,28 @@ export interface JoinGroupBookingResult {
   isZeroDollarConfirmed: boolean;
   finalPriceCents: number;
   requiresPayment: boolean;
+  // True for ORGANISER_PAYS: the joiner's beds are priced and held but the
+  // organiser settles them, so the joiner is never billed and requiresPayment
+  // is always false.
+  organiserSettled: boolean;
 }
 
 /**
  * A logged-in member adds themselves (and their own member guests) to a group.
  *
- * EACH_PAYS_OWN only for now: the joiner's beds become their own child booking
- * linked to the organiser booking via parentBookingId, created through
- * createConfirmedBooking so capacity (advisory lock), pricing, the $0
- * auto-confirm and the payment flow are all reused. The same eligibility gates
- * as POST /api/bookings are enforced (owner + guest subscriptions, minimum stay,
- * linked-member rules). ORGANISER_PAYS uses a different shared-draft flow and is
- * not handled here yet.
+ * The joiner's beds become their own child booking linked to the organiser
+ * booking via parentBookingId, created through createConfirmedBooking so
+ * capacity (advisory lock), pricing, the $0 auto-confirm and the payment flow
+ * are all reused. The same eligibility gates as POST /api/bookings are enforced
+ * (owner + guest subscriptions, minimum stay, linked-member rules).
+ *
+ * Payment mode:
+ *   - EACH_PAYS_OWN: the joiner owns and pays their child booking through the
+ *     normal member payment flow.
+ *   - ORGANISER_PAYS: the child booking is flagged organiserSettled, so the
+ *     joiner is never billed (requiresPayment is false) and cannot pay it
+ *     themselves; the organiser settles the group total as one combined bill.
+ *     The booking is still priced and holds the bed exactly as each-pays.
  *
  * Non-member friends use the public join-request path, so every guest here must
  * be a member; a non-member guest is rejected with a clear message.
@@ -425,12 +435,8 @@ export async function joinGroupBookingAsMember(
   if (!isGroupJoinable(group)) {
     throw new GroupBookingError("This group is not accepting joins", 409);
   }
-  if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
-    throw new GroupBookingError(
-      "Joining an organiser-pays group is not available yet",
-      409
-    );
-  }
+  const organiserSettled =
+    group.paymentMode === GroupBookingPaymentMode.ORGANISER_PAYS;
   if (
     group.organiserBooking.deletedAt ||
     !(ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(
@@ -594,6 +600,9 @@ export async function joinGroupBookingAsMember(
     shouldBePending: hold.shouldBePending,
     holdDays: 0,
     parentBookingId: group.organiserBooking.id,
+    // ORGANISER_PAYS: flag the child booking so the joiner is never billed and
+    // cannot pay it; the organiser settles the group total. No-op for each-pays.
+    organiserSettled,
   });
 
   if (outcome.type === "capacityExceeded") {
@@ -619,9 +628,12 @@ export async function joinGroupBookingAsMember(
     status: booking.status,
     isZeroDollarConfirmed: outcome.isZeroDollarConfirmed,
     finalPriceCents: booking.finalPriceCents,
+    // ORGANISER_PAYS joiners never pay; the organiser settles the group total.
     requiresPayment:
+      !organiserSettled &&
       booking.status === BookingStatus.PAYMENT_PENDING &&
       booking.finalPriceCents > 0,
+    organiserSettled,
   };
 }
 

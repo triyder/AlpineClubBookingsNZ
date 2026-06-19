@@ -659,6 +659,12 @@ model Booking {
   // member booking). Pure parties and the flagged "only book if my guests can
   // come" path stay a single booking with parentBookingId = null.
   parentBookingId           String?
+  // Group booking, ORGANISER_PAYS mode: a joiner's child booking carries its
+  // real price but is settled by the organiser as part of one combined bill, so
+  // the joiner is never billed for it. When true the joiner cannot pay this
+  // booking themselves; the organiser-settlement flow collects the group total
+  // and marks these PAID. Defaults false for every normal (each-pays) booking.
+  organiserSettled          Boolean            @default(false)
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
   expectedArrivalTime       String?            @db.VarChar(5)

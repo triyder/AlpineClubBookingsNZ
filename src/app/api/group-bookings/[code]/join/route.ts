@@ -39,10 +39,11 @@ const joinSchema = z
 
 /**
  * A logged-in member adds themselves (and their member guests) to a group via
- * its join code. EACH_PAYS_OWN only for now; the service enforces the same
- * eligibility gates as POST /api/bookings and creates a child booking linked to
- * the organiser. A balance-due result should be paid through the normal member
- * booking payment flow.
+ * its join code. The service enforces the same eligibility gates as POST
+ * /api/bookings and creates a child booking linked to the organiser. For
+ * EACH_PAYS_OWN a balance-due result should be paid through the normal member
+ * booking payment flow; for ORGANISER_PAYS the result is organiserSettled with
+ * requiresPayment false (the organiser settles the group total).
  */
 export async function POST(
   request: NextRequest,

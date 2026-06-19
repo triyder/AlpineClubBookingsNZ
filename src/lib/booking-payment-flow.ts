@@ -5,6 +5,9 @@ export type BookingPaymentMode = "payment" | "setup";
 export interface BookingPaymentFlowState {
   status: string;
   hasNonMembers?: boolean | null;
+  // Group booking ORGANISER_PAYS: the organiser settles this booking, so the
+  // joiner who owns it must never be offered a self-pay flow.
+  organiserSettled?: boolean | null;
 }
 
 function normalizeBookingState(
@@ -24,6 +27,12 @@ export function canCreateImmediatePaymentIntent(
   booking: string | BookingPaymentFlowState
 ) {
   const state = normalizeBookingState(booking);
+
+  // The organiser settles ORGANISER_PAYS bookings as one combined bill; the
+  // joiner who owns the booking is never billed and cannot pay it here.
+  if (state.organiserSettled) {
+    return false;
+  }
 
   if (requiresSavedPaymentMethod(state)) {
     return false;
