@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   recordBookingEvent: vi.fn(),
   enqueueXeroInvoice: vi.fn(),
   kickXero: vi.fn(),
+  sendSettlementReceipt: vi.fn(),
+  sendJoinSettled: vi.fn(),
 }));
 
 // The transaction client exposes the same nested method mocks; the callback runs
@@ -73,6 +75,10 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mocks.enqueueXeroInvoice,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickXero,
 }));
+vi.mock("@/lib/email", () => ({
+  sendGroupSettlementReceiptEmail: mocks.sendSettlementReceipt,
+  sendGroupJoinSettledEmail: mocks.sendJoinSettled,
+}));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
@@ -120,6 +126,8 @@ beforeEach(() => {
     id: "pi_settle_1",
     client_secret: "cs_settle_1",
   });
+  mocks.sendSettlementReceipt.mockResolvedValue(undefined);
+  mocks.sendJoinSettled.mockResolvedValue(undefined);
 });
 
 describe("createGroupSettlementIntent", () => {
@@ -278,21 +286,46 @@ describe("applyGroupSettlementSucceeded", () => {
 
   it("flips every confirmed child to PAID and records the settlement", async () => {
     mocks.settlementFindUnique
-      // First call: top-level lookup by intent id.
+      // First call: top-level lookup by intent id (with organiser + dates).
       .mockResolvedValueOnce({
         id: "s1",
         status: PaymentStatus.PENDING,
         amountCents: 9000,
         stripeCustomerId: "cus_123",
         groupBookingId: GROUP_ID,
-        groupBooking: { organiserBookingId: ORG_BOOKING },
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
       })
       // Second call: inside the lock, re-confirm still unpaid.
       .mockResolvedValueOnce({ status: PaymentStatus.PENDING });
-    mocks.bookingFindMany.mockResolvedValue([
-      { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
-      { id: "child-2", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
-    ]);
+    mocks.bookingFindMany
+      // Inside the lock: the confirmed children to settle.
+      .mockResolvedValueOnce([
+        { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+        { id: "child-2", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      // After commit: the settled bookings re-loaded for the joiner emails.
+      .mockResolvedValueOnce([
+        {
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j1@example.com", firstName: "Jo" },
+          _count: { guests: 1 },
+        },
+        {
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j2@example.com", firstName: "Sam" },
+          _count: { guests: 2 },
+        },
+      ]);
 
     const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
 
@@ -321,5 +354,8 @@ describe("applyGroupSettlementSucceeded", () => {
     // Side effects per settled child.
     expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(2);
     expect(mocks.enqueueXeroInvoice).toHaveBeenCalledTimes(2);
+    // Notifications: one organiser receipt + one confirmation per joiner.
+    expect(mocks.sendSettlementReceipt).toHaveBeenCalledTimes(1);
+    expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
   });
 });

@@ -45,6 +45,10 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { GroupBookingError, normaliseJoinCode } from "@/lib/group-booking";
+import {
+  sendGroupJoinSettledEmail,
+  sendGroupSettlementReceiptEmail,
+} from "@/lib/email";
 import logger from "@/lib/logger";
 
 /** Statuses an organiser-settled child can hold before it is settled. */
@@ -306,7 +310,15 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
 }): Promise<GroupSettlementAppliedResult> {
   const settlement = await prisma.groupBookingSettlement.findUnique({
     where: { stripePaymentIntentId: paymentIntent.id },
-    include: { groupBooking: { select: { organiserBookingId: true } } },
+    include: {
+      groupBooking: {
+        select: {
+          organiserBookingId: true,
+          organiserMember: { select: { email: true, firstName: true, lastName: true } },
+          organiserBooking: { select: { checkIn: true, checkOut: true } },
+        },
+      },
+    },
   });
 
   if (!settlement) {
@@ -415,6 +427,56 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
         { err: xeroErr, bookingId },
         "Failed to queue Xero invoice for settled group child booking"
       );
+    }
+  }
+
+  // Notify the organiser (receipt) and each joiner (spot confirmed). Email
+  // failures are logged but never undo the settlement.
+  if (settled.length > 0) {
+    const organiser = settlement.groupBooking.organiserMember;
+    const organiserBooking = settlement.groupBooking.organiserBooking;
+    const organiserName = `${organiser.firstName} ${organiser.lastName}`.trim();
+    try {
+      await sendGroupSettlementReceiptEmail({
+        email: organiser.email,
+        firstName: organiser.firstName,
+        checkIn: organiserBooking.checkIn,
+        checkOut: organiserBooking.checkOut,
+        joinerCount: settled.length,
+        totalCents: settlement.amountCents,
+      });
+    } catch (emailErr) {
+      logger.error(
+        { err: emailErr, groupBookingId: settlement.groupBookingId },
+        "Failed to send group settlement receipt to organiser"
+      );
+    }
+
+    const settledBookings = await prisma.booking.findMany({
+      where: { id: { in: settled } },
+      select: {
+        checkIn: true,
+        checkOut: true,
+        member: { select: { email: true, firstName: true } },
+        _count: { select: { guests: true } },
+      },
+    });
+    for (const booking of settledBookings) {
+      try {
+        await sendGroupJoinSettledEmail({
+          email: booking.member.email,
+          firstName: booking.member.firstName,
+          organiserName,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          guestCount: booking._count.guests,
+        });
+      } catch (emailErr) {
+        logger.error(
+          { err: emailErr, groupBookingId: settlement.groupBookingId },
+          "Failed to send settled-spot confirmation to group joiner"
+        );
+      }
     }
   }
 

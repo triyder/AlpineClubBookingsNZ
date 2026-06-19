@@ -70,6 +70,8 @@ import {
   adminBookingRequestPendingTemplate,
   adminSchoolManualInvoiceTemplate,
   adminBookingRequestHoldExpiredTemplate,
+  groupSettlementReceiptTemplate,
+  groupJoinSettledTemplate,
   type XeroReconciliationReportEmail,
 } from "./email-templates";
 import {
@@ -2237,6 +2239,66 @@ export async function sendGroupBookingJoinVerificationEmail(params: {
       checkOut: formatNZDate(params.checkOut),
       guestCount: params.guestCount,
       expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+/** Receipt to the organiser after they settle an ORGANISER_PAYS group bill. */
+export async function sendGroupSettlementReceiptEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  joinerCount: number;
+  totalCents: number;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your group booking is settled — ${CLUB_NAME}`,
+    html: groupSettlementReceiptTemplate({
+      firstName: params.firstName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      joinerCount: params.joinerCount,
+      totalCents: params.totalCents,
+    }),
+    templateName: "group-settlement-receipt",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      joinerCount: params.joinerCount,
+      total: formatMoneyCents(params.totalCents),
+    },
+  });
+}
+
+/** Confirmation to a joiner whose spot the organiser has settled for them. */
+export async function sendGroupJoinSettledEmail(params: {
+  email: string;
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your spot is confirmed — ${CLUB_NAME}`,
+    html: groupJoinSettledTemplate({
+      firstName: params.firstName,
+      organiserName: params.organiserName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+    }),
+    templateName: "group-join-settled",
+    templateData: {
+      firstName: params.firstName,
+      organiserName: params.organiserName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
     },
   });
 }

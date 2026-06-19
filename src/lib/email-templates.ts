@@ -2243,6 +2243,46 @@ export function bookingRequestVerificationTemplate(data: {
   `);
 }
 
+export function groupSettlementReceiptTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  joinerCount: number;
+  totalCents: number;
+}): string {
+  return layout(`
+    ${heading("Your Group Booking Is Settled")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", thanks for settling your group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge. Everyone you are paying for is now confirmed.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Joiners settled", value: String(data.joinerCount) },
+      { label: "Total paid", value: formatCents(data.totalCents) },
+    ])}
+    ${paragraph("Each joiner has been emailed to confirm their spot. There is nothing more for them to pay.")}
+    ${supportContactSentence("If anything looks wrong, contact the club at ")}
+  `);
+}
+
+export function groupJoinSettledTemplate(data: {
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+}): string {
+  return layout(`
+    ${heading("Your Spot Is Confirmed")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + escapeHtml(data.organiserName) + " has settled the cost of your stay at " + escapeHtml(CLUB_NAME) + "'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+    ])}
+    ${supportContactSentence("If you have any questions about your stay, contact the club at ")}
+  `);
+}
+
 export function bookingRequestApprovedTemplate(data: {
   firstName: string;
   payUrl: string;
