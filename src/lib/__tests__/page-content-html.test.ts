@@ -47,9 +47,9 @@ describe("sanitizePageContentHtml", () => {
   });
 
   it("strips javascript: links and forces rel on anchors", () => {
-    expect(
-      sanitizePageContentHtml('<a href="javascript:alert(1)">x</a>'),
-    ).toBe('<a rel="noopener noreferrer">x</a>');
+    expect(sanitizePageContentHtml('<a href="javascript:alert(1)">x</a>')).toBe(
+      '<a rel="noopener noreferrer">x</a>',
+    );
     expect(sanitizePageContentHtml('<a href="https://example.nz">x</a>')).toBe(
       '<a href="https://example.nz" rel="noopener noreferrer">x</a>',
     );
@@ -80,6 +80,16 @@ describe("sanitizePageContentHtml", () => {
         '<img src="data:image/png;base64,aGVsbG8=" alt="Hut" />',
       ),
     ).toBe('<img alt="Hut" />');
+  });
+
+  it("converts img style width/height to attributes", () => {
+    expect(
+      sanitizePageContentHtml(
+        '<img src="/api/images/abc123" alt="Hut" style="width: 320px; height: 180px; border: 1px solid red;" />',
+      ),
+    ).toBe(
+      '<img src="/api/images/abc123" alt="Hut" width="320" height="180" />',
+    );
   });
 });
 

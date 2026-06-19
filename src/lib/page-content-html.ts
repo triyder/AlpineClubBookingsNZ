@@ -4,6 +4,16 @@ import sanitizeHtml from "sanitize-html";
 import { prisma } from "@/lib/prisma";
 import type { EditablePageRecord } from "@/lib/page-content";
 
+function extractPixelDimension(
+  style: string,
+  property: "width" | "height",
+): string | null {
+  const match = style.match(
+    new RegExp(`${property}\\s*:\\s*(\\d+)(?:px)?\\b`, "i"),
+  );
+  return match?.[1] ?? null;
+}
+
 const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
     "h1",
@@ -95,6 +105,28 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
         rel: "noopener noreferrer",
       },
     }),
+    img: (tagName, attribs) => {
+      const style = attribs.style ?? "";
+      const width = extractPixelDimension(style, "width");
+      const height = extractPixelDimension(style, "height");
+      const nextAttribs: Record<string, string> = {
+        ...attribs,
+      };
+
+      if (width && !nextAttribs.width) {
+        nextAttribs.width = width;
+      }
+      if (height && !nextAttribs.height) {
+        nextAttribs.height = height;
+      }
+
+      delete nextAttribs.style;
+
+      return {
+        tagName,
+        attribs: nextAttribs,
+      };
+    },
   },
 };
 

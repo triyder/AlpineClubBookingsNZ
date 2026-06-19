@@ -100,6 +100,15 @@ type FilesystemImageEntry = {
   url: string;
 };
 
+function parsePixelDimension(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 const UPLOADABLE_IMAGE_TYPES =
   "image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml";
 
@@ -439,8 +448,11 @@ export const WysiwygEditor = forwardRef<
       if (ds.handle.includes("w")) newW = Math.max(20, ds.startW - dx);
       if (ds.handle.includes("s")) newH = Math.max(20, ds.startH + dy);
       if (ds.handle.includes("n")) newH = Math.max(20, ds.startH - dy);
-      target.style.width = `${Math.round(newW)}px`;
-      target.style.height = `${Math.round(newH)}px`;
+      // Persist resized image dimensions via attributes so sanitization keeps them.
+      target.setAttribute("width", String(Math.round(newW)));
+      target.setAttribute("height", String(Math.round(newH)));
+      target.style.removeProperty("width");
+      target.style.removeProperty("height");
       const rr = target.getBoundingClientRect();
       setResizeRect({
         top: rr.top,
@@ -531,10 +543,14 @@ export const WysiwygEditor = forwardRef<
 
     const img = document.createElement("img");
     img.src = selectedImagePath;
-    const w = imageWidth.trim();
-    const h = imageHeight.trim();
-    if (w) img.style.width = /^\d+$/.test(w) ? `${w}px` : w;
-    if (h) img.style.height = /^\d+$/.test(h) ? `${h}px` : h;
+    const width = parsePixelDimension(imageWidth);
+    const height = parsePixelDimension(imageHeight);
+    if (width !== null) {
+      img.setAttribute("width", String(width));
+    }
+    if (height !== null) {
+      img.setAttribute("height", String(height));
+    }
 
     // Insert the element at the current caret position.
     const range =
@@ -1092,20 +1108,19 @@ export const WysiwygEditor = forwardRef<
                   <Input
                     value={imageWidth}
                     onChange={(e) => setImageWidth(e.target.value)}
-                    placeholder="Width (e.g. 300 or 50%)"
+                    placeholder="Width (px, e.g. 300)"
                     className="h-7 flex-1 text-xs"
                   />
                   <span className="shrink-0 text-xs text-slate-400">×</span>
                   <Input
                     value={imageHeight}
                     onChange={(e) => setImageHeight(e.target.value)}
-                    placeholder="Height (optional)"
+                    placeholder="Height (px, optional)"
                     className="h-7 flex-1 text-xs"
                   />
                 </div>
                 <p className="text-[10px] text-slate-400">
-                  Enter a number (pixels) or percentage, e.g. 300 or 50%. Leave
-                  blank for natural size.
+                  Enter pixel values only. Leave blank for natural size.
                 </p>
               </div>
             ) : null}
