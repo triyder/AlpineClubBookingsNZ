@@ -864,9 +864,10 @@ model GroupBooking {
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
 
-  organiserBooking Booking            @relation("GroupBookingOrganiser", fields: [organiserBookingId], references: [id], onDelete: Cascade)
-  organiserMember  Member             @relation(fields: [organiserMemberId], references: [id], onDelete: Restrict)
+  organiserBooking Booking                 @relation("GroupBookingOrganiser", fields: [organiserBookingId], references: [id], onDelete: Cascade)
+  organiserMember  Member                  @relation(fields: [organiserMemberId], references: [id], onDelete: Restrict)
   joins            GroupBookingJoin[]
+  settlement       GroupBookingSettlement?
 
   @@index([organiserMemberId])
   @@index([status, joinDeadline])
@@ -901,6 +902,27 @@ model GroupBookingJoin {
   @@index([groupBookingId])
   @@index([verificationTokenExpiresAt])
   @@index([contactEmail])
+}
+
+// ORGANISER_PAYS settlement: one combined Stripe payment by which the organiser
+// settles every organiser-settled child booking in the group as a single bill.
+// At settle time the children are committed to CONFIRMED (capacity held, like a
+// pay-on-account invoice, issue #709); this record holds the combined
+// PaymentIntent and flips them all to PAID exactly once on webhook success.
+model GroupBookingSettlement {
+  id                    String        @id @default(cuid())
+  groupBookingId        String        @unique
+  stripePaymentIntentId String?       @unique
+  stripeCustomerId      String?
+  amountCents           Int
+  status                PaymentStatus @default(PENDING)
+  paidAt                DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   joinGroupBookingAsMember: vi.fn(),
   createNonMemberJoinRequest: vi.fn(),
   verifyAndCreateNonMemberJoin: vi.fn(),
+  createGroupSettlementIntent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -50,11 +51,17 @@ vi.mock("@/lib/group-booking", async () => {
   };
 });
 
+// The settle route imports its own service module.
+vi.mock("@/lib/group-settlement", () => ({
+  createGroupSettlementIntent: mocks.createGroupSettlementIntent,
+}));
+
 import { POST } from "@/app/api/group-bookings/route";
 import { GET, PATCH } from "@/app/api/group-bookings/[code]/route";
 import { POST as joinPOST } from "@/app/api/group-bookings/[code]/join/route";
 import { POST as joinRequestPOST } from "@/app/api/group-bookings/[code]/join-request/route";
 import { POST as verifyPOST } from "@/app/api/group-bookings/join/verify/[token]/route";
+import { POST as settlePOST } from "@/app/api/group-bookings/[code]/settle/route";
 import { GroupBookingError } from "@/lib/group-booking";
 
 /** A correctly-formatted (64 hex char) action token. */
@@ -454,6 +461,62 @@ describe("POST /api/group-bookings/join/verify/[token] (non-member confirm)", ()
   it("returns 500 if the service throws unexpectedly", async () => {
     mocks.verifyAndCreateNonMemberJoin.mockRejectedValueOnce(new Error("boom"));
     const res = await callVerify(VALID_TOKEN);
+    expect(res.status).toBe(500);
+  });
+});
+
+describe("POST /api/group-bookings/[code]/settle", () => {
+  function settleRequest() {
+    return new NextRequest("http://localhost/api/group-bookings/ABCD2345/settle", {
+      method: "POST",
+    });
+  }
+  function callSettle() {
+    return settlePOST(settleRequest(), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+  }
+
+  it("rejects an unauthenticated caller with 401", async () => {
+    mocks.auth.mockResolvedValueOnce(null);
+    const res = await callSettle();
+    expect(res.status).toBe(401);
+    expect(mocks.createGroupSettlementIntent).not.toHaveBeenCalled();
+  });
+
+  it("returns the combined client secret when settlement is ready", async () => {
+    mocks.createGroupSettlementIntent.mockResolvedValueOnce({
+      outcome: "ready",
+      amountCents: 9000,
+      childCount: 2,
+      clientSecret: "cs_settle_1",
+      paymentIntentId: "pi_settle_1",
+    });
+    const res = await callSettle();
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      outcome: "ready",
+      amountCents: 9000,
+      childCount: 2,
+      clientSecret: "cs_settle_1",
+    });
+    expect(mocks.createGroupSettlementIntent).toHaveBeenCalledWith(
+      "ABCD2345",
+      "member-1"
+    );
+  });
+
+  it("maps a GroupBookingError to its status (403 for a non-organiser)", async () => {
+    mocks.createGroupSettlementIntent.mockRejectedValueOnce(
+      new GroupBookingError("This is not your group booking", 403)
+    );
+    const res = await callSettle();
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 500 if the service throws unexpectedly", async () => {
+    mocks.createGroupSettlementIntent.mockRejectedValueOnce(new Error("boom"));
+    const res = await callSettle();
     expect(res.status).toBe(500);
   });
 });
