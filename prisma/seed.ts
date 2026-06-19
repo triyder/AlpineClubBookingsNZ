@@ -33,6 +33,56 @@ const prisma = new PrismaClient({
   adapter: createPrismaPgAdapter(),
 });
 
+type InductionChecklistTemplateDelegate = {
+  findFirst: (args: {
+    where: { version: string };
+    select: { id: true };
+  }) => Promise<{ id: string } | null>;
+  count: (args: { where: { isActive: true } }) => Promise<number>;
+  create: (args: {
+    data: {
+      name: string;
+      version: string;
+      sourceLabel: string | null;
+      isActive: boolean;
+      sections: {
+        create: Array<{
+          title: string;
+          description: string | null;
+          priority:
+            | "EMERGENCY"
+            | "SECURITY"
+            | "STARTUP"
+            | "SHUTDOWN"
+            | "GENERAL";
+          sortOrder: number;
+          items: {
+            create: Array<{
+              label: string;
+              competencyPrompt: string | null;
+              notesPrompt: string | null;
+              isMandatory: boolean;
+              requiresDemonstration: boolean;
+              sortOrder: number;
+              legacySourceText: string | null;
+            }>;
+          };
+        }>;
+      };
+    };
+  }) => Promise<unknown>;
+};
+
+function inductionChecklistTemplateDelegate(): InductionChecklistTemplateDelegate {
+  // Some local type-generation states can temporarily miss this delegate even
+  // though the model exists in schema and database. Keep seed typing resilient.
+  return (
+    prisma as unknown as {
+      inductionChecklistTemplate: InductionChecklistTemplateDelegate;
+    }
+  ).inductionChecklistTemplate;
+}
+
 function seedRatesForSeason(season: "winter" | "summer") {
   return clubConfig.ageTiers.flatMap((tier) => [
     {
@@ -62,7 +112,7 @@ function seedAgeTierSettings() {
 }
 
 function requireSeedEnv(
-  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD"
+  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD",
 ) {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -86,7 +136,9 @@ function readBrandingLogoDataUrl() {
 
   const dataUrl = `data:image/png;base64,${logo.toString("base64")}`;
   if (!isValidLogoDataUrl(dataUrl)) {
-    throw new Error("public/branding/logo.png could not be converted to a valid logo data URL.");
+    throw new Error(
+      "public/branding/logo.png could not be converted to a valid logo data URL.",
+    );
   }
 
   return dataUrl;
@@ -169,7 +221,9 @@ async function createMissingSeasonRates(
 // edits and new versions survive a re-run. It is marked active only when no
 // other active template is present.
 async function seedInductionChecklistTemplate() {
-  const existing = await prisma.inductionChecklistTemplate.findFirst({
+  const inductionChecklistTemplate = inductionChecklistTemplateDelegate();
+
+  const existing = await inductionChecklistTemplate.findFirst({
     where: { version: DEFAULT_INDUCTION_TEMPLATE.version },
     select: { id: true },
   });
@@ -178,34 +232,36 @@ async function seedInductionChecklistTemplate() {
     return;
   }
 
-  const activeCount = await prisma.inductionChecklistTemplate.count({
+  const activeCount = await inductionChecklistTemplate.count({
     where: { isActive: true },
   });
 
-  await prisma.inductionChecklistTemplate.create({
+  await inductionChecklistTemplate.create({
     data: {
       name: DEFAULT_INDUCTION_TEMPLATE.name,
       version: DEFAULT_INDUCTION_TEMPLATE.version,
       sourceLabel: DEFAULT_INDUCTION_TEMPLATE.sourceLabel,
       isActive: activeCount === 0,
       sections: {
-        create: DEFAULT_INDUCTION_TEMPLATE.sections.map((section, sectionIndex) => ({
-          title: section.title,
-          description: section.description ?? null,
-          priority: section.priority,
-          sortOrder: sectionIndex,
-          items: {
-            create: section.items.map((item, itemIndex) => ({
-              label: item.label,
-              competencyPrompt: item.competencyPrompt ?? null,
-              notesPrompt: item.notesPrompt ?? null,
-              isMandatory: item.isMandatory ?? false,
-              requiresDemonstration: item.requiresDemonstration ?? false,
-              sortOrder: itemIndex,
-              legacySourceText: item.legacySourceText ?? null,
-            })),
-          },
-        })),
+        create: DEFAULT_INDUCTION_TEMPLATE.sections.map(
+          (section, sectionIndex) => ({
+            title: section.title,
+            description: section.description ?? null,
+            priority: section.priority,
+            sortOrder: sectionIndex,
+            items: {
+              create: section.items.map((item, itemIndex) => ({
+                label: item.label,
+                competencyPrompt: item.competencyPrompt ?? null,
+                notesPrompt: item.notesPrompt ?? null,
+                isMandatory: item.isMandatory ?? false,
+                requiresDemonstration: item.requiresDemonstration ?? false,
+                sortOrder: itemIndex,
+                legacySourceText: item.legacySourceText ?? null,
+              })),
+            },
+          }),
+        ),
       },
     },
   });
@@ -215,7 +271,9 @@ async function seedInductionChecklistTemplate() {
 }
 
 async function main() {
-  console.log("Seeding database (create-if-missing; re-runs change nothing)...");
+  console.log(
+    "Seeding database (create-if-missing; re-runs change nothing)...",
+  );
 
   const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
   const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
@@ -245,7 +303,9 @@ async function main() {
     for (const chore of choreTemplates) {
       await prisma.choreTemplate.create({ data: chore });
     }
-    console.log(`Chore templates seeded: ${choreTemplates.length} example templates`);
+    console.log(
+      `Chore templates seeded: ${choreTemplates.length} example templates`,
+    );
   } else {
     console.log("Chore templates already present; skipping");
   }
@@ -283,7 +343,7 @@ async function main() {
   if (!existingLodge) {
     const lodgePasswordHash = await bcrypt.hash(
       requireSeedEnv("SEED_LODGE_PASSWORD"),
-      12
+      12,
     );
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({

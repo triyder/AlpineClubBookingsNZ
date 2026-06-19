@@ -18,7 +18,7 @@ import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
   sanitizePageContentHtml,
-} from "@/lib/page-content-html";
+} from "../page-content-html";
 
 describe("sanitizePageContentHtml", () => {
   it("keeps allowed structural markup", () => {
