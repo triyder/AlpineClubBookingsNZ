@@ -1,5 +1,8 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { parseXeroOperationRequeueOriginalId } from "@/lib/xero-operation-queue";
+
+const REDACTED_SECRET = "[REDACTED]";
 
 export type XeroFailureState = "ACTIVE" | "REPAIRED" | "SUPERSEDED";
 
@@ -43,13 +46,20 @@ function readString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function readOriginalOperationId(value: unknown): string | null {
-  const payload = asRecord(value);
-  if (!payload) {
-    return null;
+function readOriginalOperationId(
+  operation: Pick<FailedOperation, "correlationKey" | "requestPayload">
+): string | null {
+  // The correlation key is authoritative: it is never redacted, whereas the
+  // requestPayload copy can be rewritten to "[REDACTED]" for ids containing a
+  // phone-like run of digits. Fall back to the payload only for legacy rows.
+  const fromCorrelationKey = parseXeroOperationRequeueOriginalId(operation.correlationKey);
+  if (fromCorrelationKey) {
+    return fromCorrelationKey;
   }
 
-  return readString(payload.originalOperationId);
+  const payload = asRecord(operation.requestPayload);
+  const fromPayload = payload ? readString(payload.originalOperationId) : null;
+  return fromPayload && fromPayload !== REDACTED_SECRET ? fromPayload : null;
 }
 
 function buildFallbackRootKey(operation: FailedOperation) {
@@ -73,7 +83,7 @@ function buildRootKey(
     return buildFallbackRootKey(operation);
   }
 
-  const originalOperationId = readOriginalOperationId(operation.requestPayload);
+  const originalOperationId = readOriginalOperationId(operation);
   if (!originalOperationId || seen.has(originalOperationId)) {
     return buildFallbackRootKey(operation);
   }
@@ -119,7 +129,7 @@ export async function resolveFailedXeroOperationStates(
 
   const originalOperationIds = [...new Set(
     failedOperations
-      .map((operation) => readOriginalOperationId(operation.requestPayload))
+      .map((operation) => readOriginalOperationId(operation))
       .filter((operationId): operationId is string => Boolean(operationId))
   )];
 

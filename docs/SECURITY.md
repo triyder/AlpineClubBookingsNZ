@@ -5,16 +5,18 @@ implementation-specific for `SECURITY.md` at the repository root. The
 root `SECURITY.md` covers the public reporting policy; this file
 captures internal mitigations and operator-facing rationale.
 
-## Membership cancellation confirmation tokens in URL paths
+## Token-bearing URL paths
 
 ### Context
 
-Members included in a membership cancellation request receive an email
-with a confirmation link. The link carries a 256-bit token in the URL
-path:
+Some emailed confirmation and payment links carry 256-bit tokens in URL paths:
 
 ```
 https://<host>/membership-cancellation/<token>
+https://<host>/chores/<token>
+https://<host>/nominations/<token>
+https://<host>/pay/<token>
+https://<host>/booking-requests/verify/<token>
 ```
 
 URL paths are routinely captured by:
@@ -29,30 +31,26 @@ URL paths are routinely captured by:
 
 ### Residual risk
 
-The consume route requires both the token *and* an authenticated
-session whose `member.id` matches the participant who received the
-link. A stolen token alone cannot be replayed without first
-compromising that exact member's session. The residual risk is
-restricted to scenarios where an internal actor with log access could
-see the token plus separately compromise the same member.
+Some token routes are also session-bound; others are intentionally public
+opaque-token flows. A stolen public payment, chore, nomination, or booking
+request verification token can act as the bearer credential for that specific
+workflow until it is used, revoked, or expires.
 
 ### Mitigation
 
 The shared text redaction layer (`src/lib/redact-sensitive-json.ts`)
-strips the token segment from any string that contains
-`/membership-cancellation/<token>` before the value is emitted by the
-Pino logger or attached to an `err` payload. The replacement is
-`/membership-cancellation/[REDACTED]`. This covers structured request
-logs, captured error stacks, and any other observability surface that
-flows through `redactSensitiveText`.
+strips the token segment from any supported token-bearing path before the
+value is emitted by the Pino logger or attached to an `err` payload. This
+covers structured request logs, captured error stacks, URL-encoded login
+callback paths, and any other observability surface that flows through
+`redactSensitiveText`.
 
-The token remains in clear text in the email body sent to the
-participant, which is the only place the participant needs it.
+The token remains in clear text in the email body sent to the participant or
+requester, which is the only place they need it.
 
 ### Operator checklist
 
 When reviewing observability dashboards or proxy access logs that are
 exported outside of the application process, confirm that the source
-also redacts paths matching `/membership-cancellation/[^/]+`. The
-application-level redaction does not protect logs that the application
-does not emit.
+also redacts these token-bearing path segments. The application-level
+redaction does not protect logs that the application does not emit.

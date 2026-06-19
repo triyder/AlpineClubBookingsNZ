@@ -102,7 +102,16 @@ export async function POST(request: NextRequest) {
     }
 
     const safeName = sanitizeFilename(file.name);
-    const filePath = path.join(absDir, safeName);
+    // Build the destination by concatenating onto absDir rather than calling
+    // path.join(absDir, safeName). Turbopack's Node File Trace expands a
+    // path.join() whose base it cannot statically resolve (absDir derives from
+    // the request via resolveInImagesRoot) into a recursive read of
+    // process.cwd(), tracing the entire repository into the `output: standalone`
+    // build ("whole project was traced unintentionally"). sanitizeFilename above
+    // reduces safeName to a bare filename (no separators, no ".."), and absDir is
+    // already proven to live inside IMAGES_ROOT, so this is equivalent to
+    // path.join here while keeping the route's trace scoped.
+    const filePath: string = `${absDir}${path.sep}${safeName}`;
 
     // Double-check resolved path stays inside images root
     if (filePath !== absDir && !filePath.startsWith(absDir + path.sep)) {

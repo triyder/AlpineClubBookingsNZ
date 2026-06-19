@@ -1,0 +1,64 @@
+import { NextRequest, NextResponse } from "next/server";
+import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
+import {
+  canSignOff,
+  getInductionById,
+  resolveSignerRole,
+  type SignerContext,
+} from "@/lib/induction";
+import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
+import { requireActiveSession } from "@/lib/session-guards";
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const guard = await requireActiveSession();
+  if (!guard.ok) return guard.response;
+  const { id } = await params;
+
+  const memberId = guard.session.user.id;
+  const ctx: SignerContext = {
+    memberId,
+    isAdmin: guard.session.user.role === "ADMIN",
+    isHutLeader: await hasActiveHutLeaderAssignment(memberId),
+  };
+
+  const induction = await getInductionById(id);
+  if (!induction) {
+    return NextResponse.json({ error: "Induction not found" }, { status: 404 });
+  }
+
+  const isInductee = induction.memberId === memberId;
+  const role = resolveSignerRole(ctx, induction.application);
+  if (!isInductee && !role) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const eligibility = canSignOff(induction, ctx);
+
+  // Parse self-assessment JSON so the client receives a typed object
+  const selfAssessment = induction.selfAssessmentJson
+    ? (() => {
+        try {
+          return JSON.parse(induction.selfAssessmentJson) as Record<string, string>;
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  return NextResponse.json({
+    induction: {
+      ...induction,
+      selfAssessment,
+    },
+    declaration: INDUCTION_SIGN_OFF_DECLARATION,
+    viewer: {
+      isInductee,
+      canSign: eligibility.allowed,
+      role: eligibility.role ?? null,
+      reason: eligibility.reason ?? null,
+    },
+  });
+}

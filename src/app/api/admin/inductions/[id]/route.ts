@@ -1,0 +1,91 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  getInductionById,
+  InductionError,
+  overrideCompleteInduction,
+  voidInduction,
+} from "@/lib/induction";
+import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
+import logger from "@/lib/logger";
+import { requireAdmin } from "@/lib/session-guards";
+
+const patchSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("OVERRIDE_COMPLETE"),
+    comments: z.string().trim().max(2000).optional().nullable(),
+  }),
+  z.object({
+    action: z.literal("VOID"),
+    reason: z.string().trim().min(3).max(2000),
+  }),
+]);
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const { id } = await params;
+
+  const induction = await getInductionById(id);
+  if (!induction) {
+    return NextResponse.json({ error: "Induction not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    induction,
+    declaration: INDUCTION_SIGN_OFF_DECLARATION,
+  });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const { id } = await params;
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = patchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  try {
+    if (parsed.data.action === "OVERRIDE_COMPLETE") {
+      await overrideCompleteInduction({
+        inductionId: id,
+        adminMemberId: guard.session.user.id,
+        comments: parsed.data.comments ?? null,
+      });
+    } else {
+      await voidInduction({
+        inductionId: id,
+        adminMemberId: guard.session.user.id,
+        reason: parsed.data.reason,
+      });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    if (err instanceof InductionError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    logger.error({ err, inductionId: id }, "Failed to update induction");
+    return NextResponse.json(
+      { error: "Failed to update induction" },
+      { status: 500 }
+    );
+  }
+}

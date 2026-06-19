@@ -63,6 +63,33 @@ describe("redact-sensitive-json", () => {
     });
   });
 
+  it("preserves identifiers that merely contain a run of digits", () => {
+    // cuids embed digit runs; e.g. "cmqdxeu50002101n22w2ivcas" contains
+    // "50002101". These must not be treated as phone numbers, because they are
+    // load-bearing in persisted payloads (e.g. a requeue's originalOperationId).
+    expect(
+      redactSensitiveJson({
+        originalOperationId: "cmqdxeu50002101n22w2ivcas",
+        bookingId: "cmp20vk3t00q12345678npunsc",
+      })
+    ).toEqual({
+      originalOperationId: "cmqdxeu50002101n22w2ivcas",
+      bookingId: "cmp20vk3t00q12345678npunsc",
+    });
+    expect(redactSensitiveText("cmqdxeu50002101n22w2ivcas")).toBe(
+      "cmqdxeu50002101n22w2ivcas"
+    );
+  });
+
+  it("still redacts standalone phone-like numbers on generic fields", () => {
+    expect(redactSensitiveJson({ note: "call 021234567 today" })).toEqual({
+      note: "[REDACTED]",
+    });
+    expect(redactSensitiveJson({ ref: "+64211234567" })).toEqual({
+      ref: "[REDACTED]",
+    });
+  });
+
   it("redacts email and phone fields in structured payloads", () => {
     expect(
       redactSensitiveJson({
@@ -156,6 +183,24 @@ describe("redact-sensitive-json", () => {
         "GET /nominations/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       )
     ).toBe("GET /nominations/[REDACTED]");
+
+    expect(
+      redactSensitiveText(
+        "GET /pay/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      )
+    ).toBe("GET /pay/[REDACTED]");
+
+    expect(
+      redactSensitiveText(
+        "POST /api/pay/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/payment-intent"
+      )
+    ).toBe("POST /api/pay/[REDACTED]/payment-intent");
+
+    expect(
+      redactSensitiveText(
+        "GET /booking-requests/verify/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      )
+    ).toBe("GET /booking-requests/verify/[REDACTED]");
   });
 
   it("redacts token-bearing callback URLs after URL encoding", () => {
@@ -170,6 +215,20 @@ describe("redact-sensitive-json", () => {
         "GET /login?callbackUrl=%2Fnominations%2F0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 302"
       )
     ).toBe("GET /login?callbackUrl=%2Fnominations%2F[REDACTED] 302");
+
+    expect(
+      redactSensitiveText(
+        "GET /login?callbackUrl=%2Fpay%2F0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 302"
+      )
+    ).toBe("GET /login?callbackUrl=%2Fpay%2F[REDACTED] 302");
+
+    expect(
+      redactSensitiveText(
+        "GET /login?callbackUrl=%2Fbooking-requests%2Fverify%2F0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 302"
+      )
+    ).toBe(
+      "GET /login?callbackUrl=%2Fbooking-requests%2Fverify%2F[REDACTED] 302"
+    );
   });
 
   it("redacts token query parameters and Stripe client secrets in plain text", () => {

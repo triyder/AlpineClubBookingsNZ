@@ -366,8 +366,8 @@ Hardening applied in #615:
   locally before calling Addy.
 - Public committee reads are capped to 50 active records.
 - Log redaction covers token-bearing `/membership-cancellation/`, `/chores/`,
-  and `/nominations/` paths, including URL-encoded `callbackUrl` values from
-  login redirects.
+  `/nominations/`, `/pay/`, and `/booking-requests/verify/` paths, including
+  URL-encoded `callbackUrl` values from login redirects.
 
 Accepted residual risk:
 

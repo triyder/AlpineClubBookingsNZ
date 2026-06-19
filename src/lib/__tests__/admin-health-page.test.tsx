@@ -3,6 +3,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminHealthPage from "@/app/(admin)/admin/health/page";
+import BackgroundJobsPage from "@/app/(admin)/admin/background-jobs/page";
 
 const fetchMock = vi.fn();
 
@@ -117,7 +118,9 @@ describe("AdminHealthPage", () => {
   });
 
   it("renders cron schedule, threshold, and local finance sync timing", async () => {
-    render(<AdminHealthPage />);
+    // Cron job rendering moved to the Background Jobs page when the System
+    // Health page was split into per-section routes.
+    render(<BackgroundJobsPage />);
 
     await waitFor(() =>
       expect(screen.queryByText("Finance daily sync")).not.toBeNull()

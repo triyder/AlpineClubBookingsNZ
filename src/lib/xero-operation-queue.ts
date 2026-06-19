@@ -15,6 +15,12 @@ import {
 
 export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
 
+// The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
+// Operation IDs are cuids, so the key stays well under the idempotency-key
+// length cap and is never hashed. A round-trip test guards against drift.
+const REQUEUE_CORRELATION_KEY_PREFIX = "xero-operation:requeue:";
+const REDACTED_SECRET = "[REDACTED]";
+
 interface QueuedRetryPayload {
   originalOperationId?: string;
   originalOperationType?: string;
@@ -46,6 +52,23 @@ function readQueuedRetryPayload(value: unknown): QueuedRetryPayload | null {
 
 export function buildXeroOperationRequeueCorrelationKey(operationId: string) {
   return buildXeroIdempotencyKey("xero-operation", "requeue", operationId);
+}
+
+/**
+ * Recover the original operation id a requeue points at from its correlation
+ * key. The correlation key is stored verbatim (it is never run through the
+ * secrets/PII redactor), so it remains the authoritative source even when the
+ * requestPayload copy of `originalOperationId` has been redacted.
+ */
+export function parseXeroOperationRequeueOriginalId(
+  correlationKey: string | null | undefined
+): string | null {
+  if (!correlationKey || !correlationKey.startsWith(REQUEUE_CORRELATION_KEY_PREFIX)) {
+    return null;
+  }
+
+  const originalOperationId = correlationKey.slice(REQUEUE_CORRELATION_KEY_PREFIX.length);
+  return originalOperationId.trim() ? originalOperationId : null;
 }
 
 async function claimQueuedRetryOperation(operationId: string) {
@@ -132,9 +155,19 @@ export async function enqueueXeroSyncOperationRetry(
 }
 
 function getQueuedRetryOperationId(
-  operation: Pick<XeroSyncOperation, "requestPayload">
+  operation: Pick<XeroSyncOperation, "requestPayload" | "correlationKey">
 ) {
-  return readQueuedRetryPayload(operation.requestPayload)?.originalOperationId ?? null;
+  // Prefer the correlation key: it is never redacted, unlike the requestPayload
+  // copy, whose value can be rewritten to "[REDACTED]" when an operation id
+  // contains a phone-like run of digits.
+  const fromCorrelationKey = parseXeroOperationRequeueOriginalId(operation.correlationKey);
+  if (fromCorrelationKey) {
+    return fromCorrelationKey;
+  }
+
+  const fromPayload =
+    readQueuedRetryPayload(operation.requestPayload)?.originalOperationId ?? null;
+  return fromPayload && fromPayload !== REDACTED_SECRET ? fromPayload : null;
 }
 
 export interface ProcessQueuedXeroOperationRetriesResult {

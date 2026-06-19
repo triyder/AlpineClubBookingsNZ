@@ -11,6 +11,7 @@ import {
   Clock,
   Tag,
   CheckSquare,
+  ClipboardCheck,
   ClipboardList,
   XCircle,
   BarChart2,
@@ -39,6 +40,8 @@ import {
   FilePenLine,
   Palette,
   Images,
+  UserPlus,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -68,27 +71,65 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: "Bookings & Payments",
+    label: "Needs Attention",
     items: [
-      { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
       {
         href: "/admin/booking-requests",
         label: "Booking Requests",
         icon: ClipboardList,
       },
-      { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
-      { href: "/admin/payments", label: "Payments", icon: CreditCard },
+      {
+        href: "/admin/member-applications",
+        label: "Applications",
+        icon: ClipboardList,
+      },
       {
         href: "/admin/refund-requests",
         label: "Refunds & Credits",
         icon: RotateCcw,
       },
-      { href: "/admin/reports", label: "Reports", icon: BarChart2 },
+      {
+        href: "/admin/membership-cancellations",
+        label: "Cancellations",
+        icon: UserX,
+      },
+      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+    ],
+  },
+  {
+    label: "Bookings & Beds",
+    items: [
+      { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
+      { href: "/admin/book", label: "Book on Behalf", icon: UserPlus },
       {
         href: "/admin/bed-allocation",
         label: "Bed Allocation",
         icon: BedDouble,
       },
+      { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
+    ],
+  },
+  {
+    label: "Finance",
+    items: [
+      { href: "/admin/payments", label: "Payments", icon: CreditCard },
+      { href: "/admin/reports", label: "Reports", icon: BarChart2 },
+      { href: "/admin/xero", label: "Xero Sync", icon: RefreshCw },
+    ],
+  },
+  {
+    label: "Members",
+    items: [
+      { href: "/admin/members", label: "Members", icon: Users },
+      { href: "/admin/family-groups", label: "Family Groups", icon: Users },
+      {
+        href: "/admin/family-suggestions",
+        label: "Family Suggestions",
+        icon: Users,
+      },
+      { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
+      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      { href: "/admin/communications", label: "Communications", icon: Mail },
     ],
   },
   {
@@ -107,66 +148,51 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: "Members",
+    label: "Monitoring & Support",
     items: [
+      { href: "/admin/health", label: "System Health", icon: Activity },
       {
-        href: "/admin/member-applications",
-        label: "Applications",
-        icon: ClipboardList,
+        href: "/admin/email-deliverability",
+        label: "Email Deliverability",
+        icon: Mail,
       },
-      { href: "/admin/members", label: "Members", icon: Users },
-      { href: "/admin/family-groups", label: "Family Groups", icon: Users },
-      {
-        href: "/admin/family-suggestions",
-        label: "Family Suggestions",
-        icon: Users,
-      },
-      {
-        href: "/admin/membership-cancellations",
-        label: "Cancellations",
-        icon: UserX,
-      },
-      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
-      { href: "/admin/communications", label: "Communications", icon: Mail },
-    ],
-  },
-  {
-    label: "Configuration",
-    items: [
-      { href: "/admin/setup", label: "Setup", icon: ListChecks },
-      { href: "/admin/site-style", label: "Site Style", icon: Palette },
-      { href: "/admin/modules", label: "Modules", icon: Puzzle },
-      { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
-      {
-        href: "/admin/seasons",
-        label: "Hut Fees & Seasons",
-        icon: CalendarRange,
-      },
-      { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
-      {
-        href: "/admin/booking-policies",
-        label: "Booking Policies",
-        icon: XCircle,
-      },
-      { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
-      { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
-      { href: "/admin/image-manager", label: "Image Manager", icon: Images },
-      { href: "/admin/committee", label: "Committee", icon: UsersRound },
-      { href: "/admin/xero", label: "Xero", icon: RefreshCw },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { href: "/admin/notifications", label: "Notifications", icon: Bell },
-      { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+      { href: "/admin/background-jobs", label: "Background Jobs", icon: Clock },
       { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
       {
         href: "/admin/deletion-requests",
         label: "Deletion Requests",
         icon: Trash2,
       },
-      { href: "/admin/health", label: "System Health", icon: Activity },
+    ],
+  },
+  {
+    label: "Setup & Configuration",
+    items: [
+      { href: "/admin/setup", label: "Setup", icon: ListChecks },
+      { href: "/admin/modules", label: "Modules", icon: Puzzle },
+      { href: "/admin/site-style", label: "Site Style", icon: Palette },
+      { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
+      { href: "/admin/image-manager", label: "Image Manager", icon: Images },
+      { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
+      {
+        href: "/admin/seasons",
+        label: "Hut Fees & Seasons",
+        icon: CalendarRange,
+      },
+      { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
+      { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
+      {
+        href: "/admin/booking-policies",
+        label: "Booking Policies",
+        icon: XCircle,
+      },
+      {
+        href: "/admin/notifications",
+        label: "Notifications & Email",
+        icon: Bell,
+      },
+      { href: "/admin/committee", label: "Committee", icon: UsersRound },
+      { href: "/admin/xero/setup", label: "Xero Setup", icon: Plug },
     ],
   },
 ];
@@ -376,6 +402,14 @@ function SidebarLinks({
     badges["/admin/membership-cancellations"] = pendingMembershipCancellations;
   }
 
+  // Highlight the most specific nav item whose href is a prefix of the current
+  // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
+  // rather than every ancestor (e.g. both "Xero Sync" and "Xero Setup").
+  const activeHref = visibleNavSections
+    .flatMap((section) => section.items.map((item) => item.href))
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .reduce((best, href) => (href.length > best.length ? href : best), "");
+
   return (
     <nav className="flex flex-col gap-0.5">
       <Link
@@ -395,10 +429,7 @@ function SidebarLinks({
             </p>
           )}
           {section.items.map(({ href, label, icon: Icon }) => {
-            const active =
-              href === "/admin/dashboard"
-                ? pathname === "/admin/dashboard"
-                : pathname.startsWith(href);
+            const active = href === activeHref;
             const badgeCount = badges[href];
             const badgeClasses =
               href === "/admin/refund-requests"

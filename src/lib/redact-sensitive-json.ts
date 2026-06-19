@@ -29,7 +29,13 @@ const SENSITIVE_JSON_KEY_FRAGMENTS = new Set([
 ]);
 const SENSITIVE_STRING_VALUE_PATTERNS = [
   /[^\s@]+@[^\s@]+\.[^\s@]+/,
-  /\+?[0-9]{8,15}/,
+  // Phone-like digit runs, but only when standalone. The boundaries stop this
+  // from matching digits embedded in an alphanumeric identifier (e.g. a cuid
+  // such as "cmqdxeu50002101n22w2ivcas", which contains "50002101"). Without
+  // them, internal operation/record IDs that happen to hold 8+ consecutive
+  // digits were rewritten to "[REDACTED]", corrupting load-bearing IDs stored
+  // in persisted payloads (e.g. a requeue's originalOperationId).
+  /(?<![A-Za-z0-9])\+?[0-9]{8,15}(?![A-Za-z0-9])/,
 ];
 const STRIPE_SECRET_VALUE_PATTERN =
   /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|whsec_[A-Za-z0-9]+|(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+)\b/g;
@@ -99,9 +105,9 @@ function redactJsonStringCandidate(value: string): string | null {
 // observability access logs. Redact both literal paths and URL-encoded callback
 // paths so opaque action tokens do not leak through login redirects.
 const TOKEN_PATH_PATTERN =
-  /(\/(?:membership-cancellation|chores|nominations)\/)[A-Za-z0-9_-]+/g;
+  /(\/(?:membership-cancellation|chores|nominations|pay)\/|\/booking-requests\/verify\/)[A-Za-z0-9_-]+/g;
 const ENCODED_TOKEN_PATH_PATTERN =
-  /(%2F(?:membership-cancellation|chores|nominations)%2F)[A-Za-z0-9_-]+/gi;
+  /(%2F(?:membership-cancellation|chores|nominations|pay)%2F|%2Fbooking-requests%2Fverify%2F)[A-Za-z0-9_-]+/gi;
 
 export function redactSensitiveText(value: string): string {
   const redactedJsonCandidate = redactJsonStringCandidate(value);
