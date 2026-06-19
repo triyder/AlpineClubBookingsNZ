@@ -1541,22 +1541,23 @@ export function PageContentPanel() {
               <i>
                 <b>Note</b>
               </i>{" "}
-              Any <i>Style</i> or <i>Script</i> tags will be removed apon save as
-              these can pose a security risk.
+              Any <i>Style</i> or <i>Script</i> tags will be removed apon save
+              as these can pose a security risk.
             </p>
             <p>
-              If you want a background image in your header panel. Goto <b>Site
-              Style</b> page and create the style for your page.
+              If you want a background image in your header panel. Goto{" "}
+              <b>Site Style</b> page and create the style for your page.
             </p>
             <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
-{`.dynamic-header[data-page-slug="home"] {
+              {`.dynamic-header[data-page-slug="home"] {
     background: url('/api/images/uploaded/zzz.jpg') center / cover no-repeat;
 }`}
             </pre>
 
             <p>
               In the content editor you can add any of the following tokens by
-              having the token name in {"{{}}"}. E.G. <code>{"{{contact-form}}"}</code>
+              having the token name in {"{{}}"}. E.G.{" "}
+              <code>{"{{contact-form}}"}</code>
             </p>
             <p>
               <i>
