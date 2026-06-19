@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
+import { SkifieldConditionsWidget } from "@/components/website/skifield-conditions-widget";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
 import {
   getSanitizedPageContentByPath,
@@ -10,7 +11,7 @@ import {
 } from "@/lib/page-content-html";
 
 const HOME_EMBED_TOKEN_REGEX =
-  /\{\{\s*(committee-members-cards|member-application-form|contact-form|join-apply-form)\s*\}\}/gi;
+  /\{\{\s*(committee-members-cards|member-application-form|contact-form|join-apply-form|skifield-conditions)(?:\s*:\s*([a-f0-9]{32}))?\s*\}\}|\{\s*(committee-members-cards|member-application-form|contact-form|join-apply-form|skifield-conditions)(?:\s*:\s*([a-f0-9]{32}))?\s*\}/gi;
 
 function buildEmbeddedBody(contentHtml: string) {
   const parts: Array<
@@ -18,6 +19,7 @@ function buildEmbeddedBody(contentHtml: string) {
     | { type: "committee" }
     | { type: "member-application-form" }
     | { type: "contact-form" }
+    | { type: "skifield-conditions"; dataHash?: string }
   > = [];
   let lastIndex = 0;
 
@@ -28,7 +30,8 @@ function buildEmbeddedBody(contentHtml: string) {
       parts.push({ type: "html", value: before });
     }
 
-    const token = (match[1] ?? "").toLowerCase();
+    const token = (match[1] ?? match[3] ?? "").toLowerCase();
+    const dataHash = (match[2] ?? match[4] ?? "").toLowerCase() || undefined;
     if (token === "committee-members-cards") {
       parts.push({ type: "committee" });
     } else if (
@@ -36,6 +39,8 @@ function buildEmbeddedBody(contentHtml: string) {
       token === "join-apply-form"
     ) {
       parts.push({ type: "member-application-form" });
+    } else if (token === "skifield-conditions") {
+      parts.push({ type: "skifield-conditions", dataHash });
     } else {
       parts.push({ type: "contact-form" });
     }
@@ -127,6 +132,15 @@ export default async function HomePage() {
                       key={`contact-form-${index}`}
                       club={clubIdentity}
                       showHero={false}
+                    />
+                  );
+                }
+
+                if (part.type === "skifield-conditions") {
+                  return (
+                    <SkifieldConditionsWidget
+                      key={`skifield-conditions-${index}`}
+                      dataHash={part.dataHash}
                     />
                   );
                 }

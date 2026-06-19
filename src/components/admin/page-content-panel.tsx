@@ -1734,6 +1734,36 @@ export function PageContentPanel() {
                 editorClassName="min-h-[320px]"
               />
 
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <p className="font-medium text-slate-700">Embed Tokens</p>
+                <p className="mt-1">
+                  Insert these in page body content using either {"{"}token{"}"}{" "}
+                  or
+                  {" {{token}}"}:
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    skifield-conditions
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    committee-members-cards
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    member-application-form
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    join-apply-form
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    contact-form
+                  </span>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Optional hash override:
+                  {" {{skifield-conditions:4297a04af31a54b9b4dc710057f5a492}}"}
+                </p>
+              </div>
+
               <div className="flex justify-end gap-2">
                 <Button
                   type="button"
