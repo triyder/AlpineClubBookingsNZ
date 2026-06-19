@@ -22,7 +22,7 @@ export function SkifieldConditionsWidget({ dataHash }: { dataHash?: string }) {
     <>
       <div className="js-snz-widget" data-hash={hash} />
       <Script
-        id="snz-widget-loader"
+        id="snzwidget"
         src={SNZ_WIDGET_SCRIPT_URL}
         strategy="afterInteractive"
       />
