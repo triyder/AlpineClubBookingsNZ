@@ -374,6 +374,8 @@ model Member {
   lifecycleActionRequestsRequested           MemberLifecycleActionRequest[]             @relation("MemberLifecycleActionRequester")
   lifecycleActionRequestsReviewed            MemberLifecycleActionRequest[]             @relation("MemberLifecycleActionReviewer")
   bookingsDeleted                            Booking[]                                  @relation("BookingsDeletedBy")
+  groupBookingsOrganised                     GroupBooking[]
+  groupBookingJoins                          GroupBookingJoin[]
   inductions                                 MemberInduction[]                          @relation("MemberInductions")
   inductionSignOffs                          MemberInductionSignOff[]                   @relation("InductionSignOffSigner")
   assignedInductionSigners                   MemberInductionAssignedSigner[]            @relation("AssignedInductionSigners")
@@ -657,6 +659,12 @@ model Booking {
   // member booking). Pure parties and the flagged "only book if my guests can
   // come" path stay a single booking with parentBookingId = null.
   parentBookingId           String?
+  // Group booking, ORGANISER_PAYS mode: a joiner's child booking carries its
+  // real price but is settled by the organiser as part of one combined bill, so
+  // the joiner is never billed for it. When true the joiner cannot pay this
+  // booking themselves; the organiser-settlement flow collects the group total
+  // and marks these PAID. Defaults false for every normal (each-pays) booking.
+  organiserSettled          Boolean            @default(false)
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
   expectedArrivalTime       String?            @db.VarChar(5)
@@ -705,6 +713,10 @@ model Booking {
   // Durable per-transition fact store (issue #740). Unlike AuditLog these rows
   // are never retention-pruned, so booking/payment-link narratives survive.
   events                      BookingEvent[]
+  // Group booking this booking anchors as organiser, and the join row that
+  // created this booking as a group child (issue: group-booking join code).
+  groupBookingAsOrganiser     GroupBooking?                @relation("GroupBookingOrganiser")
+  groupBookingJoin            GroupBookingJoin?            @relation("GroupBookingJoinBooking")
 
   @@index([memberId])
   @@index([createdById])
@@ -779,18 +791,18 @@ model BookingGuest {
   createdAt  DateTime  @default(now())
 
   // Relations
-  booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member           Member?           @relation(fields: [memberId], references: [id], onDelete: SetNull)
-  choreAssignments ChoreAssignment[]
-  choreTokens      GuestChoreToken[]
-  bedAllocations   BedAllocation[]
+  booking                     Booking                      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member                      Member?                      @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  choreAssignments            ChoreAssignment[]
+  choreTokens                 GuestChoreToken[]
+  bedAllocations              BedAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
   // Per-night stay records (issue #713). A guest may stay non-contiguous
   // nights within one booking; each included night is one BookingGuestNight
   // row. stayStart/stayEnd above remain the derived min/max envelope, kept in
   // sync on every write. Reads outside the creation + manage-guests editing
   // flows keep using the envelope.
-  nights           BookingGuestNight[]
+  nights                      BookingGuestNight[]
 
   @@index([bookingId])
   @@index([bookingId, stayStart, stayEnd])
@@ -816,6 +828,82 @@ model BookingGuestNight {
 }
 
 // ---------------------------------------------------------------------------
+// Group bookings (shareable join code)
+// ---------------------------------------------------------------------------
+// A member (the organiser) opens one of their bookings as a private group event
+// (e.g. a birthday party at the lodge) and shares a short join code. Members and
+// non-members open the /join/[code] link and add themselves: each joiner becomes
+// their own child Booking linked to the organiser booking via parentBookingId
+// (the existing split-booking relation), so capacity, pricing, payment, and
+// cancellation all reuse the per-booking machinery. The organiser chooses whether
+// each joiner pays for their own beds (EACH_PAYS_OWN) or the organiser settles the
+// whole bill and joiners are registered at $0 (ORGANISER_PAYS). Joins are checked
+// against remaining lodge capacity at join time under the same advisory lock as
+// every other creation path; there is no pre-held block.
+
+enum GroupBookingPaymentMode {
+  EACH_PAYS_OWN
+  ORGANISER_PAYS
+}
+
+enum GroupBookingStatus {
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+model GroupBooking {
+  id                 String                  @id @default(cuid())
+  organiserBookingId String                  @unique
+  organiserMemberId  String
+  joinCode           String                  @unique
+  paymentMode        GroupBookingPaymentMode
+  status             GroupBookingStatus      @default(OPEN)
+  joinDeadline       DateTime?
+  maxJoiners         Int?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  organiserBooking Booking            @relation("GroupBookingOrganiser", fields: [organiserBookingId], references: [id], onDelete: Cascade)
+  organiserMember  Member             @relation(fields: [organiserMemberId], references: [id], onDelete: Restrict)
+  joins            GroupBookingJoin[]
+
+  @@index([organiserMemberId])
+  @@index([status, joinDeadline])
+}
+
+model GroupBookingJoin {
+  id             String  @id @default(cuid())
+  groupBookingId String
+  bookingId      String? @unique
+  joinerMemberId String?
+  isMember       Boolean @default(false)
+
+  // Non-member verify handshake (mirrors BookingRequest). Contact, the guest
+  // snapshot, and a SHA-256 token hash are held here before any child booking
+  // exists; the booking is created only after the joiner confirms their email.
+  contactFirstName           String?   @db.VarChar(100)
+  contactLastName            String?   @db.VarChar(100)
+  contactEmail               String?   @db.VarChar(200)
+  contactPhone               String?   @db.VarChar(30)
+  guestsSnapshot             Json?
+  verificationTokenHash      String?   @unique
+  verificationTokenExpiresAt DateTime?
+  verifiedAt                 DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  groupBooking GroupBooking @relation(fields: [groupBookingId], references: [id], onDelete: Cascade)
+  booking      Booking?     @relation("GroupBookingJoinBooking", fields: [bookingId], references: [id], onDelete: SetNull)
+  joinerMember Member?      @relation(fields: [joinerMemberId], references: [id], onDelete: SetNull)
+
+  @@index([groupBookingId])
+  @@index([verificationTokenExpiresAt])
+  @@index([contactEmail])
+}
+
+// ---------------------------------------------------------------------------
 // Public Booking Requests (non-member request-to-book / request-for-price)
 // ---------------------------------------------------------------------------
 
@@ -836,10 +924,10 @@ model BookingRequest {
   message          String?              @db.VarChar(1000)
 
   // SCHOOL variant only. The school is the invoiced party / Xero contact.
-  schoolName       String?              @db.VarChar(200)
+  schoolName String? @db.VarChar(200)
   // Teacher contact snapshot: array of { firstName, lastName, email? }.
   // Each becomes a non-login Member with a HutLeaderAssignment on approval.
-  teachers         Json?
+  teachers   Json?
 
   // Indicative pricing shown on the public form (when enabled) at submit time.
   indicativePriceCents Int?
@@ -857,13 +945,13 @@ model BookingRequest {
   reviewedAt         DateTime?
   declineReason      String?   @db.VarChar(2000)
 
-  convertedBookingId String?   @unique
+  convertedBookingId String? @unique
   convertedMemberId  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  convertedBooking Booking? @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
+  convertedBooking Booking?      @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
   paymentLinks     PaymentLink[]
 
   @@index([status, createdAt])
@@ -1110,46 +1198,46 @@ model PaymentRecoveryOperation {
 // ---------------------------------------------------------------------------
 
 model PromoCode {
-  id                      String        @id @default(cuid())
-  code                    String        @unique
-  description             String?
-  type                    PromoCodeType
+  id                           String            @id @default(cuid())
+  code                         String            @unique
+  description                  String?
+  type                         PromoCodeType
   // Per-individual benefit amounts (apply to each eligible guest on the booking)
-  valueCents              Int? // Fixed amount off, per eligible guest
-  percentOff              Int? // Percentage off, applied per eligible guest
-  freeNightsPerIndividual Int? // Per-booking cap: max free nights applied to each eligible guest on a single booking
-  lifetimeFreeNightsCap   Int? // Lifetime cap: max free nights any single member can claim from this code across all their bookings (null = no lifetime cap)
-  fixedNightlyPriceCents   Int? // Fixed nightly price per eligible guest-night for FIXED_NIGHTLY_PRICE promos
-  fixedNightlyMode         FixedNightlyMode?
+  valueCents                   Int? // Fixed amount off, per eligible guest
+  percentOff                   Int? // Percentage off, applied per eligible guest
+  freeNightsPerIndividual      Int? // Per-booking cap: max free nights applied to each eligible guest on a single booking
+  lifetimeFreeNightsCap        Int? // Lifetime cap: max free nights any single member can claim from this code across all their bookings (null = no lifetime cap)
+  fixedNightlyPriceCents       Int? // Fixed nightly price per eligible guest-night for FIXED_NIGHTLY_PRICE promos
+  fixedNightlyMode             FixedNightlyMode?
   // Optional per-night value cap (FREE_NIGHTS and PERCENTAGE only): caps the discount applied to any single night
-  maxNightlyValueCents    Int?
+  maxNightlyValueCents         Int?
   // Per-booking limit: how many guests on a single booking the promo applies to (null = unlimited / all eligible guests)
-  maxGuestsPerBooking     Int?
+  maxGuestsPerBooking          Int?
   // Overall usage caps
-  maxRedemptionsTotal     Int? // Hard cap on redemptions across all members (null = unlimited)
-  maxUniqueMembersTotal   Int? // Hard cap on distinct members who can ever redeem (null = unlimited)
-  maxUsesPerMember        Int? // Cap on how many bookings one member can apply this code to (null = unlimited, 1 = single-use)
-  currentRedemptions      Int           @default(0)
-  validFrom               DateTime?
-  validUntil              DateTime?
-  bookingStartFrom        DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  bookingStartUntil       DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  membersOnly             Boolean       @default(false) // Booker must be a member
-  memberGuestsOnly        Boolean       @default(false) // Promo only applies to guest rows flagged as members
-  assignedMembersOnlyOwnNights Boolean   @default(true) // Assigned members can only apply the promo to their own linked guest nights
+  maxRedemptionsTotal          Int? // Hard cap on redemptions across all members (null = unlimited)
+  maxUniqueMembersTotal        Int? // Hard cap on distinct members who can ever redeem (null = unlimited)
+  maxUsesPerMember             Int? // Cap on how many bookings one member can apply this code to (null = unlimited, 1 = single-use)
+  currentRedemptions           Int               @default(0)
+  validFrom                    DateTime?
+  validUntil                   DateTime?
+  bookingStartFrom             DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  bookingStartUntil            DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  membersOnly                  Boolean           @default(false) // Booker must be a member
+  memberGuestsOnly             Boolean           @default(false) // Promo only applies to guest rows flagged as members
+  assignedMembersOnlyOwnNights Boolean           @default(true) // Assigned members can only apply the promo to their own linked guest nights
   // Optional Xero coding for the discount line on the booking invoice. When set, the discount
   // posts to these codes (separately reportable in the P&L) instead of inheriting hut-fee codes.
   // If a Xero Item Code is set and that Item has an account mapped in Xero, the item's mapping
   // wins unless xeroAccountCode is also explicitly supplied (in which case it overrides).
-  xeroItemCode            String?
-  xeroAccountCode         String?
+  xeroItemCode                 String?
+  xeroAccountCode              String?
   // Internal promos are auto-applied by the system (e.g. work party events).
   // They are hidden from all promo listings and rejected at manual code entry.
-  internal                Boolean       @default(false)
-  active                  Boolean       @default(true)
-  archivedAt              DateTime?
-  createdAt               DateTime      @default(now())
-  updatedAt               DateTime      @updatedAt
+  internal                     Boolean           @default(false)
+  active                       Boolean           @default(true)
+  archivedAt                   DateTime?
+  createdAt                    DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
 
   // Relations
   redemptions    PromoRedemption[]
@@ -1163,21 +1251,21 @@ model PromoCode {
 }
 
 model PromoRedemption {
-  id                 String   @id @default(cuid())
-  promoCodeId        String
-  bookingId          String   @unique
-  memberId           String
-  discountCents      Int
+  id                   String   @id @default(cuid())
+  promoCodeId          String
+  bookingId            String   @unique
+  memberId             String
+  discountCents        Int
   priceAdjustmentCents Int      @default(0)
-  freeNightsUsed     Int? // Number of guest-nights subsidised (full or partial) for FREE_NIGHTS promos
-  eligibleGuestCount Int? // Number of guests the promo applied to on this booking (for reporting)
-  createdAt          DateTime @default(now())
+  freeNightsUsed       Int? // Number of guest-nights subsidised (full or partial) for FREE_NIGHTS promos
+  eligibleGuestCount   Int? // Number of guests the promo applied to on this booking (for reporting)
+  createdAt            DateTime @default(now())
 
   // Relations
-  promoCode   PromoCode                   @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
-  booking     Booking                     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member      Member                      @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  allocations PromoRedemptionAllocation[]
+  promoCode    PromoCode                    @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  booking      Booking                      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member       Member                       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  allocations  PromoRedemptionAllocation[]
   guestTargets PromoRedemptionGuestTarget[]
 
   @@index([promoCodeId])
@@ -1185,15 +1273,15 @@ model PromoRedemption {
 }
 
 model PromoRedemptionAllocation {
-  id                String   @id @default(cuid())
-  promoRedemptionId String
-  promoCodeId       String
-  bookingId         String
-  memberId          String
-  discountCents     Int
+  id                   String   @id @default(cuid())
+  promoRedemptionId    String
+  promoCodeId          String
+  bookingId            String
+  memberId             String
+  discountCents        Int
   priceAdjustmentCents Int      @default(0)
-  freeNightsUsed    Int      @default(0)
-  createdAt         DateTime @default(now())
+  freeNightsUsed       Int      @default(0)
+  createdAt            DateTime @default(now())
 
   // Relations
   promoRedemption PromoRedemption @relation(fields: [promoRedemptionId], references: [id], onDelete: Cascade)
@@ -1957,9 +2045,9 @@ model BookingModification {
   changeFeeCents   Int      @default(0) // late-notice fee charged
   createdAt        DateTime @default(now())
 
-  booking              Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  linkedChangeRequests BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
-  creditsFromModification MemberCredit[]      @relation("CreditSourceModification")
+  booking                 Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  linkedChangeRequests    BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
+  creditsFromModification MemberCredit[]         @relation("CreditSourceModification")
 
   @@index([bookingId])
   @@index([memberId])
@@ -2387,27 +2475,27 @@ model DeletionRequest {
 // ---------------------------------------------------------------------------
 
 model MemberCredit {
-  id                 String     @id @default(cuid())
-  memberId           String
-  amountCents        Int // Positive = credit added, negative = credit used
-  type               CreditType
-  description        String // Human-readable reason
-  requestedById      String? // Admin who requested a manual adjustment
-  approvedById       String? // Admin who approved a manual adjustment
-  approvalRequestId  String?    @unique // Links approved manual adjustments to their request
-  sourceBookingId    String? // Booking that generated the credit (cancellation)
+  id                          String     @id @default(cuid())
+  memberId                    String
+  amountCents                 Int // Positive = credit added, negative = credit used
+  type                        CreditType
+  description                 String // Human-readable reason
+  requestedById               String? // Admin who requested a manual adjustment
+  approvedById                String? // Admin who approved a manual adjustment
+  approvalRequestId           String?    @unique // Links approved manual adjustments to their request
+  sourceBookingId             String? // Booking that generated the credit (cancellation)
   sourceBookingModificationId String?    @unique // Booking modification that generated the credit
-  appliedToBookingId String? // Booking where credit was spent
-  xeroCreditNoteId   String? // Linked Xero credit note ID
-  createdAt          DateTime   @default(now())
+  appliedToBookingId          String? // Booking where credit was spent
+  xeroCreditNoteId            String? // Linked Xero credit note ID
+  createdAt                   DateTime   @default(now())
 
-  member           Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  requestedBy      Member?                       @relation("RequestedAdminCredits", fields: [requestedById], references: [id], onDelete: SetNull)
-  approvedBy       Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
-  approvalRequest  AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
-  sourceBooking    Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
-  sourceBookingModification BookingModification?  @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: SetNull)
-  appliedToBooking Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
+  member                    Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  requestedBy               Member?                       @relation("RequestedAdminCredits", fields: [requestedById], references: [id], onDelete: SetNull)
+  approvedBy                Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvalRequest           AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
+  sourceBooking             Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
+  sourceBookingModification BookingModification?          @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: SetNull)
+  appliedToBooking          Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
 
   @@index([memberId])
   @@index([requestedById])

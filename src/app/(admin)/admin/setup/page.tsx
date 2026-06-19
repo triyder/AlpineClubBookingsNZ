@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
@@ -14,8 +15,6 @@ import {
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { EmailMessageSettingsPanel } from "@/components/admin/email-settings/email-message-settings-panel";
-import { MembershipCancellationSettingsPanel } from "@/components/admin/membership-cancellation-settings-panel";
 import {
   Card,
   CardContent,
@@ -513,7 +512,13 @@ export default function SetupPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <MembershipCancellationSettingsPanel />
+              <Link
+                href="/admin/membership-cancellation"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+              >
+                Open Membership Cancellation settings
+                <ExternalLink className="h-4 w-4" />
+              </Link>
             </CardContent>
           </Card>
 
@@ -525,7 +530,13 @@ export default function SetupPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <EmailMessageSettingsPanel />
+              <Link
+                href="/admin/email-messages"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+              >
+                Open Email Messages settings
+                <ExternalLink className="h-4 w-4" />
+              </Link>
             </CardContent>
           </Card>
         </>

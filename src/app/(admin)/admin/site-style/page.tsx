@@ -32,7 +32,7 @@ export default async function SiteStylePage() {
             Setup
           </Link>
           <Link
-            href="/admin/notifications"
+            href="/admin/email-messages"
             className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
           >
             Email messages

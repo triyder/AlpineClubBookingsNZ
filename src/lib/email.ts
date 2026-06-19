@@ -2304,6 +2304,47 @@ export async function sendBookingRequestVerificationEmail(params: {
   });
 }
 
+/**
+ * Verification email for a non-member joining a group booking. Reuses the
+ * booking-request verification template but points the link at the group-join
+ * verify page (/join/verify/[token]) rather than the booking-request one.
+ */
+export async function sendGroupBookingJoinVerificationEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const verifyUrl = `${baseUrl}/join/verify/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Confirm your group booking spot — ${CLUB_NAME}`,
+    html: bookingRequestVerificationTemplate({
+      firstName: params.firstName,
+      verifyUrl,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "group-booking-join-verification",
+    templateData: {
+      firstName: params.firstName,
+      token: params.token,
+      verifyUrl,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
 export async function sendBookingRequestApprovedEmail(params: {
   email: string;
   firstName: string;

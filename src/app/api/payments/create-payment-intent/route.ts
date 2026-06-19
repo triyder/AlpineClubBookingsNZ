@@ -60,6 +60,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // ORGANISER_PAYS group join: the organiser settles this booking as part of
+    // one combined bill, so neither the joiner nor an admin pays it here.
+    if (booking.organiserSettled) {
+      return NextResponse.json(
+        {
+          error:
+            "This booking is paid by the group organiser and cannot be paid individually",
+        },
+        { status: 400 }
+      );
+    }
+
     if (
       booking.status !== "PENDING" &&
       booking.status !== "PAYMENT_PENDING" &&
@@ -76,6 +88,7 @@ export async function POST(request: NextRequest) {
       !canCreateImmediatePaymentIntent({
         status: booking.status,
         hasNonMembers: booking.hasNonMembers,
+        organiserSettled: booking.organiserSettled,
       })
     ) {
       return NextResponse.json(

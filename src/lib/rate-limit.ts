@@ -198,6 +198,16 @@ export const rateLimiters = {
   bookingRequestToken: { id: "booking-request-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Tokenised public payment link pages and payment intents: 20 hits per 15 minutes */
   paymentLinkToken: { id: "payment-link-token", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Organiser opens a group on their booking: 20 per hour */
+  groupBookingCreate: { id: "group-booking-create", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Public group-booking code lookup: 20 hits per 15 minutes (anti-enumeration) */
+  groupBookingLookup: { id: "group-booking-lookup", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Member self-add to a group (a booking creation): 20 per hour */
+  groupBookingJoin: { id: "group-booking-join", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Public non-member group join request: 5 per hour */
+  groupBookingJoinRequest: { id: "group-booking-join-request", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Group join verification links: 10 hits per 15 minutes */
+  groupBookingToken: { id: "group-booking-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing
