@@ -27,6 +27,10 @@ import {
   getStripePaymentMethodId,
   queueSupersededPaymentIntentRefundRecovery,
 } from "@/lib/payment-recovery";
+import {
+  applyGroupSettlementSucceeded,
+  markGroupSettlementIntentFailed,
+} from "@/lib/group-settlement";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 
 type JsonRouteResult = {
@@ -183,6 +187,17 @@ export async function processStripeWebhookEvent(
 async function handlePaymentIntentSucceeded(
   paymentIntent: Stripe.PaymentIntent
 ) {
+  // Group ORGANISER_PAYS settlement: one combined intent settles many child
+  // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
+  // its own handler before the per-booking path below.
+  if (paymentIntent.metadata?.type === "group_settlement") {
+    await applyGroupSettlementSucceeded({
+      id: paymentIntent.id,
+      amount: paymentIntent.amount,
+    });
+    return;
+  }
+
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) {
     logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
@@ -342,6 +357,17 @@ async function handlePaymentIntentSucceeded(
 async function handlePaymentIntentFailed(
   paymentIntent: Stripe.PaymentIntent
 ) {
+  // Group settlement intents have no per-booking payment transaction; the
+  // children stay CONFIRMED (beds held) so the organiser can retry.
+  if (paymentIntent.metadata?.type === "group_settlement") {
+    await markGroupSettlementIntentFailed(paymentIntent.id, PaymentStatus.FAILED);
+    logger.info(
+      { paymentIntentId: paymentIntent.id, groupBookingId: paymentIntent.metadata?.groupBookingId },
+      "Group settlement payment failed; children remain confirmed for retry"
+    );
+    return;
+  }
+
   const bookingId = paymentIntent.metadata?.bookingId;
   const paymentTransaction = await findPaymentTransactionByIntentId({
     paymentIntentId: paymentIntent.id,
@@ -403,6 +429,13 @@ async function handlePaymentIntentFailed(
 async function handlePaymentIntentCanceled(
   paymentIntent: Stripe.PaymentIntent
 ) {
+  // Group settlement intents have no per-booking payment transaction; record the
+  // canceled state and leave the children CONFIRMED for a fresh settlement.
+  if (paymentIntent.metadata?.type === "group_settlement") {
+    await markGroupSettlementIntentFailed(paymentIntent.id, PaymentStatus.FAILED);
+    return;
+  }
+
   const bookingId = paymentIntent.metadata?.bookingId;
   if (
     await completeCanceledSupersededPaymentIntentRecovery({
