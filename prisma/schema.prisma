@@ -1733,6 +1733,19 @@ model XeroAdminCache {
   @@index([expiresAt])
 }
 
+model WhakapapaReportCache {
+  id        String   @id @default(cuid())
+  source    String   @unique
+  payload   Json
+  fetchedAt DateTime @default(now())
+  frozenUntil DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([fetchedAt])
+  @@index([frozenUntil])
+}
+
 model XeroSyncCursor {
   id                   String    @id @default(cuid())
   resourceType         String

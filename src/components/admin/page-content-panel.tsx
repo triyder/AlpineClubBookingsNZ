@@ -1606,6 +1606,17 @@ export function PageContentPanel() {
               On this editor page do the following, while replacing zzz with
               your hashcode. <code>{"{{skifield-conditions:zzz}}"}</code>
             </p>
+            <p>
+              <i>
+                <b>skifield-whakapapa</b>
+              </i>
+              <br />
+              This will fetch the Whakapapa report and render a parsed curlData
+              JSON object.
+              <br />
+              On this editor page do the following:{" "}
+              <code>{"{{skifield-whakapapa}}"}</code>
+            </p>
           </div>
         </DialogContent>
       </Dialog>
@@ -1881,6 +1892,9 @@ export function PageContentPanel() {
                   {" {{token}}"}:
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    skifield-whakapapa
+                  </span>
                   <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
                     skifield-conditions
                   </span>
