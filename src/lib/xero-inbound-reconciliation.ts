@@ -18,6 +18,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { sendBookingConfirmedEmail } from "@/lib/email";
+import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
 import { getSeasonYear } from "@/lib/utils";
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -1223,6 +1224,57 @@ async function syncInternetBankingPaymentsForPaidInvoice(
   return result;
 }
 
+/**
+ * Match a paid Xero invoice to an Internet Banking group settlement and, when
+ * found, flip every joiner child booking to PAID. This is the settlement parallel
+ * to `syncInternetBankingPaymentsForPaidInvoice`: a single combined invoice
+ * settles the whole ORGANISER_PAYS group at once.
+ */
+async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
+  const invoiceId = invoice.invoiceID ?? null;
+  const result = {
+    matchedGroupSettlements: 0,
+    settledGroupSettlements: 0,
+    settledChildBookings: 0,
+  };
+
+  if (!invoiceId || !isPaidXeroInvoice(invoice)) {
+    return result;
+  }
+
+  const settlement = await prisma.groupBookingSettlement.findFirst({
+    where: {
+      xeroInvoiceId: invoiceId,
+      source: PaymentSource.INTERNET_BANKING,
+    },
+    select: { id: true, status: true },
+  });
+
+  if (!settlement) {
+    return result;
+  }
+
+  result.matchedGroupSettlements = 1;
+  if (settlement.status === PaymentStatus.SUCCEEDED) {
+    return result;
+  }
+
+  try {
+    const applied = await applyGroupSettlementSucceededFromInvoice(invoiceId);
+    if (applied.outcome === "settled") {
+      result.settledGroupSettlements = 1;
+      result.settledChildBookings = applied.settledBookingIds.length;
+    }
+  } catch (err) {
+    logger.error(
+      { err, invoiceId, settlementId: settlement.id },
+      "Failed to settle group booking from paid Xero invoice"
+    );
+  }
+
+  return result;
+}
+
 async function refreshLinkedSubscriptionsForInvoice(
   invoiceId: string,
   linkedSubscriptionIds: string[]
@@ -1909,6 +1961,7 @@ async function reconcileXeroInvoice(
       invoice,
       linkedPaymentIds
     );
+  const groupSettlementSync = await syncGroupSettlementForPaidInvoice(invoice);
 
   const linkedSubscriptionIds = relatedLinks
     .filter(
@@ -1973,6 +2026,7 @@ async function reconcileXeroInvoice(
       matchedPayments,
       updatedPayments,
       internetBankingPaymentSync,
+      groupSettlementSync,
       refreshedSubscriptions: refreshedSubscriptions.size,
       looksLikeSubscriptionInvoice,
     },
@@ -1985,6 +2039,7 @@ async function reconcileXeroInvoice(
     invoiceNumber: invoice.invoiceNumber ?? null,
     matchedPayments,
     internetBankingPaymentSync,
+    groupSettlementSync,
     paymentLinksUpdated: paymentLinks.length,
     updatedPayments,
     refreshedSubscriptions: refreshedSubscriptions.size,

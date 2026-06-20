@@ -914,6 +914,13 @@ model GroupBookingSettlement {
   groupBookingId        String        @unique
   stripePaymentIntentId String?       @unique
   stripeCustomerId      String?
+  // How the organiser settles: a Stripe PaymentIntent (default) or one combined
+  // Xero invoice paid by Internet Banking. For the Internet Banking source the
+  // raised invoice is tracked here so inbound Xero reconciliation can flip the
+  // joiner children to PAID when it is settled.
+  source                PaymentSource @default(STRIPE)
+  xeroInvoiceId         String?
+  xeroInvoiceNumber     String?
   amountCents           Int
   status                PaymentStatus @default(PENDING)
   paidAt                DateTime?

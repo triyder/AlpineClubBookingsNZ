@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, Lock, LockOpen, Users } from "lucide-react";
+import {
+  Check,
+  Copy,
+  CreditCard,
+  Landmark,
+  Lock,
+  LockOpen,
+  Users,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +22,7 @@ import { formatNZDate } from "@/lib/nzst-date";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
+type SettlePaymentMethod = "stripe" | "internet_banking";
 
 interface JoinerRow {
   id: string;
@@ -98,6 +107,21 @@ export function OrganiserGroupBookingCard({
   const [settleAmountCents, setSettleAmountCents] = useState<number | null>(null);
   const [settleMessage, setSettleMessage] = useState("");
   const [settleComplete, setSettleComplete] = useState(false);
+  const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
+  const [settleMethod, setSettleMethod] = useState<SettlePaymentMethod>("stripe");
+  const [settleReference, setSettleReference] = useState<string | null>(null);
+
+  // Internet Banking is an optional module; only offer it when it's on.
+  useEffect(() => {
+    fetch("/api/payments/options")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) =>
+        setInternetBankingEnabled(
+          Boolean(data?.methods?.internetBanking?.enabled)
+        )
+      )
+      .catch(() => setInternetBankingEnabled(false));
+  }, []);
 
   const [shareUrl, setShareUrl] = useState("");
   useEffect(() => {
@@ -165,13 +189,21 @@ export function OrganiserGroupBookingCard({
 
   async function startSettle() {
     if (!group) return;
+    const usingInternetBanking =
+      internetBankingEnabled && settleMethod === "internet_banking";
     setSettleBusy(true);
     setSettleError("");
     setSettleMessage("");
     try {
       const res = await fetch(
         `/api/group-bookings/${encodeURIComponent(group.code)}/settle`,
-        { method: "POST" }
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            paymentMethod: usingInternetBanking ? "internet_banking" : "stripe",
+          }),
+        }
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -183,6 +215,13 @@ export function OrganiserGroupBookingCard({
       }
       if (data.outcome === "nothing_to_settle") {
         setSettleMessage("There are no confirmed joiners to settle yet.");
+        return;
+      }
+      // Internet Banking: the combined Xero invoice is emailed; show the
+      // bank-transfer reference instead of opening the card flow.
+      if (data.outcome === "invoice_sent") {
+        setSettleAmountCents(data.amountCents);
+        setSettleReference(data.reference ?? null);
         return;
       }
       if (data.outcome === "ready" && data.clientSecret) {
@@ -421,6 +460,28 @@ export function OrganiserGroupBookingCard({
                   . Everyone in your group is confirmed.
                 </p>
               </div>
+            ) : settleReference ? (
+              <div className="space-y-3">
+                <div className="flex items-start gap-2 text-emerald-700">
+                  <Check className="h-5 w-5 shrink-0" />
+                  <p className="text-sm font-medium">
+                    Invoice emailed
+                    {settleAmountCents != null
+                      ? ` — ${formatCents(settleAmountCents)}`
+                      : ""}
+                    .
+                  </p>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  We&apos;ve emailed you a single invoice for the whole group. Pay it
+                  by internet banking using the reference below, and everyone&apos;s
+                  beds are confirmed once it arrives.
+                </p>
+                <div className="rounded-md border border-slate-200 p-3 text-sm">
+                  <p className="font-medium text-slate-900">Payment reference</p>
+                  <p className="mt-1 font-mono text-slate-900">{settleReference}</p>
+                </div>
+              </div>
             ) : settleClientSecret && settleAmountCents != null ? (
               <div className="space-y-3">
                 <p className="text-sm text-slate-700">
@@ -453,8 +514,57 @@ export function OrganiserGroupBookingCard({
                     ? ` Estimated total: ${formatCents(outstandingCents)}.`
                     : ""}
                 </p>
+
+                {internetBankingEnabled ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-muted-foreground">
+                      How would you like to pay?
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setSettleMethod("stripe")}
+                        className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                          settleMethod === "stripe"
+                            ? "border-blue-500 bg-blue-50 text-blue-950"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        }`}
+                      >
+                        <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          <span className="block font-medium">Card</span>
+                          <span className="block text-xs opacity-80">
+                            Pay now to settle the group.
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSettleMethod("internet_banking")}
+                        className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                          settleMethod === "internet_banking"
+                            ? "border-blue-500 bg-blue-50 text-blue-950"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        }`}
+                      >
+                        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          <span className="block font-medium">Internet Banking</span>
+                          <span className="block text-xs opacity-80">
+                            Receive one Xero invoice by email.
+                          </span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 <Button onClick={startSettle} disabled={settleBusy}>
-                  {settleBusy ? "Preparing..." : "Settle group total"}
+                  {settleBusy
+                    ? "Preparing..."
+                    : internetBankingEnabled && settleMethod === "internet_banking"
+                      ? "Settle by invoice (emailed)"
+                      : "Settle group total"}
                 </Button>
                 {settleMessage ? (
                   <p className="text-sm text-muted-foreground">{settleMessage}</p>

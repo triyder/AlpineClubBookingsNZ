@@ -514,13 +514,19 @@ describe("POST /api/group-bookings/join/verify/[token] (non-member confirm)", ()
 });
 
 describe("POST /api/group-bookings/[code]/settle", () => {
-  function settleRequest() {
+  function settleRequest(body?: unknown) {
     return new NextRequest("http://localhost/api/group-bookings/ABCD2345/settle", {
       method: "POST",
+      ...(body !== undefined
+        ? {
+            body: JSON.stringify(body),
+            headers: { "content-type": "application/json" },
+          }
+        : {}),
     });
   }
-  function callSettle() {
-    return settlePOST(settleRequest(), {
+  function callSettle(body?: unknown) {
+    return settlePOST(settleRequest(body), {
       params: Promise.resolve({ code: "ABCD2345" }),
     });
   }
@@ -550,8 +556,39 @@ describe("POST /api/group-bookings/[code]/settle", () => {
     });
     expect(mocks.createGroupSettlementIntent).toHaveBeenCalledWith(
       "ABCD2345",
-      "member-1"
+      "member-1",
+      "stripe"
     );
+  });
+
+  it("forwards an internet_banking choice and returns the invoice reference", async () => {
+    mocks.createGroupSettlementIntent.mockResolvedValueOnce({
+      outcome: "invoice_sent",
+      amountCents: 9000,
+      childCount: 2,
+      reference: "GROUP-ABCD1234",
+    });
+    const res = await callSettle({ paymentMethod: "internet_banking" });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      outcome: "invoice_sent",
+      reference: "GROUP-ABCD1234",
+    });
+    expect(mocks.createGroupSettlementIntent).toHaveBeenCalledWith(
+      "ABCD2345",
+      "member-1",
+      "internet_banking"
+    );
+  });
+
+  it("rejects internet_banking with 400 when the module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValueOnce({
+      xeroIntegration: false,
+      internetBankingPayments: false,
+    });
+    const res = await callSettle({ paymentMethod: "internet_banking" });
+    expect(res.status).toBe(400);
+    expect(mocks.createGroupSettlementIntent).not.toHaveBeenCalled();
   });
 
   it("maps a GroupBookingError to its status (403 for a non-organiser)", async () => {

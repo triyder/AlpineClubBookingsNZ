@@ -42,8 +42,14 @@ import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycl
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
   enqueueXeroBookingInvoiceOperation,
+  enqueueXeroGroupSettlementInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import {
+  buildGroupSettlementPaymentReference,
+  type BookingPaymentMethod,
+} from "@/lib/booking-payment-methods";
 import { GroupBookingError, normaliseJoinCode } from "@/lib/group-booking";
 import {
   sendGroupJoinSettledEmail,
@@ -59,6 +65,7 @@ const SETTLEABLE_CHILD_STATUSES = [
 
 export type GroupSettlementOutcome =
   | "ready"
+  | "invoice_sent"
   | "already_settled"
   | "nothing_to_settle";
 
@@ -71,6 +78,11 @@ export interface GroupSettlementIntentResult {
   /** Present when outcome === "ready": pass to Stripe Elements. */
   clientSecret?: string | null;
   paymentIntentId?: string;
+  /**
+   * Present when outcome === "invoice_sent": the bank-transfer reference shown
+   * to the organiser for the combined Internet Banking invoice.
+   */
+  reference?: string;
 }
 
 interface SettleableChild {
@@ -138,7 +150,8 @@ async function loadSettleableChildren(
  */
 export async function createGroupSettlementIntent(
   rawCode: string,
-  sessionUserId: string
+  sessionUserId: string,
+  paymentMethod: BookingPaymentMethod = "stripe"
 ): Promise<GroupSettlementIntentResult> {
   const group = await requireOrganiserPaysGroup(rawCode, sessionUserId);
 
@@ -160,6 +173,12 @@ export async function createGroupSettlementIntent(
     // Zero-dollar joiners auto-confirm at creation and never reach here; guard
     // anyway so we never open a Stripe intent for nothing.
     return { outcome: "nothing_to_settle", amountCents: 0, childCount: 0 };
+  }
+
+  // Internet Banking: raise one combined Xero invoice to the organiser instead
+  // of charging a card. Reconciliation flips the children to PAID on payment.
+  if (paymentMethod === "internet_banking") {
+    return createGroupSettlementInvoice(group.id, children, amountCents);
   }
 
   // Reuse an outstanding intent for the same total before creating a new one,
@@ -237,6 +256,71 @@ export async function createGroupSettlementIntent(
 }
 
 /**
+ * Internet Banking settlement: hold the joiners' beds (all-or-nothing, like the
+ * Stripe path) then enqueue one combined Xero invoice raised to the organiser.
+ * No card is charged; the children stay CONFIRMED until Xero reports the invoice
+ * paid, at which point `applyGroupSettlementSucceededFromInvoice` flips them PAID.
+ *
+ * The module is re-gated here so a server-side IB settlement is impossible when
+ * the Internet Banking module is off, even if the UI gate were bypassed.
+ */
+async function createGroupSettlementInvoice(
+  groupBookingId: string,
+  children: SettleableChild[],
+  amountCents: number
+): Promise<GroupSettlementIntentResult> {
+  const modules = await loadEffectiveModuleFlags();
+  if (!modules.xeroIntegration || !modules.internetBankingPayments) {
+    throw new GroupBookingError(
+      "Internet Banking payments are not available.",
+      400
+    );
+  }
+
+  // Hold the beds (all-or-nothing) before raising any invoice.
+  await commitChildrenToConfirmed(children);
+
+  const settlement = await prisma.groupBookingSettlement.upsert({
+    where: { groupBookingId },
+    create: {
+      groupBookingId,
+      source: PaymentSource.INTERNET_BANKING,
+      amountCents,
+      status: PaymentStatus.PENDING,
+    },
+    update: {
+      source: PaymentSource.INTERNET_BANKING,
+      // Drop any stale Stripe intent from a prior card attempt so reconciliation
+      // and the webhook never reuse it for an Internet Banking settlement.
+      stripePaymentIntentId: null,
+      amountCents,
+      status: PaymentStatus.PENDING,
+    },
+  });
+
+  // Enqueue the combined invoice. A failure here is logged, not thrown: the beds
+  // are held and the settlement is recorded, and the outbox can be re-driven.
+  try {
+    const queued = await enqueueXeroGroupSettlementInvoiceOperation(settlement.id);
+    if (queued.queueOperationId) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+    }
+  } catch (xeroErr) {
+    logger.error(
+      { err: xeroErr, groupBookingId, settlementId: settlement.id },
+      "Failed to queue combined Xero invoice for group settlement"
+    );
+  }
+
+  return {
+    outcome: "invoice_sent",
+    amountCents,
+    childCount: children.length,
+    reference: buildGroupSettlementPaymentReference(groupBookingId),
+  };
+}
+
+/**
  * Commit every still-PAYMENT_PENDING child to CONFIRMED under the global booking
  * advisory lock, claiming capacity for each in turn so later children see the
  * earlier ones' beds. All-or-nothing: if any child no longer fits, the whole
@@ -298,56 +382,49 @@ export interface GroupSettlementAppliedResult {
   settledBookingIds: string[];
 }
 
-/**
- * Webhook handler for a succeeded group-settlement PaymentIntent. Flips every
- * committed (CONFIRMED) organiser-settled child to PAID exactly once, records a
- * Payment per child referencing the combined intent, and marks the settlement
- * SUCCEEDED. Idempotent across webhook redelivery.
- */
-export async function applyGroupSettlementSucceeded(paymentIntent: {
+/** The settlement shape the shared settle/notify routine needs. */
+interface LoadedSettlementForApply {
   id: string;
-  amount: number;
-}): Promise<GroupSettlementAppliedResult> {
-  const settlement = await prisma.groupBookingSettlement.findUnique({
-    where: { stripePaymentIntentId: paymentIntent.id },
-    include: {
-      groupBooking: {
-        select: {
-          organiserBookingId: true,
-          organiserMember: { select: { email: true, firstName: true, lastName: true } },
-          organiserBooking: { select: { checkIn: true, checkOut: true } },
-        },
-      },
+  amountCents: number;
+  stripeCustomerId: string | null;
+  groupBookingId: string;
+  groupBooking: {
+    organiserBookingId: string;
+    organiserMember: { email: string; firstName: string; lastName: string };
+    organiserBooking: { checkIn: Date; checkOut: Date };
+  };
+}
+
+/** The relation includes both apply paths load on their settlement row. */
+const APPLY_SETTLEMENT_INCLUDE = {
+  groupBooking: {
+    select: {
+      organiserBookingId: true,
+      organiserMember: { select: { email: true, firstName: true, lastName: true } },
+      organiserBooking: { select: { checkIn: true, checkOut: true } },
     },
-  });
+  },
+} as const;
 
-  if (!settlement) {
-    logger.warn(
-      { paymentIntentId: paymentIntent.id },
-      "Group settlement PaymentIntent succeeded but no settlement record found"
-    );
-    return { outcome: "not_found", settledBookingIds: [] };
+/**
+ * Flip every committed (CONFIRMED) organiser-settled child to PAID exactly once,
+ * record a Payment per child, mark the settlement SUCCEEDED, and notify everyone.
+ * Idempotent under the booking advisory lock. Shared by the Stripe webhook and
+ * the Internet Banking Xero-invoice reconciliation paths.
+ *
+ * @param options.enqueueChildInvoices  Stripe settlements raise a Xero invoice
+ *   per child; Internet Banking settlements are already covered by the single
+ *   combined invoice, so they pass `false` to avoid duplicate invoices.
+ */
+async function settleConfirmedChildrenAndNotify(
+  settlement: LoadedSettlementForApply,
+  options: {
+    source: PaymentSource;
+    reference: string;
+    stripeCustomerId?: string | null;
+    enqueueChildInvoices: boolean;
   }
-
-  if (settlement.status === PaymentStatus.SUCCEEDED) {
-    return { outcome: "already_settled", settledBookingIds: [] };
-  }
-
-  // Never auto-apply a payment whose amount does not match what we recorded;
-  // leave the settlement PENDING for an operator to review.
-  if (paymentIntent.amount !== settlement.amountCents) {
-    logger.error(
-      {
-        paymentIntentId: paymentIntent.id,
-        expectedCents: settlement.amountCents,
-        receivedCents: paymentIntent.amount,
-        groupBookingId: settlement.groupBookingId,
-      },
-      "Group settlement amount mismatch - refusing to auto-apply payment"
-    );
-    return { outcome: "amount_mismatch", settledBookingIds: [] };
-  }
-
+): Promise<GroupSettlementAppliedResult> {
   const settled = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
@@ -377,15 +454,16 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
         create: {
           bookingId: child.id,
           amountCents: child.finalPriceCents,
-          source: PaymentSource.STRIPE,
+          source: options.source,
           status: PaymentStatus.SUCCEEDED,
-          reference: paymentIntent.id,
-          stripeCustomerId: settlement.stripeCustomerId,
+          reference: options.reference,
+          stripeCustomerId: options.stripeCustomerId ?? null,
         },
         update: {
           status: PaymentStatus.SUCCEEDED,
-          reference: paymentIntent.id,
-          stripeCustomerId: settlement.stripeCustomerId,
+          source: options.source,
+          reference: options.reference,
+          stripeCustomerId: options.stripeCustomerId ?? null,
         },
       });
       await tx.booking.update({
@@ -408,8 +486,9 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
     return settledIds;
   });
 
-  // Side effects after commit: a durable "paid" booking event and a Xero invoice
-  // per child. Failures here are logged but never undo the settlement.
+  // Side effects after commit: a durable "paid" booking event and (Stripe only)
+  // a Xero invoice per child. Failures here are logged but never undo the
+  // settlement.
   for (const bookingId of settled) {
     await recordBookingEvent({
       bookingId,
@@ -417,16 +496,18 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
       actorMemberId: null,
       reason: "Settled by the group organiser as part of the combined group bill",
     });
-    try {
-      const queued = await enqueueXeroBookingInvoiceOperation(bookingId);
-      if (queued.queueOperationId) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+    if (options.enqueueChildInvoices) {
+      try {
+        const queued = await enqueueXeroBookingInvoiceOperation(bookingId);
+        if (queued.queueOperationId) {
+          await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+        }
+      } catch (xeroErr) {
+        logger.error(
+          { err: xeroErr, bookingId },
+          "Failed to queue Xero invoice for settled group child booking"
+        );
       }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, bookingId },
-        "Failed to queue Xero invoice for settled group child booking"
-      );
     }
   }
 
@@ -482,14 +563,98 @@ export async function applyGroupSettlementSucceeded(paymentIntent: {
 
   logger.info(
     {
-      paymentIntentId: paymentIntent.id,
       groupBookingId: settlement.groupBookingId,
       settledCount: settled.length,
+      source: options.source,
     },
     "Group settlement paid"
   );
 
   return { outcome: "settled", settledBookingIds: settled };
+}
+
+/**
+ * Webhook handler for a succeeded group-settlement PaymentIntent. Flips every
+ * committed (CONFIRMED) organiser-settled child to PAID exactly once, records a
+ * Payment per child referencing the combined intent, and marks the settlement
+ * SUCCEEDED. Idempotent across webhook redelivery.
+ */
+export async function applyGroupSettlementSucceeded(paymentIntent: {
+  id: string;
+  amount: number;
+}): Promise<GroupSettlementAppliedResult> {
+  const settlement = await prisma.groupBookingSettlement.findUnique({
+    where: { stripePaymentIntentId: paymentIntent.id },
+    include: APPLY_SETTLEMENT_INCLUDE,
+  });
+
+  if (!settlement) {
+    logger.warn(
+      { paymentIntentId: paymentIntent.id },
+      "Group settlement PaymentIntent succeeded but no settlement record found"
+    );
+    return { outcome: "not_found", settledBookingIds: [] };
+  }
+
+  if (settlement.status === PaymentStatus.SUCCEEDED) {
+    return { outcome: "already_settled", settledBookingIds: [] };
+  }
+
+  // Never auto-apply a payment whose amount does not match what we recorded;
+  // leave the settlement PENDING for an operator to review.
+  if (paymentIntent.amount !== settlement.amountCents) {
+    logger.error(
+      {
+        paymentIntentId: paymentIntent.id,
+        expectedCents: settlement.amountCents,
+        receivedCents: paymentIntent.amount,
+        groupBookingId: settlement.groupBookingId,
+      },
+      "Group settlement amount mismatch - refusing to auto-apply payment"
+    );
+    return { outcome: "amount_mismatch", settledBookingIds: [] };
+  }
+
+  return settleConfirmedChildrenAndNotify(settlement, {
+    source: PaymentSource.STRIPE,
+    reference: paymentIntent.id,
+    stripeCustomerId: settlement.stripeCustomerId,
+    enqueueChildInvoices: true,
+  });
+}
+
+/**
+ * Reconciliation handler for a paid combined Internet Banking settlement invoice.
+ * Matched by `GroupBookingSettlement.xeroInvoiceId` when Xero reports the invoice
+ * PAID; flips every CONFIRMED organiser-settled child to PAID and marks the
+ * settlement SUCCEEDED. Idempotent across re-reconciliation.
+ */
+export async function applyGroupSettlementSucceededFromInvoice(
+  xeroInvoiceId: string
+): Promise<GroupSettlementAppliedResult> {
+  const settlement = await prisma.groupBookingSettlement.findFirst({
+    where: { xeroInvoiceId },
+    include: APPLY_SETTLEMENT_INCLUDE,
+  });
+
+  if (!settlement) {
+    logger.warn(
+      { xeroInvoiceId },
+      "Group settlement invoice paid but no settlement record found"
+    );
+    return { outcome: "not_found", settledBookingIds: [] };
+  }
+
+  if (settlement.status === PaymentStatus.SUCCEEDED) {
+    return { outcome: "already_settled", settledBookingIds: [] };
+  }
+
+  return settleConfirmedChildrenAndNotify(settlement, {
+    source: PaymentSource.INTERNET_BANKING,
+    reference: settlement.xeroInvoiceNumber ?? xeroInvoiceId,
+    stripeCustomerId: null,
+    enqueueChildInvoices: false,
+  });
 }
 
 /**
