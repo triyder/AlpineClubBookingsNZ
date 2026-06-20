@@ -15,6 +15,9 @@ import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input"
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import { formatLocalDateOnly } from "@/lib/date-only";
+import { CreditCard, Landmark } from "lucide-react";
+
+type BookingPaymentMethod = "stripe" | "internet_banking";
 
 interface FamilyMember {
   id: string;
@@ -63,6 +66,8 @@ export default function AdminBookPage() {
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
 
   // Fetch family members for the selected member
   useEffect(() => {
@@ -213,6 +218,18 @@ export default function AdminBookPage() {
     return hasMinor && !hasAdult;
   })();
 
+  // Internet Banking is an optional module; only offer it when it's on.
+  useEffect(() => {
+    fetch("/api/payments/options")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) =>
+        setInternetBankingEnabled(
+          Boolean(data?.methods?.internetBanking?.enabled)
+        )
+      )
+      .catch(() => setInternetBankingEnabled(false));
+  }, []);
+
   async function handleSubmit() {
     setSubmitting(true);
     setError("");
@@ -232,6 +249,10 @@ export default function AdminBookPage() {
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         forMemberId: selectedMember!.id,
+        paymentMethod:
+          showPaymentMethodChoice && paymentMethod === "internet_banking"
+            ? "internet_banking"
+            : "stripe",
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim() || undefined
           : undefined,
@@ -306,6 +327,7 @@ export default function AdminBookPage() {
     ? Math.min(availableCreditCents, finalPriceBeforeCredit)
     : 0;
   const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
+  const showPaymentMethodChoice = internetBankingEnabled && remainingToPay > 0;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -605,6 +627,50 @@ export default function AdminBookPage() {
               <strong>Note:</strong> This booking includes non-member guests. It may
               be held as PENDING until closer to check-in.
             </div>
+          )}
+
+          {showPaymentMethodChoice && (
+            <Card>
+              <CardContent className="space-y-3 pt-6">
+                <p className="text-sm font-medium text-slate-900">Payment method</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("stripe")}
+                    className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                      paymentMethod === "stripe"
+                        ? "border-blue-500 bg-blue-50 text-blue-950"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      <span className="block font-medium">Card</span>
+                      <span className="block text-xs opacity-80">
+                        The member pays by card to secure the booking.
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("internet_banking")}
+                    className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                      paymentMethod === "internet_banking"
+                        ? "border-blue-500 bg-blue-50 text-blue-950"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      <span className="block font-medium">Internet Banking</span>
+                      <span className="block text-xs opacity-80">
+                        Email the member a Xero invoice to pay by bank transfer.
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           <div className="flex justify-between">

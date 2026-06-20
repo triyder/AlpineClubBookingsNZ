@@ -8,6 +8,7 @@ import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
+import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
@@ -327,6 +328,16 @@ export default async function BookingDetailPage({
     : null;
   const internetBankingPayment =
     booking.payment?.source === "INTERNET_BANKING" ? booking.payment : null;
+  // Switch-at-pay: a card PAYMENT_PENDING booking can move to Internet Banking
+  // when the module is on (an organiser-settled or already-IB booking cannot).
+  const canSwitchToInternetBanking =
+    modules.xeroIntegration &&
+    modules.internetBankingPayments &&
+    !isDeleted &&
+    !internetBankingPayment &&
+    booking.status === "PAYMENT_PENDING" &&
+    !booking.organiserSettled &&
+    booking.finalPriceCents > 0;
   const originalPaymentCaptured = hasCapturedPayment(booking.payment);
   const retainedAfterCancellationCents = booking.payment
     ? Math.max(
@@ -934,6 +945,9 @@ export default async function BookingDetailPage({
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
+            {canSwitchToInternetBanking && (
+              <SwitchToInternetBankingButton bookingId={booking.id} />
+            )}
           </CardContent>
         </Card>
       )}
