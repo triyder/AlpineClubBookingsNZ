@@ -29,7 +29,7 @@ interface PaymentLinkContext {
     guestCount: number;
     status: string;
     amountCents: number;
-    internetBankingReference: string;
+    internetBankingReference?: string;
     expiresAt: string;
   } | null;
   canRequestFreshLink: boolean;
@@ -296,13 +296,15 @@ export default function PayByLinkPage() {
               </div>
             ) : null}
 
-            <div className="rounded-md border border-slate-200 p-3 text-sm">
-              <p className="font-medium text-slate-900">Or pay by internet banking</p>
-              <p className="mt-1 text-muted-foreground">
-                Use the reference below when making a direct transfer.
-              </p>
-              <p className="mt-2 font-mono text-slate-900">{payable.internetBankingReference}</p>
-            </div>
+            {payable.internetBankingReference ? (
+              <div className="rounded-md border border-slate-200 p-3 text-sm">
+                <p className="font-medium text-slate-900">Or pay by internet banking</p>
+                <p className="mt-1 text-muted-foreground">
+                  Use the reference below when making a direct transfer.
+                </p>
+                <p className="mt-2 font-mono text-slate-900">{payable.internetBankingReference}</p>
+              </div>
+            ) : null}
           </div>
         )}
       </CardContent>

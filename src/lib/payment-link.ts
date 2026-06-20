@@ -23,6 +23,7 @@ import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
 import { sendBookingRequestApprovedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
@@ -144,7 +145,12 @@ export interface PaymentLinkPayable {
   guestCount: number;
   status: BookingStatus;
   amountCents: number;
-  internetBankingReference: string;
+  /**
+   * The bank-transfer reference, present only when the optional Internet
+   * Banking module is on. Omitted when the module is off so the public pay
+   * page never offers a payment method the club hasn't enabled.
+   */
+  internetBankingReference?: string;
   /** NZT end-of-check-in-day expiry, ISO. */
   expiresAt: string;
 }
@@ -221,6 +227,14 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
       );
   }
 
+  // Internet Banking is an optional module; only surface the bank-transfer
+  // reference on the public pay page when the club has it enabled.
+  const ibModules =
+    narrative.state === "payable" ? await loadEffectiveModuleFlags() : null;
+  const internetBankingEnabled = Boolean(
+    ibModules?.xeroIntegration && ibModules?.internetBankingPayments
+  );
+
   const payable: PaymentLinkPayable | null =
     narrative.state === "payable"
       ? {
@@ -229,7 +243,13 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
           guestCount: booking.guests.length,
           status: booking.status,
           amountCents: booking.finalPriceCents,
-          internetBankingReference: buildInternetBankingPaymentReference(booking.id),
+          ...(internetBankingEnabled
+            ? {
+                internetBankingReference: buildInternetBankingPaymentReference(
+                  booking.id
+                ),
+              }
+            : {}),
           expiresAt: link.expiresAt.toISOString(),
         }
       : null;
