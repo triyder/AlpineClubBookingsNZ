@@ -379,6 +379,7 @@ model Member {
   inductions                                 MemberInduction[]                          @relation("MemberInductions")
   inductionSignOffs                          MemberInductionSignOff[]                   @relation("InductionSignOffSigner")
   assignedInductionSigners                   MemberInductionAssignedSigner[]            @relation("AssignedInductionSigners")
+  lockersAllocated                           Locker[]                                   @relation("LockerAllocatedMember")
 
   @@index([email])
   @@index([xeroContactId])
@@ -1034,6 +1035,19 @@ model LodgeRoom {
 
   @@unique([name])
   @@index([active, sortOrder])
+}
+
+model Locker {
+  id                  String   @id @default(cuid())
+  name                String
+  allocatedToMemberId String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  allocatedTo Member? @relation("LockerAllocatedMember", fields: [allocatedToMemberId], references: [id], onDelete: SetNull)
+
+  @@index([allocatedToMemberId])
+  @@index([name])
 }
 
 model LodgeBed {

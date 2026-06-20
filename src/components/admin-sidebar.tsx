@@ -130,6 +130,7 @@ const navSections: NavSection[] = [
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
       { href: "/admin/communications", label: "Communications", icon: Mail },
+      { href: "/admin/lockers", label: "Lockers", icon: House },
     ],
   },
   {

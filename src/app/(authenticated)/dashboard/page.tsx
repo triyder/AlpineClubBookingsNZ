@@ -17,6 +17,7 @@ import {
   PlusCircle,
   Mountain,
   Home,
+  House,
   Shield,
   Wallet,
   CreditCard,
@@ -75,6 +76,7 @@ export default async function DashboardPage() {
     paymentOwedBookings,
     creditBalanceCents,
     availablePromoCodes,
+    lockers,
   ] = await Promise.all([
     prisma.booking.findMany({
       where: {
@@ -149,6 +151,11 @@ export default async function DashboardPage() {
     }),
     getMemberCreditBalance(memberId),
     getAvailablePromoCodesForMember(memberId),
+    prisma.locker.findMany({
+      where: { allocatedToMemberId: memberId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;
@@ -364,6 +371,26 @@ export default async function DashboardPage() {
             >
               <Link href="/induction">Open Induction</Link>
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Lockers</CardTitle>
+            <House className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {lockers.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No lockers allocated.</p>
+            ) : (
+              <ul className="space-y-1">
+                {lockers.map((locker) => (
+                  <li key={locker.id} className="text-sm text-slate-700">
+                    {locker.name}
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>
