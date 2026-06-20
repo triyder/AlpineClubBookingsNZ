@@ -1,0 +1,59 @@
+name: Codex Review Plan
+description: Request a planning-only Codex review pass.
+title: "[Review plan] "
+labels:
+  - codex-review-plan
+body:
+  - type: textarea
+    id: review_scope
+    attributes:
+      label: Review scope
+    validations:
+      required: true
+  - type: checkboxes
+    id: target_workstreams
+    attributes:
+      label: Target workstreams
+      options:
+        - label: Security and route/auth boundaries
+        - label: Booking, capacity, and waitlist
+        - label: Payments, refunds, and credits
+        - label: Membership, family, archive, and delete lifecycle
+        - label: Xero, Stripe, SES, Sentry, and webhooks
+        - label: Cron, recovery, and operations
+        - label: UI/UX and accessibility
+        - label: Test coverage
+        - label: Documentation and agent workflow
+    validations:
+      required: true
+  - type: textarea
+    id: output_files
+    attributes:
+      label: Output files
+      placeholder: docs/reviews/YYYY-MM-DD-review-plan.md
+    validations:
+      required: true
+  - type: dropdown
+    id: create_issues
+    attributes:
+      label: Should GitHub Issues be created?
+      options:
+        - "No, plan only"
+        - "Yes, after human review"
+        - "Yes, dry-run first"
+    validations:
+      required: true
+  - type: textarea
+    id: safety_constraints
+    attributes:
+      label: Safety constraints
+      value: |
+        Do not use production credentials, production databases, production backups, live Stripe, live Xero, live SES, live Sentry, or live provider webhooks.
+    validations:
+      required: true
+  - type: textarea
+    id: validation_expectations
+    attributes:
+      label: Validation expectations
+    validations:
+      required: true

@@ -1,0 +1,119 @@
+name: Codex Task
+description: Define one issue-scoped Codex implementation or documentation task.
+title: "[Codex] "
+labels:
+  - codex-ready
+body:
+  - type: dropdown
+    id: workstream
+    attributes:
+      label: Workstream
+      options:
+        - Security
+        - Booking and capacity
+        - Payments, refunds, and credits
+        - Membership lifecycle
+        - Family and dependents
+        - Xero, Stripe, SES, or Sentry
+        - Cron, recovery, and operations
+        - UI and accessibility
+        - Documentation and agent workflow
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      options:
+        - risk:critical
+        - risk:high
+        - risk:medium
+        - risk:low
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - planning
+        - review
+        - coding
+        - docs
+        - ui
+    validations:
+      required: true
+  - type: dropdown
+    id: recommended_effort
+    attributes:
+      label: Recommended effort
+      options:
+        - xhigh
+        - high
+        - medium
+        - low
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+    validations:
+      required: true
+  - type: textarea
+    id: context_files
+    attributes:
+      label: Context files
+      description: List files and docs Codex must read first.
+    validations:
+      required: true
+  - type: textarea
+    id: allowed_scope
+    attributes:
+      label: Allowed scope
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true
+  - type: textarea
+    id: required_tests
+    attributes:
+      label: Required tests
+    validations:
+      required: true
+  - type: textarea
+    id: validation_commands
+    attributes:
+      label: Validation commands
+      description: Exact safe commands expected before PR.
+    validations:
+      required: true
+  - type: textarea
+    id: codex_prompt
+    attributes:
+      label: Codex invocation prompt
+    validations:
+      required: true
+  - type: textarea
+    id: manual_checks
+    attributes:
+      label: Manual checks
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies or blockers
+    validations:
+      required: true

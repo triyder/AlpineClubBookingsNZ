@@ -1,0 +1,52 @@
+labels:
+  - name: codex-ready
+    color: "0E8A16"
+    description: Ready for one Codex issue-scoped run.
+  - name: codex-blocked
+    color: "B60205"
+    description: Blocked pending human decision, dependency, or corrected scope.
+  - name: codex-in-progress
+    color: "FBCA04"
+    description: A Codex run or human is actively working this issue.
+  - name: codex-pr-opened
+    color: "5319E7"
+    description: A PR exists for this Codex issue.
+  - name: codex-finding
+    color: "D93F0B"
+    description: Review finding not yet split into a task.
+  - name: codex-review-plan
+    color: "1D76DB"
+    description: Planning-only review request.
+  - name: workstream:security
+    color: "B60205"
+    description: Security, auth, privacy, route, token, or webhook work.
+  - name: workstream:booking
+    color: "006B75"
+    description: Booking, capacity, waitlist, or bed allocation work.
+  - name: workstream:payments
+    color: "C2E0C6"
+    description: Stripe, refunds, credits, or settlement work.
+  - name: workstream:membership
+    color: "D4C5F9"
+    description: Membership, family, cancellation, archive, or delete lifecycle.
+  - name: workstream:integrations
+    color: "0052CC"
+    description: Xero, SES, Sentry, provider queues, or webhooks.
+  - name: workstream:ui-ux
+    color: "FBCA04"
+    description: UI, UX, accessibility, and journey work.
+  - name: workstream:operations
+    color: "5319E7"
+    description: Cron, deployment, CI, migrations, or operations.
+  - name: risk:critical
+    color: "B60205"
+    description: Critical risk; no unattended coding.
+  - name: risk:high
+    color: "D93F0B"
+    description: High risk; human-reviewed plan and PR required.
+  - name: risk:medium
+    color: "FBCA04"
+    description: Medium risk.
+  - name: risk:low
+    color: "0E8A16"
+    description: Low risk.
