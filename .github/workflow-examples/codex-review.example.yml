@@ -1,0 +1,32 @@
+# Example workflow only.
+# This file lives outside .github/workflows so GitHub Actions will not run it.
+# It does not trigger from issue comments and does not run Codex automatically.
+
+name: Codex Review Example
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan_file:
+        description: "Path to a checked-in review issue JSON file"
+        required: false
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  dry-run-review-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Dry-run proposed review issues
+        run: |
+          if [ -n "${{ inputs.plan_file }}" ]; then
+            node scripts/codex/create-review-issues.mjs --dry-run --input "${{ inputs.plan_file }}"
+          else
+            node scripts/codex/create-review-issues.mjs --dry-run
+          fi

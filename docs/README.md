@@ -16,6 +16,12 @@ AlpineClubBookingsNZ.
 
 - `ARCHITECTURE.md` explains the runtime shape, module boundaries, data model,
   integrations, cron jobs, and deployment approach.
+- `DOMAIN_INVARIANTS.md`, `STATE_MACHINES.md`,
+  `END_TO_END_TEST_MATRIX.md`, and `UX_FLOW_MAP.md` capture the first-pass
+  domain and review map used by Codex issue work.
+- `agents/CODEX_WORKFLOW.md` is the operating guide for Codex agents, with
+  issue, prompt, profile, subagent, severity, and prompt-injection references
+  in the same directory.
 - `ONGOING-DEVELOPMENT-WORKFLOW.md` explains how generic public changes and
   private deployment-fork changes should flow.
 - `MAINTENANCE.md` records the public validation and release checklist.

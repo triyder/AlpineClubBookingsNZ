@@ -1,0 +1,29 @@
+# Example workflow only.
+# This file lives outside .github/workflows so GitHub Actions will not run it.
+# Copy it deliberately into .github/workflows and review permissions before enabling.
+
+name: Codex IssueOps Example
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to convert into a Codex prompt"
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  prompt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Generate prompt only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/codex/issue-to-prompt.mjs "${{ inputs.issue }}" --repo "${{ github.repository }}"

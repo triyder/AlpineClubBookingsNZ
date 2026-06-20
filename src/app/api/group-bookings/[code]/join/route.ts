@@ -18,6 +18,11 @@ import {
   BookingPromoError,
   BookingReviewJustificationRequiredError,
 } from "@/lib/booking-create";
+import {
+  BOOKING_PAYMENT_METHOD_VALUES,
+  DEFAULT_BOOKING_PAYMENT_METHOD,
+} from "@/lib/booking-payment-methods";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import logger from "@/lib/logger";
 
 const joinSchema = z
@@ -34,6 +39,10 @@ const joinSchema = z
       )
       .min(1)
       .max(50),
+    paymentMethod: z
+      .enum(BOOKING_PAYMENT_METHOD_VALUES)
+      .optional()
+      .default(DEFAULT_BOOKING_PAYMENT_METHOD),
   })
   .strict();
 
@@ -73,9 +82,26 @@ export async function POST(
 
   const { code } = await params;
 
+  // Internet Banking is an optional module; reject it when off (mirrors
+  // POST /api/bookings) so a joiner can never raise an invoice the club can't
+  // service.
+  if (parsed.data.paymentMethod === "internet_banking") {
+    const modules = await loadEffectiveModuleFlags();
+    if (!modules.xeroIntegration || !modules.internetBankingPayments) {
+      return NextResponse.json(
+        { error: "Internet Banking payments are not available." },
+        { status: 400 }
+      );
+    }
+  }
+
   try {
     const result = await joinGroupBookingAsMember(
-      { code, guests: parsed.data.guests },
+      {
+        code,
+        guests: parsed.data.guests,
+        paymentMethod: parsed.data.paymentMethod,
+      },
       session.user.id,
       session.user.role
     );

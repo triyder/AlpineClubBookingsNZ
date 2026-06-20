@@ -1,0 +1,78 @@
+name: Codex Finding
+description: Record a review finding before it is split into one or more tasks.
+title: "[Finding] "
+labels:
+  - codex-finding
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - critical
+        - high
+        - medium
+        - low
+        - informational
+    validations:
+      required: true
+  - type: input
+    id: affected_area
+    attributes:
+      label: Affected area
+    validations:
+      required: true
+  - type: textarea
+    id: affected_files
+    attributes:
+      label: Affected files
+      description: Include paths and line references when available.
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Remove secrets and personal data.
+    validations:
+      required: true
+  - type: textarea
+    id: risk_scenario
+    attributes:
+      label: Risk scenario
+    validations:
+      required: true
+  - type: textarea
+    id: recommended_fix
+    attributes:
+      label: Recommended fix
+    validations:
+      required: true
+  - type: textarea
+    id: recommended_tests
+    attributes:
+      label: Recommended tests
+    validations:
+      required: true
+  - type: textarea
+    id: suggested_issue_split
+    attributes:
+      label: Suggested issue split
+    validations:
+      required: true
+  - type: dropdown
+    id: security_sensitivity
+    attributes:
+      label: Should public details be limited because of security sensitivity?
+      options:
+        - "No"
+        - "Yes"
+        - Unsure
+    validations:
+      required: true

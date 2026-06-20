@@ -48,6 +48,10 @@ import {
   type BookingGuestInput as PricedGuestInput,
 } from "@/lib/booking-create";
 import {
+  DEFAULT_BOOKING_PAYMENT_METHOD,
+  type BookingPaymentMethod,
+} from "@/lib/booking-payment-methods";
+import {
   assertLinkedBookingMembersCanBeBooked,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
@@ -74,7 +78,7 @@ import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
 // others, so we require a capacity-holding or payment-pending status.
-const OPENABLE_ORGANISER_STATUSES: readonly string[] = [
+export const OPENABLE_ORGANISER_STATUSES: readonly string[] = [
   "PAID",
   "CONFIRMED",
   "PAYMENT_PENDING",
@@ -299,7 +303,12 @@ export interface GroupBookingRecordForSummary {
   status: GroupBookingStatus;
   paymentMode: GroupBookingPaymentMode;
   joinDeadline: Date | null;
-  organiserBooking: { checkIn: Date; checkOut: Date };
+  organiserBooking: {
+    checkIn: Date;
+    checkOut: Date;
+    status: BookingStatus;
+    deletedAt: Date | null;
+  };
   organiserMember: { firstName: string };
 }
 
@@ -318,6 +327,24 @@ export function isGroupJoinable(
   return !group.joinDeadline || group.joinDeadline.getTime() > now.getTime();
 }
 
+/**
+ * True when the organiser's host booking is still live, so the group can
+ * actually accept joins. Mirrors the gate joinGroupBookingAsMember and
+ * verifyAndCreateNonMemberJoin enforce: a cancelled / bumped / completed or
+ * soft-deleted host booking can host no further joins. Kept separate from
+ * isGroupJoinable so the public summary's hint matches what those write paths
+ * accept, even though they re-check it themselves under the capacity lock.
+ */
+export function isOrganiserBookingActive(booking: {
+  status: BookingStatus;
+  deletedAt: Date | null;
+}): boolean {
+  return (
+    !booking.deletedAt &&
+    (ACTIVE_BOOKING_STATUSES as readonly BookingStatus[]).includes(booking.status)
+  );
+}
+
 /** Pure mapping from the selected record to the public-safe summary. */
 export function toGroupBookingSummary(
   group: GroupBookingRecordForSummary,
@@ -331,7 +358,12 @@ export function toGroupBookingSummary(
     checkIn: group.organiserBooking.checkIn,
     checkOut: group.organiserBooking.checkOut,
     joinDeadline: group.joinDeadline,
-    isJoinable: isGroupJoinable(group, now),
+    // A group is only joinable when BOTH the group itself is open/in-deadline
+    // AND its host booking is still active; otherwise the public page would
+    // invite joins the write paths will reject.
+    isJoinable:
+      isGroupJoinable(group, now) &&
+      isOrganiserBookingActive(group.organiserBooking),
   };
 }
 
@@ -354,7 +386,9 @@ export async function resolveGroupBookingByCode(
       status: true,
       paymentMode: true,
       joinDeadline: true,
-      organiserBooking: { select: { checkIn: true, checkOut: true } },
+      organiserBooking: {
+        select: { checkIn: true, checkOut: true, status: true, deletedAt: true },
+      },
       organiserMember: { select: { firstName: true } },
     },
   });
@@ -401,7 +435,11 @@ export interface JoinGroupBookingResult {
  * be a member; a non-member guest is rejected with a clear message.
  */
 export async function joinGroupBookingAsMember(
-  input: { code: string; guests: BookingGuestInput[] },
+  input: {
+    code: string;
+    guests: BookingGuestInput[];
+    paymentMethod?: BookingPaymentMethod;
+  },
   sessionUserId: string,
   sessionRole: string
 ): Promise<JoinGroupBookingResult> {
@@ -580,6 +618,14 @@ export async function joinGroupBookingAsMember(
     holdDays: 0,
   });
 
+  // Payment method only applies to EACH_PAYS_OWN joiners who pay for their own
+  // beds. An ORGANISER_PAYS joiner is organiserSettled (never billed, no payment
+  // record created at join), so force the default and never raise an Internet
+  // Banking invoice to the joiner. Module availability is gated in the route.
+  const effectivePaymentMethod: BookingPaymentMethod = organiserSettled
+    ? DEFAULT_BOOKING_PAYMENT_METHOD
+    : input.paymentMethod ?? DEFAULT_BOOKING_PAYMENT_METHOD;
+
   const outcome = await createConfirmedBooking({
     effectiveMemberId: sessionUserId,
     isOnBehalf: false,
@@ -603,6 +649,9 @@ export async function joinGroupBookingAsMember(
     // ORGANISER_PAYS: flag the child booking so the joiner is never billed and
     // cannot pay it; the organiser settles the group total. No-op for each-pays.
     organiserSettled,
+    // EACH_PAYS_OWN joiner can pay by card or Internet Banking; createConfirmedBooking
+    // raises + emails the Xero invoice when internet_banking is chosen.
+    paymentMethod: effectivePaymentMethod,
   });
 
   if (outcome.type === "capacityExceeded") {

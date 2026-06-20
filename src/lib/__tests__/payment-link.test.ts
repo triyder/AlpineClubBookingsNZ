@@ -45,6 +45,17 @@ vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: vi.fn(),
 }));
 
+const { loadEffectiveModuleFlagsMock } = vi.hoisted(() => ({
+  loadEffectiveModuleFlagsMock: vi.fn(),
+}));
+// Partial-mock so the module's other exports stay intact for transitive imports.
+vi.mock("@/lib/module-settings", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/module-settings")>(
+    "@/lib/module-settings"
+  );
+  return { ...actual, loadEffectiveModuleFlags: loadEffectiveModuleFlagsMock };
+});
+
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -173,6 +184,11 @@ describe("getPaymentLinkContext", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedBookingEventFindMany.mockResolvedValue([] as never);
+    // Internet Banking module on by default.
+    loadEffectiveModuleFlagsMock.mockResolvedValue({
+      xeroIntegration: true,
+      internetBankingPayments: true,
+    });
   });
 
   it("returns a payable context for a PENDING booking without marking the link used", async () => {
@@ -183,8 +199,23 @@ describe("getPaymentLinkContext", () => {
     expect(context.state).toBe("payable");
     expect(context.payable?.amountCents).toBe(12000);
     expect(context.payable?.status).toBe(BookingStatus.PENDING);
+    // Internet Banking is on, so the bank-transfer reference is offered.
+    expect(context.payable?.internetBankingReference).toBe("BOOKING-BOOKING-");
     expect(context.narrative.message).toContain("$120.00");
     expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  it("omits the internet banking reference when the module is off", async () => {
+    loadEffectiveModuleFlagsMock.mockResolvedValue({
+      xeroIntegration: false,
+      internetBankingPayments: false,
+    });
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN);
+
+    expect(context.state).toBe("payable");
+    expect(context.payable?.internetBankingReference).toBeUndefined();
   });
 
   it("returns a paid context and marks the link as used for a PAID booking", async () => {

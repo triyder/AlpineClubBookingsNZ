@@ -27,6 +27,7 @@ import {
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
+import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 
 export interface CancelBookingResult {
   success: boolean;
@@ -85,6 +86,20 @@ export async function cancelBooking(
 
   if (result.status === 200) {
     await cancelLinkedProvisionalChildBookings(bookingId, sessionUserId, ipAddress);
+    // If this booking hosts a group, clean up the joiners the PENDING-only sweep
+    // above never touches (ORGANISER_PAYS children, group closure). Best-effort:
+    // the organiser's own cancel has already committed, so a failure here is
+    // logged rather than surfaced, and the work is idempotent.
+    await settleGroupBookingOnOrganiserCancel(
+      bookingId,
+      sessionUserId,
+      ipAddress
+    ).catch((err) =>
+      logger.error(
+        { err, bookingId },
+        "Failed to clean up group booking on organiser cancel"
+      )
+    );
   }
 
   return result;

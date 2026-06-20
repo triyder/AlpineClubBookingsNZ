@@ -1,0 +1,382 @@
+"use client";
+
+import type { AgeTier } from "@prisma/client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2, CreditCard, Info, Landmark } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import type { ClubIdentity } from "@/config/club-identity-types";
+import {
+  getFamilyMemberBookingActionLabel,
+  getFamilyMemberBookingBlockMessage,
+  type BookingFamilyMember,
+} from "@/lib/family-booking";
+import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
+import { formatNZDate } from "@/lib/nzst-date";
+
+type PaymentMethod = "stripe" | "internet_banking";
+
+interface GroupSummary {
+  code: string;
+  status: string;
+  paymentMode: "EACH_PAYS_OWN" | "ORGANISER_PAYS";
+  organiserFirstName: string;
+  checkIn: string;
+  checkOut: string;
+  joinDeadline: string | null;
+  isJoinable: boolean;
+}
+
+interface FamilyMember extends BookingFamilyMember {
+  id: string;
+  firstName: string;
+  lastName: string;
+  ageTier: AgeTier;
+}
+
+/**
+ * Logged-in member self-add for a group booking. Mirrors the family quick-add on
+ * the book page: the member picks themselves and any bookable family members and
+ * POSTs to the authenticated /join endpoint. Non-member friends still use the
+ * public request form (GroupJoinPageClient); this panel only adds members.
+ *
+ * It reads no client session context (the (website) layout has no SessionProvider)
+ * — the server component renders it only for a logged-in visitor, and the join +
+ * family fetches ride the session cookie.
+ */
+export function MemberGroupJoinPanel({
+  club,
+  code,
+}: {
+  club: ClubIdentity;
+  code: string;
+}) {
+  const router = useRouter();
+
+  const [summary, setSummary] = useState<GroupSummary | null>(null);
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState("");
+  const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("stripe");
+  const [ibReference, setIbReference] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      fetch(`/api/group-bookings/${encodeURIComponent(code)}`).then(async (res) =>
+        res.ok ? ((await res.json()) as GroupSummary) : null
+      ),
+      fetch("/api/members/family")
+        .then((res) => (res.ok ? res.json() : { familyMembers: [] }))
+        .then((data) => (data.familyMembers || []) as FamilyMember[])
+        .catch(() => [] as FamilyMember[]),
+    ])
+      .then(([summaryData, family]) => {
+        if (cancelled) return;
+        if (!summaryData) {
+          setNotFound(true);
+          return;
+        }
+        setSummary(summaryData);
+        setFamilyMembers(family);
+        // Pre-select the member themselves (the common self-add case).
+        const self = family.find((fm) => fm.relationship === "self");
+        if (self && self.canBeBooked !== false) {
+          setSelectedIds(new Set([self.id]));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setNotFound(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  // Internet Banking is an optional module; only offer it when it's on.
+  useEffect(() => {
+    fetch("/api/payments/options")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) =>
+        setInternetBankingEnabled(
+          Boolean(data?.methods?.internetBanking?.enabled)
+        )
+      )
+      .catch(() => setInternetBankingEnabled(false));
+  }, []);
+
+  function toggle(id: string) {
+    setError("");
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  const selectedMembers = familyMembers.filter((fm) => selectedIds.has(fm.id));
+  const canSubmit = selectedMembers.length > 0 && !submitting;
+  // The payment-method choice only applies when the joiner pays for their own
+  // beds (EACH_PAYS_OWN) and the Internet Banking module is on.
+  const showPaymentMethodChoice =
+    summary?.paymentMode === "EACH_PAYS_OWN" && internetBankingEnabled;
+
+  async function submit() {
+    setSubmitting(true);
+    setError("");
+    const usingInternetBanking =
+      showPaymentMethodChoice && paymentMethod === "internet_banking";
+    try {
+      const res = await fetch(
+        `/api/group-bookings/${encodeURIComponent(code)}/join`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            guests: selectedMembers.map((fm) => ({
+              firstName: fm.firstName,
+              lastName: fm.lastName,
+              ageTier: fm.ageTier,
+              isMember: true,
+              memberId: fm.id,
+            })),
+            paymentMethod: usingInternetBanking ? "internet_banking" : "stripe",
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Unable to join right now.");
+      }
+      // Internet Banking: the Xero invoice is emailed; confirm in place with the
+      // payment reference instead of opening the card flow.
+      if (usingInternetBanking && data.bookingId) {
+        setIbReference(buildInternetBankingPaymentReference(data.bookingId));
+        setSubmitted(true);
+        return;
+      }
+      // EACH_PAYS_OWN card joiners owe for their beds — send them to the booking
+      // to pay. ORGANISER_PAYS (and $0) joins are done, so confirm in place.
+      if (data.requiresPayment && data.bookingId) {
+        router.push(`/bookings/${data.bookingId}`);
+        return;
+      }
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to join right now.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-lg items-center justify-center p-4">
+        <Card className="w-full">
+          <CardContent className="py-8 text-center text-muted-foreground">
+            Loading...
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (notFound || !summary) {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-lg items-center justify-center p-4">
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle>Group booking not found</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            We couldn&apos;t find a group booking for this link. Please check you copied the whole
+            link from the organiser, or ask them to share it again.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-lg p-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Join {summary.organiserFirstName}&apos;s group at {club.lodgeName}
+          </CardTitle>
+          <CardDescription>
+            {formatNZDate(new Date(summary.checkIn))} to {formatNZDate(new Date(summary.checkOut))}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {!summary.isJoinable ? (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              <Info className="h-5 w-5 shrink-0" />
+              <p>
+                This group is no longer accepting new joiners
+                {summary.joinDeadline
+                  ? ` (the deadline was ${formatNZDate(new Date(summary.joinDeadline))})`
+                  : ""}
+                . Please contact the organiser if you think this is a mistake.
+              </p>
+            </div>
+          ) : submitted ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-emerald-700">
+                <CheckCircle2 className="h-6 w-6 shrink-0" />
+                <p className="font-medium">You&apos;re in!</p>
+              </div>
+              {ibReference ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    We&apos;ve emailed you an invoice. Pay by internet banking using
+                    the reference below, and we&apos;ll confirm your beds once it
+                    arrives.
+                  </p>
+                  <div className="rounded-md border border-slate-200 p-3 text-sm">
+                    <p className="font-medium text-slate-900">Payment reference</p>
+                    <p className="mt-1 font-mono text-slate-900">{ibReference}</p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {summary.paymentMode === "ORGANISER_PAYS"
+                    ? `${summary.organiserFirstName} is settling the beds for this group, so there's nothing more to pay. We've added you to the group.`
+                    : "You've been added to the group."}
+                </p>
+              )}
+              <Button variant="outline" onClick={() => router.push("/bookings")}>
+                View my bookings
+              </Button>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Add yourself and your family to {summary.organiserFirstName}&apos;s group.
+                {summary.paymentMode === "ORGANISER_PAYS"
+                  ? ` ${summary.organiserFirstName} is paying for the group, so you won't be charged.`
+                  : " You'll be taken to pay for your beds after joining."}
+              </p>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Who is coming?</p>
+                <div className="grid gap-2">
+                  {familyMembers.map((fm) => {
+                    const selected = selectedIds.has(fm.id);
+                    const blocked = fm.canBeBooked === false;
+                    const label =
+                      fm.relationship === "self"
+                        ? `${fm.firstName} ${fm.lastName} (You)`
+                        : `${fm.firstName} ${fm.lastName} (${fm.ageTier})`;
+                    const blockMessage = getFamilyMemberBookingBlockMessage(fm);
+                    const actionLabel = getFamilyMemberBookingActionLabel(fm);
+                    return (
+                      <div
+                        key={fm.id}
+                        className={blocked ? "rounded-md border border-amber-200 bg-amber-50 p-3" : ""}
+                      >
+                        <Button
+                          type="button"
+                          variant={selected ? "default" : "outline"}
+                          size="sm"
+                          disabled={blocked}
+                          onClick={() => toggle(fm.id)}
+                          className="w-full justify-start"
+                        >
+                          {selected ? "✓ " : "+ "}
+                          {label}
+                        </Button>
+                        {blocked && blockMessage && (
+                          <p className="mt-2 text-sm text-amber-800">{blockMessage}</p>
+                        )}
+                        {blocked && actionLabel && (
+                          <p className="mt-1 text-xs font-medium text-amber-800">{actionLabel}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Bringing a non-member friend? They can join with the same link without signing in.
+                </p>
+              </div>
+
+              {showPaymentMethodChoice ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-muted-foreground">How would you like to pay?</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("stripe")}
+                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "stripe"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Card</span>
+                        <span className="block text-xs opacity-80">Pay now to secure your beds.</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("internet_banking")}
+                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "internet_banking"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Internet Banking</span>
+                        <span className="block text-xs opacity-80">Receive a Xero invoice by email.</span>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {error ? (
+                <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </div>
+              ) : null}
+
+              <Button onClick={submit} disabled={!canSubmit} className="w-full">
+                {submitting
+                  ? "Joining..."
+                  : summary.paymentMode === "ORGANISER_PAYS"
+                    ? "Join group"
+                    : showPaymentMethodChoice && paymentMethod === "internet_banking"
+                      ? "Join (invoice by email)"
+                      : "Join and pay"}
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

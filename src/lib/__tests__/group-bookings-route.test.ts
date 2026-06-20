@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   createNonMemberJoinRequest: vi.fn(),
   verifyAndCreateNonMemberJoin: vi.fn(),
   createGroupSettlementIntent: vi.fn(),
+  loadEffectiveModuleFlags: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -56,6 +57,15 @@ vi.mock("@/lib/group-settlement", () => ({
   createGroupSettlementIntent: mocks.createGroupSettlementIntent,
 }));
 
+// Internet Banking module gate (join route). Partial-mock so the module's other
+// exports (used transitively by admin-modules etc.) stay intact.
+vi.mock("@/lib/module-settings", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/module-settings")>(
+    "@/lib/module-settings"
+  );
+  return { ...actual, loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags };
+});
+
 import { POST } from "@/app/api/group-bookings/route";
 import { GET, PATCH } from "@/app/api/group-bookings/[code]/route";
 import { POST as joinPOST } from "@/app/api/group-bookings/[code]/join/route";
@@ -90,6 +100,10 @@ beforeEach(() => {
   mocks.applyRateLimit.mockReturnValue(null);
   mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
+  mocks.loadEffectiveModuleFlags.mockResolvedValue({
+    xeroIntegration: true,
+    internetBankingPayments: true,
+  });
 });
 
 describe("POST /api/group-bookings", () => {
@@ -286,10 +300,44 @@ describe("POST /api/group-bookings/[code]/join", () => {
       requiresPayment: true,
     });
     expect(mocks.joinGroupBookingAsMember).toHaveBeenCalledWith(
-      { code: "ABCD2345", guests: validBody.guests },
+      { code: "ABCD2345", guests: validBody.guests, paymentMethod: "stripe" },
       "member-1",
       "MEMBER"
     );
+  });
+
+  it("forwards an internet_banking choice when the module is on", async () => {
+    mocks.joinGroupBookingAsMember.mockResolvedValueOnce({
+      bookingId: "booking-ib",
+      status: "PAYMENT_PENDING",
+      isZeroDollarConfirmed: false,
+      finalPriceCents: 4500,
+      requiresPayment: true,
+      organiserSettled: false,
+    });
+    const res = await joinPOST(
+      joinRequest({ ...validBody, paymentMethod: "internet_banking" }),
+      { params: Promise.resolve({ code: "ABCD2345" }) }
+    );
+    expect(res.status).toBe(201);
+    expect(mocks.joinGroupBookingAsMember).toHaveBeenCalledWith(
+      { code: "ABCD2345", guests: validBody.guests, paymentMethod: "internet_banking" },
+      "member-1",
+      "MEMBER"
+    );
+  });
+
+  it("rejects internet_banking with 400 when the module is off", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValueOnce({
+      xeroIntegration: false,
+      internetBankingPayments: false,
+    });
+    const res = await joinPOST(
+      joinRequest({ ...validBody, paymentMethod: "internet_banking" }),
+      { params: Promise.resolve({ code: "ABCD2345" }) }
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.joinGroupBookingAsMember).not.toHaveBeenCalled();
   });
 
   it("maps a capacity-exceeded error to 409 with its code and details", async () => {

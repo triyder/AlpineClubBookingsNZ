@@ -8,6 +8,7 @@ import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
+import { SwitchToInternetBankingButton } from "@/components/switch-to-internet-banking-button";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
@@ -45,6 +46,11 @@ import { isBookingBedAllocationLocked } from "@/lib/admin-bed-allocation";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
+import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
+import {
+  OrganiserGroupBookingCard,
+  type OrganiserGroupState,
+} from "@/components/group-booking/organiser-group-booking-card";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
   default: "border-slate-200 bg-slate-100 text-slate-700",
@@ -160,6 +166,37 @@ export default async function BookingDetailPage({
           finalPriceCents: true,
           hasNonMembers: true,
           guests: { select: { id: true } },
+        },
+      },
+      // Group booking the owner organises on this booking (#796+). Drives the
+      // organiser management card: join code, share link, open/close and (for
+      // ORGANISER_PAYS) the combined settlement.
+      groupBookingAsOrganiser: {
+        select: {
+          joinCode: true,
+          status: true,
+          paymentMode: true,
+          joinDeadline: true,
+          maxJoiners: true,
+          settlement: {
+            select: { status: true, amountCents: true, paidAt: true },
+          },
+          joins: {
+            select: {
+              id: true,
+              isMember: true,
+              contactFirstName: true,
+              contactLastName: true,
+              joinerMember: { select: { firstName: true, lastName: true } },
+              booking: {
+                select: {
+                  status: true,
+                  finalPriceCents: true,
+                  guests: { select: { id: true } },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -291,6 +328,16 @@ export default async function BookingDetailPage({
     : null;
   const internetBankingPayment =
     booking.payment?.source === "INTERNET_BANKING" ? booking.payment : null;
+  // Switch-at-pay: a card PAYMENT_PENDING booking can move to Internet Banking
+  // when the module is on (an organiser-settled or already-IB booking cannot).
+  const canSwitchToInternetBanking =
+    modules.xeroIntegration &&
+    modules.internetBankingPayments &&
+    !isDeleted &&
+    !internetBankingPayment &&
+    booking.status === "PAYMENT_PENDING" &&
+    !booking.organiserSettled &&
+    booking.finalPriceCents > 0;
   const originalPaymentCaptured = hasCapturedPayment(booking.payment);
   const retainedAfterCancellationCents = booking.payment
     ? Math.max(
@@ -428,6 +475,50 @@ export default async function BookingDetailPage({
     0
   );
 
+  // Group booking organiser card (#796+). Only the owner manages their group;
+  // the API enforces ownership too. Non-member joins appear once they verify
+  // (i.e. once a child booking exists), so the roster is built from joins that
+  // have a booking.
+  const organiserGroup = booking.groupBookingAsOrganiser;
+  const organiserGroupState: OrganiserGroupState | null = organiserGroup
+    ? {
+        code: organiserGroup.joinCode,
+        status: organiserGroup.status,
+        paymentMode: organiserGroup.paymentMode,
+        joinDeadline: organiserGroup.joinDeadline?.toISOString() ?? null,
+        maxJoiners: organiserGroup.maxJoiners,
+        settlement: organiserGroup.settlement
+          ? {
+              status: organiserGroup.settlement.status,
+              amountCents: organiserGroup.settlement.amountCents,
+              paidAt: organiserGroup.settlement.paidAt?.toISOString() ?? null,
+            }
+          : null,
+        joiners: organiserGroup.joins
+          .filter((join) => join.booking)
+          .map((join) => ({
+            id: join.id,
+            name: join.joinerMember
+              ? `${join.joinerMember.firstName} ${join.joinerMember.lastName}`.trim()
+              : [join.contactFirstName, join.contactLastName]
+                  .filter(Boolean)
+                  .join(" ") || "Guest",
+            guestCount: join.booking?.guests.length ?? 0,
+            status: join.booking?.status ?? null,
+            priceCents: join.booking?.finalPriceCents ?? null,
+            isMember: join.isMember,
+          })),
+      }
+    : null;
+  const canOpenGroup =
+    isBookingOwner &&
+    !isDeleted &&
+    !booking.parentBookingId &&
+    !organiserGroup &&
+    OPENABLE_ORGANISER_STATUSES.includes(booking.status);
+  const showGroupSection =
+    isBookingOwner && (Boolean(organiserGroupState) || canOpenGroup);
+
   return (
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center justify-between">
@@ -522,6 +613,14 @@ export default async function BookingDetailPage({
       ) : null}
 
       <BookingEditor booking={editorData} canModify={canModify} />
+
+      {showGroupSection && (
+        <OrganiserGroupBookingCard
+          bookingId={booking.id}
+          canOpenGroup={canOpenGroup}
+          group={organiserGroupState}
+        />
+      )}
 
       {booking.createdBy && (
         <div className="rounded-md bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-600">
@@ -846,6 +945,9 @@ export default async function BookingDetailPage({
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
+            {canSwitchToInternetBanking && (
+              <SwitchToInternetBankingButton bookingId={booking.id} />
+            )}
           </CardContent>
         </Card>
       )}

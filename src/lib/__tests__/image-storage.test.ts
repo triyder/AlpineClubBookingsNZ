@@ -45,13 +45,13 @@ describe("image-storage", () => {
   });
 
   describe("imagePublicUrl", () => {
-    it("maps a stored file to its /images URL", () => {
+    it("maps a stored file to its /api/images/uploaded URL", () => {
       const abs = path.join(IMAGES_ROOT, "brand", "logo.png");
-      expect(imagePublicUrl(abs)).toBe("/images/brand/logo.png");
+      expect(imagePublicUrl(abs)).toBe("/api/images/uploaded/brand/logo.png");
     });
 
     it("returns the prefix for the root itself", () => {
-      expect(imagePublicUrl(IMAGES_ROOT)).toBe("/images");
+      expect(imagePublicUrl(IMAGES_ROOT)).toBe("/api/images/uploaded");
     });
   });
 

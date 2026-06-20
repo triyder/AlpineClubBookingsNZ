@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { AgeTier, GroupBookingPaymentMode, GroupBookingStatus } from "@prisma/client";
+import {
+  AgeTier,
+  BookingStatus,
+  GroupBookingPaymentMode,
+  GroupBookingStatus,
+} from "@prisma/client";
 import {
   generateGroupBookingCode,
   isGroupJoinable,
+  isOrganiserBookingActive,
   normaliseJoinCode,
   parseNonMemberJoinGuests,
   toGroupBookingSummary,
@@ -88,6 +94,33 @@ describe("isGroupJoinable", () => {
   });
 });
 
+describe("isOrganiserBookingActive", () => {
+  it("is active for live host statuses", () => {
+    for (const status of [
+      BookingStatus.PAID,
+      BookingStatus.CONFIRMED,
+      BookingStatus.PAYMENT_PENDING,
+    ]) {
+      expect(isOrganiserBookingActive({ status, deletedAt: null })).toBe(true);
+    }
+  });
+
+  it("is inactive when cancelled, bumped or soft-deleted", () => {
+    expect(
+      isOrganiserBookingActive({ status: BookingStatus.CANCELLED, deletedAt: null })
+    ).toBe(false);
+    expect(
+      isOrganiserBookingActive({ status: BookingStatus.BUMPED, deletedAt: null })
+    ).toBe(false);
+    expect(
+      isOrganiserBookingActive({
+        status: BookingStatus.PAID,
+        deletedAt: new Date("2026-06-01T00:00:00Z"),
+      })
+    ).toBe(false);
+  });
+});
+
 describe("toGroupBookingSummary", () => {
   const baseRecord: GroupBookingRecordForSummary = {
     joinCode: "ABCD2345",
@@ -97,6 +130,8 @@ describe("toGroupBookingSummary", () => {
     organiserBooking: {
       checkIn: new Date("2026-07-01T00:00:00Z"),
       checkOut: new Date("2026-07-03T00:00:00Z"),
+      status: BookingStatus.CONFIRMED,
+      deletedAt: null,
     },
     organiserMember: { firstName: "Andy" },
   };
@@ -124,6 +159,23 @@ describe("toGroupBookingSummary", () => {
       status: GroupBookingStatus.CLOSED,
     });
     expect(summary.isJoinable).toBe(false);
+  });
+
+  it("is not joinable when the host booking is no longer active", () => {
+    const cancelledHost = toGroupBookingSummary({
+      ...baseRecord,
+      organiserBooking: { ...baseRecord.organiserBooking, status: BookingStatus.CANCELLED },
+    });
+    expect(cancelledHost.isJoinable).toBe(false);
+
+    const deletedHost = toGroupBookingSummary({
+      ...baseRecord,
+      organiserBooking: {
+        ...baseRecord.organiserBooking,
+        deletedAt: new Date("2026-06-01T00:00:00Z"),
+      },
+    });
+    expect(deletedHost.isJoinable).toBe(false);
   });
 });
 
