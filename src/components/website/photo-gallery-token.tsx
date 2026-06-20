@@ -82,7 +82,10 @@ export function PhotoGalleryToken({
               buttons.forEach((button, index) => {
                 const isActive = index === pswp.currIndex;
                 button.classList.toggle("is-active", isActive);
-                button.setAttribute("aria-current", isActive ? "true" : "false");
+                button.setAttribute(
+                  "aria-current",
+                  isActive ? "true" : "false",
+                );
 
                 if (isActive) {
                   button.scrollIntoView({
