@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
+import { PhotoGalleryToken } from "@/components/website/photo-gallery-token";
 import { SkifieldConditionsWidget } from "@/components/website/skifield-conditions-widget";
 import { SkifieldWhakapapaWidget } from "@/components/website/skifield-whakapapa-widget";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
@@ -11,6 +12,7 @@ import {
   pageContentHtmlToPlainText,
 } from "@/lib/page-content-html";
 import { isReservedPageSlug, isValidPageSlug } from "@/lib/page-content";
+import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 
 type DynamicPageProps = {
   params: Promise<{
@@ -31,54 +33,6 @@ async function getPageForParams(props: DynamicPageProps) {
   }
 
   return getSanitizedPageContentByPath(`/${slug}`);
-}
-
-const EMBED_TOKEN_REGEX =
-  /\{\{\s*(committee-members-cards|member-application-form|contact-form|skifield-conditions|skifield-whakapapa)(?:\s*:\s*([a-f0-9]{32}))?\s*\}\}|\{\s*(committee-members-cards|member-application-form|contact-form|skifield-conditions|skifield-whakapapa)(?:\s*:\s*([a-f0-9]{32}))?\s*\}/gi;
-
-function buildEmbeddedBody(contentHtml: string) {
-  const parts: Array<
-    | { type: "html"; value: string }
-    | { type: "committee" }
-    | { type: "member-application-form" }
-    | { type: "contact-form" }
-    | { type: "skifield-conditions"; dataHash?: string }
-    | { type: "skifield-whakapapa" }
-  > = [];
-  let lastIndex = 0;
-
-  for (const match of contentHtml.matchAll(EMBED_TOKEN_REGEX)) {
-    const startIndex = match.index ?? 0;
-    const before = contentHtml.slice(lastIndex, startIndex);
-    if (before.trim().length > 0) {
-      parts.push({ type: "html", value: before });
-    }
-    const token = (match[1] ?? match[3] ?? "").toLowerCase();
-    const dataHash = (match[2] ?? match[4] ?? "").toLowerCase() || undefined;
-    if (token === "committee-members-cards") {
-      parts.push({ type: "committee" });
-    } else if (token === "member-application-form") {
-      parts.push({ type: "member-application-form" });
-    } else if (token === "skifield-conditions") {
-      parts.push({ type: "skifield-conditions", dataHash });
-    } else if (token === "skifield-whakapapa") {
-      parts.push({ type: "skifield-whakapapa" });
-    } else {
-      parts.push({ type: "contact-form" });
-    }
-    lastIndex = startIndex + match[0].length;
-  }
-
-  const trailing = contentHtml.slice(lastIndex);
-  if (trailing.trim().length > 0) {
-    parts.push({ type: "html", value: trailing });
-  }
-
-  if (parts.length === 0) {
-    return null;
-  }
-
-  return parts;
 }
 
 function pageSlugFromPath(path: string) {
@@ -111,7 +65,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
     notFound();
   }
 
-  const embeddedBody = buildEmbeddedBody(page.contentHtml);
+  const embeddedBody = await buildEmbeddedBody(page.contentHtml);
   const headerHtml = { __html: page.headerText };
   const pageSlug = pageSlugFromPath(page.path);
 
@@ -178,6 +132,28 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
                   return (
                     <SkifieldWhakapapaWidget
                       key={`skifield-whakapapa-${index}`}
+                    />
+                  );
+                }
+
+                if (part.type === "photo-gallery") {
+                  return (
+                    <PhotoGalleryToken
+                      key={`photo-gallery-${index}`}
+                      galleryId={`photo-gallery-${pageSlug}-${index}`}
+                      variant="gallery"
+                      images={part.images}
+                    />
+                  );
+                }
+
+                if (part.type === "photo-slideshow") {
+                  return (
+                    <PhotoGalleryToken
+                      key={`photo-slideshow-${index}`}
+                      galleryId={`photo-slideshow-${pageSlug}-${index}`}
+                      variant="slideshow"
+                      images={part.images}
                     />
                   );
                 }

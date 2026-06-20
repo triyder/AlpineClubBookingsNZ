@@ -3,10 +3,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type MemberSummary = {
   id: string;
@@ -42,7 +54,8 @@ export default function LockersPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [name, setName] = useState("");
-  const [allocatedToMemberId, setAllocatedToMemberId] = useState<string>("UNALLOCATED");
+  const [allocatedToMemberId, setAllocatedToMemberId] =
+    useState<string>("UNALLOCATED");
   const [allocatedToSearch, setAllocatedToSearch] = useState("");
   const [editingLockerId, setEditingLockerId] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberSummary[]>([]);
@@ -63,7 +76,11 @@ export default function LockersPage() {
       setMembers(body.members ?? []);
       setLockers(body.lockers ?? []);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load lockers");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load lockers",
+      );
     } finally {
       setLoading(false);
     }
@@ -99,7 +116,12 @@ export default function LockersPage() {
           });
       const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.error || (editingLockerId ? "Failed to update locker" : "Failed to create locker"));
+        throw new Error(
+          body.error ||
+            (editingLockerId
+              ? "Failed to update locker"
+              : "Failed to create locker"),
+        );
       }
 
       if (editingLockerId) {
@@ -151,13 +173,9 @@ export default function LockersPage() {
     const clone = [...lockers];
     clone.sort((a, b) => {
       const aValue =
-        sortField === "name"
-          ? a.name
-          : memberDisplayName(a.allocatedTo);
+        sortField === "name" ? a.name : memberDisplayName(a.allocatedTo);
       const bValue =
-        sortField === "name"
-          ? b.name
-          : memberDisplayName(b.allocatedTo);
+        sortField === "name" ? b.name : memberDisplayName(b.allocatedTo);
 
       const result = aValue.localeCompare(bValue, "en-NZ", {
         sensitivity: "base",
@@ -198,7 +216,10 @@ export default function LockersPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleFormSubmit} className="grid gap-4 sm:grid-cols-3">
+          <form
+            onSubmit={handleFormSubmit}
+            className="grid gap-4 sm:grid-cols-3"
+          >
             <div className="space-y-1 sm:col-span-1">
               <Label htmlFor="locker-name">Name</Label>
               <Input
@@ -226,7 +247,9 @@ export default function LockersPage() {
                   <div className="p-2">
                     <Input
                       value={allocatedToSearch}
-                      onChange={(event) => setAllocatedToSearch(event.target.value)}
+                      onChange={(event) =>
+                        setAllocatedToSearch(event.target.value)
+                      }
                       onKeyDown={handleAllocatedToSearchKeyDown}
                       placeholder="Search member"
                       className="h-8"
@@ -239,20 +262,28 @@ export default function LockersPage() {
                     </SelectItem>
                   ))}
                   {filteredMembers.length === 0 ? (
-                    <div className="px-2 pb-2 text-xs text-slate-500">No members found.</div>
+                    <div className="px-2 pb-2 text-xs text-slate-500">
+                      No members found.
+                    </div>
                   ) : null}
                 </SelectContent>
               </Select>
             </div>
             <div className="sm:col-span-1 flex items-end">
-              <Button type="submit" disabled={saving} className="w-full sm:w-auto">
-                {saving ? "Saving..." : editingLockerId ? "Update Locker" : "Create Locker"}
+              <Button
+                type="submit"
+                disabled={saving}
+                className="w-full sm:w-auto"
+              >
+                {saving
+                  ? "Saving..."
+                  : editingLockerId
+                    ? "Update Locker"
+                    : "Create Locker"}
               </Button>
             </div>
           </form>
-          {error ? (
-            <p className="mt-3 text-sm text-red-600">{error}</p>
-          ) : null}
+          {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
         </CardContent>
       </Card>
 
@@ -280,7 +311,9 @@ export default function LockersPage() {
                         onClick={() => toggleSort("name")}
                       >
                         Name
-                        {sortField === "name" ? <SortIcon className="h-3.5 w-3.5" /> : null}
+                        {sortField === "name" ? (
+                          <SortIcon className="h-3.5 w-3.5" />
+                        ) : null}
                       </button>
                     </th>
                     <th className="px-4 py-3">
@@ -290,7 +323,9 @@ export default function LockersPage() {
                         onClick={() => toggleSort("allocatedTo")}
                       >
                         Allocated To
-                        {sortField === "allocatedTo" ? <SortIcon className="h-3.5 w-3.5" /> : null}
+                        {sortField === "allocatedTo" ? (
+                          <SortIcon className="h-3.5 w-3.5" />
+                        ) : null}
                       </button>
                     </th>
                   </tr>
@@ -311,7 +346,9 @@ export default function LockersPage() {
                           <span>{locker.name}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">{memberDisplayName(locker.allocatedTo)}</td>
+                      <td className="px-4 py-3">
+                        {memberDisplayName(locker.allocatedTo)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

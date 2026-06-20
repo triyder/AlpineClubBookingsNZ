@@ -1617,6 +1617,34 @@ export function PageContentPanel() {
               On this editor page do the following:{" "}
               <code>{"{{skifield-whakapapa}}"}</code>
             </p>
+            <p>
+              <i>
+                <b>photo-gallery</b>
+              </i>
+              <br />
+              This will display a PhotoSwipe gallery using the images already
+              inserted into the page body.
+              <br />
+              Add your images to the page body, then place the token where the
+              gallery should appear.
+              <br />
+              You can also pass a folder path, for example:
+              <code>{"{{photo-gallery:/public/images/photos/One}}"}</code>
+            </p>
+            <p>
+              <i>
+                <b>photo-slideshow</b>
+              </i>
+              <br />
+              This will display the same images in a slideshow-oriented
+              PhotoSwipe layout.
+              <br />
+              Use the same folder-path format when you want to load all photos
+              from a directory.
+              <br />
+              For example:{" "}
+              <code>{"{{photo-slideshow:/public/images/photos/One}}"}</code>
+            </p>
           </div>
         </DialogContent>
       </Dialog>
@@ -1918,6 +1946,12 @@ export function PageContentPanel() {
                   </span>
                   <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
                     contact-form
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    photo-gallery
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    photo-slideshow
                   </span>
                 </div>
                 <p className="mt-2 text-[11px] text-slate-500">
