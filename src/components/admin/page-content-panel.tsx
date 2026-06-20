@@ -1626,6 +1626,7 @@ export function PageContentPanel() {
           const textPreview = stripHtml(page.contentHtml);
           const hasContent = textPreview.length > 0;
           const isSystem = isSystemPageSlug(page.slug);
+          const hasMenuTitle = page.menuTitle.trim().length > 0;
 
           return (
             <Card key={page.slug}>
@@ -1635,13 +1636,21 @@ export function PageContentPanel() {
                     <CardTitle>{page.title}</CardTitle>
                     <CardDescription>{page.path}</CardDescription>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                     {isSystem && (
                       <Badge
                         variant="outline"
                         className="text-[10px] uppercase text-slate-500"
                       >
                         System
+                      </Badge>
+                    )}
+                    {!hasMenuTitle && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] uppercase text-slate-500"
+                      >
+                        No menu
                       </Badge>
                     )}
                     <Badge variant={hasContent ? "default" : "secondary"}>
