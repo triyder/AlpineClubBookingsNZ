@@ -92,6 +92,29 @@ export interface ExhaustedEmailFailure {
   reviewNote: string | null;
 }
 
+export interface AdminAlertDeliveryEscalation {
+  id: string;
+  templateName: string;
+  preferenceKey: string;
+  attemptedRecipientCount: number;
+  suppressedRecipientCount: number;
+  failedRecipientCount: number;
+  createdAt: string;
+}
+
+export interface TokenEmailRecoveryFailure {
+  id: string;
+  to: string;
+  subject: string;
+  templateName: string;
+  status: string;
+  lastAttemptAt: string;
+  errorMessage: string | null;
+  createdAt: string;
+  reissuedAt: string | null;
+  reissuedById: string | null;
+}
+
 export interface HealthData {
   health: {
     status: string;
@@ -127,6 +150,22 @@ export interface HealthData {
     };
     failures: ExhaustedEmailFailure[];
     recentlyReviewed: ExhaustedEmailFailure[];
+  };
+  adminAlertDelivery: {
+    summary: {
+      recentCount: number;
+      lookbackDays: number;
+    };
+    escalations: AdminAlertDeliveryEscalation[];
+  };
+  tokenEmailRecovery: {
+    summary: {
+      activeCount: number;
+      reissuedCount: number;
+      scannedCount: number;
+    };
+    failures: TokenEmailRecoveryFailure[];
+    recentlyReissued: TokenEmailRecoveryFailure[];
   };
   systemInfo: {
     version: string;

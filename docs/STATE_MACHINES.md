@@ -18,8 +18,28 @@ AWAITING_REVIEW -> CONFIRMED/PAID or CANCELLED
 ```
 
 To verify in later review: exact terminal transitions, capacity-holding
-statuses, non-member hold expiry, admin force-confirm behavior, school group
-`CONFIRMED` semantics, and payment-failure back paths.
+statuses, non-member hold expiry, school group `CONFIRMED` semantics, and
+payment-failure back paths.
+
+### BookingEvent Scope
+
+`BookingEvent` is a durable narrative fact store, not the complete transition
+ledger. It stores the facts needed to explain member/admin-visible events such
+as creation, payment, bumping, cancellation, refund, and credit outcomes after
+AuditLog retention pruning.
+
+Transitions that do not need a narrative fact remain durable through their
+own state fields or operational ledgers. For example, waitlist offers and
+expiries use booking waitlist fields plus waitlist/audit records, admin review
+and force-confirm actions use booking status/admin review fields plus AuditLog,
+scheduled completion uses booking status plus CronJobRun, and money/provider
+work uses payment, transaction, refund, recovery, and Xero outbox ledgers.
+
+Admin force-confirm records are written in the same transaction as the booking
+status change. Explicit overbook overrides use the
+`waitlist.force_confirmed_overbook` action with critical severity, preserved
+retention, overbooked date-only nights, and an admin waitlist completion report
+linking directly to the filtered audit record.
 
 ## Booking Modification Lifecycle
 
@@ -74,8 +94,10 @@ offer accepted -> confirmed or paid booking
 offer expires/declined -> WAITLISTED or CANCELLED
 ```
 
-To verify: offer expiry cron, retry count, email visibility, and admin repair
-path for stale offers.
+The admin waitlist view decorates active `WAITLIST_OFFERED` rows with the latest
+`waitlist-offer` EmailLog status. Failed, exhausted, bounced, or missing delivery
+records are surfaced beside the offer with a link to email-deliverability
+recovery, so state changes are not hidden behind best-effort email delivery.
 
 ## Bed Allocation Lifecycle
 

@@ -13,6 +13,22 @@ import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-retur
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
+interface OfferEmailDelivery {
+  status: "QUEUED" | "SENT" | "FAILED" | "BOUNCED" | "MISSING";
+  emailLogId: string | null;
+  attempts: number | null;
+  lastAttemptAt: string | null;
+  errorMessage: string | null;
+  retryState:
+    | "delivered"
+    | "queued"
+    | "retrying"
+    | "exhausted"
+    | "undeliverable"
+    | "missing";
+  needsOperatorAction: boolean;
+}
+
 interface WaitlistEntry {
   id: string;
   memberName: string;
@@ -29,6 +45,15 @@ interface WaitlistEntry {
   adminReviewReason: string | null;
   finalPriceCents: number;
   createdAt: string;
+  offerEmailDelivery: OfferEmailDelivery | null;
+}
+
+interface ForceConfirmReport {
+  bookingId: string;
+  status: string | null;
+  overbooked: boolean;
+  overbookDates: string[];
+  auditAction: string | null;
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {
@@ -70,6 +95,16 @@ function getErrorMessage(data: unknown, fallback: string) {
   return fallback;
 }
 
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
 function getWaitlistActionContext(entry: WaitlistEntry) {
   if (entry.status === "WAITLIST_OFFERED") {
     const expires = formatDateTime(entry.waitlistOfferExpiresAt);
@@ -81,6 +116,66 @@ function getWaitlistActionContext(entry: WaitlistEntry) {
   }
 
   return "Waiting for capacity";
+}
+
+function getOfferEmailSummary(delivery: OfferEmailDelivery) {
+  switch (delivery.retryState) {
+    case "delivered":
+      return "Offer email sent";
+    case "queued":
+      return "Offer email queued";
+    case "retrying":
+      return `Offer email retrying (${delivery.attempts ?? "?"}/3)`;
+    case "exhausted":
+      return "Offer email retry exhausted";
+    case "undeliverable":
+      return "Offer email undeliverable";
+    case "missing":
+      return "Offer email log missing";
+  }
+}
+
+function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
+  if (delivery.needsOperatorAction) {
+    return "bg-red-100 text-red-800";
+  }
+
+  if (delivery.retryState === "retrying" || delivery.retryState === "queued") {
+    return "bg-amber-100 text-amber-800";
+  }
+
+  return "bg-emerald-100 text-emerald-800";
+}
+
+function formatOfferEmailDetail(delivery: OfferEmailDelivery) {
+  if (delivery.retryState === "delivered" && delivery.lastAttemptAt) {
+    return `Last delivery ${formatDateTime(delivery.lastAttemptAt)}`;
+  }
+
+  if (delivery.retryState === "queued" && delivery.lastAttemptAt) {
+    return `Queued ${formatDateTime(delivery.lastAttemptAt)}`;
+  }
+
+  if (delivery.errorMessage) {
+    return delivery.errorMessage;
+  }
+
+  if (delivery.lastAttemptAt) {
+    return `Last attempt ${formatDateTime(delivery.lastAttemptAt)}`;
+  }
+
+  return null;
+}
+
+function buildForceConfirmAuditPath(report: ForceConfirmReport) {
+  const params = new URLSearchParams({
+    eventType: report.auditAction ?? "waitlist.force_confirmed_overbook",
+    entityType: "Booking",
+    severity: "critical",
+    q: report.bookingId,
+  });
+
+  return buildPathWithSearch("/admin/audit-log", params);
 }
 
 export default function AdminWaitlistPage() {
@@ -99,6 +194,8 @@ export default function AdminWaitlistPage() {
     bookingId: string;
     dates: string[];
   } | null>(null);
+  const [forceConfirmReport, setForceConfirmReport] =
+    useState<ForceConfirmReport | null>(null);
   const [error, setError] = useState("");
   const [from, setFrom] = useState(fromParam);
   const [to, setTo] = useState(toParam);
@@ -239,10 +336,19 @@ export default function AdminWaitlistPage() {
 
     if (res.ok && data.success) {
       setOverbookDialog(null);
+      setForceConfirmReport({
+        bookingId,
+        status: readString(data.status),
+        overbooked: data.overbooked === true,
+        overbookDates: readStringArray(data.overbookDates),
+        auditAction: readString(data.auditAction),
+      });
       await loadEntries();
     } else if (data.error === "CAPACITY_EXCEEDED" && data.overbookDates) {
+      setForceConfirmReport(null);
       setOverbookDialog({ bookingId, dates: data.overbookDates });
     } else {
+      setForceConfirmReport(null);
       setError(data.error || "Failed to force-confirm booking");
     }
 
@@ -262,6 +368,36 @@ export default function AdminWaitlistPage() {
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {forceConfirmReport?.overbooked && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="pt-6 space-y-3">
+            <div>
+              <p className="font-medium text-red-900">
+                Force-confirmed overbooked booking
+              </p>
+              {forceConfirmReport.status && (
+                <p className="text-sm text-red-800">
+                  New status: {bookingStatusLabel(forceConfirmReport.status)}
+                </p>
+              )}
+            </div>
+            {forceConfirmReport.overbookDates.length > 0 && (
+              <ul className="list-disc list-inside text-sm text-red-800">
+                {forceConfirmReport.overbookDates.map((date) => (
+                  <li key={date}>{date}</li>
+                ))}
+              </ul>
+            )}
+            <Link
+              href={buildForceConfirmAuditPath(forceConfirmReport)}
+              className="text-sm text-blue-700 hover:underline"
+            >
+              View critical audit record
+            </Link>
+          </CardContent>
+        </Card>
       )}
 
       <Card>
@@ -420,6 +556,29 @@ export default function AdminWaitlistPage() {
                       <p className="mt-1 text-xs text-gray-500">
                         {getWaitlistActionContext(entry)}
                       </p>
+                      {entry.offerEmailDelivery && (
+                        <div className="mt-2 space-y-1">
+                          <Badge
+                            variant="secondary"
+                            className={getOfferEmailBadgeClass(entry.offerEmailDelivery)}
+                          >
+                            {getOfferEmailSummary(entry.offerEmailDelivery)}
+                          </Badge>
+                          {formatOfferEmailDetail(entry.offerEmailDelivery) && (
+                            <p className="max-w-xs text-xs text-gray-500">
+                              {formatOfferEmailDetail(entry.offerEmailDelivery)}
+                            </p>
+                          )}
+                          {entry.offerEmailDelivery.needsOperatorAction && (
+                            <Link
+                              href="/admin/email-deliverability"
+                              className="block text-xs text-blue-600 hover:underline"
+                            >
+                              Review email recovery
+                            </Link>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-xs">{formatDateTime(entry.createdAt)}</td>
                     <td className="px-3 py-2">

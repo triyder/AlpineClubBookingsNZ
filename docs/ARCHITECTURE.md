@@ -258,6 +258,8 @@ captures without running the normal booking-confirmation path.
 Operational Xero handles member/contact sync, booking invoices, payments,
 credit notes, item codes, contact groups, inbound webhooks, local caches, retry
 queues, and usage metering. Xero tokens are encrypted at rest.
+OAuth token refresh uses a short database-backed lease on the operational
+token row so multiple app workers cannot use the same rotating refresh token.
 Internet Banking bookings use this boundary to issue invoice-backed payment
 instructions and reconcile settlement from inbound Xero invoice/payment state.
 
@@ -275,6 +277,14 @@ and complaint suppression. Email templates should avoid embedding secrets and
 should use effective recipient logic for dependents where required. Editable
 templates and admin/system delivery policies are registered in the email
 message registry and surfaced in Admin Setup and Admin Notifications.
+If an admin/system alert cannot be delivered to any opted-in admin recipient
+because every send is suppressed or fails, the app records a critical
+communication audit event and surfaces it in Admin Email Deliverability.
+Failed token-bearing lifecycle emails for nomination requests, member setup
+invites, and membership cancellation confirmations are not auto-retried because
+their HTML is redacted; Admin Email Deliverability exposes a reissue action that
+creates a fresh token and resends the lifecycle email after any active
+suppression has been cleared.
 Membership cancellation, archive, and hard-delete lifecycle messages use that
 registry so operators can preview and override copy without bypassing the
 shared `sendEmail` path.
@@ -296,7 +306,7 @@ disable cron with `CRON_ENABLED=false`.
 | `xero-membership` | Daily | Sync membership invoice state |
 | `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings |
-| `credit-reconciliation` | Daily | Reconcile account-credit ledger state |
+| `credit-reconciliation` | Daily | Reconcile account-credit ledger state and alert on refunded Stripe payments missing Xero credit notes |
 | `hut-leader-auto-assign` | Daily | Suggest hut leaders |
 | `age-up` | Daily | Process age-tier/member transitions |
 | `capacity-warnings` | Daily | Alert when lodge occupancy approaches limits |
