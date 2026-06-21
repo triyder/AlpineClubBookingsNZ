@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   coerceWhakapapaCurlData,
   emptyWhakapapaCurlData,
@@ -16,7 +13,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 
 type WhakapapaReportCacheRecord = {
   source: string;
-  payload: Prisma.JsonValue;
+  payload: unknown;
   fetchedAt: Date;
   frozenUntil: Date | null;
 };
@@ -29,12 +26,12 @@ type WhakapapaReportCacheDelegate = {
     where: { source: string };
     create: {
       source: string;
-      payload: Prisma.InputJsonValue;
+      payload: unknown;
       fetchedAt: Date;
       frozenUntil: Date | null;
     };
     update: {
-      payload: Prisma.InputJsonValue;
+      payload: unknown;
       fetchedAt: Date;
       frozenUntil: Date | null;
     };
@@ -54,16 +51,6 @@ function isFrozenUntil(frozenUntil: Date | null): boolean {
 }
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
   const existing = await whakapapaReportCache.findUnique({
     where: { source: WHAKAPAPA_SOURCE },
   });
@@ -89,12 +76,12 @@ export async function GET() {
       where: { source: WHAKAPAPA_SOURCE },
       create: {
         source: WHAKAPAPA_SOURCE,
-        payload: curlData as unknown as Prisma.InputJsonValue,
+        payload: curlData,
         fetchedAt: new Date(),
         frozenUntil: null,
       },
       update: {
-        payload: curlData as unknown as Prisma.InputJsonValue,
+        payload: curlData,
         fetchedAt: new Date(),
         frozenUntil: null,
       },
