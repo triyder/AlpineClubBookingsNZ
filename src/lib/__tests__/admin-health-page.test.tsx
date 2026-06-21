@@ -81,6 +81,22 @@ function healthResponse() {
       failures: [],
       recentlyReviewed: [],
     },
+    adminAlertDelivery: {
+      summary: {
+        recentCount: 0,
+        lookbackDays: 7,
+      },
+      escalations: [],
+    },
+    tokenEmailRecovery: {
+      summary: {
+        activeCount: 0,
+        reissuedCount: 0,
+        scannedCount: 0,
+      },
+      failures: [],
+      recentlyReissued: [],
+    },
     systemInfo: {
       version: "0.1.0",
       nodeVersion: "v20.0.0",

@@ -59,6 +59,7 @@ function waitlistEntry() {
     adminReviewReason: "Booking has no adult guest",
     finalPriceCents: 12500,
     createdAt: "2026-05-01T00:00:00.000Z",
+    offerEmailDelivery: null,
   };
 }
 
@@ -108,6 +109,110 @@ describe("Admin waitlist page", () => {
     expect(bookingHref).toContain(
       "/bookings/booking-1?returnTo=/admin/waitlist?from=2026-07-01&to=2026-07-31&page=2&pageSize=10"
     );
+  });
+
+  it("surfaces failed waitlist offer email recovery state", async () => {
+    mocks.currentSearch = "";
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            ...waitlistEntry(),
+            offerEmailDelivery: {
+              status: "FAILED",
+              emailLogId: "email-log-1",
+              attempts: 3,
+              lastAttemptAt: "2026-06-01T09:30:00.000Z",
+              errorMessage: "SMTP rejected recipient",
+              retryState: "exhausted",
+              needsOperatorAction: true,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      }),
+    });
+
+    render(<AdminWaitlistPage />);
+
+    await screen.findByText("Offer email retry exhausted");
+    expect(screen.getByText("SMTP rejected recipient")).toBeTruthy();
+    const recoveryLink = screen.getByRole("link", {
+      name: /Review email recovery/i,
+    });
+    expect(recoveryLink.getAttribute("href")).toBe("/admin/email-deliverability");
+  });
+
+  it("reports force-confirmed overbook dates and links the critical audit record", async () => {
+    mocks.currentSearch = "";
+    let waitlistLoads = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+
+      if (url === "/api/admin/waitlist") {
+        waitlistLoads += 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            entries: waitlistLoads === 1 ? [waitlistEntry()] : [],
+            page: 1,
+            pageSize: 25,
+            total: waitlistLoads === 1 ? 1 : 0,
+          }),
+        });
+      }
+
+      if (url === "/api/admin/bookings/booking-1/force-confirm") {
+        const requestBody = JSON.parse(String(init?.body ?? "{}")) as {
+          allowOverbook?: boolean;
+        };
+
+        if (requestBody.allowOverbook) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              success: true,
+              overbooked: true,
+              overbookDates: ["2026-07-01"],
+              auditAction: "waitlist.force_confirmed_overbook",
+              status: "PAYMENT_PENDING",
+            }),
+          });
+        }
+
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({
+            error: "CAPACITY_EXCEEDED",
+            overbookDates: ["2026-07-01"],
+          }),
+        });
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<AdminWaitlistPage />);
+
+    await screen.findByText("Jane Doe");
+    fireEvent.click(screen.getByRole("button", { name: "Force Confirm" }));
+    await screen.findByText("This will overbook the lodge on the following dates:");
+    fireEvent.click(screen.getByRole("button", { name: /Confirm Anyway/i }));
+
+    await screen.findByText("Force-confirmed overbooked booking");
+    expect(screen.getByText("New status: Payment Pending")).toBeTruthy();
+    expect(screen.getByText("2026-07-01")).toBeTruthy();
+    const auditLink = screen.getByRole("link", {
+      name: /View critical audit record/i,
+    });
+    const auditHref = decodeURIComponent(auditLink.getAttribute("href") ?? "");
+    expect(auditHref).toContain("/admin/audit-log?");
+    expect(auditHref).toContain("eventType=waitlist.force_confirmed_overbook");
+    expect(auditHref).toContain("severity=critical");
+    expect(auditHref).toContain("q=booking-1");
   });
 
   it("keeps date filters, page size, and pagination in the URL query", async () => {
