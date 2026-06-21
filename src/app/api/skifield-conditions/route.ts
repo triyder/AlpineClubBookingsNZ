@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const SNZ_WIDGET_ENDPOINT_PREFIX = "https://snowhq.com/widget/";
 
@@ -15,6 +17,16 @@ function isValidHash(value: string) {
 }
 
 export async function GET(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
+
   const { searchParams } = new URL(request.url);
   const hash = (searchParams.get("hash") ?? "").trim();
 
