@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   paymentUpsert: vi.fn(),
   settlementUpsert: vi.fn(),
   settlementFindUnique: vi.fn(),
+  settlementFindFirst: vi.fn(),
   settlementUpdate: vi.fn(),
   txExecuteRaw: vi.fn(),
   transaction: vi.fn(),
@@ -24,7 +25,9 @@ const mocks = vi.hoisted(() => ({
   reconcileBedAllocations: vi.fn(),
   recordBookingEvent: vi.fn(),
   enqueueXeroInvoice: vi.fn(),
+  enqueueSettlementInvoice: vi.fn(),
   kickXero: vi.fn(),
+  loadModuleFlags: vi.fn(),
   sendSettlementReceipt: vi.fn(),
   sendJoinSettled: vi.fn(),
 }));
@@ -52,6 +55,7 @@ vi.mock("@/lib/prisma", () => ({
     groupBookingSettlement: {
       upsert: mocks.settlementUpsert,
       findUnique: mocks.settlementFindUnique,
+      findFirst: mocks.settlementFindFirst,
       update: mocks.settlementUpdate,
     },
     $transaction: mocks.transaction,
@@ -73,7 +77,11 @@ vi.mock("@/lib/booking-events", () => ({
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mocks.enqueueXeroInvoice,
+  enqueueXeroGroupSettlementInvoiceOperation: mocks.enqueueSettlementInvoice,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickXero,
+}));
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: mocks.loadModuleFlags,
 }));
 vi.mock("@/lib/email", () => ({
   sendGroupSettlementReceiptEmail: mocks.sendSettlementReceipt,
@@ -86,6 +94,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   createGroupSettlementIntent,
   applyGroupSettlementSucceeded,
+  applyGroupSettlementSucceededFromInvoice,
 } from "@/lib/group-settlement";
 import { GroupBookingError } from "@/lib/group-booking";
 
@@ -120,7 +129,13 @@ beforeEach(() => {
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.enqueueXeroInvoice.mockResolvedValue({ queueOperationId: null });
+  mocks.enqueueSettlementInvoice.mockResolvedValue({ queueOperationId: "op_settle_1" });
   mocks.kickXero.mockResolvedValue(undefined);
+  mocks.loadModuleFlags.mockResolvedValue({
+    xeroIntegration: true,
+    internetBankingPayments: true,
+  });
+  mocks.settlementUpsert.mockResolvedValue({ id: "settle-1", groupBookingId: GROUP_ID });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
   mocks.createPaymentIntent.mockResolvedValue({
     id: "pi_settle_1",
@@ -249,6 +264,70 @@ describe("createGroupSettlementIntent", () => {
     ).rejects.toMatchObject({ status: 409, code: "CAPACITY_EXCEEDED" });
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
   });
+
+  it("internet banking: commits children, enqueues one combined invoice, opens no Stripe intent", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+
+    const result = await createGroupSettlementIntent(
+      "ABCD2345",
+      ORGANISER,
+      "internet_banking"
+    );
+
+    expect(result.outcome).toBe("invoice_sent");
+    expect(result.amountCents).toBe(9000);
+    expect(result.childCount).toBe(2);
+    expect(result.reference).toBe(`GROUP-${GROUP_ID.slice(0, 8).toUpperCase()}`);
+    // Beds held: both children committed to CONFIRMED.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.CONFIRMED }),
+      })
+    );
+    // The settlement records the Internet Banking source, no Stripe intent.
+    expect(mocks.settlementUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          source: PaymentSource.INTERNET_BANKING,
+          amountCents: 9000,
+          status: PaymentStatus.PENDING,
+        }),
+      })
+    );
+    // One combined invoice enqueued; never a Stripe PaymentIntent.
+    expect(mocks.enqueueSettlementInvoice).toHaveBeenCalledWith("settle-1");
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("internet banking: rejects with 400 when the module is off (no beds held, no invoice)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.loadModuleFlags.mockResolvedValue({
+      xeroIntegration: false,
+      internetBankingPayments: false,
+    });
+
+    await expect(
+      createGroupSettlementIntent("ABCD2345", ORGANISER, "internet_banking")
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mocks.enqueueSettlementInvoice).not.toHaveBeenCalled();
+    expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
 });
 
 describe("applyGroupSettlementSucceeded", () => {
@@ -355,6 +434,103 @@ describe("applyGroupSettlementSucceeded", () => {
     expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(2);
     expect(mocks.enqueueXeroInvoice).toHaveBeenCalledTimes(2);
     // Notifications: one organiser receipt + one confirmation per joiner.
+    expect(mocks.sendSettlementReceipt).toHaveBeenCalledTimes(1);
+    expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("applyGroupSettlementSucceededFromInvoice", () => {
+  it("returns not_found when no settlement matches the invoice", async () => {
+    mocks.settlementFindFirst.mockResolvedValue(null);
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_x");
+    expect(result.outcome).toBe("not_found");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent for an already-succeeded settlement", async () => {
+    mocks.settlementFindFirst.mockResolvedValue({
+      id: "s1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 9000,
+      groupBookingId: GROUP_ID,
+      groupBooking: { organiserBookingId: ORG_BOOKING },
+    });
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
+    expect(result.outcome).toBe("already_settled");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("flips every confirmed child to PAID with Internet Banking payments and no per-child invoices", async () => {
+    mocks.settlementFindFirst.mockResolvedValue({
+      id: "s1",
+      status: PaymentStatus.PENDING,
+      amountCents: 9000,
+      stripeCustomerId: null,
+      xeroInvoiceId: "xinv_1",
+      xeroInvoiceNumber: "INV-0042",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: {
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    });
+    // Inside the lock: re-confirm still unpaid.
+    mocks.settlementFindUnique.mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+    mocks.bookingFindMany
+      // Inside the lock: the confirmed children to settle.
+      .mockResolvedValueOnce([
+        { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+        { id: "child-2", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      ])
+      // After commit: the settled bookings re-loaded for the joiner emails.
+      .mockResolvedValueOnce([
+        {
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j1@example.com", firstName: "Jo" },
+          _count: { guests: 1 },
+        },
+        {
+          checkIn: new Date(),
+          checkOut: new Date(),
+          member: { email: "j2@example.com", firstName: "Sam" },
+          _count: { guests: 2 },
+        },
+      ]);
+
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
+
+    expect(result.outcome).toBe("settled");
+    expect(result.settledBookingIds).toEqual(["child-1", "child-2"]);
+    expect(mocks.paymentUpsert).toHaveBeenCalledTimes(2);
+    // Per-child payments carry the Internet Banking source + the invoice number.
+    expect(mocks.paymentUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          source: PaymentSource.INTERNET_BANKING,
+          status: PaymentStatus.SUCCEEDED,
+          reference: "INV-0042",
+        }),
+      })
+    );
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingStatus.PAID }),
+      })
+    );
+    expect(mocks.settlementUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: PaymentStatus.SUCCEEDED }),
+      })
+    );
+    // The combined invoice already covers the group: no per-child Xero invoices.
+    expect(mocks.enqueueXeroInvoice).not.toHaveBeenCalled();
+    // Notifications still fire: organiser receipt + one per joiner.
     expect(mocks.sendSettlementReceipt).toHaveBeenCalledTimes(1);
     expect(mocks.sendJoinSettled).toHaveBeenCalledTimes(2);
   });

@@ -11,3 +11,7 @@ export const DEFAULT_BOOKING_PAYMENT_METHOD: BookingPaymentMethod = "stripe";
 export function buildInternetBankingPaymentReference(bookingId: string) {
   return `BOOKING-${bookingId.slice(0, 8).toUpperCase()}`;
 }
+
+export function buildGroupSettlementPaymentReference(groupBookingId: string) {
+  return `GROUP-${groupBookingId.slice(0, 8).toUpperCase()}`;
+}

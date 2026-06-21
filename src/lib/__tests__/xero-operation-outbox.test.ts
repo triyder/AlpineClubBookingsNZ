@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueMember: vi.fn(),
   findUniqueMemberSubscription: vi.fn(),
   findUniquePayment: vi.fn(),
+  findUniqueGroupSettlement: vi.fn(),
   findFirstPaymentTransaction: vi.fn(),
   findFirstOperation: vi.fn(),
   findManyOperations: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   createXeroCreditNoteForModification: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
+  createXeroInvoiceForGroupSettlement: vi.fn(),
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
@@ -43,6 +45,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       findUnique: mocks.findUniquePayment,
+    },
+    groupBookingSettlement: {
+      findUnique: mocks.findUniqueGroupSettlement,
     },
     paymentTransaction: {
       findFirst: mocks.findFirstPaymentTransaction,
@@ -95,6 +100,7 @@ vi.mock("@/lib/xero", () => ({
   getEntranceFeeContext: mocks.getEntranceFeeContext,
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
   createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
+  createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
   updateXeroBookingInvoiceForBooking: mocks.updateXeroBookingInvoiceForBooking,
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
   isXeroConnected: mocks.isXeroConnected,
@@ -111,6 +117,7 @@ import {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
+  enqueueXeroGroupSettlementInvoiceOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
   enqueueXeroMembershipCancellationContactOperation,
   enqueueXeroMembershipCancellationCreditNoteOperation,
@@ -881,6 +888,63 @@ describe("membership cancellation Xero enqueue operations", () => {
   });
 });
 
+describe("enqueueXeroGroupSettlementInvoiceOperation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueGroupSettlement.mockResolvedValue({
+      id: "settle_1",
+      xeroInvoiceId: null,
+    });
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_settle_1" });
+  });
+
+  it("creates a pending invoice sync operation against the settlement", async () => {
+    await expect(
+      enqueueXeroGroupSettlementInvoiceOperation("settle_1", {
+        createdByMemberId: "admin_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_settle_1",
+      message: "Xero settlement invoice queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "GroupBookingSettlement",
+        localId: "settle_1",
+        status: "PENDING",
+        idempotencyKey: "group-settlement:settle_1:invoice:v1",
+        correlationKey: "group-settlement:settle_1:invoice:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "GROUP_SETTLEMENT_INVOICE",
+          settlementId: "settle_1",
+        },
+      })
+    );
+  });
+
+  it("skips queueing when the settlement already carries an invoice", async () => {
+    mocks.findUniqueGroupSettlement.mockResolvedValue({
+      id: "settle_1",
+      xeroInvoiceId: "xinv_existing",
+    });
+
+    await expect(
+      enqueueXeroGroupSettlementInvoiceOperation("settle_1")
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "Xero settlement invoice already linked for this group.",
+    });
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+});
+
 describe("processQueuedXeroOutboxOperations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -951,6 +1015,38 @@ describe("processQueuedXeroOutboxOperations", () => {
       createdByMemberId: "admin_1",
       syncOperationId: "op_booking_1",
     });
+  });
+
+  it("claims and processes queued group settlement invoice operations", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_settle_1",
+        localId: "settle_1",
+        localModel: "GroupBookingSettlement",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "GROUP_SETTLEMENT_INVOICE",
+          settlementId: "settle_1",
+        },
+      },
+    ]);
+    mocks.createXeroInvoiceForGroupSettlement.mockResolvedValue("xinv_1");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.createXeroInvoiceForGroupSettlement).toHaveBeenCalledWith(
+      "settle_1",
+      {
+        createdByMemberId: "admin_1",
+        syncOperationId: "op_settle_1",
+      }
+    );
   });
 
   it("claims and processes queued booking invoice update operations", async () => {

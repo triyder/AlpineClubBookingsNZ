@@ -18,6 +18,8 @@ export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE =
   "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
   "MEMBERSHIP_CANCELLATION_CONTACT";
+export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE =
+  "GROUP_SETTLEMENT_INVOICE";
 
 export interface QueuedEntranceFeeOutboxPayload {
   queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
@@ -96,6 +98,11 @@ export interface QueuedMembershipCancellationContactOutboxPayload {
   participantId: string;
 }
 
+export interface QueuedGroupSettlementInvoiceOutboxPayload {
+  queueType: typeof XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE;
+  settlementId: string;
+}
+
 export type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
@@ -107,7 +114,8 @@ export type QueuedOutboxPayload =
   | QueuedModificationAccountCreditNoteOutboxPayload
   | QueuedCreditNoteAllocationOutboxPayload
   | QueuedMembershipCancellationCreditNoteOutboxPayload
-  | QueuedMembershipCancellationContactOutboxPayload;
+  | QueuedMembershipCancellationContactOutboxPayload
+  | QueuedGroupSettlementInvoiceOutboxPayload;
 
 export interface QueuedOutboxExpectedOperation {
   entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION" | "CONTACT";
@@ -119,6 +127,7 @@ export interface QueuedOutboxExpectedOperation {
     | "BookingModification"
     | "MemberSubscription"
     | "MembershipCancellationRequestParticipant"
+    | "GroupBookingSettlement"
   >;
 }
 
@@ -343,6 +352,18 @@ export function readQueuedOutboxPayload(
     };
   }
 
+  if (queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE) {
+    const settlementId = readString(payload.settlementId);
+    if (!settlementId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      settlementId,
+    };
+  }
+
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;
   }
@@ -423,6 +444,8 @@ export function getQueuedOutboxExpectedOperation(
         ? ["Payment"]
         : queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE
           ? ["Booking", "BookingModification"]
-          : ["Member"],
+          : queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE
+            ? ["GroupBookingSettlement"]
+            : ["Member"],
   };
 }

@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionUpdateMany: vi.fn(),
   paymentTransactionCreate: vi.fn(),
   subscriptionFindMany: vi.fn(),
+  groupSettlementFindFirst: vi.fn(),
+  applyGroupSettlementFromInvoice: vi.fn(),
   syncContactsFromXero: vi.fn(),
   refreshAllMembershipStatuses: vi.fn(),
   startXeroSyncOperation: vi.fn(),
@@ -97,6 +99,9 @@ vi.mock("@/lib/prisma", () => ({
     memberSubscription: {
       findMany: mocks.subscriptionFindMany,
     },
+    groupBookingSettlement: {
+      findFirst: mocks.groupSettlementFindFirst,
+    },
     $transaction: mocks.transaction,
   },
 }));
@@ -112,6 +117,10 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/lib/group-settlement", () => ({
+  applyGroupSettlementSucceededFromInvoice: mocks.applyGroupSettlementFromInvoice,
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
@@ -761,6 +770,127 @@ describe("processStoredXeroInboundEvents", () => {
       12345,
       undefined
     );
+  });
+
+  it("settles an organiser group when its combined invoice is paid", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_settle_1",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_settle_1",
+        correlationKey: "corr_settle_1",
+        payload: { resourceId: "inv_settle_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_settle_1" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.groupSettlementFindFirst.mockResolvedValue({
+      id: "settle_1",
+      status: "PENDING",
+    });
+    mocks.applyGroupSettlementFromInvoice.mockResolvedValue({
+      outcome: "settled",
+      settledBookingIds: ["child_1", "child_2"],
+    });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_settle_1",
+              invoiceNumber: "INV-SETTLE-001",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              payments: [],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.groupSettlementFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          xeroInvoiceId: "inv_settle_1",
+          source: "INTERNET_BANKING",
+        }),
+      })
+    );
+    expect(mocks.applyGroupSettlementFromInvoice).toHaveBeenCalledWith(
+      "inv_settle_1"
+    );
+  });
+
+  it("does not settle a group when the matched settlement is already succeeded", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_settle_2",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_settle_2",
+        correlationKey: "corr_settle_2",
+        payload: { resourceId: "inv_settle_2" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_settle_2" });
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.groupSettlementFindFirst.mockResolvedValue({
+      id: "settle_2",
+      status: "SUCCEEDED",
+    });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_settle_2",
+              invoiceNumber: "INV-SETTLE-002",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              payments: [],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toMatchObject({
+      succeeded: 1,
+      failed: 0,
+    });
+
+    expect(mocks.applyGroupSettlementFromInvoice).not.toHaveBeenCalled();
   });
 
   it("recovers missing supplementary invoice and payment links from the outbound operation ledger", async () => {

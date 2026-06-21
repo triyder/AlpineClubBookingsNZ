@@ -171,6 +171,12 @@ export type {
 } from "./xero-booking-invoices";
 
 export {
+  createXeroInvoiceForGroupSettlement,
+  GROUP_SETTLEMENT_INVOICE_ROLE,
+} from "./xero-group-settlement-invoices";
+export type { CreateXeroGroupSettlementInvoiceOptions } from "./xero-group-settlement-invoices";
+
+export {
   allocateCreditNoteToInvoice,
   createUnappliedXeroCreditNote,
   createUnappliedXeroCreditNoteForModification,
