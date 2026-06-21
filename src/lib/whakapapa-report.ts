@@ -1,5 +1,3 @@
-const WHAKAPAPA_REPORT_URL = "https://www.whakapapa.com/report";
-
 export interface WhakapapaRoadStatus {
   name: string;
   status: string;
@@ -28,10 +26,6 @@ export interface WhakapapaCurlData {
   conditions: WhakapapaCondition[];
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 export function emptyWhakapapaCurlData(): WhakapapaCurlData {
   return {
     updated: "",
@@ -44,45 +38,6 @@ export function emptyWhakapapaCurlData(): WhakapapaCurlData {
     chairlifts: [],
     conditions: [],
   };
-}
-
-function normalizeLabel(value: string): string {
-  return value.replace(/:\s*$/, "").trim().toLowerCase();
-}
-
-function findMetricValue(container: ParentNode, title: string): string {
-  const target = normalizeLabel(title);
-  const titleNodes = Array.from(container.querySelectorAll("div"));
-
-  for (const node of titleNodes) {
-    const nodeLabel = normalizeLabel(normalizeText(node.textContent));
-    if (nodeLabel !== target) {
-      continue;
-    }
-
-    const nextSiblingText = normalizeText(node.nextElementSibling?.textContent);
-    if (nextSiblingText) {
-      return nextSiblingText;
-    }
-
-    const parent = node.parentElement;
-    if (!parent) {
-      continue;
-    }
-
-    const parentChildren = Array.from(parent.children);
-    const nodeIndex = parentChildren.indexOf(node);
-    if (nodeIndex >= 0) {
-      for (let i = nodeIndex + 1; i < parentChildren.length; i += 1) {
-        const siblingText = normalizeText(parentChildren[i]?.textContent);
-        if (siblingText && normalizeLabel(siblingText) !== target) {
-          return siblingText;
-        }
-      }
-    }
-  }
-
-  return "";
 }
 
 export function coerceWhakapapaCurlData(

@@ -58,6 +58,29 @@ export function PhotoGalleryToken({
             track.className = "pswp__thumbnail-carousel";
             element.appendChild(track);
 
+            const centerThumbnailInTrack = (
+              thumbnailButton: HTMLButtonElement,
+            ) => {
+              const maxScrollLeft = track.scrollWidth - track.clientWidth;
+              if (maxScrollLeft <= 0) {
+                return;
+              }
+
+              const deltaToCenter =
+                thumbnailButton.offsetLeft +
+                thumbnailButton.offsetWidth / 2 -
+                track.clientWidth / 2;
+              const targetScrollLeft = Math.min(
+                maxScrollLeft,
+                Math.max(0, deltaToCenter),
+              );
+
+              track.scrollTo({
+                left: targetScrollLeft,
+                behavior: "auto",
+              });
+            };
+
             const buttons = images.map((image, index) => {
               const button = document.createElement("button");
               button.type = "button";
@@ -88,11 +111,7 @@ export function PhotoGalleryToken({
                 );
 
                 if (isActive) {
-                  button.scrollIntoView({
-                    block: "nearest",
-                    inline: "center",
-                    behavior: "smooth",
-                  });
+                  centerThumbnailInTrack(button);
                 }
               });
             };

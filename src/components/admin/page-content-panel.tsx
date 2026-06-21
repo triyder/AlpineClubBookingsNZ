@@ -1601,7 +1601,7 @@ export function PageContentPanel() {
               select the skifield you want information on.
               <br />
               On submit you will be shown a script. On the first line, copy the
-              hash code within the quotes. e.g. data-hash="zzz".
+              hash code within the quotes. e.g. data-hash=&quot;zzz&quot;.
               <br />
               On this editor page do the following, while replacing zzz with
               your hashcode. <code>{"{{skifield-conditions:zzz}}"}</code>

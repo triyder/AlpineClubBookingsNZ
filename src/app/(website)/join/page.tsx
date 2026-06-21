@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
   getSanitizedPageContentByPath,
