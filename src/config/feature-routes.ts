@@ -57,6 +57,57 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
       "/api/admin/bed-allocation",
     ],
   },
+  {
+    flag: "groupBookings",
+    prefixes: ["/api/group-bookings"],
+  },
+  {
+    flag: "lockers",
+    prefixes: ["/admin/lockers", "/api/admin/lockers"],
+  },
+  {
+    flag: "induction",
+    prefixes: [
+      "/admin/induction",
+      "/induction",
+      "/api/admin/inductions",
+      "/api/admin/induction-templates",
+      "/api/inductions",
+    ],
+  },
+  {
+    flag: "workParties",
+    prefixes: [
+      "/admin/work-parties",
+      "/api/admin/work-parties",
+      "/api/work-parties",
+    ],
+  },
+  {
+    flag: "promoCodes",
+    prefixes: [
+      "/admin/promo-codes",
+      "/api/admin/promo-codes",
+      "/api/promo-codes",
+    ],
+  },
+  {
+    flag: "hutLeaders",
+    prefixes: ["/admin/hut-leaders", "/api/admin/hut-leaders"],
+  },
+  {
+    flag: "communications",
+    prefixes: ["/admin/communications", "/api/admin/communications"],
+  },
+  {
+    flag: "skifieldConditions",
+    prefixes: [
+      "/admin/mountain-conditions",
+      "/api/admin/mountain-conditions",
+      "/api/skifield-whakapapa",
+      "/api/skifield-conditions",
+    ],
+  },
 ];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {

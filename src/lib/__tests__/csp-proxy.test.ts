@@ -10,18 +10,13 @@ import {
   CSP_REPORT_ONLY_HEADER,
   SECURITY_HEADERS,
 } from "@/lib/csp";
+import { FEATURE_ROUTE_RULES } from "@/config/feature-routes";
+import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
 import proxy, { config, getFeatureFlagBlockResponse } from "../../proxy";
 import type { FeatureFlags } from "@/config/schema";
 
-const allFeaturesOn: FeatureFlags = {
-  kiosk: true,
-  chores: true,
-  financeDashboard: true,
-  waitlist: true,
-  xeroIntegration: true,
-  bedAllocation: true,
-  internetBankingPayments: true,
-};
+// Every module on; derived so it covers every module key without drifting.
+const allFeaturesOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
 
 function directive(policy: string, name: string) {
   const match = policy
@@ -150,5 +145,71 @@ describe("CSP proxy", () => {
     expect(pageResponse?.status).toBe(404);
     expect(apiResponse?.status).toBe(404);
     await expect(apiResponse!.json()).resolves.toEqual({ error: "Not found" });
+  });
+
+  it("returns 404 for a disabled new-module page and its API route", async () => {
+    // The page AND the backend API must both 404 when the module is off.
+    const pageResponse = getFeatureFlagBlockResponse("/admin/lockers", {
+      ...allFeaturesOn,
+      lockers: false,
+    });
+    const apiResponse = getFeatureFlagBlockResponse("/api/admin/lockers", {
+      ...allFeaturesOn,
+      lockers: false,
+    });
+    const groupApiResponse = getFeatureFlagBlockResponse(
+      "/api/group-bookings/abc/join",
+      { ...allFeaturesOn, groupBookings: false },
+    );
+
+    expect(pageResponse?.status).toBe(404);
+    expect(apiResponse?.status).toBe(404);
+    expect(groupApiResponse?.status).toBe(404);
+  });
+
+  // Regression guard: every feature-gated route must actually be covered by the
+  // middleware matcher, or the proxy never runs and the 404 gate above is dead
+  // code for that route. (An earlier bug shipped feature-routes rules for new
+  // modules whose /api paths were missing from the matcher, so disabled modules
+  // still served their backend.)
+  it("matcher runs for every feature-gated route prefix", () => {
+    const gatedPrefixes = FEATURE_ROUTE_RULES.flatMap(
+      (rule) => rule.prefixes ?? [],
+    );
+
+    for (const prefix of gatedPrefixes) {
+      expect(
+        unstable_doesProxyMatch({ config, nextConfig: {}, url: prefix }),
+        `middleware matcher must run for ${prefix} (feature-gated route)`,
+      ).toBe(true);
+    }
+  });
+
+  it("matcher runs for the new modules' child API paths", () => {
+    // The real routes live under these prefixes (e.g. /[id], /[code]), so the
+    // matcher must cover the children too — not just the bare prefix.
+    const childApiPaths = [
+      "/api/group-bookings/CODE/join",
+      "/api/admin/lockers/123",
+      "/api/admin/inductions/123",
+      "/api/admin/induction-templates/123",
+      "/api/inductions/123",
+      "/api/admin/work-parties/123",
+      "/api/work-parties/active",
+      "/api/admin/promo-codes/123",
+      "/api/promo-codes/validate",
+      "/api/admin/hut-leaders/123",
+      "/api/admin/communications/send",
+      "/api/admin/mountain-conditions",
+      "/api/skifield-whakapapa",
+      "/api/skifield-conditions",
+    ];
+
+    for (const url of childApiPaths) {
+      expect(
+        unstable_doesProxyMatch({ config, nextConfig: {}, url }),
+        `middleware matcher must run for ${url} (gated API route)`,
+      ).toBe(true);
+    }
   });
 });

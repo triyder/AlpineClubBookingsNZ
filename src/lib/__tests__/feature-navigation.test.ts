@@ -2,17 +2,11 @@ import { describe, expect, it } from "vitest";
 import { getVisibleAdminNavSections } from "@/components/admin-sidebar";
 import { getNavBarLinks } from "@/components/nav-bar";
 import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
+import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-const allOn: FeatureFlags = {
-  kiosk: true,
-  chores: true,
-  financeDashboard: true,
-  waitlist: true,
-  xeroIntegration: true,
-  bedAllocation: true,
-  internetBankingPayments: true,
-};
+// All modules on; derived so it covers every module key without drifting.
+const allOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
 
 describe("feature-aware navigation", () => {
   it("hides finance and kiosk links from the member nav when effective modules are off", () => {

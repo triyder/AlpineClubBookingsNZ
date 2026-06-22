@@ -24,6 +24,11 @@ const mockPrisma = {
     count: vi.fn(),
     findUnique: vi.fn(),
   },
+  // Module flags are read via loadEffectiveModuleFlags; null normalizes to all
+  // modules on, so the hut-leader auto-assign runs.
+  clubModuleSettings: {
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));

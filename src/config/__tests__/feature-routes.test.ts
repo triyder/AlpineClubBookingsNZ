@@ -4,18 +4,12 @@ import {
   getRequiredFeaturesForPath,
   isFeatureHrefVisible,
 } from "@/config/feature-routes";
-import { getEffectiveModuleFlags } from "@/config/modules";
+import { DEFAULT_MODULE_SETTINGS, getEffectiveModuleFlags } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-const allOn: FeatureFlags = {
-  kiosk: true,
-  chores: true,
-  financeDashboard: true,
-  waitlist: true,
-  xeroIntegration: true,
-  bedAllocation: true,
-  internetBankingPayments: true,
-};
+// Every module on; derived so the fixture covers all module keys and never
+// drifts when new modules are added.
+const allOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
 
 describe("feature route map", () => {
   it("maps optional module routes to the expected feature flags", () => {
@@ -35,6 +29,58 @@ describe("feature route map", () => {
       "kiosk",
       "chores",
     ]);
+  });
+
+  it("maps the newer toggleable module routes to their flags", () => {
+    expect(getRequiredFeaturesForPath("/api/group-bookings")).toEqual([
+      "groupBookings",
+    ]);
+    expect(getRequiredFeaturesForPath("/admin/lockers")).toEqual(["lockers"]);
+    expect(getRequiredFeaturesForPath("/admin/induction")).toEqual([
+      "induction",
+    ]);
+    expect(getRequiredFeaturesForPath("/induction")).toEqual(["induction"]);
+    expect(getRequiredFeaturesForPath("/admin/work-parties")).toEqual([
+      "workParties",
+    ]);
+    expect(getRequiredFeaturesForPath("/admin/promo-codes")).toEqual([
+      "promoCodes",
+    ]);
+    expect(getRequiredFeaturesForPath("/admin/hut-leaders")).toEqual([
+      "hutLeaders",
+    ]);
+    expect(getRequiredFeaturesForPath("/admin/communications")).toEqual([
+      "communications",
+    ]);
+    expect(getRequiredFeaturesForPath("/api/skifield-whakapapa")).toEqual([
+      "skifieldConditions",
+    ]);
+  });
+
+  it("blocks each new module's pages AND api routes when it is off", () => {
+    // Both a page and an API route 404 when the module is disabled — i.e. an
+    // off module is fully gated, not just hidden in the UI.
+    expect(
+      getDisabledFeatureForPath("/admin/lockers", { ...allOn, lockers: false })
+    ).toBe("lockers");
+    expect(
+      getDisabledFeatureForPath("/api/admin/lockers", {
+        ...allOn,
+        lockers: false,
+      })
+    ).toBe("lockers");
+    expect(
+      getDisabledFeatureForPath("/api/group-bookings/abc/join", {
+        ...allOn,
+        groupBookings: false,
+      })
+    ).toBe("groupBookings");
+    expect(
+      getDisabledFeatureForPath("/api/promo-codes/validate", {
+        ...allOn,
+        promoCodes: false,
+      })
+    ).toBe("promoCodes");
   });
 
   it("detects the disabled feature for protected route and API paths", () => {

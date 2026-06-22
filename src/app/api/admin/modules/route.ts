@@ -12,18 +12,19 @@ import {
   normalizeClubModuleSettings,
 } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
-import { MODULE_KEYS, type ModuleSettingsValues } from "@/config/modules";
+import {
+  MODULE_KEYS,
+  type ModuleKey,
+  type ModuleSettingsValues,
+} from "@/config/modules";
 
 const moduleSettingsSchema = z
-  .object({
-    kiosk: z.boolean(),
-    chores: z.boolean(),
-    financeDashboard: z.boolean(),
-    waitlist: z.boolean(),
-    xeroIntegration: z.boolean(),
-    bedAllocation: z.boolean(),
-    internetBankingPayments: z.boolean(),
-  })
+  .object(
+    Object.fromEntries(MODULE_KEYS.map((key) => [key, z.boolean()])) as Record<
+      ModuleKey,
+      z.ZodBoolean
+    >,
+  )
   .strict();
 
 const updateSchema = z

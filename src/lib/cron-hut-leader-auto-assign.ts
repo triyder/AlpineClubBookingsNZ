@@ -2,17 +2,24 @@ import { prisma } from "./prisma";
 import { eachDayOfInterval, addDays } from "date-fns";
 import { calculateOverlapDays } from "./hut-leader-overlap";
 import { getNZSTToday } from "@/lib/nzst-date";
+import { loadEffectiveModuleFlags } from "./module-settings";
 import logger from "./logger";
 
 /**
  * Auto-assign hut leaders when only 1 adult member is booked for a date.
  * Looks ahead 14 days, finds dates without an assignment, and auto-assigns
- * if exactly 1 distinct adult member is staying.
+ * if exactly 1 distinct adult member is staying. No-op when the Hut leaders
+ * module is disabled.
  */
 export async function autoAssignHutLeaders(): Promise<{
   assignedCount: number;
   assignedDates: string[];
 }> {
+  const modules = await loadEffectiveModuleFlags();
+  if (!modules.hutLeaders) {
+    return { assignedCount: 0, assignedDates: [] };
+  }
+
   const today = getNZSTToday();
   const endDate = addDays(today, 14);
   const days = eachDayOfInterval({ start: today, end: endDate });

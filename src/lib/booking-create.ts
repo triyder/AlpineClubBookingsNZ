@@ -44,6 +44,7 @@ import {
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
 import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
   sendBookingConfirmedEmail,
@@ -413,13 +414,26 @@ async function resolveEffectivePromoSource(
     checkOut: Date;
   }
 ): Promise<{ promoCodeStr: string; allowInternal: boolean } | null> {
-  if (options.workPartyEventId && options.promoCodeStr) {
+  if (!options.workPartyEventId && !options.promoCodeStr) {
+    return null;
+  }
+
+  // Honour the admin module toggles: when a feature is off, its input is ignored
+  // (no discount applied) rather than erroring, so a disabled module can never
+  // affect pricing even if an id/code reaches this far.
+  const modules = await loadEffectiveModuleFlags();
+  const workPartyEventId = modules.workParties
+    ? options.workPartyEventId
+    : undefined;
+  const promoCodeStr = modules.promoCodes ? options.promoCodeStr : undefined;
+
+  if (workPartyEventId && promoCodeStr) {
     throw new BookingPromoError(PROMO_WORK_PARTY_EXCLUSION_MESSAGE);
   }
-  if (options.workPartyEventId) {
+  if (workPartyEventId) {
     const resolution = await resolveWorkPartyEventPromoForBooking(
       db,
-      options.workPartyEventId,
+      workPartyEventId,
       options.checkIn,
       options.checkOut
     );
@@ -428,8 +442,8 @@ async function resolveEffectivePromoSource(
     }
     return { promoCodeStr: resolution.promoCodeStr, allowInternal: true };
   }
-  if (options.promoCodeStr) {
-    return { promoCodeStr: options.promoCodeStr, allowInternal: false };
+  if (promoCodeStr) {
+    return { promoCodeStr, allowInternal: false };
   }
   return null;
 }

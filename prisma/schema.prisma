@@ -1961,6 +1961,14 @@ model ClubModuleSettings {
   xeroIntegration         Boolean  @default(true)
   bedAllocation           Boolean  @default(true)
   internetBankingPayments Boolean  @default(true)
+  groupBookings           Boolean  @default(true)
+  lockers                 Boolean  @default(true)
+  induction               Boolean  @default(true)
+  workParties             Boolean  @default(true)
+  promoCodes              Boolean  @default(true)
+  hutLeaders              Boolean  @default(true)
+  communications          Boolean  @default(true)
+  skifieldConditions      Boolean  @default(true)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt

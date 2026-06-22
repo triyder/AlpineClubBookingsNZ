@@ -62,7 +62,7 @@ export function getNavBarLinks(user: NavBarUser, features: FeatureFlags) {
     ...memberLinks,
     ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
     ...(features.kiosk
-      ? user.isHutLeader
+      ? user.isHutLeader && features.hutLeaders
         ? [hutLeaderLink]
         : user.isStayingGuest
           ? [viewLodgeLink]
