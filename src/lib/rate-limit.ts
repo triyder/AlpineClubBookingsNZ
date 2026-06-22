@@ -202,6 +202,8 @@ export const rateLimiters = {
   groupBookingCreate: { id: "group-booking-create", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Public group-booking code lookup: 20 hits per 15 minutes (anti-enumeration) */
   groupBookingLookup: { id: "group-booking-lookup", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Public ski-condition widgets: 60 hits per minute, backed by server-side caching */
+  skifieldConditions: { id: "skifield-conditions", limit: 60, windowSeconds: 60 } as RateLimitConfig,
   /** Member self-add to a group (a booking creation): 20 per hour */
   groupBookingJoin: { id: "group-booking-join", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Public non-member group join request: 5 per hour */

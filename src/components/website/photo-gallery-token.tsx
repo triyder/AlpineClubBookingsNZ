@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import PhotoSwipeLightbox from "photoswipe/lightbox";
-import "photoswipe/style.css";
+import PhotoSwipeLightbox, {
+  loadPhotoSwipeModule,
+} from "@/lib/photoswipe-lightbox";
 
 type PhotoGalleryImage = {
   src: string;
@@ -35,7 +36,7 @@ export function PhotoGalleryToken({
     const lightbox = new PhotoSwipeLightbox({
       gallery: galleryElement,
       children: "a",
-      pswpModule: () => import("photoswipe"),
+      pswpModule: loadPhotoSwipeModule,
     });
 
     if (variant === "slideshow") {
@@ -125,19 +126,7 @@ export function PhotoGalleryToken({
 
     lightbox.init();
 
-    let autoOpenFrame: number | undefined;
-    if (variant === "slideshow") {
-      autoOpenFrame = window.requestAnimationFrame(() => {
-        if (!lightbox.pswp) {
-          lightbox.loadAndOpen(0, { gallery: galleryElement });
-        }
-      });
-    }
-
     return () => {
-      if (autoOpenFrame !== undefined) {
-        window.cancelAnimationFrame(autoOpenFrame);
-      }
       lightbox.destroy();
     };
   }, [galleryId, images, variant]);

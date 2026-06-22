@@ -517,7 +517,9 @@ export default async function BookingDetailPage({
     !organiserGroup &&
     OPENABLE_ORGANISER_STATUSES.includes(booking.status);
   const showGroupSection =
-    isBookingOwner && (Boolean(organiserGroupState) || canOpenGroup);
+    modules.groupBookings &&
+    isBookingOwner &&
+    (Boolean(organiserGroupState) || canOpenGroup);
 
   return (
     <div className="max-w-2xl space-y-6">

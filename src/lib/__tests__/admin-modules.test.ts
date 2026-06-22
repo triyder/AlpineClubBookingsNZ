@@ -4,29 +4,17 @@ import {
   loadAdminModuleSettings,
   normalizeAdminModuleSettings,
 } from "@/lib/admin-modules";
+import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-const allCapabilitiesOn: FeatureFlags = {
-  kiosk: true,
-  chores: true,
-  financeDashboard: true,
-  waitlist: true,
-  xeroIntegration: true,
-  bedAllocation: true,
-  internetBankingPayments: true,
-};
+// All modules on. Derived from DEFAULT_MODULE_SETTINGS (every module defaults
+// true) so these fixtures cover every module key and never drift when new
+// modules are added.
+const allCapabilitiesOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
 
 describe("Admin Modules effective state", () => {
   it("defaults missing module settings to active for upgrade-safe fallback", () => {
-    expect(normalizeAdminModuleSettings(null)).toEqual({
-      kiosk: true,
-      chores: true,
-      financeDashboard: true,
-      waitlist: true,
-      xeroIntegration: true,
-      bedAllocation: true,
-      internetBankingPayments: true,
-    });
+    expect(normalizeAdminModuleSettings(null)).toEqual(DEFAULT_MODULE_SETTINGS);
   });
 
   it("keeps env capability as the upper bound", () => {
@@ -70,14 +58,12 @@ describe("Admin Modules effective state", () => {
           findUnique,
         },
       })
+      // Persisted row only sets the original 7 keys; newer modules fall back to
+      // their defaults (on).
     ).resolves.toEqual({
-      kiosk: true,
+      ...DEFAULT_MODULE_SETTINGS,
       chores: false,
-      financeDashboard: true,
       waitlist: false,
-      xeroIntegration: true,
-      bedAllocation: true,
-      internetBankingPayments: true,
     });
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "default" },
@@ -91,14 +77,6 @@ describe("Admin Modules effective state", () => {
           findUnique: vi.fn().mockRejectedValue(new Error("database unavailable")),
         },
       })
-    ).resolves.toEqual({
-      kiosk: true,
-      chores: true,
-      financeDashboard: true,
-      waitlist: true,
-      xeroIntegration: true,
-      bedAllocation: true,
-      internetBankingPayments: true,
-    });
+    ).resolves.toEqual(DEFAULT_MODULE_SETTINGS);
   });
 });

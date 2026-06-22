@@ -125,6 +125,14 @@ export const featureFlagsSchema = z
     xeroIntegration: z.boolean(),
     bedAllocation: z.boolean(),
     internetBankingPayments: z.boolean(),
+    groupBookings: z.boolean(),
+    lockers: z.boolean(),
+    induction: z.boolean(),
+    workParties: z.boolean(),
+    promoCodes: z.boolean(),
+    hutLeaders: z.boolean(),
+    communications: z.boolean(),
+    skifieldConditions: z.boolean(),
   })
   .strict();
 

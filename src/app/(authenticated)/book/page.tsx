@@ -191,6 +191,9 @@ export default function BookPage() {
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null; lifetimeFreeNightsCap: number | null; fixedNightlyPriceCents: number | null; fixedNightlyMode: string | null }[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
+  // Promo codes module: the available-codes route 404s when the module is off,
+  // so hide the code entry rather than show an input that can't validate.
+  const [promoCodesEnabled, setPromoCodesEnabled] = useState(true);
   const [activeWorkPartyEvents, setActiveWorkPartyEvents] = useState<WorkPartyEvent[]>([]);
   const [attendingWorkParty, setAttendingWorkParty] = useState(false);
   const [selectedWorkPartyEventId, setSelectedWorkPartyEventId] = useState<string | null>(null);
@@ -563,7 +566,10 @@ export default function BookPage() {
 
       // Fetch available promo codes for the member
       fetch("/api/promo-codes/available")
-        .then((r) => r.ok ? r.json() : [])
+        .then((r) => {
+          setPromoCodesEnabled(r.status !== 404);
+          return r.ok ? r.json() : [];
+        })
         .then((codes) => setAvailablePromoCodes(codes))
         .catch(() => {});
 
@@ -1536,16 +1542,18 @@ export default function BookPage() {
                   </div>
                 </div>
               )}
-              <PromoCodeInput
-                checkIn={checkIn!}
-                checkOut={checkOut!}
-                guests={reviewGuestPayload}
-                onPromoApplied={setAppliedPromo}
-                appliedPromo={appliedPromo}
-                prefillCode={prefillPromoCode}
-                disabled={attendingWorkParty}
-                disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."
-              />
+              {promoCodesEnabled && (
+                <PromoCodeInput
+                  checkIn={checkIn!}
+                  checkOut={checkOut!}
+                  guests={reviewGuestPayload}
+                  onPromoApplied={setAppliedPromo}
+                  appliedPromo={appliedPromo}
+                  prefillCode={prefillPromoCode}
+                  disabled={attendingWorkParty}
+                  disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."
+                />
+              )}
             </CardContent>
           </Card>
 

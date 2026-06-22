@@ -15,6 +15,7 @@ import {
   sendNominationRequestEmail,
 } from "@/lib/email";
 import { createMemberInduction } from "@/lib/induction";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import logger from "@/lib/logger";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
@@ -993,53 +994,57 @@ export async function approveMemberApplication(
   }
 
   // Create the new member's lodge induction record and ask their nominators to
-  // sign it off. Non-fatal: failures become warnings, like the Xero sync above.
-  try {
-    await createMemberInduction({
-      memberId: approved.applicantMember.id,
-      kind: "NEW_MEMBER",
-      applicationId,
-      createdByMemberId: adminMemberId,
-    });
-
-    const nominatorIds = [
-      approved.application.nominator1Id,
-      approved.application.nominator2Id,
-    ].filter((value): value is string => Boolean(value));
-
-    if (nominatorIds.length > 0) {
-      const nominators = await prisma.member.findMany({
-        where: { id: { in: nominatorIds } },
-        select: { id: true, email: true, firstName: true },
+  // sign it off, when the Lodge induction module is enabled. Non-fatal:
+  // failures become warnings, like the Xero sync above.
+  const inductionModules = await loadEffectiveModuleFlags();
+  if (inductionModules.induction) {
+    try {
+      await createMemberInduction({
+        memberId: approved.applicantMember.id,
+        kind: "NEW_MEMBER",
+        applicationId,
+        createdByMemberId: adminMemberId,
       });
-      const inducteeName =
-        `${approved.applicantMember.firstName} ${approved.applicantMember.lastName}`.trim();
 
-      await Promise.all(
-        nominators.map((nominator) =>
-          sendInductionSignOffRequestEmail({
-            email: nominator.email,
-            signerName: nominator.firstName,
-            inducteeName,
-            signerRoleLabel: "Nominator",
-          }).catch((err) => {
-            logger.error(
-              { err, applicationId, nominatorId: nominator.id },
-              "Failed to send induction sign-off request email"
-            );
-            warnings.push(
-              `Could not email induction sign-off request to ${nominator.email}`
-            );
-          })
-        )
+      const nominatorIds = [
+        approved.application.nominator1Id,
+        approved.application.nominator2Id,
+      ].filter((value): value is string => Boolean(value));
+
+      if (nominatorIds.length > 0) {
+        const nominators = await prisma.member.findMany({
+          where: { id: { in: nominatorIds } },
+          select: { id: true, email: true, firstName: true },
+        });
+        const inducteeName =
+          `${approved.applicantMember.firstName} ${approved.applicantMember.lastName}`.trim();
+
+        await Promise.all(
+          nominators.map((nominator) =>
+            sendInductionSignOffRequestEmail({
+              email: nominator.email,
+              signerName: nominator.firstName,
+              inducteeName,
+              signerRoleLabel: "Nominator",
+            }).catch((err) => {
+              logger.error(
+                { err, applicationId, nominatorId: nominator.id },
+                "Failed to send induction sign-off request email"
+              );
+              warnings.push(
+                `Could not email induction sign-off request to ${nominator.email}`
+              );
+            })
+          )
+        );
+      }
+    } catch (err) {
+      logger.error(
+        { err, applicationId },
+        "Failed to create induction for approved application"
       );
+      warnings.push("The induction record could not be created automatically");
     }
-  } catch (err) {
-    logger.error(
-      { err, applicationId },
-      "Failed to create induction for approved application"
-    );
-    warnings.push("The induction record could not be created automatically");
   }
 
   if (warnings.length > 0) {

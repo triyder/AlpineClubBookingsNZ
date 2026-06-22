@@ -4,6 +4,8 @@ import { searchAddyAddresses } from "@/lib/addy-api";
 
 const mocks = vi.hoisted(() => ({
   emailVerificationFindUnique: vi.fn(),
+  whakapapaReportCacheFindUnique: vi.fn(),
+  fetchWhakapapaCurlData: vi.fn(),
   validateGuestChoreToken: vi.fn(),
   applyRateLimit: vi.fn().mockReturnValue(null),
 }));
@@ -13,7 +15,15 @@ vi.mock("@/lib/prisma", () => ({
     emailVerificationToken: {
       findUnique: mocks.emailVerificationFindUnique,
     },
+    whakapapaReportCache: {
+      findUnique: mocks.whakapapaReportCacheFindUnique,
+      upsert: vi.fn(),
+    },
   },
+}));
+
+vi.mock("@/lib/whakapapa-report.server", () => ({
+  fetchWhakapapaCurlData: mocks.fetchWhakapapaCurlData,
 }));
 
 vi.mock("@/lib/guest-chore-token", () => ({
@@ -37,6 +47,11 @@ vi.mock("@/lib/rate-limit", () => ({
       id: "verification-token",
       limit: 10,
       windowSeconds: 15 * 60,
+    },
+    skifieldConditions: {
+      id: "skifield-conditions",
+      limit: 60,
+      windowSeconds: 60,
     },
   },
 }));
@@ -129,5 +144,54 @@ describe("public endpoint abuse hardening", () => {
       "/login?verifyError=invalid"
     );
     expect(mocks.emailVerificationFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed ski-condition widget hashes before proxying upstream", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { GET } = await import("@/app/api/skifield-conditions/route");
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/skifield-conditions?hash=bad")
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      _error: "A valid 32-character widget hash is required.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("serves cached Whakapapa conditions as a public website payload", async () => {
+    const fetchedAt = new Date();
+    mocks.whakapapaReportCacheFindUnique.mockResolvedValue({
+      source: "whakapapa-report",
+      payload: {
+        updated: "2026-06-22T00:00:00.000Z",
+        roadStatus: {
+          name: "Bruce Road",
+          status: "Open",
+          wheelRequirements: "",
+          roadContent: "",
+        },
+        chairlifts: [],
+        conditions: [],
+      },
+      fetchedAt,
+      frozenUntil: null,
+    });
+
+    const { GET } = await import("@/app/api/skifield-whakapapa/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/skifield-whakapapa")
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toContain("public");
+    await expect(response.json()).resolves.toMatchObject({
+      roadStatus: { name: "Bruce Road", status: "Open" },
+    });
+    expect(mocks.applyRateLimit).toHaveBeenCalled();
+    expect(mocks.fetchWhakapapaCurlData).not.toHaveBeenCalled();
   });
 });

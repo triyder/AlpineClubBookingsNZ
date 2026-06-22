@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Pencil } from "lucide-react";
+import { ArrowDown, ArrowUp, Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -58,6 +58,7 @@ export default function LockersPage() {
     useState<string>("UNALLOCATED");
   const [allocatedToSearch, setAllocatedToSearch] = useState("");
   const [editingLockerId, setEditingLockerId] = useState<string | null>(null);
+  const [deletingLockerId, setDeletingLockerId] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberSummary[]>([]);
   const [lockers, setLockers] = useState<LockerRecord[]>([]);
   const [sortField, setSortField] = useState<SortField>("name");
@@ -97,6 +98,7 @@ export default function LockersPage() {
 
     try {
       const payload = {
+        name,
         allocatedToMemberId:
           allocatedToMemberId === "UNALLOCATED" ? null : allocatedToMemberId,
       };
@@ -109,10 +111,7 @@ export default function LockersPage() {
         : await fetch("/api/admin/lockers", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name,
-              ...payload,
-            }),
+            body: JSON.stringify(payload),
           });
       const body = await response.json();
       if (!response.ok) {
@@ -157,6 +156,47 @@ export default function LockersPage() {
     setAllocatedToMemberId(locker.allocatedToMemberId ?? "UNALLOCATED");
     setAllocatedToSearch("");
     setError("");
+  }
+
+  function resetForm() {
+    setEditingLockerId(null);
+    setName("");
+    setAllocatedToMemberId("UNALLOCATED");
+    setAllocatedToSearch("");
+    setError("");
+  }
+
+  async function deleteLocker(locker: LockerRecord) {
+    if (!window.confirm(`Delete locker ${locker.name}? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingLockerId(locker.id);
+    setError("");
+    try {
+      const response = await fetch(`/api/admin/lockers/${locker.id}`, {
+        method: "DELETE",
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error || "Failed to delete locker");
+      }
+
+      setLockers((previous) =>
+        previous.filter((current) => current.id !== locker.id),
+      );
+      if (editingLockerId === locker.id) {
+        resetForm();
+      }
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete locker",
+      );
+    } finally {
+      setDeletingLockerId(null);
+    }
   }
 
   function toggleSort(nextField: SortField) {
@@ -210,9 +250,11 @@ export default function LockersPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>New Locker</CardTitle>
+          <CardTitle>{editingLockerId ? "Edit Locker" : "New Locker"}</CardTitle>
           <CardDescription>
-            Add a locker name and optionally assign it to a member.
+            {editingLockerId
+              ? "Update the locker name or member allocation."
+              : "Add a locker name and optionally assign it to a member."}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -227,7 +269,6 @@ export default function LockersPage() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Locker A1"
-                readOnly={Boolean(editingLockerId)}
                 required
               />
             </div>
@@ -269,7 +310,7 @@ export default function LockersPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="sm:col-span-1 flex items-end">
+            <div className="flex items-end gap-2 sm:col-span-1">
               <Button
                 type="submit"
                 disabled={saving}
@@ -281,6 +322,19 @@ export default function LockersPage() {
                     ? "Update Locker"
                     : "Create Locker"}
               </Button>
+              {editingLockerId ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={resetForm}
+                  disabled={saving}
+                  aria-label="Cancel locker edit"
+                  title="Cancel locker edit"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              ) : null}
             </div>
           </form>
           {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
@@ -328,26 +382,42 @@ export default function LockersPage() {
                         ) : null}
                       </button>
                     </th>
+                    <th className="px-4 py-3 text-right font-semibold">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedLockers.map((locker) => (
                     <tr key={locker.id} className="border-t border-slate-200">
                       <td className="px-4 py-3 font-medium text-slate-900">
-                        <div className="inline-flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => beginEdit(locker)}
-                            className="inline-flex h-6 w-6 items-center justify-center rounded border border-slate-300 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-                            aria-label={`Edit locker ${locker.name}`}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <span>{locker.name}</span>
-                        </div>
+                        {locker.name}
                       </td>
                       <td className="px-4 py-3">
                         {memberDisplayName(locker.allocatedTo)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => beginEdit(locker)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-300 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                            aria-label={`Edit locker ${locker.name}`}
+                            title="Edit locker"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteLocker(locker)}
+                            disabled={deletingLockerId === locker.id}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label={`Delete locker ${locker.name}`}
+                            title="Delete locker"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

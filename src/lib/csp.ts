@@ -32,19 +32,14 @@ export function buildContentSecurityPolicy(nonce: string) {
       `'nonce-${nonce}'`,
       ...(isDev ? ["'unsafe-eval'"] : []),
       "https://js.stripe.com",
-      "https://snowhq.com",
-      "https://*.snowhq.com",
-      "https://snow.nz",
-      "https://*.snow.nz",
-      "https://www.snow.nz",
     ].join(" "),
     // Keep inline styles during the script nonce rollout; Tailwind/Radix and
-    // third-party widgets can still emit runtime style attributes.
+    // selected editor-rendered content can still emit runtime style attributes.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://snowhq.com https://*.snowhq.com https://snow.nz https://*.snow.nz https://www.snow.nz",
-    "frame-src https://js.stripe.com https://hooks.stripe.com https://snowhq.com https://*.snowhq.com https://snow.nz https://*.snow.nz https://www.snow.nz",
+    "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io",
+    "frame-src https://js.stripe.com https://hooks.stripe.com",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "frame-ancestors 'none'",

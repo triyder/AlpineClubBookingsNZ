@@ -11,30 +11,64 @@ const FEATURE_ENV_VARS = {
   xeroIntegration: "FEATURE_XERO_INTEGRATION",
   bedAllocation: "FEATURE_BED_ALLOCATION",
   internetBankingPayments: "FEATURE_INTERNET_BANKING_PAYMENTS",
+  groupBookings: "FEATURE_GROUP_BOOKINGS",
+  lockers: "FEATURE_LOCKERS",
+  induction: "FEATURE_INDUCTION",
+  workParties: "FEATURE_WORK_PARTIES",
+  promoCodes: "FEATURE_PROMO_CODES",
+  hutLeaders: "FEATURE_HUT_LEADERS",
+  communications: "FEATURE_COMMUNICATIONS",
+  skifieldConditions: "FEATURE_SKIFIELD_CONDITIONS",
 } as const satisfies Record<keyof FeatureFlags, string>;
 
 /**
- * Parse a feature flag env var. Only the literal "true" (case-insensitive, trimmed)
- * enables a flag. Anything else — unset, "false", "1", "yes", garbage — disables it.
- * This is intentionally strict so accidental values default to "off" rather than "on".
+ * Deploy-time default when a feature's env var is unset.
+ *
+ * The original capability flags default OFF (false): a deploy must opt in with
+ * FEATURE_X=true. The newer general-purpose feature modules default ON (true) so
+ * the software is fully featured out of the box and each club switches OFF what
+ * it doesn't use via the admin Modules page (an explicit FEATURE_X=false still
+ * hard-disables at deploy time).
  */
-function parseFlag(raw: string | undefined): boolean {
-  if (raw === undefined) return false;
-  return raw.trim().toLowerCase() === "true";
+const ENV_DEFAULTS = {
+  kiosk: false,
+  chores: false,
+  financeDashboard: false,
+  waitlist: false,
+  xeroIntegration: false,
+  bedAllocation: false,
+  internetBankingPayments: false,
+  groupBookings: true,
+  lockers: true,
+  induction: true,
+  workParties: true,
+  promoCodes: true,
+  hutLeaders: true,
+  communications: true,
+  skifieldConditions: true,
+} as const satisfies Record<keyof FeatureFlags, boolean>;
+
+/**
+ * Parse a feature flag env var against its default. The literal "true"/"false"
+ * (case-insensitive, trimmed) force a value; anything else — unset or garbage —
+ * falls back to the module's ENV_DEFAULTS entry. Parsing stays strict so an
+ * accidental value never silently flips a flag.
+ */
+function parseFlag(raw: string | undefined, defaultValue: boolean): boolean {
+  if (raw === undefined) return defaultValue;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return defaultValue;
 }
 
 export function loadFeatureFlags(env: NodeJS.ProcessEnv = process.env): FeatureFlags {
-  const flags = {
-    kiosk: parseFlag(env[FEATURE_ENV_VARS.kiosk]),
-    chores: parseFlag(env[FEATURE_ENV_VARS.chores]),
-    financeDashboard: parseFlag(env[FEATURE_ENV_VARS.financeDashboard]),
-    waitlist: parseFlag(env[FEATURE_ENV_VARS.waitlist]),
-    xeroIntegration: parseFlag(env[FEATURE_ENV_VARS.xeroIntegration]),
-    bedAllocation: parseFlag(env[FEATURE_ENV_VARS.bedAllocation]),
-    internetBankingPayments: parseFlag(
-      env[FEATURE_ENV_VARS.internetBankingPayments],
-    ),
-  };
+  const flags = Object.fromEntries(
+    (Object.keys(FEATURE_ENV_VARS) as FeatureFlagKey[]).map((key) => [
+      key,
+      parseFlag(env[FEATURE_ENV_VARS[key]], ENV_DEFAULTS[key]),
+    ]),
+  );
   return featureFlagsSchema.parse(flags);
 }
 

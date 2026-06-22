@@ -99,13 +99,11 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/group-bookings/[code]/join-request/route.ts": {
     boundary: "public",
-    reason:
-      "Anonymous non-member group join request submission; mirrors /api/booking-requests with strict validation, controlled JSON parsing, a neutral anti-enumeration response and rate limiting. Creates only an unverified GroupBookingJoin staging row, never a booking or payment.",
+    reason: "Anonymous non-member group join request submission; mirrors /api/booking-requests with strict validation, controlled JSON parsing, rate limiting, and a neutral success response for account-state and group-state lookup failures. Creates only an unverified GroupBookingJoin staging row, never a booking or payment.",
   },
   "src/app/api/group-bookings/join/verify/[token]/route.ts": {
     boundary: "public",
-    reason:
-      "Token-bearing non-member group join confirmation; only the matching SHA-256 token resolves a staged join, the create is idempotent and rate limited, and it mirrors the booking-request approval conversion (non-login member, PENDING child booking, pay link).",
+    reason: "Token-bearing non-member group join confirmation; only the matching SHA-256 token resolves a staged join, the create is idempotent and rate limited, and it mirrors the booking-request approval conversion (non-login member, PENDING child booking, pay link).",
   },
   "src/app/api/health/ready/route.ts": {
     boundary: "public",
@@ -130,11 +128,6 @@ export const explicitPublicApiRoutes = {
     reason:
       "Token-authenticated public payment link page data; only the matching token resolves a booking and it is rate limited.",
   },
-  "src/app/api/skifield-whakapapa/route.ts": {
-    boundary: "public",
-    reason:
-      "Public website token data source for Whakapapa report embed; read-only cached fetch endpoint.",
-  },
   "src/app/api/images/[id]/route.ts": {
     boundary: "public",
     reason:
@@ -144,6 +137,16 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason:
       "Serves Image Manager uploads from the shared images volume at runtime.",
+  },
+  "src/app/api/skifield-conditions/route.ts": {
+    boundary: "public",
+    reason:
+      "Public server-side proxy for non-sensitive SnowHQ widget data embedded on public website pages; validates the fixed hash shape, rate limits requests, and returns only upstream JSON.",
+  },
+  "src/app/api/skifield-whakapapa/route.ts": {
+    boundary: "public",
+    reason:
+      "Public cached Whakapapa mountain-condition payload used by public website embed tokens; fixed upstream source, rate limited, no member data.",
   },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",

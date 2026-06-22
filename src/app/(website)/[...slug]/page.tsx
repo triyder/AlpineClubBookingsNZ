@@ -92,7 +92,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
         data-page-slug={pageSlug}
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          {embeddedBody ? (
+          {embeddedBody.length > 0 ? (
             <div className="space-y-10 text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
               {embeddedBody.map((part, index) => {
                 if (part.type === "committee") {

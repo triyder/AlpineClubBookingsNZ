@@ -44,34 +44,15 @@ export interface ClubModuleSettingsPayload {
 
 type ClubModuleSettingsRecord = Pick<
   ClubModuleSettings,
-  | "kiosk"
-  | "chores"
-  | "financeDashboard"
-  | "waitlist"
-  | "xeroIntegration"
-  | "bedAllocation"
-  | "internetBankingPayments"
-  | "updatedAt"
-  | "updatedByMemberId"
+  ModuleKey | "updatedAt" | "updatedByMemberId"
 >;
 
 export function normalizeClubModuleSettings(
   record?: Partial<ClubModuleSettingsRecord> | null,
 ): ModuleSettingsValues {
-  return {
-    kiosk: record?.kiosk ?? DEFAULT_MODULE_SETTINGS.kiosk,
-    chores: record?.chores ?? DEFAULT_MODULE_SETTINGS.chores,
-    financeDashboard:
-      record?.financeDashboard ?? DEFAULT_MODULE_SETTINGS.financeDashboard,
-    waitlist: record?.waitlist ?? DEFAULT_MODULE_SETTINGS.waitlist,
-    xeroIntegration:
-      record?.xeroIntegration ?? DEFAULT_MODULE_SETTINGS.xeroIntegration,
-    bedAllocation:
-      record?.bedAllocation ?? DEFAULT_MODULE_SETTINGS.bedAllocation,
-    internetBankingPayments:
-      record?.internetBankingPayments ??
-      DEFAULT_MODULE_SETTINGS.internetBankingPayments,
-  };
+  return Object.fromEntries(
+    MODULE_KEYS.map((key) => [key, record?.[key] ?? DEFAULT_MODULE_SETTINGS[key]]),
+  ) as ModuleSettingsValues;
 }
 
 function readinessMessage(params: {
@@ -155,15 +136,9 @@ export async function loadClubModuleSettings(): Promise<ClubModuleSettingsPayloa
   return buildClubModuleSettingsPayload(record);
 }
 
-const DISABLED_MODULE_FLAGS: FeatureFlags = {
-  kiosk: false,
-  chores: false,
-  financeDashboard: false,
-  waitlist: false,
-  xeroIntegration: false,
-  bedAllocation: false,
-  internetBankingPayments: false,
-};
+const DISABLED_MODULE_FLAGS: FeatureFlags = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, false]),
+) as FeatureFlags;
 
 export async function loadEffectiveModuleFlags(
   flags: FeatureFlags = featureFlags,

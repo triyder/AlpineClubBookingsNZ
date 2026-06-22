@@ -102,15 +102,9 @@ function getReadiness(
 }
 
 function cloneSettings(settings: ModuleSettingsValues): ModuleSettingsValues {
-  return {
-    kiosk: settings.kiosk,
-    chores: settings.chores,
-    financeDashboard: settings.financeDashboard,
-    waitlist: settings.waitlist,
-    xeroIntegration: settings.xeroIntegration,
-    bedAllocation: settings.bedAllocation,
-    internetBankingPayments: settings.internetBankingPayments,
-  };
+  return Object.fromEntries(
+    MODULE_KEYS.map((key) => [key, settings[key]]),
+  ) as ModuleSettingsValues;
 }
 
 export default function AdminModulesPage() {

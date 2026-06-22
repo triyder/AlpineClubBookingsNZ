@@ -185,6 +185,14 @@ describe("featureFlagsSchema", () => {
         xeroIntegration: true,
         bedAllocation: true,
         internetBankingPayments: false,
+        groupBookings: true,
+        lockers: true,
+        induction: false,
+        workParties: true,
+        promoCodes: false,
+        hutLeaders: true,
+        communications: false,
+        skifieldConditions: true,
       }),
     ).toBeDefined();
   });

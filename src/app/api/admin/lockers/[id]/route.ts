@@ -1,18 +1,41 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { parseJsonRequestBody } from "@/lib/api-json";
+import { createAuditLog } from "@/lib/audit";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 const updateLockerSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .transform((value) => value.replace(/\s+/g, " "))
+    .pipe(z.string().min(1).max(200))
+    .optional(),
   allocatedToMemberId: z.string().trim().min(1).max(191).nullable().optional(),
 });
 
+async function findDuplicateLockerName(name: string, excludeId: string) {
+  return prisma.locker.findFirst({
+    where: {
+      id: { not: excludeId },
+      name: {
+        equals: name,
+        mode: "insensitive",
+      },
+    },
+    select: { id: true },
+  });
+}
+
 /**
  * PUT /api/admin/lockers/[id]
- * Updates locker allocation while keeping locker name unchanged.
+ * Updates locker name and allocation.
  */
 export async function PUT(
-  request: NextRequest,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin();
@@ -24,20 +47,16 @@ export async function PUT(
 
   const existing = await prisma.locker.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, name: true, allocatedToMemberId: true },
   });
   if (!existing) {
     return NextResponse.json({ error: "Locker not found" }, { status: 404 });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const json = await parseJsonRequestBody(request);
+  if (!json.ok) return json.response;
 
-  const parsed = updateLockerSchema.safeParse(body);
+  const parsed = updateLockerSchema.safeParse(json.body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
@@ -47,8 +66,8 @@ export async function PUT(
 
   const allocatedToMemberId = parsed.data.allocatedToMemberId ?? null;
   if (allocatedToMemberId) {
-    const member = await prisma.member.findUnique({
-      where: { id: allocatedToMemberId },
+    const member = await prisma.member.findFirst({
+      where: { id: allocatedToMemberId, active: true },
       select: { id: true },
     });
     if (!member) {
@@ -59,15 +78,116 @@ export async function PUT(
     }
   }
 
-  const locker = await prisma.locker.update({
+  const nextName = parsed.data.name ?? existing.name;
+  if (nextName !== existing.name && (await findDuplicateLockerName(nextName, id))) {
+    return NextResponse.json(
+      { error: "A locker with that name already exists" },
+      { status: 409 },
+    );
+  }
+
+  try {
+    const locker = await prisma.$transaction(async (tx) => {
+      const updated = await tx.locker.update({
+        where: { id },
+        data: { name: nextName, allocatedToMemberId },
+        include: {
+          allocatedTo: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+        },
+      });
+
+      await createAuditLog(
+        {
+          action: "locker.updated",
+          memberId: guard.session.user.id,
+          entityType: "Locker",
+          entityId: updated.id,
+          category: "admin",
+          outcome: "success",
+          summary: "Locker updated",
+          metadata: {
+            lockerId: updated.id,
+            before: {
+              name: existing.name,
+              allocatedToMemberId: existing.allocatedToMemberId,
+            },
+            after: {
+              name: updated.name,
+              allocatedToMemberId: updated.allocatedToMemberId,
+            },
+          },
+        },
+        tx,
+      );
+
+      return updated;
+    });
+
+    return NextResponse.json({ locker });
+  } catch (error) {
+    if (
+      isPrismaUniqueConstraintError(error) ||
+      (error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002")
+    ) {
+      return NextResponse.json(
+        { error: "A locker with that name already exists" },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Failed to update locker" },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * DELETE /api/admin/lockers/[id]
+ * Deletes a locker record after recording the previous allocation.
+ */
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const guard = await requireAdmin();
+  if (!guard.ok) {
+    return guard.response;
+  }
+
+  const { id } = await params;
+
+  const existing = await prisma.locker.findUnique({
     where: { id },
-    data: { allocatedToMemberId },
-    include: {
-      allocatedTo: {
-        select: { id: true, firstName: true, lastName: true },
+    select: { id: true, name: true, allocatedToMemberId: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ error: "Locker not found" }, { status: 404 });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.locker.delete({ where: { id } });
+    await createAuditLog(
+      {
+        action: "locker.deleted",
+        memberId: guard.session.user.id,
+        entityType: "Locker",
+        entityId: id,
+        category: "admin",
+        outcome: "success",
+        summary: "Locker deleted",
+        metadata: {
+          lockerId: id,
+          name: existing.name,
+          allocatedToMemberId: existing.allocatedToMemberId,
+        },
       },
-    },
+      tx,
+    );
   });
 
-  return NextResponse.json({ locker });
+  return NextResponse.json({ success: true });
 }

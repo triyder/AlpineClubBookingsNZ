@@ -2,6 +2,7 @@ import { clubConfig } from "@/config/club";
 import { featureFlags } from "@/config/features";
 import {
   DEFAULT_MODULE_SETTINGS,
+  MODULE_KEYS,
   getEffectiveModuleFlags,
   type ModuleSettingsValues,
 } from "@/config/modules";
@@ -36,20 +37,9 @@ export interface LodgeCapacityStatus {
 function normalizeModuleSettings(
   record?: ModuleSettingsRecord,
 ): ModuleSettingsValues {
-  return {
-    kiosk: record?.kiosk ?? DEFAULT_MODULE_SETTINGS.kiosk,
-    chores: record?.chores ?? DEFAULT_MODULE_SETTINGS.chores,
-    financeDashboard:
-      record?.financeDashboard ?? DEFAULT_MODULE_SETTINGS.financeDashboard,
-    waitlist: record?.waitlist ?? DEFAULT_MODULE_SETTINGS.waitlist,
-    xeroIntegration:
-      record?.xeroIntegration ?? DEFAULT_MODULE_SETTINGS.xeroIntegration,
-    bedAllocation:
-      record?.bedAllocation ?? DEFAULT_MODULE_SETTINGS.bedAllocation,
-    internetBankingPayments:
-      record?.internetBankingPayments ??
-      DEFAULT_MODULE_SETTINGS.internetBankingPayments,
-  };
+  return Object.fromEntries(
+    MODULE_KEYS.map((key) => [key, record?.[key] ?? DEFAULT_MODULE_SETTINGS[key]]),
+  ) as ModuleSettingsValues;
 }
 
 async function resolveLodgeCapacityDb(): Promise<LodgeCapacityDb> {

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const SNZ_WIDGET_ENDPOINT_PREFIX = "https://snowhq.com/widget/";
+const PUBLIC_CACHE_CONTROL = "public, max-age=600, stale-while-revalidate=1800";
 
 const EMPTY_WIDGET_PAYLOAD = {
   Type: "Small",
@@ -17,15 +17,8 @@ function isValidHash(value: string) {
 }
 
 export async function GET(request: Request) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
+  const rateLimited = applyRateLimit(rateLimiters.skifieldConditions, request);
+  if (rateLimited) return rateLimited;
 
   const { searchParams } = new URL(request.url);
   const hash = (searchParams.get("hash") ?? "").trim();
@@ -36,7 +29,10 @@ export async function GET(request: Request) {
         ...EMPTY_WIDGET_PAYLOAD,
         _error: "A valid 32-character widget hash is required.",
       },
-      { status: 200 },
+      {
+        status: 400,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   }
 
@@ -60,7 +56,10 @@ export async function GET(request: Request) {
           "Snow widget data was empty or unavailable from the upstream service.",
         upstreamStatus: upstream.status,
       },
-      { status: 200 },
+      {
+        status: 200,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   }
 
@@ -68,7 +67,8 @@ export async function GET(request: Request) {
     status: 200,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": PUBLIC_CACHE_CONTROL,
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

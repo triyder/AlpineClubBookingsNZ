@@ -3,6 +3,8 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import {
+  DEFAULT_MODULE_SETTINGS,
+  MODULE_KEYS,
   getEffectiveModuleFlags,
   type ModuleSettingsValues,
 } from "@/config/modules";
@@ -62,15 +64,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
 const memberSession = { user: { id: "member-1", role: "MEMBER" } };
 
-const allEnabled: ModuleSettingsValues = {
-  kiosk: true,
-  chores: true,
-  financeDashboard: true,
-  waitlist: true,
-  xeroIntegration: true,
-  bedAllocation: true,
-  internetBankingPayments: true,
-};
+const allEnabled: ModuleSettingsValues = { ...DEFAULT_MODULE_SETTINGS };
 
 function request(body: unknown) {
   return new NextRequest("http://localhost/api/admin/modules", {
@@ -177,15 +171,9 @@ describe("Admin modules API", () => {
 
     expect(response.status).toBe(200);
     expect(body.settings.waitlist).toBe(false);
-    expect(body.modules).toHaveLength(7);
+    expect(body.modules).toHaveLength(MODULE_KEYS.length);
     expect(body.modules.map((module: { key: string }) => module.key)).toEqual([
-      "kiosk",
-      "chores",
-      "financeDashboard",
-      "waitlist",
-      "xeroIntegration",
-      "bedAllocation",
-      "internetBankingPayments",
+      ...MODULE_KEYS,
     ]);
     expect(body.modules[0]).toEqual(
       expect.objectContaining({
@@ -332,24 +320,8 @@ describe("effective module state", () => {
       new Error("database unavailable"),
     );
 
-    await expect(
-      loadEffectiveModuleFlags({
-        kiosk: true,
-        chores: true,
-        financeDashboard: true,
-        waitlist: true,
-        xeroIntegration: true,
-        bedAllocation: true,
-        internetBankingPayments: true,
-      }),
-    ).resolves.toEqual({
-      kiosk: false,
-      chores: false,
-      financeDashboard: false,
-      waitlist: false,
-      xeroIntegration: false,
-      bedAllocation: false,
-      internetBankingPayments: false,
-    });
+    await expect(loadEffectiveModuleFlags({ ...allEnabled })).resolves.toEqual(
+      Object.fromEntries(MODULE_KEYS.map((key) => [key, false])),
+    );
   });
 });

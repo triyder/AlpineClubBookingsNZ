@@ -31,6 +31,7 @@ import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   ACTIVE_BOOKING_STATUSES,
@@ -188,6 +189,8 @@ export default async function DashboardPage() {
   const inductionNeedsAction =
     Boolean(inductionInfo?.requiresInduction) && !inductionComplete;
 
+  const modules = await loadEffectiveModuleFlags();
+
   return (
     <div className="space-y-8">
       {/* Welcome header */}
@@ -326,24 +329,26 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Promo Codes Available
-            </CardTitle>
-            <TicketPercent className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">
-              {availablePromoCodes.length}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {availablePromoCodes.length > 0
-                ? "Assigned to your member account"
-                : "No assigned promo codes available"}
-            </p>
-          </CardContent>
-        </Card>
+        {modules.promoCodes && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Promo Codes Available
+              </CardTitle>
+              <TicketPercent className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">
+                {availablePromoCodes.length}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {availablePromoCodes.length > 0
+                  ? "Assigned to your member account"
+                  : "No assigned promo codes available"}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -360,52 +365,56 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Lodge Induction
-            </CardTitle>
-            <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-lg font-semibold">{inductionStatusText}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {inductionNeedsAction
-                ? "Your induction is required — please complete it."
-                : "View your induction and sign off others."}
-            </p>
-            <Button
-              asChild
-              size="sm"
-              variant={inductionNeedsAction ? "default" : "outline"}
-              className="mt-4 w-full"
-            >
-              <Link href="/induction">Open Induction</Link>
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Lockers</CardTitle>
-            <House className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {lockers.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No lockers allocated.
+        {modules.induction && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Lodge Induction
+              </CardTitle>
+              <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">{inductionStatusText}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {inductionNeedsAction
+                  ? "Your induction is required — please complete it."
+                  : "View your induction and sign off others."}
               </p>
-            ) : (
-              <ul className="space-y-1">
-                {lockers.map((locker) => (
-                  <li key={locker.id} className="text-sm text-slate-700">
-                    {locker.name}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+              <Button
+                asChild
+                size="sm"
+                variant={inductionNeedsAction ? "default" : "outline"}
+                className="mt-4 w-full"
+              >
+                <Link href="/induction">Open Induction</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {modules.lockers && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Lockers</CardTitle>
+              <House className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {lockers.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No lockers allocated.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {lockers.map((locker) => (
+                    <li key={locker.id} className="text-sm text-slate-700">
+                      {locker.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Draft bookings */}
