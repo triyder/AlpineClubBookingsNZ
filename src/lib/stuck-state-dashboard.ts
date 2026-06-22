@@ -273,7 +273,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.failedOperations.count,
-    href: "/admin/xero/operations?status=FAILED&failureState=ACTIVE",
+    href: "/admin/xero?section=operations&opStatus=FAILED&opFailureState=ACTIVE",
     summary: `${snapshot.failedOperations.count} active Xero outbox ${plural(
       snapshot.failedOperations.count,
       "operation",
@@ -286,7 +286,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.staleRunningOperations.count,
-    href: "/admin/xero/operations?status=RUNNING",
+    href: "/admin/xero?section=operations&opStatus=RUNNING",
     summary: `${snapshot.staleRunningOperations.count} Xero outbox ${plural(
       snapshot.staleRunningOperations.count,
       "operation",
@@ -299,7 +299,7 @@ function addXeroItems(items: StuckStateItem[], snapshot: XeroAdminHealthSnapshot
     severity: "critical",
     owner: "Finance",
     count: snapshot.staleProcessingInboundEvents.count,
-    href: "/admin/xero/inbound-events?status=PROCESSING",
+    href: "/admin/xero?section=inbound&inStatus=PROCESSING",
     summary: `${snapshot.staleProcessingInboundEvents.count} inbound Xero ${plural(
       snapshot.staleProcessingInboundEvents.count,
       "event",
