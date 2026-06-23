@@ -146,18 +146,18 @@ async function resolveGalleryImages(
 
 export async function buildEmbeddedBody(contentHtml: string) {
   const matches = Array.from(contentHtml.matchAll(EMBED_TOKEN_REGEX));
-  const hasDirectoryGalleryToken = matches.some((match) => {
+  const hasInlineGalleryToken = matches.some((match) => {
     const parsed = parseTokenMatch(match);
     return (
       (parsed.token === "photo-gallery" ||
         parsed.token === "photo-slideshow") &&
-      Boolean(parsed.parameter)
+      !parsed.parameter
     );
   });
 
-  const { cleanedHtml, images: inlineImages } = hasDirectoryGalleryToken
-    ? { cleanedHtml: contentHtml, images: [] as PhotoGalleryImage[] }
-    : extractInlinePhotoGalleryImages(contentHtml);
+  const { cleanedHtml, images: inlineImages } = hasInlineGalleryToken
+    ? extractInlinePhotoGalleryImages(contentHtml)
+    : { cleanedHtml: contentHtml, images: [] as PhotoGalleryImage[] };
 
   const parts: EmbeddedBodyPart[] = [];
   let lastIndex = 0;
@@ -187,7 +187,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
         images: await resolveGalleryImages(
           parsed.parameter,
           inlineImages,
-          !hasDirectoryGalleryToken,
+          hasInlineGalleryToken,
         ),
       });
     } else if (parsed.token === "photo-slideshow") {
@@ -196,7 +196,7 @@ export async function buildEmbeddedBody(contentHtml: string) {
         images: await resolveGalleryImages(
           parsed.parameter,
           inlineImages,
-          !hasDirectoryGalleryToken,
+          hasInlineGalleryToken,
         ),
       });
     } else {
