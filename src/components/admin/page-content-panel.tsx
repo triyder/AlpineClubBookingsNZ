@@ -110,6 +110,61 @@ function parsePixelDimension(value: string): number | null {
   return parsed;
 }
 
+type TextAlignment = "left" | "center" | "right";
+
+const ALIGNMENT_CLASS_BY_VALUE: Record<TextAlignment, string> = {
+  left: "wysiwyg-align-left",
+  center: "wysiwyg-align-center",
+  right: "wysiwyg-align-right",
+};
+
+const ALIGNMENT_CLASS_NAMES = Object.values(ALIGNMENT_CLASS_BY_VALUE);
+
+function findAlignedBlock(
+  editor: HTMLElement,
+  selection: Selection,
+): HTMLElement | null {
+  if (selection.rangeCount === 0) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const anchor =
+    range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.commonAncestorContainer as Element)
+      : range.commonAncestorContainer.parentElement;
+
+  if (!anchor) {
+    return null;
+  }
+
+  const block = anchor.closest(
+    "p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th, div",
+  );
+  if (!block || !editor.contains(block)) {
+    return null;
+  }
+
+  return block as HTMLElement;
+}
+
+export function applyTextAlignmentToSelection(
+  editor: HTMLElement,
+  selection: Selection,
+  alignment: TextAlignment,
+): boolean {
+  const block = findAlignedBlock(editor, selection);
+  if (!block) {
+    return false;
+  }
+
+  for (const className of ALIGNMENT_CLASS_NAMES) {
+    block.classList.remove(className);
+  }
+  block.classList.add(ALIGNMENT_CLASS_BY_VALUE[alignment]);
+  return true;
+}
+
 const UPLOADABLE_IMAGE_TYPES =
   "image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml";
 
@@ -652,13 +707,34 @@ export const WysiwygEditor = forwardRef<
     runCommand("insertHorizontalRule");
   }
 
+  function alignSelection(alignment: TextAlignment) {
+    if (showHtmlFallback) return;
+
+    const selection = window.getSelection();
+    if (selectionRef.current && selection) {
+      selection.removeAllRanges();
+      selection.addRange(selectionRef.current);
+    }
+
+    const editor = editorDivRef.current;
+    if (!editor || !selection) {
+      return;
+    }
+
+    editor.focus();
+    if (applyTextAlignmentToSelection(editor, selection, alignment)) {
+      captureSelection();
+      onChange(editor.innerHTML ?? "");
+    }
+  }
+
   return (
     <div
       className={`flex flex-col gap-1${
         wrapperClassName ? ` ${wrapperClassName}` : ""
       }`}
     >
-      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="sticky top-0 z-30 rounded-md border border-slate-200 bg-slate-50/95 px-3 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-slate-50/90">
         <p className="text-sm text-slate-600">
           {showHtmlFallback
             ? "HTML editor mode is active."
@@ -678,7 +754,7 @@ export const WysiwygEditor = forwardRef<
                   )
                 }
               >
-                Paragraph
+                P
               </Button>
               <Button
                 size="sm"
@@ -728,7 +804,7 @@ export const WysiwygEditor = forwardRef<
                   onToolbarMouseDown(event, () => runCommand("bold"))
                 }
               >
-                Bold
+                B
               </Button>
               <Button
                 size="sm"
@@ -739,7 +815,7 @@ export const WysiwygEditor = forwardRef<
                   onToolbarMouseDown(event, () => runCommand("italic"))
                 }
               >
-                Italic
+                i
               </Button>
               <Button
                 size="sm"
@@ -750,7 +826,7 @@ export const WysiwygEditor = forwardRef<
                   onToolbarMouseDown(event, () => runCommand("underline"))
                 }
               >
-                Underline
+                _
               </Button>
               <Button
                 size="sm"
@@ -803,7 +879,7 @@ export const WysiwygEditor = forwardRef<
                 aria-label="Align left"
                 title="Align left"
                 onMouseDown={(event) =>
-                  onToolbarMouseDown(event, () => runCommand("justifyLeft"))
+                  onToolbarMouseDown(event, () => alignSelection("left"))
                 }
               >
                 <AlignLeft className="h-4 w-4" />
@@ -816,7 +892,7 @@ export const WysiwygEditor = forwardRef<
                 aria-label="Align center"
                 title="Align center"
                 onMouseDown={(event) =>
-                  onToolbarMouseDown(event, () => runCommand("justifyCenter"))
+                  onToolbarMouseDown(event, () => alignSelection("center"))
                 }
               >
                 <AlignCenter className="h-4 w-4" />
@@ -829,7 +905,7 @@ export const WysiwygEditor = forwardRef<
                 aria-label="Align right"
                 title="Align right"
                 onMouseDown={(event) =>
-                  onToolbarMouseDown(event, () => runCommand("justifyRight"))
+                  onToolbarMouseDown(event, () => alignSelection("right"))
                 }
               >
                 <AlignRight className="h-4 w-4" />
