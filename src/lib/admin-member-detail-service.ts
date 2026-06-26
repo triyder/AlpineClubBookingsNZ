@@ -40,6 +40,7 @@ import {
   getMemberDeleteLifecycleRequests,
 } from "@/lib/member-lifecycle-actions";
 import { nameField } from "@/lib/zod-helpers";
+import { genderEnum, titleEnum } from "@/lib/member-enums";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -53,8 +54,11 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
 }
 
 export const updateMemberSchema = z.object({
+  title: titleEnum.optional().nullable(),
   firstName: nameField({ required: "First name is required" }).optional(),
   lastName: nameField({ required: "Last name is required" }).optional(),
+  gender: genderEnum.optional().nullable(),
+  occupation: z.string().max(100).optional().nullable().or(z.literal("")),
   email: z.string().email("Invalid email address").optional(),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
@@ -65,7 +69,7 @@ export const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  role: z.enum(["MEMBER", "ADMIN"]).optional(),
+  role: z.enum(["MEMBER", "ADMIN", "LODGE", "ASSOCIATE", "LIFE"]).optional(),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
   active: z.boolean().optional(),
@@ -79,6 +83,13 @@ export const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
+  lifeMemberDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  comments: z.string().max(4000).optional().nullable().or(z.literal("")),
   // Addresses
   streetAddressLine1: maxStr(200),
   streetAddressLine2: maxStr(200),
@@ -97,26 +108,45 @@ export const updateMemberSchema = z.object({
 
 export type UpdateMemberInput = z.infer<typeof updateMemberSchema>;
 
-const PHONE_FIELDS = ["phoneCountryCode", "phoneAreaCode", "phoneNumber"] as const;
+const PHONE_FIELDS = [
+  "phoneCountryCode",
+  "phoneAreaCode",
+  "phoneNumber",
+] as const;
 const ADDRESS_FIELDS = [
-  "streetAddressLine1", "streetAddressLine2", "streetCity", "streetRegion", "streetPostalCode", "streetCountry",
-  "postalAddressLine1", "postalAddressLine2", "postalCity", "postalRegion", "postalPostalCode", "postalCountry",
+  "streetAddressLine1",
+  "streetAddressLine2",
+  "streetCity",
+  "streetRegion",
+  "streetPostalCode",
+  "streetCountry",
+  "postalAddressLine1",
+  "postalAddressLine2",
+  "postalCity",
+  "postalRegion",
+  "postalPostalCode",
+  "postalCountry",
 ] as const;
 const ADMIN_MEMBER_AUDIT_FIELDS = [
+  "title",
   "firstName",
   "lastName",
+  "gender",
+  "occupation",
   "email",
   ...PHONE_FIELDS,
   ...ADDRESS_FIELDS,
   "dateOfBirth",
   "ageTier",
   "joinedDate",
+  "lifeMemberDate",
   "role",
   "financeAccessLevel",
   "active",
   "canLogin",
   "forcePasswordChange",
   "requiresInduction",
+  "comments",
   "inheritEmailFromId",
 ] as const;
 const ADMIN_MEMBER_ACCESS_FIELDS = [
@@ -140,19 +170,22 @@ function normalizeAuditValue(value: unknown): unknown {
 function getChangedFields(
   before: Record<string, unknown>,
   updateData: Record<string, unknown>,
-  fields: readonly string[]
+  fields: readonly string[],
 ): string[] {
   return fields.filter((field) => {
     if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
       return false;
     }
-    return normalizeAuditValue(before[field]) !== normalizeAuditValue(updateData[field]);
+    return (
+      normalizeAuditValue(before[field]) !==
+      normalizeAuditValue(updateData[field])
+    );
   });
 }
 
 function hasAnyField(
   changedFields: readonly string[],
-  fields: readonly string[]
+  fields: readonly string[],
 ): boolean {
   return fields.some((field) => changedFields.includes(field));
 }
@@ -160,10 +193,10 @@ function hasAnyField(
 function buildAccessChanges(
   before: Record<string, unknown>,
   updateData: Record<string, unknown>,
-  changedFields: readonly string[]
+  changedFields: readonly string[],
 ) {
   return ADMIN_MEMBER_ACCESS_FIELDS.filter((field) =>
-    changedFields.includes(field)
+    changedFields.includes(field),
   ).map((field) => ({
     field,
     before: before[field],
@@ -173,7 +206,7 @@ function buildAccessChanges(
 
 function getAdminMemberAuditAction(
   before: Record<string, unknown>,
-  updateData: Record<string, unknown>
+  updateData: Record<string, unknown>,
 ): { action: string; summary: string } {
   if (
     Object.prototype.hasOwnProperty.call(updateData, "active") &&
@@ -218,8 +251,10 @@ export async function getAdminMemberDetail(params: {
       where: { id },
       select: {
         id: true,
+        title: true,
         firstName: true,
         lastName: true,
+        gender: true,
         email: true,
         phoneCountryCode: true,
         phoneAreaCode: true,
@@ -269,9 +304,12 @@ export async function getAdminMemberDetail(params: {
         },
         xeroContactId: true,
         joinedDate: true,
+        lifeMemberDate: true,
+        occupation: true,
         requiresInduction: true,
         cancelledAt: true,
         cancelledReason: true,
+        comments: true,
         archivedAt: true,
         archivedReason: true,
         archivedViaLifecycleActionRequestId: true,
@@ -405,8 +443,8 @@ export async function getAdminMemberDetail(params: {
     new Set(
       auditLogs
         .map((log) => getAuditLogActorMemberId(log))
-        .filter((memberId): memberId is string => Boolean(memberId))
-    )
+        .filter((memberId): memberId is string => Boolean(memberId)),
+    ),
   );
   const auditActors =
     actorIds.length > 0
@@ -415,14 +453,12 @@ export async function getAdminMemberDetail(params: {
           select: { id: true, firstName: true, lastName: true, email: true },
         })
       : [];
-  const auditActorById = new Map(
-    auditActors.map((actor) => [actor.id, actor])
-  );
+  const auditActorById = new Map(auditActors.map((actor) => [actor.id, actor]));
   const auditLogsWithActors = auditLogs.map((log) => {
     const actorMemberId = getAuditLogActorMemberId(log);
     return {
       ...log,
-      actor: actorMemberId ? auditActorById.get(actorMemberId) ?? null : null,
+      actor: actorMemberId ? (auditActorById.get(actorMemberId) ?? null) : null,
     };
   });
 
@@ -436,14 +472,17 @@ export async function getAdminMemberDetail(params: {
       xeroContactGroups = memberships[member.xeroContactId] ?? [];
       xeroContactGroupsLoaded = Object.prototype.hasOwnProperty.call(
         memberships,
-        member.xeroContactId
+        member.xeroContactId,
       );
     } catch (error) {
-      const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for member detail");
+      const xeroError = getXeroApiErrorInfo(
+        error,
+        "Failed to fetch Xero contact groups for member detail",
+      );
       if (!xeroError.handled) {
         logger.error(
           { err: error, memberId: id },
-          "Failed to fetch Xero contact groups for member detail"
+          "Failed to fetch Xero contact groups for member detail",
         );
       }
     }
@@ -460,7 +499,9 @@ export async function getAdminMemberDetail(params: {
       ...(member.secondaryDependents ?? [])
         .filter(
           (dependent) =>
-            !(member.dependents ?? []).some((primary) => primary.id === dependent.id)
+            !(member.dependents ?? []).some(
+              (primary) => primary.id === dependent.id,
+            ),
         )
         .map((dependent) => ({
           ...dependent,
@@ -527,21 +568,21 @@ export async function updateAdminMember(params: {
     if (data.role === "MEMBER") {
       return jsonResult(
         { error: "You cannot demote your own admin account" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (data.active === false) {
       return jsonResult(
         { error: "You cannot deactivate your own account" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (data.canLogin === false) {
       return jsonResult(
         { error: "You cannot disable login for your own admin account" },
-        { status: 400 }
+        { status: 400 },
       );
     }
   }
@@ -561,15 +602,24 @@ export async function updateAdminMember(params: {
   }
 
   // Check email uniqueness if changing email for a canLogin member
-  const effectiveCanLogin = data.canLogin !== undefined ? data.canLogin : existing.canLogin;
-  if (data.email && data.email.toLowerCase() !== existing.email && effectiveCanLogin) {
+  const effectiveCanLogin =
+    data.canLogin !== undefined ? data.canLogin : existing.canLogin;
+  if (
+    data.email &&
+    data.email.toLowerCase() !== existing.email &&
+    effectiveCanLogin
+  ) {
     const emailTaken = await prisma.member.findFirst({
-      where: { email: data.email.toLowerCase(), canLogin: true, id: { not: id } },
+      where: {
+        email: data.email.toLowerCase(),
+        canLogin: true,
+        id: { not: id },
+      },
     });
     if (emailTaken) {
       return jsonResult(
         { error: "A member with this email already exists" },
-        { status: 409 }
+        { status: 409 },
       );
     }
   }
@@ -584,7 +634,7 @@ export async function updateAdminMember(params: {
       if (!validation.ok) {
         return jsonResult(
           { error: validation.error },
-          { status: validation.status }
+          { status: validation.status },
         );
       }
     }
@@ -592,8 +642,13 @@ export async function updateAdminMember(params: {
 
   // Build update data
   const updateData: Record<string, unknown> = {};
-  if (data.firstName !== undefined) updateData.firstName = data.firstName.trim();
+  if (data.title !== undefined) updateData.title = data.title ?? null;
+  if (data.firstName !== undefined)
+    updateData.firstName = data.firstName.trim();
   if (data.lastName !== undefined) updateData.lastName = data.lastName.trim();
+  if (data.gender !== undefined) updateData.gender = data.gender ?? null;
+  if (data.occupation !== undefined)
+    updateData.occupation = data.occupation?.trim() || null;
   for (const f of PHONE_FIELDS) {
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
@@ -609,8 +664,10 @@ export async function updateAdminMember(params: {
   }
   if (data.active !== undefined) updateData.active = data.active;
   if (data.canLogin !== undefined) updateData.canLogin = data.canLogin;
-  if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
-  if (data.requiresInduction !== undefined) updateData.requiresInduction = data.requiresInduction;
+  if (data.forcePasswordChange !== undefined)
+    updateData.forcePasswordChange = data.forcePasswordChange;
+  if (data.requiresInduction !== undefined)
+    updateData.requiresInduction = data.requiresInduction;
   if (data.inheritEmailFromId !== undefined) {
     updateData.inheritEmailFromId = data.inheritEmailFromId?.trim() || null;
   }
@@ -648,6 +705,25 @@ export async function updateAdminMember(params: {
     }
   }
 
+  if (data.lifeMemberDate !== undefined) {
+    if (data.lifeMemberDate && data.lifeMemberDate !== "") {
+      const lmd = new Date(data.lifeMemberDate);
+      if (isNaN(lmd.getTime())) {
+        return jsonResult(
+          { error: "Invalid life member date" },
+          { status: 422 },
+        );
+      }
+      updateData.lifeMemberDate = lmd;
+    } else {
+      updateData.lifeMemberDate = null;
+    }
+  }
+
+  if (data.comments !== undefined) {
+    updateData.comments = data.comments?.trim() || null;
+  }
+
   // Handle DOB and age tier
   if (data.dateOfBirth !== undefined) {
     if (data.dateOfBirth && data.dateOfBirth !== "") {
@@ -656,7 +732,10 @@ export async function updateAdminMember(params: {
         return jsonResult({ error: "Invalid date of birth" }, { status: 422 });
       }
       updateData.dateOfBirth = dob;
-      updateData.ageTier = await computeAgeTier(dob, getSeasonStartDate(getSeasonYear()));
+      updateData.ageTier = await computeAgeTier(
+        dob,
+        getSeasonStartDate(getSeasonYear()),
+      );
     } else {
       updateData.dateOfBirth = null;
       // Use explicit ageTier if provided, otherwise keep existing
@@ -671,16 +750,16 @@ export async function updateAdminMember(params: {
     const changedFields = getChangedFields(
       existingAuditRecord,
       updateData,
-      ADMIN_MEMBER_AUDIT_FIELDS
+      ADMIN_MEMBER_AUDIT_FIELDS,
     );
     const accessChanges = buildAccessChanges(
       existingAuditRecord,
       updateData,
-      changedFields
+      changedFields,
     );
     const auditAction = getAdminMemberAuditAction(
       existingAuditRecord,
-      updateData
+      updateData,
     );
     const [updated] = await prisma.$transaction([
       prisma.member.update({
@@ -688,8 +767,11 @@ export async function updateAdminMember(params: {
         data: updateData,
         select: {
           id: true,
+          title: true,
           firstName: true,
           lastName: true,
+          gender: true,
+          occupation: true,
           email: true,
           phoneCountryCode: true,
           phoneAreaCode: true,
@@ -706,7 +788,10 @@ export async function updateAdminMember(params: {
           inheritEmailFromId: true,
           xeroContactId: true,
           joinedDate: true,
+          lifeMemberDate: true,
           requiresInduction: true,
+          cancelledAt: true,
+          comments: true,
           createdAt: true,
           streetAddressLine1: true,
           streetAddressLine2: true,
@@ -737,6 +822,9 @@ export async function updateAdminMember(params: {
             changedFieldCount: changedFields.length,
             fieldGroups: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
+              title: changedFields.includes("title"),
+              gender: changedFields.includes("gender"),
+              occupation: changedFields.includes("occupation"),
               email: changedFields.includes("email"),
               phone: hasAnyField(changedFields, PHONE_FIELDS),
               address: hasAnyField(changedFields, ADDRESS_FIELDS),
@@ -744,6 +832,8 @@ export async function updateAdminMember(params: {
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
               joinedDate: changedFields.includes("joinedDate"),
+              lifeMemberDate: changedFields.includes("lifeMemberDate"),
+              comments: changedFields.includes("comments"),
               emailInheritance: changedFields.includes("inheritEmailFromId"),
             },
             accessChanges,
@@ -754,13 +844,13 @@ export async function updateAdminMember(params: {
                   newDomain: getAuditEmailDomain(
                     typeof updateData.email === "string"
                       ? updateData.email
-                      : null
+                      : null,
                   ),
                 }
               : undefined,
           },
           request: getAuditRequestContext(req),
-        })
+        }),
       ),
     ]);
 
@@ -772,12 +862,15 @@ export async function updateAdminMember(params: {
       : false;
     const needsContactUpdate = Boolean(
       updated.xeroContactId &&
-        (hasMappedContactUpdate || shouldRepairContactNameOrder)
+      (hasMappedContactUpdate || shouldRepairContactNameOrder),
     );
     const needsContactGroupSync =
       updated.xeroContactId && existing.ageTier !== updated.ageTier;
 
-    if (updated.xeroContactId && (needsContactUpdate || needsContactGroupSync)) {
+    if (
+      updated.xeroContactId &&
+      (needsContactUpdate || needsContactGroupSync)
+    ) {
       try {
         if (await isXeroConnected()) {
           if (needsContactUpdate) {
@@ -789,7 +882,7 @@ export async function updateAdminMember(params: {
                 localId: id,
                 createdByMemberId: currentAdminMemberId,
                 preserveXeroName: !shouldRepairContactNameOrder,
-              }
+              },
             );
           }
 
@@ -800,7 +893,10 @@ export async function updateAdminMember(params: {
           }
         }
       } catch (xeroErr) {
-        logger.error({ err: xeroErr, memberId: id }, "Xero sync failed for member update");
+        logger.error(
+          { err: xeroErr, memberId: id },
+          "Xero sync failed for member update",
+        );
       }
     }
 
@@ -809,7 +905,7 @@ export async function updateAdminMember(params: {
     if (isPrismaUniqueConstraintError(error)) {
       return jsonResult(
         { error: "A member with this email already exists" },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
