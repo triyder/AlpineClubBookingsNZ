@@ -23,7 +23,9 @@ import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
 } from "./xero-api-client";
-import { getAccountMapping } from "./xero-mappings";
+import { getResolvedAccountMapping } from "./xero-mappings";
+import { getSeasonStartMonth } from "@/lib/financial-year";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 import {
   getXeroSyncCursor,
@@ -70,19 +72,26 @@ function getMembershipSeasonWindow(seasonYear: number): {
   start: Date;
   end: Date;
 } {
-  return {
-    start: new Date(Date.UTC(seasonYear, 3, 1, 0, 0, 0, 0)),
-    end: new Date(Date.UTC(seasonYear + 1, 2, 31, 23, 59, 59, 999)),
-  };
+  // Season starts on the first of the month after the financial year-end and
+  // runs until the instant before the next season starts. Using an exclusive
+  // next-season boundary keeps this correct for any year-end month, including
+  // 30-day end months and a December (calendar-year) year-end.
+  const startMonth = getSeasonStartMonth(); // 1-12
+  const start = new Date(Date.UTC(seasonYear, startMonth - 1, 1, 0, 0, 0, 0));
+  const nextStart = new Date(
+    Date.UTC(seasonYear + 1, startMonth - 1, 1, 0, 0, 0, 0)
+  );
+  return { start, end: new Date(nextStart.getTime() - 1) };
 }
 
 function buildMembershipInvoiceWhereClause(
   seasonYear: number,
   xeroContactId?: string
 ): string {
+  const startMonth = getSeasonStartMonth(); // 1-12
   const conditions = [
-    `Date >= DateTime(${seasonYear},4,1)`,
-    `Date <= DateTime(${seasonYear + 1},3,31)`,
+    `Date >= DateTime(${seasonYear},${startMonth},1)`,
+    `Date < DateTime(${seasonYear + 1},${startMonth},1)`,
     `Type=="ACCREC"`,
   ];
 
@@ -440,14 +449,16 @@ export async function checkMembershipStatus(
 
     const invoices = response.body.invoices ?? [];
 
-    // Look for subscription invoices matching the season year
-    const subscriptionAccountCode =
-      (await getAccountMapping("subscriptionIncome")) ?? "203";
-    const subscriptionInvoice = findSubscriptionInvoice(
-      invoices,
-      year,
-      subscriptionAccountCode
-    );
+    // Look for subscription invoices matching the season year. Detection
+    // criteria (account code, item code, text fallback) are admin-configurable.
+    const subscriptionMapping =
+      await getResolvedAccountMapping("subscriptionIncome");
+    const lockoutSettings = await loadMembershipLockoutSettings();
+    const subscriptionInvoice = findSubscriptionInvoice(invoices, year, {
+      accountCode: subscriptionMapping.code ?? "203",
+      itemCode: subscriptionMapping.itemCode,
+      textFallbackEnabled: lockoutSettings.textFallbackEnabled,
+    });
 
     if (!subscriptionInvoice) {
       await prisma.memberSubscription.upsert({
@@ -600,18 +611,34 @@ export async function checkMembershipStatus(
   }
 }
 
+export interface SubscriptionInvoiceMatchOptions {
+  /** Chart-of-account code that marks a line as a membership subscription. */
+  accountCode: string;
+  /** Optional Xero item code that also marks a line as a subscription. */
+  itemCode?: string | null;
+  /**
+   * When true (default), an invoice whose reference/description text reads like
+   * a membership subscription also matches, in addition to account/item code.
+   */
+  textFallbackEnabled?: boolean;
+}
+
 /**
- * Find a subscription invoice among a list of Xero invoices for a given
- * season year. Exported for testing.
+ * Find a subscription invoice among a list of Xero invoices for a given season
+ * year. An invoice within the season window matches if any line uses the
+ * configured account code OR the configured item code, or (when the text
+ * fallback is enabled) its reference/description reads like a subscription.
+ * Exported for testing.
  */
 export function findSubscriptionInvoice(
   invoices: Invoice[],
   seasonYear: number,
-  subscriptionAccountCode: string = "203"
+  options: SubscriptionInvoiceMatchOptions
 ): Invoice | null {
-  const SUBSCRIPTION_ACCOUNT_CODE = subscriptionAccountCode;
-  const seasonStart = new Date(seasonYear, 3, 1); // April 1
-  const seasonEndExclusive = new Date(seasonYear + 1, 3, 1); // April 1 next year (exclusive)
+  const { accountCode, itemCode, textFallbackEnabled = true } = options;
+  const startMonth = getSeasonStartMonth(); // 1-12
+  const seasonStart = new Date(seasonYear, startMonth - 1, 1);
+  const seasonEndExclusive = new Date(seasonYear + 1, startMonth - 1, 1);
 
   for (const invoice of invoices) {
     // Check if invoice date falls within the season year [seasonStart, seasonEndExclusive)
@@ -620,19 +647,28 @@ export function findSubscriptionInvoice(
 
     if (invoiceDate < seasonStart || invoiceDate >= seasonEndExclusive) continue;
 
-    // Check if any line item uses account code 203 (Annual Subs)
-    const hasSubsAccountCode = invoice.lineItems?.some(
-      (li) => li.accountCode === SUBSCRIPTION_ACCOUNT_CODE
+    // Match on the configured chart-of-account code (e.g. 203 "Annual Subs").
+    const hasAccountCode = invoice.lineItems?.some(
+      (li) => li.accountCode === accountCode
     );
 
-    const hasRefMatch = invoiceTextSuggestsMembershipSubscription(
-      invoice.reference
-    );
-    const hasDescriptionMatch = invoice.lineItems?.some((lineItem) =>
-      invoiceTextSuggestsMembershipSubscription(lineItem.description)
-    );
+    // Match on the configured Xero item code, when one is set.
+    const hasItemCode = itemCode
+      ? invoice.lineItems?.some((li) => li.itemCode === itemCode)
+      : false;
 
-    if (hasSubsAccountCode || hasRefMatch || hasDescriptionMatch) {
+    let hasTextMatch = false;
+    if (textFallbackEnabled) {
+      const hasRefMatch = invoiceTextSuggestsMembershipSubscription(
+        invoice.reference
+      );
+      const hasDescriptionMatch = invoice.lineItems?.some((lineItem) =>
+        invoiceTextSuggestsMembershipSubscription(lineItem.description)
+      );
+      hasTextMatch = Boolean(hasRefMatch || hasDescriptionMatch);
+    }
+
+    if (hasAccountCode || hasItemCode || hasTextMatch) {
       return invoice;
     }
   }

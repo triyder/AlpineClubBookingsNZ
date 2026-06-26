@@ -2916,3 +2916,25 @@ model MembershipNominationSettings {
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
 }
+
+// Admin-configurable settings for the booking lockout that blocks members with
+// an unpaid annual subscription. Single-row table (id = "default"), same
+// pattern as MembershipNominationSettings. The subscription detection codes
+// (account code / item code) are NOT stored here; they remain in the
+// XeroAccountMapping "subscriptionIncome" row so there is a single source of
+// truth shared with the Xero mappings panel.
+model MembershipLockoutSettings {
+  id                            String   @id @default("default")
+  // Master toggle. When false, no booking is blocked for an unpaid subscription.
+  enabled                       Boolean  @default(true)
+  // Membership financial year-end month (1-12). Null = follow the connected
+  // Xero organisation's accounting financial year. A value overrides it when the
+  // membership subscription year differs from the accounting year.
+  financialYearEndMonthOverride Int?
+  // When true, an invoice whose reference/description text reads like a
+  // membership subscription also counts, in addition to account/item code.
+  textFallbackEnabled           Boolean  @default(true)
+  updatedByMemberId             String?
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+}

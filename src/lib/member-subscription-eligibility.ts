@@ -3,6 +3,8 @@ import {
   getAgeTierSettings,
   type AgeTierSettingData,
 } from "@/lib/age-tier";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { requiresPaidSubscriptionForAgeTier as requiresPaidSubscriptionForAgeTierRule } from "@/lib/policies/subscription";
 
@@ -21,14 +23,23 @@ export async function requiresPaidSubscriptionForAgeTierFromSettings(
 }
 
 /**
- * Membership subscriptions are invoiced and reconciled through Xero. When the
- * Xero module is effectively disabled (deploy capability AND admin setting,
- * via loadEffectiveModuleFlags), members can never reach PAID, so the
- * "subscription must be paid" rule must not be enforced at booking time.
+ * Membership subscriptions are invoiced and reconciled through Xero. The
+ * booking lockout is enforced only when BOTH:
+ *  - the Xero module is effectively enabled (deploy capability AND admin
+ *    setting, via loadEffectiveModuleFlags) — otherwise members can never
+ *    reach PAID; and
+ *  - the admin has the lockout toggle on (MembershipLockoutSettings.enabled).
+ *
+ * This call also reseeds the financial-year cache for the current instance, so
+ * the synchronous season helpers stay correct on every gated booking request.
  */
 export async function isSubscriptionEnforcementActive(): Promise<boolean> {
   const flags = await loadEffectiveModuleFlags();
-  return flags.xeroIntegration;
+  if (!flags.xeroIntegration) return false;
+  const lockout = await loadMembershipLockoutSettings();
+  // Reseed the in-process financial-year cache (cheap; uses cached Xero value).
+  await refreshFinancialYearConfig();
+  return lockout.enabled;
 }
 
 /**

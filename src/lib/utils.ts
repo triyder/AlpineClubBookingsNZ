@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
+import { getSeasonStartMonth } from "@/lib/financial-year";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -17,8 +18,15 @@ export function formatCents(cents: number): string {
   }).format(cents / 100);
 }
 
+/**
+ * Map a calendar date to its membership season year. The season starts on the
+ * first of the month after the club's financial year-end (April for the default
+ * 31 March year-end), so a date in or after the start month belongs to the
+ * current calendar year, otherwise the previous one.
+ */
 export function getSeasonYear(date: Date = new Date()): number {
-  const month = date.getMonth();
+  const startMonth = getSeasonStartMonth(); // 1-12
+  const month = date.getMonth() + 1; // 1-12
   const year = date.getFullYear();
-  return month >= 3 ? year : year - 1;
+  return month >= startMonth ? year : year - 1;
 }

@@ -43,6 +43,7 @@ import {
   Images,
   UserPlus,
   Plug,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -130,6 +131,11 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      {
+        href: "/admin/subscription-lockout",
+        label: "Subscription Lockout",
+        icon: Lock,
+      },
       { href: "/admin/communications", label: "Communications", icon: Mail },
       { href: "/admin/lockers", label: "Lockers", icon: House },
     ],

@@ -1,12 +1,15 @@
 import type { AgeTier } from "@prisma/client";
 import { clubConfig } from "@/config/club";
+import { getSeasonStartMonth } from "@/lib/financial-year";
 
 /**
- * Returns April 1 of the given season year.
- * e.g. getSeasonStartDate(2026) => 2026-04-01
+ * Returns the first day of the given season year, i.e. the start of the
+ * membership financial year. For the default 31 March year-end this is April 1
+ * (e.g. getSeasonStartDate(2026) => 2026-04-01).
  */
 export function getSeasonStartDate(seasonYear: number): Date {
-  return new Date(seasonYear, 3, 1); // month 3 = April
+  const startMonth = getSeasonStartMonth(); // 1-12
+  return new Date(seasonYear, startMonth - 1, 1);
 }
 
 export function computeAge(dateOfBirth: Date, referenceDate: Date): number {

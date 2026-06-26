@@ -25,13 +25,14 @@ import {
   callXeroApi,
   checkMembershipStatus,
   findSubscriptionInvoice,
-  getAccountMapping,
   getAuthenticatedXeroClient,
   refreshAllMembershipStatuses,
   refreshXeroContactCachesFromContact,
   syncContactsFromXero,
   XeroDailyLimitError,
 } from "@/lib/xero";
+import { getResolvedAccountMapping } from "@/lib/xero-mappings";
+import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -1979,9 +1980,14 @@ async function reconcileXeroInvoice(
       );
 
   const seasonYear = buildSeasonYearFromInvoice(invoice);
-  const subscriptionIncomeCode = (await getAccountMapping("subscriptionIncome")) ?? "203";
+  const subscriptionMapping = await getResolvedAccountMapping("subscriptionIncome");
+  const lockoutSettings = await loadMembershipLockoutSettings();
   const looksLikeSubscriptionInvoice =
-    findSubscriptionInvoice([invoice], seasonYear, subscriptionIncomeCode) !== null;
+    findSubscriptionInvoice([invoice], seasonYear, {
+      accountCode: subscriptionMapping.code ?? "203",
+      itemCode: subscriptionMapping.itemCode,
+      textFallbackEnabled: lockoutSettings.textFallbackEnabled,
+    }) !== null;
   const fallbackSubscriptionMemberIds: string[] = [];
 
   if (

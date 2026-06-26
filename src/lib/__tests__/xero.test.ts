@@ -107,7 +107,7 @@ describe("findSubscriptionInvoice", () => {
 
   it("finds a subscription invoice by account code 203", () => {
     const invoices = [makeInvoice()]
-    const result = findSubscriptionInvoice(invoices, 2026)
+    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
     expect(result).not.toBeNull()
     expect(result!.invoiceID).toBe("inv-001")
   })
@@ -120,7 +120,7 @@ describe("findSubscriptionInvoice", () => {
         lineItems: [{ description: "Payment", quantity: 1, unitAmount: 150 }],
       }),
     ]
-    const result = findSubscriptionInvoice(invoices, 2026)
+    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
     expect(result).not.toBeNull()
     expect(result!.invoiceID).toBe("inv-002")
   })
@@ -131,7 +131,7 @@ describe("findSubscriptionInvoice", () => {
         lineItems: [{ description: "Club Membership Fee 2026-2027", accountCode: "203", quantity: 1, unitAmount: 100 }],
       }),
     ]
-    expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
   })
 
   it("matches 'annual member subscription' in reference", () => {
@@ -141,7 +141,7 @@ describe("findSubscriptionInvoice", () => {
         lineItems: [{ description: "Sub", quantity: 1, unitAmount: 100 }],
       }),
     ]
-    expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
   })
 
   it("matches membership subscription wording in a line description", () => {
@@ -159,7 +159,7 @@ describe("findSubscriptionInvoice", () => {
       }),
     ]
 
-    const result = findSubscriptionInvoice(invoices, 2026)
+    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
 
     expect(result).not.toBeNull()
     expect(result!.invoiceID).toBe("inv-003")
@@ -171,7 +171,7 @@ describe("findSubscriptionInvoice", () => {
         date: "2025-02-15", // Before April 2026
       }),
     ]
-    const result = findSubscriptionInvoice(invoices, 2026)
+    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
     expect(result).toBeNull()
   })
 
@@ -182,32 +182,81 @@ describe("findSubscriptionInvoice", () => {
         reference: undefined,
       }),
     ]
-    const result = findSubscriptionInvoice(invoices, 2026)
+    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
     expect(result).toBeNull()
   })
 
   it("returns null for empty invoice list", () => {
-    expect(findSubscriptionInvoice([], 2026)).toBeNull()
+    expect(findSubscriptionInvoice([], 2026, { accountCode: "203" })).toBeNull()
   })
 
   it("handles invoice without date", () => {
     const invoices = [makeInvoice({ date: undefined })]
-    expect(findSubscriptionInvoice(invoices, 2026)).toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).toBeNull()
   })
 
   it("matches invoices at season year boundaries (April 1)", () => {
     const invoices = [makeInvoice({ date: "2026-04-01" })]
-    expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
   })
 
   it("matches invoices at season year boundaries (March 31)", () => {
     const invoices = [makeInvoice({ date: "2027-03-31" })]
-    expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
   })
 
   it("rejects invoices just outside season year (March 31 before)", () => {
     const invoices = [makeInvoice({ date: "2026-03-31" })]
-    expect(findSubscriptionInvoice(invoices, 2026)).toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).toBeNull()
+  })
+
+  it("matches by configured item code even when the account code differs", () => {
+    const invoices = [
+      makeInvoice({
+        invoiceID: "inv-item",
+        reference: "Renewal",
+        lineItems: [
+          { description: "Renewal", accountCode: "999", itemCode: "SUBS", quantity: 1, unitAmount: 150 },
+        ],
+      }),
+    ]
+    const result = findSubscriptionInvoice(invoices, 2026, {
+      accountCode: "203",
+      itemCode: "SUBS",
+      textFallbackEnabled: false,
+    })
+    expect(result).not.toBeNull()
+    expect(result!.invoiceID).toBe("inv-item")
+  })
+
+  it("does not match by item code when none is configured", () => {
+    const invoices = [
+      makeInvoice({
+        reference: "Renewal",
+        lineItems: [
+          { description: "Renewal", accountCode: "999", itemCode: "SUBS", quantity: 1, unitAmount: 150 },
+        ],
+      }),
+    ]
+    expect(
+      findSubscriptionInvoice(invoices, 2026, { accountCode: "203", textFallbackEnabled: false })
+    ).toBeNull()
+  })
+
+  it("ignores the text fallback when it is disabled", () => {
+    const invoices = [
+      makeInvoice({
+        reference: "Annual Member Subscription 2026",
+        lineItems: [{ description: "Payment", accountCode: "200", quantity: 1, unitAmount: 150 }],
+      }),
+    ]
+    // With the fallback on, the reference text matches; with it off it must not.
+    expect(
+      findSubscriptionInvoice(invoices, 2026, { accountCode: "203", textFallbackEnabled: true })
+    ).not.toBeNull()
+    expect(
+      findSubscriptionInvoice(invoices, 2026, { accountCode: "203", textFallbackEnabled: false })
+    ).toBeNull()
   })
 })
 
