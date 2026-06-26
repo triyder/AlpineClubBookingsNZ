@@ -37,6 +37,8 @@ import {
   type FinancePricingSensitivityScenarioRow,
   type FinancePricingSensitivitySummaryCard,
 } from "@/lib/finance-pricing-sensitivity-page";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
 
 type FinancePricingSensitivityPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -314,6 +316,68 @@ export default async function FinancePricingSensitivityPage({
       {model.loadError ? null : (
         <>
           <SummaryCards cards={model.summaryCards} />
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Monthly costs
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Synced expense total per month.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="bar"
+                  xKey="label"
+                  data={model.chart.byPeriod.map((point) => ({
+                    label: point.label,
+                    totalCostsCents: point.totalCostsCents,
+                  }))}
+                  series={[
+                    {
+                      key: "totalCostsCents",
+                      name: "Costs",
+                      color: FINANCE_SERIES_COLORS.costs,
+                      valueType: "currency",
+                    },
+                  ]}
+                  emptyMessage="No cost snapshots are available yet."
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Realized demand
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Realized guest nights per month, to weigh against costs.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="bar"
+                  xKey="label"
+                  data={model.chart.byPeriod.map((point) => ({
+                    label: point.label,
+                    guestNights: point.guestNights,
+                  }))}
+                  series={[
+                    {
+                      key: "guestNights",
+                      name: "Guest nights",
+                      color: FINANCE_SERIES_COLORS.bookings,
+                      valueType: "count",
+                    },
+                  ]}
+                  emptyMessage="No realized demand is available yet."
+                />
+              </CardContent>
+            </Card>
+          </div>
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
             <Card>

@@ -77,6 +77,15 @@ export interface FinanceWorkingCapitalReportPageModel {
   coverageSummary: string;
   summaryCards: FinanceWorkingCapitalReportSummaryCard[];
   periodRows: FinanceWorkingCapitalReportPeriodRow[];
+  chart: {
+    byPeriod: Array<{
+      label: string;
+      currentAssetsCents: number;
+      currentLiabilitiesCents: number;
+      workingCapitalCents: number;
+      currentRatio: number | null;
+    }>;
+  };
   sourceNotes: Array<{
     label: string;
     description: string;
@@ -268,6 +277,17 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
         ),
         sourceUpdatedAtLabel: snapshot.sourceUpdatedAtLabel,
       })),
+      chart: {
+        byPeriod: [...comparableSnapshots]
+          .reverse()
+          .map((snapshot) => ({
+            label: snapshot.snapshotLabel,
+            currentAssetsCents: snapshot.currentAssetsCents,
+            currentLiabilitiesCents: snapshot.currentLiabilitiesCents,
+            workingCapitalCents: snapshot.workingCapitalCents,
+            currentRatio: snapshot.currentRatio,
+          })),
+      },
       sourceNotes: buildWorkingCapitalSourceNotes(),
     };
   } catch (error) {
@@ -307,6 +327,7 @@ function buildUnavailableWorkingCapitalReportModel(input: {
     coverageSummary: "Working-capital snapshots unavailable",
     summaryCards: [],
     periodRows: [],
+    chart: { byPeriod: [] },
     sourceNotes: buildWorkingCapitalSourceNotes(),
   };
 }

@@ -124,6 +124,14 @@ export interface FinanceBalanceSheetReportPageModel {
   summaryCards: FinanceBalanceSheetReportSummaryCard[];
   snapshotRows: FinanceBalanceSheetReportSnapshotRow[];
   lineItemRows: FinanceBalanceSheetReportLineItemRow[];
+  chart: {
+    byPeriod: Array<{
+      label: string;
+      totalAssetsCents: number;
+      totalLiabilitiesCents: number;
+      netAssetsCents: number;
+    }>;
+  };
   sourceNotes: Array<{
     label: string;
     description: string;
@@ -296,6 +304,16 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
         sourceUpdatedAtLabel: snapshot.sourceUpdatedAtLabel,
       })),
       lineItemRows,
+      chart: {
+        byPeriod: [...parsedSnapshots]
+          .reverse()
+          .map((snapshot) => ({
+            label: snapshot.snapshotLabel,
+            totalAssetsCents: snapshot.totalAssetsCents,
+            totalLiabilitiesCents: snapshot.totalLiabilitiesCents,
+            netAssetsCents: snapshot.netAssetsCents,
+          })),
+      },
       sourceNotes: buildBalanceSheetSourceNotes(),
     };
   } catch (error) {
@@ -336,6 +354,7 @@ function buildUnavailableBalanceSheetReportModel(input: {
     summaryCards: [],
     snapshotRows: [],
     lineItemRows: [],
+    chart: { byPeriod: [] },
     sourceNotes: buildBalanceSheetSourceNotes(),
   };
 }

@@ -33,6 +33,8 @@ import {
   type FinanceBalanceSheetReportSnapshotRow,
   type FinanceBalanceSheetReportSummaryCard,
 } from "@/lib/finance-balance-sheet-report-page";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
 
 type FinanceBalanceSheetPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -313,6 +315,45 @@ export default async function FinanceBalanceSheetPage({
       ) : (
         <>
           <SummaryCards cards={model.summaryCards} />
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg text-slate-900">
+                Assets, liabilities and net assets
+              </CardTitle>
+              <CardDescription className="text-sm text-slate-600">
+                Position per stored balance-sheet snapshot.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TrendChart
+                variant="bar"
+                xKey="label"
+                data={model.chart.byPeriod}
+                series={[
+                  {
+                    key: "totalAssetsCents",
+                    name: "Assets",
+                    color: FINANCE_SERIES_COLORS.positive,
+                    valueType: "currency",
+                  },
+                  {
+                    key: "totalLiabilitiesCents",
+                    name: "Liabilities",
+                    color: FINANCE_SERIES_COLORS.costs,
+                    valueType: "currency",
+                  },
+                  {
+                    key: "netAssetsCents",
+                    name: "Net assets",
+                    color: FINANCE_SERIES_COLORS.accent,
+                    valueType: "currency",
+                  },
+                ]}
+                emptyMessage="No balance-sheet snapshots are available yet."
+              />
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,1fr)]">
             <Card>

@@ -98,6 +98,14 @@ export interface FinancePricingSensitivityPageModel {
   summaryCards: FinancePricingSensitivitySummaryCard[];
   periodRows: FinancePricingSensitivityPeriodRow[];
   scenarioRows: FinancePricingSensitivityScenarioRow[];
+  chart: {
+    byPeriod: Array<{
+      label: string;
+      totalCostsCents: number;
+      guestNights: number;
+      occupancyRate: number;
+    }>;
+  };
   sourceNotes: Array<{
     label: string;
     description: string;
@@ -363,6 +371,16 @@ export async function buildFinancePricingSensitivityPageModel(input: {
         ),
       })),
       scenarioRows,
+      chart: {
+        byPeriod: [...periodComparisons]
+          .reverse()
+          .map((comparison) => ({
+            label: comparison.periodLabel,
+            totalCostsCents: comparison.totalCostsCents,
+            guestNights: comparison.guestNights,
+            occupancyRate: comparison.occupancyRate,
+          })),
+      },
       sourceNotes: buildPricingSensitivitySourceNotes(),
     };
   } catch (error) {
@@ -400,6 +418,7 @@ function buildUnavailablePricingSensitivityModel(input: {
     summaryCards: [],
     periodRows: [],
     scenarioRows: [],
+    chart: { byPeriod: [] },
     sourceNotes: buildPricingSensitivitySourceNotes(),
   };
 }

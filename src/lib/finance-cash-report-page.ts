@@ -96,6 +96,11 @@ export interface FinanceCashReportAccountRow {
   periodsPresent: string;
 }
 
+export interface FinanceCashReportChart {
+  balanceTrend: Array<{ label: string; totalBalanceCents: number }>;
+  accountMix: Array<{ name: string; valueCents: number }>;
+}
+
 export interface FinanceCashReportPageModel {
   generatedOn: string;
   isManager: boolean;
@@ -107,6 +112,7 @@ export interface FinanceCashReportPageModel {
   summaryCards: FinanceCashReportSummaryCard[];
   snapshotRows: FinanceCashReportSnapshotRow[];
   accountRows: FinanceCashReportAccountRow[];
+  chart: FinanceCashReportChart;
   sourceNotes: Array<{
     label: string;
     description: string;
@@ -283,6 +289,18 @@ export async function buildFinanceCashReportPageModel(input: {
         sourceUpdatedAtLabel: snapshot.sourceUpdatedAtLabel,
       })),
       accountRows,
+      chart: {
+        balanceTrend: [...parsedSnapshots]
+          .reverse()
+          .map((snapshot) => ({
+            label: snapshot.snapshotLabel,
+            totalBalanceCents: snapshot.totalBalanceCents,
+          })),
+        accountMix: latestSnapshot.accounts.map((account) => ({
+          name: account.label,
+          valueCents: account.balanceCents,
+        })),
+      },
       sourceNotes: buildCashSourceNotes(),
     };
   } catch (error) {
@@ -320,6 +338,7 @@ function buildUnavailableCashReportModel(input: {
     summaryCards: [],
     snapshotRows: [],
     accountRows: [],
+    chart: { balanceTrend: [], accountMix: [] },
     sourceNotes: buildCashSourceNotes(),
   };
 }

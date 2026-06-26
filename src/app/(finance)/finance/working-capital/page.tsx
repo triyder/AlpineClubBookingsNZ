@@ -40,6 +40,8 @@ import {
   type FinanceWorkingCapitalReportPeriodRow,
   type FinanceWorkingCapitalReportSummaryCard,
 } from "@/lib/finance-working-capital-report-page";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
 
 type FinanceWorkingCapitalPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -318,6 +320,78 @@ export default async function FinanceWorkingCapitalPage({
       ) : (
         <>
           <SummaryCards cards={model.summaryCards} />
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Current assets vs liabilities
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Per stored balance-sheet snapshot.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="bar"
+                  xKey="label"
+                  data={model.chart.byPeriod.map((point) => ({
+                    label: point.label,
+                    currentAssetsCents: point.currentAssetsCents,
+                    currentLiabilitiesCents: point.currentLiabilitiesCents,
+                  }))}
+                  series={[
+                    {
+                      key: "currentAssetsCents",
+                      name: "Current assets",
+                      color: FINANCE_SERIES_COLORS.positive,
+                      valueType: "currency",
+                    },
+                    {
+                      key: "currentLiabilitiesCents",
+                      name: "Current liabilities",
+                      color: FINANCE_SERIES_COLORS.costs,
+                      valueType: "currency",
+                    },
+                  ]}
+                  emptyMessage="No working-capital snapshots are available yet."
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Current ratio
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Current assets divided by current liabilities. Above 1.0 means
+                  current assets cover current liabilities.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="line"
+                  xKey="label"
+                  data={model.chart.byPeriod
+                    .filter((point) => point.currentRatio !== null)
+                    .map((point) => ({
+                      label: point.label,
+                      currentRatio: point.currentRatio ?? 0,
+                    }))}
+                  series={[
+                    {
+                      key: "currentRatio",
+                      name: "Current ratio",
+                      color: FINANCE_SERIES_COLORS.accent,
+                      valueType: "count",
+                    },
+                  ]}
+                  emptyMessage="No current-ratio data is available yet."
+                />
+              </CardContent>
+            </Card>
+          </div>
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
             <Card>

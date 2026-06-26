@@ -32,6 +32,9 @@ import {
   type FinanceCashReportSnapshotRow,
   type FinanceCashReportSummaryCard,
 } from "@/lib/finance-cash-report-page";
+import { FINANCE_SERIES_COLORS } from "@/components/finance/charts/finance-chart-theme";
+import { TrendChart } from "@/components/finance/charts/trend-chart";
+import { MixPieChart } from "@/components/finance/charts/mix-pie-chart";
 
 type FinanceCashPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -304,6 +307,56 @@ export default async function FinanceCashPage({
       ) : (
         <>
           <SummaryCards cards={model.summaryCards} />
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Cash balance trend
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Total closing bank balance across the stored snapshots.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TrendChart
+                  variant="area"
+                  xKey="label"
+                  data={model.chart.balanceTrend}
+                  series={[
+                    {
+                      key: "totalBalanceCents",
+                      name: "Cash balance",
+                      color: FINANCE_SERIES_COLORS.accent,
+                      valueType: "currency",
+                    },
+                  ]}
+                  emptyMessage="No cash snapshots are available yet."
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg text-slate-900">
+                  Account mix
+                </CardTitle>
+                <CardDescription className="text-sm text-slate-600">
+                  Closing balance by account in the latest snapshot.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <MixPieChart
+                  data={model.chart.accountMix.map((item) => ({
+                    name: item.name,
+                    value: item.valueCents,
+                  }))}
+                  valueType="currency"
+                  emptyMessage="No account balances were available in the latest snapshot."
+                />
+              </CardContent>
+            </Card>
+          </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,1fr)]">
             <Card>
