@@ -1,5 +1,4 @@
-import type { FeatureFlags } from "./schema";
-import type { FeatureFlagKey } from "./features";
+import type { FeatureFlags, FeatureFlagKey } from "./schema";
 
 interface FeatureRouteRule {
   flag: FeatureFlagKey;

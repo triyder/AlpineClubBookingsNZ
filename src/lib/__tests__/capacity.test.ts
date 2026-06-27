@@ -33,19 +33,6 @@ import {
 } from "@/lib/lodge-capacity";
 
 const TEST_LODGE_CAPACITY = FALLBACK_LODGE_CAPACITY;
-const FEATURE_FLAGS_ON = {
-  kiosk: false,
-  chores: false,
-  financeDashboard: false,
-  waitlist: false,
-  xeroIntegration: false,
-  bedAllocation: true,
-  internetBankingPayments: false,
-};
-const FEATURE_FLAGS_OFF = {
-  ...FEATURE_FLAGS_ON,
-  bedAllocation: false,
-};
 
 describe("capacity calendar availability", () => {
   beforeEach(() => {
@@ -56,17 +43,16 @@ describe("capacity calendar availability", () => {
   });
 
   it("uses club config capacity when the bed allocation module is off", async () => {
-    const status = await getLodgeCapacityStatus(
-      {
-        clubModuleSettings: {
-          findUnique: mocks.clubModuleSettingsFindUnique,
-        },
-        lodgeBed: {
-          count: mocks.lodgeBedCount,
-        },
-      } as never,
-      FEATURE_FLAGS_OFF,
-    );
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+
+    const status = await getLodgeCapacityStatus({
+      clubModuleSettings: {
+        findUnique: mocks.clubModuleSettingsFindUnique,
+      },
+      lodgeBed: {
+        count: mocks.lodgeBedCount,
+      },
+    } as never);
 
     expect(status).toMatchObject({
       capacity: TEST_LODGE_CAPACITY,
@@ -81,17 +67,14 @@ describe("capacity calendar availability", () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(17);
 
-    const status = await getLodgeCapacityStatus(
-      {
-        clubModuleSettings: {
-          findUnique: mocks.clubModuleSettingsFindUnique,
-        },
-        lodgeBed: {
-          count: mocks.lodgeBedCount,
-        },
-      } as never,
-      FEATURE_FLAGS_ON,
-    );
+    const status = await getLodgeCapacityStatus({
+      clubModuleSettings: {
+        findUnique: mocks.clubModuleSettingsFindUnique,
+      },
+      lodgeBed: {
+        count: mocks.lodgeBedCount,
+      },
+    } as never);
 
     expect(status).toMatchObject({
       capacity: 17,
@@ -105,23 +88,69 @@ describe("capacity calendar availability", () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(0);
 
-    const status = await getLodgeCapacityStatus(
-      {
-        clubModuleSettings: {
-          findUnique: mocks.clubModuleSettingsFindUnique,
-        },
-        lodgeBed: {
-          count: mocks.lodgeBedCount,
-        },
-      } as never,
-      FEATURE_FLAGS_ON,
-    );
+    const status = await getLodgeCapacityStatus({
+      clubModuleSettings: {
+        findUnique: mocks.clubModuleSettingsFindUnique,
+      },
+      lodgeBed: {
+        count: mocks.lodgeBedCount,
+      },
+    } as never);
 
     expect(status).toMatchObject({
       capacity: TEST_LODGE_CAPACITY,
       source: "club_config",
       bedAllocationEnabled: true,
       activeBedCount: 0,
+    });
+  });
+
+  it("uses the admin lodge capacity override as the fallback", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+
+    const status = await getLodgeCapacityStatus({
+      clubModuleSettings: {
+        findUnique: mocks.clubModuleSettingsFindUnique,
+      },
+      lodgeSettings: {
+        findUnique: vi.fn().mockResolvedValue({ capacity: 42 }),
+      },
+      lodgeBed: {
+        count: mocks.lodgeBedCount,
+      },
+    } as never);
+
+    expect(status).toMatchObject({
+      capacity: 42,
+      source: "club_config",
+      bedAllocationEnabled: false,
+      activeBedCount: 0,
+      fallbackCapacity: 42,
+    });
+  });
+
+  it("prefers active configured beds over the capacity override", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(20);
+
+    const status = await getLodgeCapacityStatus({
+      clubModuleSettings: {
+        findUnique: mocks.clubModuleSettingsFindUnique,
+      },
+      lodgeSettings: {
+        findUnique: vi.fn().mockResolvedValue({ capacity: 42 }),
+      },
+      lodgeBed: {
+        count: mocks.lodgeBedCount,
+      },
+    } as never);
+
+    expect(status).toMatchObject({
+      capacity: 20,
+      source: "configured_beds",
+      bedAllocationEnabled: true,
+      activeBedCount: 20,
+      fallbackCapacity: 42,
     });
   });
 

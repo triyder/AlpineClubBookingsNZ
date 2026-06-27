@@ -98,32 +98,19 @@ describe("feature route map", () => {
     ).toBe("xeroIntegration");
   });
 
-  it("uses effective module state for env/admin activation combinations", () => {
+  it("uses the admin module toggle for effective state", () => {
+    // Admin off → disabled.
     expect(
       getDisabledFeatureForPath(
         "/admin/waitlist",
-        getEffectiveModuleFlags(
-          { ...allOn, waitlist: true },
-          { ...allOn, waitlist: false }
-        )
+        getEffectiveModuleFlags({ ...allOn, waitlist: false })
       )
     ).toBe("waitlist");
+    // Admin on → enabled.
     expect(
       getDisabledFeatureForPath(
         "/admin/waitlist",
-        getEffectiveModuleFlags(
-          { ...allOn, waitlist: false },
-          { ...allOn, waitlist: true }
-        )
-      )
-    ).toBe("waitlist");
-    expect(
-      getDisabledFeatureForPath(
-        "/admin/waitlist",
-        getEffectiveModuleFlags(
-          { ...allOn, waitlist: true },
-          { ...allOn, waitlist: true }
-        )
+        getEffectiveModuleFlags({ ...allOn, waitlist: true })
       )
     ).toBeNull();
   });

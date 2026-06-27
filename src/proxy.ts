@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { featureFlags } from "./config/features";
 import {
   getDisabledFeatureForPath,
   getRequiredFeaturesForPath,
@@ -16,7 +15,7 @@ import {
 
 export function getFeatureFlagBlockResponse(
   pathname: string,
-  flags: FeatureFlags = featureFlags,
+  flags: FeatureFlags,
 ): NextResponse | null {
   const disabledFeature = getDisabledFeatureForPath(pathname, flags);
 

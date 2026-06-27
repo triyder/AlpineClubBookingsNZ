@@ -1,10 +1,9 @@
-import { featureFlags } from "@/config/features";
 import { APP_TIME_ZONE } from "@/config/operational";
 import type { FeatureFlags } from "@/config/schema";
 
 const CRON_TIMEZONE = APP_TIME_ZONE;
 
-export function getOptionalCronRegistrationState(flags: FeatureFlags = featureFlags) {
+export function getOptionalCronRegistrationState(flags: FeatureFlags) {
   return {
     financeDailySync: flags.financeDashboard,
     waitlistProcessor: flags.waitlist,
@@ -56,7 +55,10 @@ export async function register() {
     const { deleteDraftBookingDependents } = await import("./lib/draft-booking-cleanup");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
     const { isEffectiveModuleEnabled } = await import("./lib/admin-modules");
-    const optionalCron = getOptionalCronRegistrationState();
+    const { loadEffectiveModuleFlags } = await import("./lib/module-settings");
+    const optionalCron = getOptionalCronRegistrationState(
+      await loadEffectiveModuleFlags(),
+    );
 
     // Verify Prisma client is ready before starting cron jobs
     try {

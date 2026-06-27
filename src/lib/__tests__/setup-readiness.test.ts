@@ -177,7 +177,7 @@ describe("setup-readiness", () => {
     expect(report).toContain("Run the seed command");
   });
 
-  it("distinguishes env capability from Admin Modules activation", () => {
+  it("reports module state from Admin Modules activation only", () => {
     const readiness = buildSetupReadiness({
       env: baseEnv,
       configDir: makeConfigDir(),
@@ -194,16 +194,11 @@ describe("setup-readiness", () => {
 
     const report = renderSetupCheckReport(readiness);
 
-    expect(report).toContain(
-      "Operational Xero env capability (FEATURE_XERO_INTEGRATION): enabled"
-    );
     expect(report).toContain("Operational Xero Admin Modules activation: disabled");
-    expect(report).toContain("Operational Xero is inactive by env capability or Admin Modules activation.");
-    expect(report).toContain(
-      "Finance dashboard env capability (FEATURE_FINANCE_DASHBOARD): enabled"
-    );
+    expect(report).toContain("Operational Xero is disabled in Admin Modules.");
     expect(report).toContain("Finance dashboard Admin Modules activation: disabled");
-    expect(report).toContain("Finance dashboard is inactive by env capability or Admin Modules activation.");
+    expect(report).toContain("Finance dashboard is disabled in Admin Modules.");
+    expect(report).not.toContain("env capability");
   });
 
   it("treats acknowledged not-started checks as resolved for overall readiness", () => {

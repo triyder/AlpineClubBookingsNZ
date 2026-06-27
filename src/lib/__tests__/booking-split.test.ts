@@ -81,8 +81,6 @@ vi.mock("@/lib/payment-transactions", () => ({
 
 vi.mock("@/lib/audit", () => ({ logAudit: (...a: unknown[]) => h.logAudit(...a) }));
 
-vi.mock("@/config/features", () => ({ isFeatureEnabled: vi.fn().mockReturnValue(false) }));
-
 vi.mock("@/lib/booking-review", () => ({
   ADULT_SUPERVISION_REVIEW_REASON: "no-adult",
   requiresAdultSupervisionReview: vi.fn().mockReturnValue(false),

@@ -1,27 +1,11 @@
 import { BookingStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
-import type { FeatureFlags } from "@/config/schema";
 import {
   BED_ALLOCATABLE_BOOKING_STATUSES,
   reconcileBedAllocationsForBooking,
 } from "@/lib/bed-allocation-lifecycle";
 import { parseDateOnly } from "@/lib/date-only";
-
-const enabledBedAllocationFlags: FeatureFlags = {
-  kiosk: false,
-  chores: false,
-  financeDashboard: false,
-  waitlist: false,
-  xeroIntegration: false,
-  bedAllocation: true,
-  internetBankingPayments: false,
-};
-
-const disabledBedAllocationFlags: FeatureFlags = {
-  ...enabledBedAllocationFlags,
-  bedAllocation: false,
-};
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   return {
@@ -49,12 +33,15 @@ function makeDb(overrides: Record<string, unknown> = {}) {
 
 describe("bed allocation lifecycle", () => {
   it("does not touch allocations when the bed allocation module is disabled", async () => {
-    const db = makeDb();
+    const db = makeDb({
+      clubModuleSettings: {
+        findUnique: vi.fn().mockResolvedValue({ bedAllocation: false }),
+      },
+    });
 
     const result = await reconcileBedAllocationsForBooking({
       bookingId: "booking-1",
       db: db as any,
-      envCapability: disabledBedAllocationFlags,
     });
 
     expect(result).toEqual({
@@ -93,7 +80,6 @@ describe("bed allocation lifecycle", () => {
     const result = await reconcileBedAllocationsForBooking({
       bookingId: "booking-1",
       db: db as any,
-      envCapability: enabledBedAllocationFlags,
     });
 
     expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
@@ -172,7 +158,6 @@ describe("bed allocation lifecycle", () => {
         checkIn: parseDateOnly("2026-07-01"),
         checkOut: parseDateOnly("2026-07-03"),
       },
-      envCapability: enabledBedAllocationFlags,
     });
 
     expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
@@ -289,7 +274,6 @@ describe("bed allocation lifecycle", () => {
     const result = await reconcileBedAllocationsForBooking({
       bookingId: "booking-family",
       db: db as any,
-      envCapability: enabledBedAllocationFlags,
     });
 
     expect(db.bedAllocation.createMany).toHaveBeenCalledWith({
@@ -342,7 +326,6 @@ describe("bed allocation lifecycle", () => {
         checkIn: parseDateOnly("2026-07-01"),
         checkOut: parseDateOnly("2026-07-06"),
       },
-      envCapability: enabledBedAllocationFlags,
     });
 
     expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
@@ -399,7 +382,6 @@ describe("bed allocation lifecycle", () => {
         checkIn: parseDateOnly("2026-07-01"),
         checkOut: parseDateOnly("2026-07-03"),
       },
-      envCapability: enabledBedAllocationFlags,
     });
 
     const pruneCall = db.bedAllocation.deleteMany.mock.calls[0][0];
@@ -448,7 +430,6 @@ describe("bed allocation lifecycle", () => {
         checkIn: parseDateOnly("2026-07-01"),
         checkOut: parseDateOnly("2026-07-05"),
       },
-      envCapability: enabledBedAllocationFlags,
     });
 
     // The existing-allocation scan and the overlapping-booking scan both use the

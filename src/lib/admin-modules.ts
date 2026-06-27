@@ -1,4 +1,3 @@
-import { featureFlags } from "@/config/features";
 import {
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
@@ -28,10 +27,9 @@ interface ClubModuleSettingsClient {
 }
 
 export function getEffectiveModuleState(
-  envCapability: FeatureFlags = featureFlags,
   adminActivation: AdminModuleSettingsSnapshot = DEFAULT_ADMIN_MODULE_SETTINGS,
 ): FeatureFlags {
-  return getEffectiveModuleFlags(envCapability, adminActivation);
+  return getEffectiveModuleFlags(adminActivation);
 }
 
 export async function loadAdminModuleSettings(
@@ -57,22 +55,20 @@ export async function loadAdminModuleSettings(
 }
 
 export async function loadEffectiveModuleState(
-  envCapability: FeatureFlags = featureFlags,
   client?: ClubModuleSettingsClient,
 ): Promise<FeatureFlags> {
   if (!client) {
-    return loadEffectiveModuleFlags(envCapability);
+    return loadEffectiveModuleFlags();
   }
 
   const adminActivation = await loadAdminModuleSettings(client);
-  return getEffectiveModuleState(envCapability, adminActivation);
+  return getEffectiveModuleState(adminActivation);
 }
 
 export async function isEffectiveModuleEnabled(
   moduleKey: AdminModuleKey,
-  envCapability: FeatureFlags = featureFlags,
   client?: ClubModuleSettingsClient,
 ): Promise<boolean> {
-  const effective = await loadEffectiveModuleState(envCapability, client);
+  const effective = await loadEffectiveModuleState(client);
   return effective[moduleKey];
 }

@@ -131,11 +131,6 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
-      {
-        href: "/admin/subscription-lockout",
-        label: "Subscription Lockout",
-        icon: Lock,
-      },
       { href: "/admin/communications", label: "Communications", icon: Mail },
       { href: "/admin/lockers", label: "Lockers", icon: House },
     ],
@@ -179,6 +174,11 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
+      {
+        href: "/admin/subscription-lockout",
+        label: "Subscription Lockout",
+        icon: Lock,
+      },
       { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
       {

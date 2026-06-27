@@ -1,5 +1,4 @@
 import { clubConfig } from "@/config/club";
-import { featureFlags } from "@/config/features";
 import {
   DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
@@ -8,10 +7,19 @@ import {
 } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-export const FALLBACK_LODGE_CAPACITY = clubConfig.beds.reduce(
+// Club config bed total, used only when no admin capacity override is set and
+// the Bed Allocation module is not providing an active bed count.
+export const CLUB_CONFIG_LODGE_CAPACITY = clubConfig.beds.reduce(
   (total, bed) => total + bed.capacity,
   0,
 );
+
+/**
+ * @deprecated Prefer the resolved `fallbackCapacity` from getLodgeCapacityStatus,
+ * which honours the admin capacity override. Retained for callers that need a
+ * static default with no database access.
+ */
+export const FALLBACK_LODGE_CAPACITY = CLUB_CONFIG_LODGE_CAPACITY;
 
 type ModuleSettingsRecord = Partial<ModuleSettingsValues> | null;
 
@@ -20,6 +28,11 @@ interface LodgeCapacityDb {
     findUnique: (args: {
       where: { id: string };
     }) => Promise<ModuleSettingsRecord>;
+  };
+  lodgeSettings?: {
+    findUnique: (args: {
+      where: { id: string };
+    }) => Promise<{ capacity: number | null } | null>;
   };
   lodgeBed: {
     count: (args: { where: { active: boolean } }) => Promise<number>;
@@ -49,46 +62,43 @@ async function resolveLodgeCapacityDb(): Promise<LodgeCapacityDb> {
 
 async function loadCapacityModuleState(
   db: LodgeCapacityDb,
-  flags: FeatureFlags,
 ): Promise<FeatureFlags> {
   if (!db.clubModuleSettings?.findUnique) {
-    return getEffectiveModuleFlags(flags, DEFAULT_MODULE_SETTINGS);
+    return getEffectiveModuleFlags(DEFAULT_MODULE_SETTINGS);
   }
 
   try {
     const record = await db.clubModuleSettings.findUnique({
       where: { id: "default" },
     });
-    return getEffectiveModuleFlags(flags, normalizeModuleSettings(record));
+    return getEffectiveModuleFlags(normalizeModuleSettings(record));
   } catch {
-    return getEffectiveModuleFlags(flags, DEFAULT_MODULE_SETTINGS);
+    return getEffectiveModuleFlags(DEFAULT_MODULE_SETTINGS);
   }
 }
 
 export async function getLodgeCapacityStatus(
   db?: LodgeCapacityDb,
-  flags: FeatureFlags = featureFlags,
 ): Promise<LodgeCapacityStatus> {
-  if (!flags.bedAllocation) {
-    return {
-      capacity: FALLBACK_LODGE_CAPACITY,
-      source: "club_config",
-      bedAllocationEnabled: false,
-      activeBedCount: 0,
-      fallbackCapacity: FALLBACK_LODGE_CAPACITY,
-    };
-  }
-
+  // Bed allocation availability follows the admin Modules toggle only.
   const client = db ?? (await resolveLodgeCapacityDb());
-  const modules = await loadCapacityModuleState(client, flags);
+  const modules = await loadCapacityModuleState(client);
+
+  // The fallback is the admin-set lodge capacity if present, otherwise the
+  // club config bed total. Imported dynamically so this module's static graph
+  // stays free of the Prisma client (config/club-identity imports the constants
+  // here at load time, well before any database is available).
+  const { loadLodgeCapacityOverride } = await import("@/lib/lodge-settings");
+  const override = await loadLodgeCapacityOverride(client);
+  const fallbackCapacity = override ?? CLUB_CONFIG_LODGE_CAPACITY;
 
   if (!modules.bedAllocation) {
     return {
-      capacity: FALLBACK_LODGE_CAPACITY,
+      capacity: fallbackCapacity,
       source: "club_config",
       bedAllocationEnabled: false,
       activeBedCount: 0,
-      fallbackCapacity: FALLBACK_LODGE_CAPACITY,
+      fallbackCapacity,
     };
   }
 
@@ -97,11 +107,11 @@ export async function getLodgeCapacityStatus(
   });
 
   return {
-    capacity: activeBedCount > 0 ? activeBedCount : FALLBACK_LODGE_CAPACITY,
+    capacity: activeBedCount > 0 ? activeBedCount : fallbackCapacity,
     source: activeBedCount > 0 ? "configured_beds" : "club_config",
     bedAllocationEnabled: true,
     activeBedCount,
-    fallbackCapacity: FALLBACK_LODGE_CAPACITY,
+    fallbackCapacity,
   };
 }
 

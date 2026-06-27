@@ -103,6 +103,9 @@ export async function GET(request: NextRequest) {
         where: {
           ...where,
           status: "FAILED",
+          // Manually-resolved operations are no longer active/repaired/superseded
+          // failures, so keep them out of the failure-state filters entirely.
+          manuallyResolvedAt: null,
         },
         orderBy: { createdAt: "desc" },
       });

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   xeroOperationFindMany: vi.fn(),
   xeroOperationCount: vi.fn(),
   xeroOperationUpdate: vi.fn(),
+  xeroOperationUpdateMany: vi.fn(),
   resolveFailedXeroOperationStates: vi.fn(),
   enqueueXeroSyncOperationRetry: vi.fn(),
   processQueuedXeroOperationRetries: vi.fn(),
@@ -51,8 +52,16 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.xeroOperationFindMany,
       count: mocks.xeroOperationCount,
       update: mocks.xeroOperationUpdate,
+      updateMany: mocks.xeroOperationUpdateMany,
     },
   },
+}));
+
+vi.mock("@/lib/xero-stale-operations", () => ({
+  staleRunningXeroOperationFilter: () => ({
+    status: "RUNNING",
+    startedAt: { lt: new Date("2026-01-01T00:00:00.000Z") },
+  }),
 }));
 
 vi.mock("@/lib/xero-admin-failures", () => ({
@@ -97,6 +106,8 @@ vi.mock("@/lib/logger", () => ({
 import { POST as retryOperation } from "@/app/api/admin/xero/operations/[id]/retry/route";
 import { POST as requeueOperation } from "@/app/api/admin/xero/operations/[id]/requeue/route";
 import { POST as markNonReplayableOperation } from "@/app/api/admin/xero/operations/[id]/mark-non-replayable/route";
+import { POST as resolveOperation } from "@/app/api/admin/xero/operations/[id]/resolve/route";
+import { POST as resetStaleRunning } from "@/app/api/admin/xero/operations/reset-stale-running/route";
 import { GET as listOperations } from "@/app/api/admin/xero/operations/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 
@@ -256,7 +267,7 @@ describe("Xero operation admin retry routes", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.xeroOperationFindMany).toHaveBeenCalledWith({
-      where: { status: "FAILED" },
+      where: { status: "FAILED", manuallyResolvedAt: null },
       orderBy: { createdAt: "desc" },
     });
 
@@ -357,5 +368,56 @@ describe("Xero operation admin retry routes", () => {
       ok: true,
       message: "Xero operation marked non-replayable with an audit record.",
     });
+  });
+
+  it("marks a failed operation resolved in Xero and audits it", async () => {
+    const response = await resolveOperation(
+      new NextRequest("http://localhost", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Contact was archived directly in Xero." }),
+      }),
+      {
+        params: Promise.resolve({ id: "op_failed" }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.xeroOperationUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "op_failed" },
+        data: expect.objectContaining({
+          manuallyResolvedReason: "Contact was archived directly in Xero.",
+          manuallyResolvedById: "admin-1",
+          manuallyResolvedAt: expect.any(Date),
+        }),
+      })
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "xero.operation.manually_resolved",
+        targetId: "op_failed",
+        details: "Contact was archived directly in Xero.",
+      })
+    );
+  });
+
+  it("resets stale running operations to failed", async () => {
+    mocks.xeroOperationUpdateMany.mockResolvedValue({ count: 3 });
+
+    const response = await resetStaleRunning();
+
+    expect(response.status).toBe(200);
+    expect(mocks.xeroOperationUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "RUNNING" }),
+        data: expect.objectContaining({
+          status: "FAILED",
+          lastErrorCode: "ORPHANED_STALE_RUNNING",
+        }),
+      })
+    );
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ ok: true, count: 3 })
+    );
   });
 });

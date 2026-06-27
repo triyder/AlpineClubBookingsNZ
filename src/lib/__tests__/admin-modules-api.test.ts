@@ -3,7 +3,6 @@ import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import {
-  DEFAULT_MODULE_SETTINGS,
   MODULE_KEYS,
   getEffectiveModuleFlags,
   type ModuleSettingsValues,
@@ -64,7 +63,9 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
 const memberSession = { user: { id: "member-1", role: "MEMBER" } };
 
-const allEnabled: ModuleSettingsValues = { ...DEFAULT_MODULE_SETTINGS };
+const allEnabled: ModuleSettingsValues = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, true]),
+) as ModuleSettingsValues;
 
 function request(body: unknown) {
   return new NextRequest("http://localhost/api/admin/modules", {
@@ -270,48 +271,12 @@ describe("effective module state", () => {
     mocks.clubModuleSettingsFindUnique.mockReset();
   });
 
-  it("requires both deploy capability and admin activation", () => {
+  it("is controlled solely by admin activation", () => {
     expect(
-      getEffectiveModuleFlags(
-        {
-          kiosk: true,
-          chores: true,
-          financeDashboard: true,
-          waitlist: true,
-          xeroIntegration: true,
-          bedAllocation: true,
-          internetBankingPayments: true,
-        },
-        { ...allEnabled, waitlist: false },
-      ).waitlist,
+      getEffectiveModuleFlags({ ...allEnabled, waitlist: false }).waitlist,
     ).toBe(false);
     expect(
-      getEffectiveModuleFlags(
-        {
-          kiosk: true,
-          chores: true,
-          financeDashboard: true,
-          waitlist: false,
-          xeroIntegration: true,
-          bedAllocation: true,
-          internetBankingPayments: true,
-        },
-        { ...allEnabled, waitlist: true },
-      ).waitlist,
-    ).toBe(false);
-    expect(
-      getEffectiveModuleFlags(
-        {
-          kiosk: true,
-          chores: true,
-          financeDashboard: true,
-          waitlist: true,
-          xeroIntegration: true,
-          bedAllocation: true,
-          internetBankingPayments: true,
-        },
-        { ...allEnabled, waitlist: true },
-      ).waitlist,
+      getEffectiveModuleFlags({ ...allEnabled, waitlist: true }).waitlist,
     ).toBe(true);
   });
 
@@ -320,7 +285,7 @@ describe("effective module state", () => {
       new Error("database unavailable"),
     );
 
-    await expect(loadEffectiveModuleFlags({ ...allEnabled })).resolves.toEqual(
+    await expect(loadEffectiveModuleFlags()).resolves.toEqual(
       Object.fromEntries(MODULE_KEYS.map((key) => [key, false])),
     );
   });

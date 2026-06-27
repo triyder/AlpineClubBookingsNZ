@@ -3,7 +3,6 @@ import path from "node:path";
 import { clubConfigSchema, type ClubConfig } from "../config/schema";
 import {
   DEFAULT_ADMIN_MODULE_SETTINGS,
-  getEffectiveModuleState,
   normalizeAdminModuleSettings,
   type AdminModuleKey,
   type AdminModuleSettingsSnapshot,
@@ -146,48 +145,17 @@ const CATEGORY_META: Record<
 };
 
 const MODULE_CONTROLS = [
-  {
-    key: "kiosk",
-    label: "Lodge kiosk",
-    envVar: "FEATURE_KIOSK",
-  },
-  {
-    key: "chores",
-    label: "Chores and roster",
-    envVar: "FEATURE_CHORES",
-  },
-  {
-    key: "financeDashboard",
-    label: "Finance dashboard",
-    envVar: "FEATURE_FINANCE_DASHBOARD",
-  },
-  {
-    key: "waitlist",
-    label: "Waitlist",
-    envVar: "FEATURE_WAITLIST",
-  },
-  {
-    key: "xeroIntegration",
-    label: "Operational Xero",
-    envVar: "FEATURE_XERO_INTEGRATION",
-  },
-  {
-    key: "bedAllocation",
-    label: "Bed allocation",
-    envVar: "FEATURE_BED_ALLOCATION",
-  },
-  {
-    key: "internetBankingPayments",
-    label: "Internet Banking payments",
-    envVar: "FEATURE_INTERNET_BANKING_PAYMENTS",
-  },
+  { key: "kiosk", label: "Lodge kiosk" },
+  { key: "chores", label: "Chores and roster" },
+  { key: "financeDashboard", label: "Finance dashboard" },
+  { key: "waitlist", label: "Waitlist" },
+  { key: "xeroIntegration", label: "Operational Xero" },
+  { key: "bedAllocation", label: "Bed allocation" },
+  { key: "internetBankingPayments", label: "Internet Banking payments" },
 ] as const satisfies readonly {
   key: AdminModuleKey;
   label: string;
-  envVar: string;
 }[];
-
-const FEATURE_FLAGS = MODULE_CONTROLS.map((module) => module.envVar);
 
 const REQUIRED_RUNTIME_ENV = [
   "DATABASE_URL",
@@ -233,10 +201,6 @@ function isLikelyStripePublishable(value: string | undefined): boolean {
 
 function isHexEncryptionKey(value: string | undefined): boolean {
   return Boolean(value && /^[0-9a-fA-F]{64}$/.test(value));
-}
-
-function isEnabledFlag(value: string | undefined): boolean {
-  return value?.trim().toLowerCase() === "true";
 }
 
 function toStatusScore(status: SetupStatus): number {
@@ -480,34 +444,18 @@ function buildSeedAdminCheck(
 }
 
 function buildModuleLayerState(
-  env: Env,
   db: SetupDatabaseSnapshot | undefined,
   moduleKey: AdminModuleKey,
 ) {
-  const control = MODULE_CONTROLS.find((item) => item.key === moduleKey);
-  if (!control) {
-    throw new Error(`Unknown module key: ${moduleKey}`);
-  }
-
   const adminActivation =
     db?.adminModuleSettings === undefined
       ? DEFAULT_ADMIN_MODULE_SETTINGS
       : normalizeAdminModuleSettings(db.adminModuleSettings);
-  const envCapability = MODULE_CONTROLS.reduce(
-    (flags, item) => ({
-      ...flags,
-      [item.key]: isEnabledFlag(readEnv(env, item.envVar)),
-    }),
-    {} as Record<AdminModuleKey, boolean>,
-  );
-  const effective = getEffectiveModuleState(envCapability, adminActivation);
 
   return {
-    envVar: control.envVar,
-    envEnabled: envCapability[moduleKey],
     adminChecked: Boolean(db && db.adminModuleSettings),
     adminEnabled: adminActivation[moduleKey],
-    effectiveEnabled: effective[moduleKey],
+    effectiveEnabled: adminActivation[moduleKey],
   };
 }
 
@@ -523,31 +471,13 @@ function formatModuleActivationDetail(
 }
 
 function buildFeatureFlagCheck(
-  env: Env,
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const envDetails = MODULE_CONTROLS.map((module) => {
-    const layer = buildModuleLayerState(env, db, module.key);
-    return `${module.label} env capability (${module.envVar}): ${
-      layer.envEnabled
-        ? "enabled"
-        : hasEnv(env, module.envVar)
-          ? "disabled"
-          : "unset"
-    }`;
-  });
   const adminDetails = MODULE_CONTROLS.map((module) => {
-    const layer = buildModuleLayerState(env, db, module.key);
+    const layer = buildModuleLayerState(db, module.key);
     return `${module.label} ${formatModuleActivationDetail(db, layer.adminEnabled)}`;
   });
-  const effectiveDetails = MODULE_CONTROLS.map((module) => {
-    const layer = buildModuleLayerState(env, db, module.key);
-    return `${module.label} effective state: ${
-      layer.effectiveEnabled ? "enabled" : "disabled"
-    }`;
-  });
-  const envConfigured = FEATURE_FLAGS.every((name) => hasEnv(env, name));
   const adminChecked = Boolean(db && db.adminModuleSettings);
 
   return applyProgress(
@@ -555,14 +485,13 @@ function buildFeatureFlagCheck(
       id: "feature-flags",
       title: "Module Controls",
       description:
-        "Deploy env capability plus Admin Modules club activation for optional modules.",
-      status: envConfigured && adminChecked ? "complete" : "warning",
+        "Admin Modules club activation for optional modules.",
+      status: adminChecked ? "complete" : "warning",
       required: false,
-      message:
-        envConfigured && adminChecked
-          ? "Module env capabilities and Admin Modules activation were checked."
-          : "Module controls are layered; set env capability flags and review Admin Modules activation.",
-      details: [...envDetails, ...adminDetails, ...effectiveDetails],
+      message: adminChecked
+        ? "Admin Modules activation was checked."
+        : "Review optional module activation on the admin Modules page.",
+      details: adminDetails,
     },
     progress,
   );
@@ -888,7 +817,7 @@ function buildOperationalXeroCheck(
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const moduleState = buildModuleLayerState(env, db, "xeroIntegration");
+  const moduleState = buildModuleLayerState(db, "xeroIntegration");
   const enabled = moduleState.effectiveEnabled;
   const issues = [
     !hasEnv(env, "XERO_CLIENT_ID") ? "XERO_CLIENT_ID is missing" : null,
@@ -920,7 +849,7 @@ function buildOperationalXeroCheck(
               : "not_started",
       required: enabled,
       message: !enabled
-        ? "Operational Xero is inactive by env capability or Admin Modules activation."
+        ? "Operational Xero is disabled in Admin Modules."
         : !db
           ? "Operational Xero env is ready; connection state was not checked."
           : connected
@@ -929,9 +858,6 @@ function buildOperationalXeroCheck(
               ? "Operational Xero env needs attention."
               : "Operational Xero env is ready; connect the tenant from admin.",
       details: [
-        `Env capability (${moduleState.envVar}): ${
-          moduleState.envEnabled ? "enabled" : "disabled"
-        }`,
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
         ...issues,
@@ -957,7 +883,7 @@ function buildFinanceDashboardCheck(
   db: SetupDatabaseSnapshot | undefined,
   progress: SetupProgressState,
 ): SetupStepCheck {
-  const moduleState = buildModuleLayerState(env, db, "financeDashboard");
+  const moduleState = buildModuleLayerState(db, "financeDashboard");
   const enabled = moduleState.effectiveEnabled;
   const operationalConnected = Boolean(db?.operationalXeroConnected);
 
@@ -976,16 +902,13 @@ function buildFinanceDashboardCheck(
             : "not_started",
       required: enabled,
       message: !enabled
-        ? "Finance dashboard is inactive by env capability or Admin Modules activation."
+        ? "Finance dashboard is disabled in Admin Modules."
         : !db
           ? "Finance dashboard is enabled; Xero connection state was not checked."
           : operationalConnected
             ? "Finance dashboard is ready and the shared Xero connection is active."
             : "Finance dashboard is enabled; connect Xero from the admin Xero page so finance sync can run.",
       details: [
-        `Env capability (${moduleState.envVar}): ${
-          moduleState.envEnabled ? "enabled" : "disabled"
-        }`,
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
         "Finance reporting reads from the shared operational Xero connection (requires the accounting.reports.read scope).",
@@ -1069,7 +992,7 @@ export function buildSetupReadiness(
       buildClubConfigCheck(club, progress),
       buildRuntimeEnvCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),
-      buildFeatureFlagCheck(env, input.database, progress),
+      buildFeatureFlagCheck(input.database, progress),
     ],
     booking: [
       buildBookingPolicyCheck(input.database, progress),
@@ -1156,7 +1079,6 @@ export function getSetupRequiredEnvNames(): string[] {
   return [
     ...REQUIRED_RUNTIME_ENV,
     "AUTH_SECRET or NEXTAUTH_SECRET",
-    ...FEATURE_FLAGS,
     "STRIPE_SECRET_KEY",
     "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
     "STRIPE_WEBHOOK_SECRET",

@@ -1,7 +1,5 @@
 import { BookingStatus, Prisma } from "@prisma/client";
 
-import { featureFlags } from "@/config/features";
-import type { FeatureFlags } from "@/config/schema";
 import {
   buildFirstFitBedAllocationPlan,
   type BedAllocationBooking,
@@ -51,7 +49,6 @@ interface ReconcileBedAllocationsForBookingInput {
   bookingId: string;
   db?: BedAllocationLifecycleDb;
   previousRange?: BedAllocationLifecycleRange | null;
-  envCapability?: FeatureFlags;
 }
 
 interface AutoAllocateMissingBedNightsInput {
@@ -389,13 +386,8 @@ export async function reconcileBedAllocationsForBooking({
   bookingId,
   db = prisma,
   previousRange,
-  envCapability = featureFlags,
 }: ReconcileBedAllocationsForBookingInput): Promise<BedAllocationLifecycleResult> {
-  const enabled = await isEffectiveModuleEnabled(
-    "bedAllocation",
-    envCapability,
-    db,
-  );
+  const enabled = await isEffectiveModuleEnabled("bedAllocation", db);
 
   if (!enabled) {
     return { enabled: false, deletedCount: 0, createdCount: 0 };

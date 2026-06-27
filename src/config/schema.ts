@@ -137,3 +137,4 @@ export const featureFlagsSchema = z
   .strict();
 
 export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
+export type FeatureFlagKey = keyof FeatureFlags;

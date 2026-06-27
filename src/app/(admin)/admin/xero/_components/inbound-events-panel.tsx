@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -38,6 +38,15 @@ export function InboundEventsPanel({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  // Hold the latest searchParams in a ref so syncUrl can preserve the *other*
+  // panel's params without taking searchParams as a reactive dependency. If it
+  // did, the sibling OperationsPanel rewriting the URL would re-trigger this
+  // panel's sync (and vice versa), causing the section param to ping-pong
+  // forever. Keyed off our own filter state only, the loop cannot form.
+  const searchParamsRef = useRef(searchParams)
+  useEffect(() => {
+    searchParamsRef.current = searchParams
+  }, [searchParams])
   const hasInboundUrlState =
     searchParams.get("section") === "inbound" ||
     [
@@ -74,7 +83,8 @@ export function InboundEventsPanel({
   const syncUrl = useCallback(() => {
     if (!urlSyncEnabled) return
 
-    const params = new URLSearchParams(searchParams.toString())
+    const currentSearch = searchParamsRef.current.toString()
+    const params = new URLSearchParams(currentSearch)
     params.set("section", "inbound")
     const setOrDelete = (key: string, value: string, defaultValue = "") => {
       if (value && value !== defaultValue) params.set(key, value)
@@ -93,9 +103,7 @@ export function InboundEventsPanel({
 
     const query = params.toString()
     const nextPath = query ? `${pathname}?${query}` : pathname
-    const currentPath = searchParams.toString()
-      ? `${pathname}?${searchParams.toString()}`
-      : pathname
+    const currentPath = currentSearch ? `${pathname}?${currentSearch}` : pathname
     if (nextPath !== currentPath) {
       router.replace(nextPath, { scroll: false })
     }
@@ -110,7 +118,6 @@ export function InboundEventsPanel({
     pathname,
     resourceIdFilter,
     router,
-    searchParams,
     statusFilter,
     urlSyncEnabled,
   ])

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -38,6 +38,15 @@ export function OperationsPanel({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  // Hold the latest searchParams in a ref so syncUrl can preserve the *other*
+  // panel's params without taking searchParams as a reactive dependency. If it
+  // did, the sibling InboundEventsPanel rewriting the URL would re-trigger this
+  // panel's sync (and vice versa), causing the section param to ping-pong
+  // forever. Keyed off our own filter state only, the loop cannot form.
+  const searchParamsRef = useRef(searchParams)
+  useEffect(() => {
+    searchParamsRef.current = searchParams
+  }, [searchParams])
   const hasOperationsUrlState =
     searchParams.get("section") === "operations" ||
     [
@@ -73,12 +82,15 @@ export function OperationsPanel({
   const [urlSyncEnabled, setUrlSyncEnabled] = useState(hasOperationsUrlState)
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
   const [markingNonReplayableOperationId, setMarkingNonReplayableOperationId] = useState<string | null>(null)
+  const [resolvingOperationId, setResolvingOperationId] = useState<string | null>(null)
   const [retryingAllFailed, setRetryingAllFailed] = useState(false)
+  const [resettingStale, setResettingStale] = useState(false)
 
   const syncUrl = useCallback(() => {
     if (!urlSyncEnabled) return
 
-    const params = new URLSearchParams(searchParams.toString())
+    const currentSearch = searchParamsRef.current.toString()
+    const params = new URLSearchParams(currentSearch)
     params.set("section", "operations")
 
     const setOrDelete = (key: string, value: string, defaultValue = "") => {
@@ -99,9 +111,7 @@ export function OperationsPanel({
 
     const query = params.toString()
     const nextPath = query ? `${pathname}?${query}` : pathname
-    const currentPath = searchParams.toString()
-      ? `${pathname}?${searchParams.toString()}`
-      : pathname
+    const currentPath = currentSearch ? `${pathname}?${currentSearch}` : pathname
     if (nextPath !== currentPath) {
       router.replace(nextPath, { scroll: false })
     }
@@ -117,7 +127,6 @@ export function OperationsPanel({
     pathname,
     resourceIdFilter,
     router,
-    searchParams,
     statusFilter,
     urlSyncEnabled,
   ])
@@ -232,6 +241,44 @@ export function OperationsPanel({
     }
   }
 
+  const resolveOperation = async (operationId: string) => {
+    const reason = window.prompt("How was this resolved in Xero? This drops it off the active failure list.", "Resolved manually in Xero")
+    if (reason === null) return
+    setResolvingOperationId(operationId)
+    setError("")
+    onMessage("")
+    try {
+      const data = await postJson<{ message?: string }>(
+        `/api/admin/xero/operations/${operationId}/resolve`,
+        { reason },
+        "Failed to resolve Xero operation"
+      )
+      onMessage(data.message || "Xero operation marked resolved.")
+      await fetchOperations()
+      onRefreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resolve Xero operation")
+    } finally {
+      setResolvingOperationId(null)
+    }
+  }
+
+  const resetStaleRunning = async () => {
+    setResettingStale(true)
+    setError("")
+    onMessage("")
+    try {
+      const data = await postJson<{ message?: string }>("/api/admin/xero/operations/reset-stale-running", undefined, "Failed to reset stale running Xero operations")
+      onMessage(data.message || "Reset stale running Xero operations.")
+      await fetchOperations()
+      onRefreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset stale running Xero operations")
+    } finally {
+      setResettingStale(false)
+    }
+  }
+
   return (
     <SectionCard
       id="xero-section-operations"
@@ -243,6 +290,9 @@ export function OperationsPanel({
         <>
           <Button size="sm" onClick={() => void retryAllFailed()} disabled={retryingAllFailed}>
             {retryingAllFailed ? "Queueing..." : "Retry Active Failed"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
+            {resettingStale ? "Resetting..." : "Reset stale running"}
           </Button>
           <Button variant="outline" size="sm" onClick={() => void fetchOperations()} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
@@ -292,8 +342,10 @@ export function OperationsPanel({
                 operation={operation}
                 retrying={retryingOperationId === operation.id}
                 markingNonReplayable={markingNonReplayableOperationId === operation.id}
+                resolving={resolvingOperationId === operation.id}
                 onRetry={() => void retryOperation(operation.id)}
                 onMarkNonReplayable={() => void markNonReplayable(operation.id)}
+                onResolve={() => void resolveOperation(operation.id)}
               />
             ))}
           </div>
@@ -318,20 +370,30 @@ function OperationItem({
   operation,
   retrying,
   markingNonReplayable,
+  resolving,
   onRetry,
   onMarkNonReplayable,
+  onResolve,
 }: {
   operation: XeroOperation
   retrying: boolean
   markingNonReplayable: boolean
+  resolving: boolean
   onRetry: () => void
   onMarkNonReplayable: () => void
+  onResolve: () => void
 }) {
+  const resolved = Boolean(operation.manuallyResolvedAt)
+  const isFailedOrPartial = operation.status === "FAILED" || operation.status === "PARTIAL"
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="default" className={operationStatusClass(operation.status)}>{operation.status}</Badge>
-        {operation.failureState ? <Badge variant="default" className={failureStateBadgeClass(operation.failureState)}>{failureStateLabel(operation.failureState)}</Badge> : null}
+        {resolved ? (
+          <Badge variant="default" className="bg-green-100 text-green-800">Resolved in Xero</Badge>
+        ) : operation.failureState ? (
+          <Badge variant="default" className={failureStateBadgeClass(operation.failureState)}>{failureStateLabel(operation.failureState)}</Badge>
+        ) : null}
         <span className="text-sm font-medium">{operation.entityType} {operation.operationType}</span>
         <span className="text-xs text-muted-foreground">{new Date(operation.createdAt).toLocaleString("en-NZ")}</span>
       </div>
@@ -367,21 +429,32 @@ function OperationItem({
           {redactSensitiveText(operation.lastErrorMessage)}
         </p>
       ) : null}
-      {operation.failureStateReason && operation.status === "FAILED" ? <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p> : null}
-      <div className="flex flex-wrap items-center gap-2">
-        {operation.supported && operation.failureState !== "REPAIRED" && operation.failureState !== "SUPERSEDED" ? (
-          <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
-            {retrying ? "Queueing..." : "Retry in background"}
-          </Button>
-        ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
-          <p className="text-xs text-muted-foreground">{operation.reason}</p>
-        ) : null}
-        {operation.replayable && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
-          <Button variant="outline" size="sm" onClick={onMarkNonReplayable} disabled={markingNonReplayable}>
-            {markingNonReplayable ? "Archiving..." : "Mark non-replayable"}
-          </Button>
-        ) : null}
-      </div>
+      {operation.failureStateReason && operation.status === "FAILED" && !resolved ? <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p> : null}
+      {resolved ? (
+        <p className="text-xs text-green-700">
+          Resolved in Xero{operation.manuallyResolvedReason ? `: ${operation.manuallyResolvedReason}` : ""}
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          {operation.supported && operation.failureState !== "REPAIRED" && operation.failureState !== "SUPERSEDED" ? (
+            <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
+              {retrying ? "Queueing..." : "Retry in background"}
+            </Button>
+          ) : operation.reason && isFailedOrPartial ? (
+            <p className="text-xs text-muted-foreground">{operation.reason}</p>
+          ) : null}
+          {operation.replayable && isFailedOrPartial ? (
+            <Button variant="outline" size="sm" onClick={onMarkNonReplayable} disabled={markingNonReplayable}>
+              {markingNonReplayable ? "Archiving..." : "Mark non-replayable"}
+            </Button>
+          ) : null}
+          {isFailedOrPartial ? (
+            <Button variant="outline" size="sm" onClick={onResolve} disabled={resolving}>
+              {resolving ? "Resolving..." : "Resolve (fixed in Xero)"}
+            </Button>
+          ) : null}
+        </div>
+      )}
       <details className="rounded-md bg-slate-50 p-2">
         <summary className="cursor-pointer text-xs font-medium text-slate-700">View request / response payloads</summary>
         <div className="mt-2 grid gap-3 lg:grid-cols-2">

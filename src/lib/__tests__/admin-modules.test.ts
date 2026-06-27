@@ -17,21 +17,18 @@ describe("Admin Modules effective state", () => {
     expect(normalizeAdminModuleSettings(null)).toEqual(DEFAULT_MODULE_SETTINGS);
   });
 
-  it("keeps env capability as the upper bound", () => {
+  it("reflects admin activation as the effective state", () => {
     expect(
-      getEffectiveModuleState(
-        { ...allCapabilitiesOn, waitlist: false },
-        { ...allCapabilitiesOn, waitlist: true },
-      )
+      getEffectiveModuleState({ ...allCapabilitiesOn, waitlist: false })
     ).toEqual({
       ...allCapabilitiesOn,
       waitlist: false,
     });
   });
 
-  it("lets Admin Modules disable an env-capable module", () => {
+  it("lets Admin Modules disable a module", () => {
     expect(
-      getEffectiveModuleState(allCapabilitiesOn, {
+      getEffectiveModuleState({
         ...allCapabilitiesOn,
         xeroIntegration: false,
       })
@@ -58,12 +55,17 @@ describe("Admin Modules effective state", () => {
           findUnique,
         },
       })
-      // Persisted row only sets the original 7 keys; newer modules fall back to
-      // their defaults (on).
+      // Persisted row sets the 7 capability keys explicitly; the general-purpose
+      // modules are absent and fall back to their defaults (on).
     ).resolves.toEqual({
       ...DEFAULT_MODULE_SETTINGS,
+      kiosk: true,
       chores: false,
+      financeDashboard: true,
       waitlist: false,
+      xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "default" },

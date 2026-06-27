@@ -21,10 +21,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { MODULE_KEYS, type ModuleKey, type ModuleSettingsValues } from "@/config/modules";
 
-type ModuleReadinessStatus =
-  | "ready"
-  | "admin_disabled"
-  | "capability_disabled";
+type ModuleReadinessStatus = "ready" | "admin_disabled";
 
 interface ModuleStatus {
   key: ModuleKey;
@@ -32,7 +29,6 @@ interface ModuleStatus {
   description: string;
   envVar: string;
   adminEnabled: boolean;
-  capabilityEnabled: boolean;
   effectiveEnabled: boolean;
   readiness: {
     status: ModuleReadinessStatus;
@@ -64,40 +60,30 @@ function readinessVariant(
   status: ModuleReadinessStatus,
 ): BadgeProps["variant"] {
   if (status === "ready") return "success";
-  if (status === "capability_disabled") return "warning";
   return "secondary";
 }
 
 function readinessLabel(status: ModuleReadinessStatus) {
-  if (status === "ready") return "Ready";
-  if (status === "capability_disabled") return "Capability off";
-  return "Admin disabled";
+  if (status === "ready") return "Enabled";
+  return "Disabled";
 }
 
 function getReadiness(
   module: ModuleStatus,
   adminEnabled: boolean,
 ): ModuleStatus["readiness"] {
-  if (!module.capabilityEnabled) {
-    return {
-      ...module.readiness,
-      status: "capability_disabled",
-      message: `${module.envVar} is not enabled, so ${module.label} cannot take effect even if admins activate it.`,
-    };
-  }
-
   if (!adminEnabled) {
     return {
       ...module.readiness,
       status: "admin_disabled",
-      message: `${module.label} is available at deploy time but disabled by admin activation.`,
+      message: `${module.label} is turned off in the admin Modules settings.`,
     };
   }
 
   return {
     ...module.readiness,
     status: "ready",
-    message: `${module.label} is active and deploy capability is available.`,
+    message: `${module.label} is enabled.`,
   };
 }
 
@@ -148,7 +134,7 @@ export default function AdminModulesPage() {
     return payload.modules.map((module) => ({
       ...module,
       adminEnabled: draft[module.key],
-      effectiveEnabled: draft[module.key] && module.capabilityEnabled,
+      effectiveEnabled: draft[module.key],
       readiness: getReadiness(module, draft[module.key]),
     }));
   }, [payload, draft]);
@@ -214,8 +200,8 @@ export default function AdminModulesPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Modules</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Manage admin activation for optional club modules. Deploy capability
-            still comes from environment feature flags.
+            Turn optional club modules on or off. These toggles are the single
+            control for whether a module is available across the site.
           </p>
         </div>
 
@@ -261,12 +247,13 @@ export default function AdminModulesPage() {
           <ServerCog className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
           <div className="space-y-1 text-sm text-slate-600">
             <p>
-              Admin activation is stored in the database and does not store
+              Module activation is stored in the database and does not store
               secrets, tokens, tenant ids, or provider credentials.
             </p>
             <p>
-              A module is ready only when both admin activation and its deploy
-              capability flag are enabled.
+              A module is available across the site whenever it is enabled here.
+              Some modules still need their own setup (for example Xero
+              credentials) before they can do useful work.
             </p>
           </div>
         </div>
@@ -300,15 +287,7 @@ export default function AdminModulesPage() {
                         <label htmlFor={checkboxId}>{module.label}</label>
                       </CardTitle>
                       <Badge variant={module.adminEnabled ? "success" : "secondary"}>
-                        {module.adminEnabled ? "Admin on" : "Admin off"}
-                      </Badge>
-                      <Badge
-                        variant={
-                          module.capabilityEnabled ? "success" : "warning"
-                        }
-                      >
-                        {module.envVar}{" "}
-                        {module.capabilityEnabled ? "on" : "off"}
+                        {module.adminEnabled ? "Enabled" : "Disabled"}
                       </Badge>
                     </div>
                     <CardDescription className="mt-1">
@@ -331,16 +310,18 @@ export default function AdminModulesPage() {
                   </div>
                 </div>
 
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                    Dependencies
-                  </p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
-                    {module.readiness.dependencies.map((dependency) => (
-                      <li key={dependency}>{dependency}</li>
-                    ))}
-                  </ul>
-                </div>
+                {module.readiness.dependencies.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      Dependencies
+                    </p>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-600">
+                      {module.readiness.dependencies.map((dependency) => (
+                        <li key={dependency}>{dependency}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </CardContent>
             </Card>
           );

@@ -65,7 +65,6 @@ import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transacti
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
-import { isFeatureEnabled } from "@/config/features";
 import type { GroupDiscountConfig } from "@/lib/pricing";
 import {
   ADULT_SUPERVISION_REVIEW_REASON,
@@ -1328,7 +1327,8 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             : undefined,
         ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
 
-        if (isFeatureEnabled("xeroIntegration")) {
+        const effectiveModules = await loadEffectiveModuleFlags();
+        if (effectiveModules.xeroIntegration) {
           void enqueueXeroBookingInvoiceOperation(booking.id, { createdByMemberId: sessionUserId })
             .then(async (queuedInvoice) => {
               if (!queuedInvoice.queueOperationId) return;

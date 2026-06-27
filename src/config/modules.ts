@@ -21,14 +21,20 @@ export const MODULE_KEYS = [
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 export type ModuleSettingsValues = Record<ModuleKey, boolean>;
 
+// Default activation for a club that has not saved its Modules page yet. The
+// optional "capability" modules (which require deploy-time setup such as Xero
+// credentials, kiosk hardware, or bed inventory) default OFF so a fresh install
+// opts into them deliberately. The general-purpose modules default ON so the
+// software is fully featured out of the box and each club switches OFF what it
+// does not use.
 export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
-  kiosk: true,
-  chores: true,
-  financeDashboard: true,
-  waitlist: true,
-  xeroIntegration: true,
-  bedAllocation: true,
-  internetBankingPayments: true,
+  kiosk: false,
+  chores: false,
+  financeDashboard: false,
+  waitlist: false,
+  xeroIntegration: false,
+  bedAllocation: false,
+  internetBankingPayments: false,
   groupBookings: true,
   lockers: true,
   induction: true,
@@ -53,14 +59,14 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Lodge kiosk",
     description: "Guest arrival, departure, and lodge access screens.",
     envVar: "FEATURE_KIOSK",
-    dependencies: ["Deploy-time kiosk capability must be enabled."],
+    dependencies: [],
   },
   chores: {
     key: "chores",
     label: "Chores and roster",
     description: "Roster generation, chore templates, and guest chore tracking.",
     envVar: "FEATURE_CHORES",
-    dependencies: ["Deploy-time chores capability must be enabled."],
+    dependencies: [],
   },
   financeDashboard: {
     key: "financeDashboard",
@@ -68,7 +74,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description: "Finance reports, sync diagnostics, and finance-only dashboards.",
     envVar: "FEATURE_FINANCE_DASHBOARD",
     dependencies: [
-      "Deploy-time finance dashboard capability must be enabled.",
       "Finance access levels and finance data sync are configured separately.",
     ],
   },
@@ -77,7 +82,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Waitlist",
     description: "Waitlist booking state, admin queue, and offer handling.",
     envVar: "FEATURE_WAITLIST",
-    dependencies: ["Deploy-time waitlist capability must be enabled."],
+    dependencies: [],
   },
   xeroIntegration: {
     key: "xeroIntegration",
@@ -85,7 +90,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description: "Operational Xero linking, sync actions, and reconciliation tools.",
     envVar: "FEATURE_XERO_INTEGRATION",
     dependencies: [
-      "Deploy-time Xero capability must be enabled.",
       "Xero OAuth credentials, tenant tokens, and account mappings are configured outside this table.",
     ],
   },
@@ -95,7 +99,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description: "Room and bed setup plus admin guest-to-bed allocation.",
     envVar: "FEATURE_BED_ALLOCATION",
     dependencies: [
-      "Deploy-time bed allocation capability must be enabled.",
       "Room and bed inventory is configured separately.",
     ],
   },
@@ -105,7 +108,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description: "Member Internet Banking payment option backed by Xero invoices.",
     envVar: "FEATURE_INTERNET_BANKING_PAYMENTS",
     dependencies: [
-      "Deploy-time Internet Banking payment capability must be enabled.",
       "Operational Xero must be active before invoices can be issued.",
     ],
   },
@@ -179,19 +181,11 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
   },
 };
 
-export function getModuleCapabilityFlags(
-  flags: FeatureFlags,
-): ModuleSettingsValues {
-  return Object.fromEntries(
-    MODULE_KEYS.map((key) => [key, flags[key]]),
-  ) as ModuleSettingsValues;
-}
-
 export function getEffectiveModuleFlags(
-  flags: FeatureFlags,
   settings: ModuleSettingsValues,
 ): FeatureFlags {
+  // Modules are controlled solely by the admin Modules page.
   return Object.fromEntries(
-    MODULE_KEYS.map((key) => [key, flags[key] && settings[key]]),
+    MODULE_KEYS.map((key) => [key, settings[key]]),
   ) as FeatureFlags;
 }

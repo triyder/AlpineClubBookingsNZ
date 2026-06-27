@@ -22,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type ProgressStatus = "open" | "completed" | "skipped";
@@ -320,6 +321,8 @@ export default function SetupPage() {
           Setup has been marked complete.
         </div>
       ) : null}
+
+      <LodgeCapacityCard />
 
       {readiness ? (
         <>

@@ -296,6 +296,9 @@ export interface XeroOperation {
   createdByMemberId: string | null
   startedAt: string | null
   completedAt: string | null
+  manuallyResolvedAt: string | null
+  manuallyResolvedReason: string | null
+  manuallyResolvedById: string | null
   createdAt: string
   updatedAt: string
   supported: boolean

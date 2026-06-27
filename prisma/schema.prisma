@@ -1648,6 +1648,12 @@ model XeroSyncOperation {
   createdByMemberId String?
   startedAt         DateTime?
   completedAt       DateTime?
+  // Operator override: a failed operation that was resolved directly in Xero.
+  // When set, the operation is excluded from the active-failure overview and the
+  // stuck-state dashboard count.
+  manuallyResolvedAt     DateTime?
+  manuallyResolvedReason String?
+  manuallyResolvedById   String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -1658,6 +1664,7 @@ model XeroSyncOperation {
   @@index([correlationKey])
   @@index([idempotencyKey])
   @@index([xeroObjectType, xeroObjectId])
+  @@index([status, manuallyResolvedAt])
 }
 
 model XeroObjectLink {
@@ -1968,6 +1975,16 @@ model ClubModuleSettings {
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+model LodgeSettings {
+  id                String   @id @default("default")
+  capacity          Int?
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }

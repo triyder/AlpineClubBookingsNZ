@@ -25,7 +25,6 @@ import {
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
 import { nameField } from "@/lib/zod-helpers";
-import { isFeatureEnabled } from "@/config/features";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   BOOKING_PAYMENT_METHOD_VALUES,
@@ -114,7 +113,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const xeroIntegrationEnabled = isFeatureEnabled("xeroIntegration");
+  const xeroIntegrationEnabled = (await loadEffectiveModuleFlags()).xeroIntegration;
 
   // Resolve effective member: admin booking on behalf of another member.
   let effectiveMemberId = session.user.id;

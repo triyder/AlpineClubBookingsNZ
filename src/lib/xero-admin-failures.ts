@@ -386,6 +386,8 @@ export async function getFailedXeroOperationOverview(options?: {
   const failedOperations = await prisma.xeroSyncOperation.findMany({
     where: {
       status: "FAILED",
+      // Operations resolved directly in Xero are no longer active failures.
+      manuallyResolvedAt: null,
     },
     orderBy: {
       createdAt: "desc",
