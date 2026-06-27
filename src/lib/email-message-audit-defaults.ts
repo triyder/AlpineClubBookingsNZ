@@ -274,6 +274,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Your booking request has been approved — {{CLUB_NAME}}",
     "defaultBody": "Booking Request Approved\n\nHi {{firstName}}, great news — your booking request has been approved!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{price}}\nBooking reference: {{bookingReference}}\n\nPlease complete payment to confirm your booking.\n\nPay Now: {{BASE_URL}}/pay/{{token}}\n\nThis payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link."
   },
+  "booking-request-quote": {
+    "defaultSubject": "Your booking quote is ready — {{CLUB_NAME}}",
+    "defaultBody": "Booking Quote Ready\n\nHi {{firstName}}, the club has prepared a quote for your lodge request.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\n{{quoteOptions}}\n\nRespond to Quote: {{BASE_URL}}/booking-requests/respond/{{token}}\n\nThis quote link expires on {{expiresAt}}. You can use it to accept, cancel, request changes, or send a question."
+  },
   "booking-request-declined": {
     "defaultSubject": "Update on your booking request — {{CLUB_NAME}}",
     "defaultBody": "Booking Request Update\n\nHi {{firstName}}, thank you for your interest in staying with {{CLUB_NAME}}.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nUnfortunately we're unable to accommodate this request.\n\nNote: {{reason}} [only when reason exists]\n\nIf you have any questions, please contact the club at {{SUPPORT_EMAIL}}."

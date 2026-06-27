@@ -125,6 +125,7 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
   "booking-request-verification": ["verifyUrl"],
   "booking-request-approved": ["payUrl"],
+  "booking-request-quote": ["respondUrl"],
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
@@ -183,6 +184,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "bulk-communication": ["adminEnteredBody"],
   "booking-request-verification": ["token"],
   "booking-request-approved": ["token"],
+  "booking-request-quote": ["token"],
   "admin-booking-request-pending": ["requesterName", "reviewUrl"],
   "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
 };
@@ -257,6 +259,10 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "booking-request-approved": {
     triggerSummary: "Public booking request approved and priced by admin",
     frequency: "Per booking request approval",
+  },
+  "booking-request-quote": {
+    triggerSummary: "Public booking request quote sent by admin",
+    frequency: "Per booking request quote version sent",
   },
   "booking-request-declined": {
     triggerSummary: "Public booking request declined by admin",
@@ -485,6 +491,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "pin",
   "position",
   "promoCode",
+  "quoteOptions",
   "reason",
   "recipientLabel",
   "refundAmount",

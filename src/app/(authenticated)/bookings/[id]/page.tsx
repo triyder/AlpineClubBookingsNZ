@@ -204,7 +204,13 @@ export default async function BookingDetailPage({
 
   if (!booking) notFound();
   if (booking.deletedAt && session.user.role !== "ADMIN") notFound();
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  const isBookingOwner = booking.memberId === session.user.id;
+  const isLinkedGuestViewer =
+    !isBookingOwner &&
+    session.user.role !== "ADMIN" &&
+    booking.guests.some((guest) => guest.memberId === session.user.id);
+  const canManageBooking = isBookingOwner || session.user.role === "ADMIN";
+  if (!canManageBooking && !isLinkedGuestViewer) {
     redirect("/bookings");
   }
 
@@ -277,7 +283,7 @@ export default async function BookingDetailPage({
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const isDeleted = Boolean(booking.deletedAt);
-  const canCancel = !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
+  const canCancel = canManageBooking && !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const modules = await loadEffectiveModuleFlags();
   const showRequestedRoom =
@@ -286,7 +292,6 @@ export default async function BookingDetailPage({
   // (locks) the bed allocation; admins can always edit while the booking is
   // modifiable. Only check the lock when the editor will actually render and
   // the module is on (the admin route also gates on bedAllocation).
-  const isBookingOwner = booking.memberId === session.user.id;
   const bedAllocationLocked =
     showRequestedRoom && modules.bedAllocation
       ? await isBookingBedAllocationLocked({ bookingId: booking.id })
@@ -299,7 +304,7 @@ export default async function BookingDetailPage({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
-  const canModify = !isDeleted && editPolicy.canModify;
+  const canModify = canManageBooking && !isDeleted && editPolicy.canModify;
   const canEditRequestedRoom = isDeleted
     ? false
     : session.user.role === "ADMIN"
@@ -334,6 +339,7 @@ export default async function BookingDetailPage({
     modules.xeroIntegration &&
     modules.internetBankingPayments &&
     !isDeleted &&
+    canManageBooking &&
     !internetBankingPayment &&
     booking.status === "PAYMENT_PENDING" &&
     !booking.organiserSettled &&
@@ -422,7 +428,7 @@ export default async function BookingDetailPage({
     session.user.role === "ADMIN";
   const showMemberArrivalInstructions =
     !isDeleted &&
-    booking.memberId === session.user.id &&
+    (booking.memberId === session.user.id || isLinkedGuestViewer) &&
     ["CONFIRMED", "PAID"].includes(booking.status);
   const memberArrivalInstructions = showMemberArrivalInstructions
     ? await loadEmailMessageSettings()
@@ -449,6 +455,7 @@ export default async function BookingDetailPage({
   // Method" card below already explains the save-card flow, so the on-hold
   // explanation is only needed when that card is not showing.
   const showSavePaymentMethodCard =
+    canManageBooking &&
     !isDeleted &&
     !internetBankingPayment &&
     booking.status === "PENDING" &&
@@ -467,6 +474,7 @@ export default async function BookingDetailPage({
   // off the booking price, so amount due = finalPriceCents - creditAppliedCents.
   const creditAppliedCents = booking.payment?.creditAppliedCents ?? 0;
   const showCreditApplied =
+    canManageBooking &&
     creditAppliedCents > 0 &&
     isPaymentOwedBookingStatus(booking.status) &&
     booking.payment?.status !== "SUCCEEDED";
@@ -518,6 +526,7 @@ export default async function BookingDetailPage({
     OPENABLE_ORGANISER_STATUSES.includes(booking.status);
   const showGroupSection =
     modules.groupBookings &&
+    canManageBooking &&
     isBookingOwner &&
     (Boolean(organiserGroupState) || canOpenGroup);
 
@@ -714,7 +723,7 @@ export default async function BookingDetailPage({
             <ArrivalTimeEditor
               bookingId={booking.id}
               initialTime={booking.expectedArrivalTime}
-              canEdit={editPolicy.mode === "future"}
+              canEdit={canManageBooking && editPolicy.mode === "future"}
             />
           </CardContent>
         </Card>
@@ -791,12 +800,12 @@ export default async function BookingDetailPage({
         )}
 
       {/* Draft booking: $0 confirm or payment to complete */}
-      {!isDeleted && isDraft && booking.finalPriceCents === 0 && (
+      {canManageBooking && !isDeleted && isDraft && booking.finalPriceCents === 0 && (
         <ConfirmDraftButton bookingId={booking.id} />
       )}
 
       {/* Draft booking with non-zero price: show payment section to complete */}
-      {!isDeleted && isDraft && booking.finalPriceCents > 0 && (
+      {canManageBooking && !isDeleted && isDraft && booking.finalPriceCents > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Booking</CardTitle>
@@ -839,7 +848,7 @@ export default async function BookingDetailPage({
       )}
 
       {/* Waitlist offered: show confirm button with countdown */}
-      {isWaitlistOffered && booking.waitlistOfferExpiresAt && (
+      {canManageBooking && isWaitlistOffered && booking.waitlistOfferExpiresAt && (
         <WaitlistOfferCard
           bookingId={booking.id}
           expiresAt={booking.waitlistOfferExpiresAt.toISOString()}
@@ -848,6 +857,7 @@ export default async function BookingDetailPage({
       )}
 
       {!isDeleted &&
+        canManageBooking &&
         internetBankingPayment &&
         isPaymentOwedBookingStatus(booking.status) &&
         internetBankingPayment.status !== "SUCCEEDED" && (
@@ -912,7 +922,7 @@ export default async function BookingDetailPage({
       )}
 
       {/* Show payment form if payment hasn't been completed */}
-      {(!isDeleted && !internetBankingPayment && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
+      {(canManageBooking && !isDeleted && !internetBankingPayment && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Payment</CardTitle>
@@ -976,6 +986,7 @@ export default async function BookingDetailPage({
 
       {/* Additional payment required after a modification that increased the price */}
       {booking.payment &&
+        canManageBooking &&
         !isDeleted &&
         booking.payment.additionalAmountCents > 0 &&
         booking.payment.additionalPaymentStatus !== "SUCCEEDED" && (

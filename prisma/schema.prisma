@@ -233,9 +233,39 @@ enum BookingRequestStatus {
   NEW
   VERIFIED
   PRICED
+  QUOTED
+  QUOTE_SENT
+  QUERY_PENDING
+  MODIFICATION_REQUESTED
+  ACCEPTED
   APPROVED
   DECLINED
+  CANCELLED
   CONVERTED
+}
+
+enum BookingRequestPricingMode {
+  OVERALL_TOTAL
+  PER_GUEST_NIGHT
+}
+
+enum BookingRequestQuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  CANCELLED
+  SUPERSEDED
+}
+
+enum SchoolCateringPreference {
+  CATERED
+  NON_CATERED
+  QUOTE_BOTH
+}
+
+enum SchoolCateringOption {
+  CATERED
+  NON_CATERED
 }
 
 enum AgeRestriction {
@@ -741,6 +771,10 @@ model Booking {
   bedAllocations              BedAllocation[]
   // Present when this booking was created from a public BookingRequest.
   originBookingRequest        BookingRequest?              @relation("BookingRequestConvertedBooking")
+  // Present while a public BookingRequest has been capacity-held by an admin
+  // before the requester accepts a quote. Acceptance converts this row rather
+  // than creating a duplicate booking.
+  heldForBookingRequest       BookingRequest?              @relation("BookingRequestHeldBooking")
   paymentLinks                PaymentLink[]
   // Durable per-transition fact store (issue #740). Unlike AuditLog these rows
   // are never retention-pruned, so booking/payment-link narratives survive.
@@ -989,6 +1023,11 @@ model BookingRequest {
   // Teacher contact snapshot: array of { firstName, lastName, email? }.
   // Each becomes a non-login Member with a HutLeaderAssignment on approval.
   teachers   Json?
+  // School quote intake preference. GENERAL requests leave this null.
+  cateringPreference SchoolCateringPreference?
+  // Admin-linked member guests: array of { guestIndex, memberId }. Linked
+  // adults are copied into BookingGuest.memberId on hold/acceptance.
+  linkedGuestMembers Json?
 
   // Indicative pricing shown on the public form (when enabled) at submit time.
   indicativePriceCents Int?
@@ -1008,11 +1047,22 @@ model BookingRequest {
 
   convertedBookingId String? @unique
   convertedMemberId  String?
+  heldBookingId      String? @unique
+  acceptedQuoteId    String? @unique
+  acceptedQuoteOptionId String?
+  acceptedQuoteSnapshot Json?
+  acceptedPriceCents Int?
+  acceptedAt         DateTime?
+  responseMessage    String?   @db.VarChar(2000)
+  responseMessageAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   convertedBooking Booking?      @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
+  heldBooking      Booking?      @relation("BookingRequestHeldBooking", fields: [heldBookingId], references: [id], onDelete: SetNull)
+  acceptedQuote    BookingRequestQuote? @relation("BookingRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: SetNull)
+  quotes           BookingRequestQuote[]
   paymentLinks     PaymentLink[]
 
   @@index([status, createdAt])
@@ -1021,6 +1071,37 @@ model BookingRequest {
   @@index([status, reviewedAt])
   @@index([pricedByMemberId])
   @@index([reviewedByMemberId])
+  @@index([heldBookingId])
+  @@index([acceptedQuoteId])
+}
+
+// Versioned public booking request quotes. The raw response token is emailed
+// once; only its SHA-256 hash is stored here.
+model BookingRequestQuote {
+  id                     String                    @id @default(cuid())
+  bookingRequestId       String
+  version                Int
+  status                 BookingRequestQuoteStatus @default(DRAFT)
+  pricingMode            BookingRequestPricingMode
+  options                Json
+  message                String?                   @db.VarChar(2000)
+  responseTokenHash      String?                   @unique
+  responseTokenExpiresAt DateTime?
+  sentAt                 DateTime?
+  supersededAt           DateTime?
+  acceptedAt             DateTime?
+  cancelledAt            DateTime?
+  createdByMemberId      String?
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+  acceptedByRequest BookingRequest? @relation("BookingRequestAcceptedQuote")
+
+  @@unique([bookingRequestId, version])
+  @@index([bookingRequestId, status])
+  @@index([responseTokenExpiresAt])
+  @@index([createdByMemberId])
 }
 
 // Tokenised public payment links (SHA-256 hash only; raw token is emailed once).

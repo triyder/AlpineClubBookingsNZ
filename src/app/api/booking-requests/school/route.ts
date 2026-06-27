@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SchoolCateringPreference } from "@prisma/client";
 import { z } from "zod";
 import { BookingRequestError } from "@/lib/booking-request";
 import {
@@ -36,6 +37,9 @@ const schoolBookingRequestSchema = z.object({
     .nullable(),
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  cateringPreference: z
+    .enum(["CATERED", "NON_CATERED", "QUOTE_BOTH"])
+    .default("QUOTE_BOTH"),
   teachers: z.array(schoolTeacherSchema).min(1, "At least one teacher is required").max(50),
   childCounts: schoolChildCountsSchema,
   message: z
@@ -101,6 +105,7 @@ export async function POST(request: NextRequest) {
       contactPhone: parsed.data.contactPhone,
       checkIn,
       checkOut,
+      cateringPreference: parsed.data.cateringPreference as SchoolCateringPreference,
       teachers,
       childCounts,
       message: parsed.data.message,

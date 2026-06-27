@@ -52,11 +52,14 @@ export default async function DashboardPage() {
   tomorrow.setDate(tomorrow.getDate() + 1);
   const stayingGuestBooking = await prisma.booking.findFirst({
     where: {
-      memberId,
       deletedAt: null,
       status: "PAID",
       checkIn: { lte: tomorrow },
       checkOut: { gte: today },
+      OR: [
+        { memberId },
+        { guests: { some: { memberId } } },
+      ],
     },
     select: { id: true },
   });
@@ -82,15 +85,19 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     prisma.booking.findMany({
       where: {
-        memberId,
         deletedAt: null,
         status: { in: [...ACTIVE_BOOKING_STATUSES] },
         checkIn: { gte: today },
+        OR: [
+          { memberId },
+          { guests: { some: { memberId } } },
+        ],
       },
       orderBy: { checkIn: "asc" },
       take: 20,
       select: {
         id: true,
+        memberId: true,
         checkIn: true,
         checkOut: true,
         status: true,
@@ -99,11 +106,19 @@ export default async function DashboardPage() {
       },
     }),
     prisma.booking.findMany({
-      where: { memberId, deletedAt: null, status: { not: "DRAFT" } },
+      where: {
+        deletedAt: null,
+        status: { not: "DRAFT" },
+        OR: [
+          { memberId },
+          { guests: { some: { memberId } } },
+        ],
+      },
       orderBy: { createdAt: "desc" },
       take: 5,
       select: {
         id: true,
+        memberId: true,
         checkIn: true,
         checkOut: true,
         status: true,

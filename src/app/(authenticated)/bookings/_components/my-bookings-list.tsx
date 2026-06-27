@@ -25,7 +25,7 @@ export interface MyBookingItem {
   finalPriceCents: number;
   status: BookingStatus;
   // Split-booking (#738) labelling, pre-computed on the server.
-  linkLabel: "linked-parent" | "provisional-child" | null;
+  linkLabel: "linked-parent" | "provisional-child" | "guest-linked" | null;
 }
 
 type SortDir = "desc" | "asc";
@@ -133,6 +133,10 @@ export function MyBookingsList({ bookings }: { bookings: MyBookingItem[] }) {
                     ) : booking.linkLabel === "linked-parent" ? (
                       <p className="text-xs text-sky-700">
                         Includes linked provisional non-member guests
+                      </p>
+                    ) : booking.linkLabel === "guest-linked" ? (
+                      <p className="text-xs text-sky-700">
+                        You are listed as a guest on this booking
                       </p>
                     ) : null}
                   </div>

@@ -66,6 +66,7 @@ import {
   preArrivalReminderTemplate,
   bookingRequestVerificationTemplate,
   bookingRequestApprovedTemplate,
+  bookingRequestQuoteTemplate,
   bookingRequestDeclinedTemplate,
   adminBookingRequestPendingTemplate,
   adminSchoolManualInvoiceTemplate,
@@ -2496,6 +2497,54 @@ export async function sendBookingRequestApprovedEmail(params: {
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
       bookingReference: params.bookingReference,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendBookingRequestQuoteEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  requestType: string;
+  schoolName?: string | null;
+  options: Array<{ label: string; totalCents: number }>;
+  message?: string | null;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const respondUrl = `${baseUrl}/booking-requests/respond/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Your booking quote is ready — ${CLUB_NAME}`,
+    html: bookingRequestQuoteTemplate({
+      firstName: params.firstName,
+      respondUrl,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+      options: params.options,
+      message: params.message,
+      expiresAt: params.expiresAt,
+      schoolName: params.schoolName,
+    }),
+    templateName: "booking-request-quote",
+    templateData: {
+      firstName: params.firstName,
+      token: params.token,
+      respondUrl,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      requestType: params.requestType,
+      schoolName: params.schoolName ?? "",
+      quoteOptions: params.options
+        .map((option) => `${option.label}: ${formatMoneyCents(option.totalCents)}`)
+        .join("\n"),
       expiresAt: formatNZDateTime(params.expiresAt),
     },
   });

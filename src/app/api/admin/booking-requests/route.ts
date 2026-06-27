@@ -5,6 +5,7 @@ import {
   buildBookingRequestListWhere,
   serializeBookingRequestForAdmin,
 } from "@/lib/booking-request";
+import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -64,6 +65,16 @@ export async function GET(req: NextRequest) {
   const reviewerNames = new Map(
     reviewers.map((member) => [member.id, `${member.firstName} ${member.lastName}`])
   );
+  const latestQuotes = requests.length
+    ? await prisma.bookingRequestQuote.findMany({
+        where: { bookingRequestId: { in: requests.map((request) => request.id) } },
+        distinct: ["bookingRequestId"],
+        orderBy: [{ bookingRequestId: "asc" }, { version: "desc" }],
+      })
+    : [];
+  const latestQuoteByRequestId = new Map(
+    latestQuotes.map((quote) => [quote.bookingRequestId, quote])
+  );
 
   const data = requests.map((request) => ({
     ...serializeBookingRequestForAdmin(request),
@@ -72,6 +83,21 @@ export async function GET(req: NextRequest) {
       : null,
     reviewedByMemberName: request.reviewedByMemberId
       ? reviewerNames.get(request.reviewedByMemberId) ?? null
+      : null,
+    latestQuote: latestQuoteByRequestId.has(request.id)
+      ? {
+          id: latestQuoteByRequestId.get(request.id)!.id,
+          version: latestQuoteByRequestId.get(request.id)!.version,
+          status: latestQuoteByRequestId.get(request.id)!.status,
+          pricingMode: latestQuoteByRequestId.get(request.id)!.pricingMode,
+          sentAt: latestQuoteByRequestId.get(request.id)!.sentAt?.toISOString() ?? null,
+          responseTokenExpiresAt:
+            latestQuoteByRequestId.get(request.id)!.responseTokenExpiresAt?.toISOString() ??
+            null,
+          options: parseBookingRequestQuoteOptions(
+            latestQuoteByRequestId.get(request.id)!.options
+          ),
+        }
       : null,
   }));
 

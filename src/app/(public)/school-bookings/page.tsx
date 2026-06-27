@@ -7,6 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
@@ -39,6 +46,9 @@ export default function SchoolBookingRequestPage() {
   const [message, setMessage] = useState("");
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
+  const [cateringPreference, setCateringPreference] = useState<
+    "CATERED" | "NON_CATERED" | "QUOTE_BOTH"
+  >("QUOTE_BOTH");
   const [teachers, setTeachers] = useState<TeacherInput[]>([emptyTeacher()]);
   const [childCounts, setChildCounts] = useState<Record<string, number>>({
     INFANT: 0,
@@ -112,6 +122,7 @@ export default function SchoolBookingRequestPage() {
           contactPhone: contactPhone || undefined,
           checkIn,
           checkOut,
+          cateringPreference,
           teachers: validTeachers.map((t) => ({
             firstName: t.firstName,
             lastName: t.lastName,
@@ -153,7 +164,7 @@ export default function SchoolBookingRequestPage() {
           <p className="text-sm text-muted-foreground">
             We&apos;ve sent a confirmation email to {contactEmail}. Please click the link inside to
             confirm your email address. Once confirmed, your request will join our review queue and
-            {" "}{club.lodgeName} will confirm the booking and invoice the school.
+            {" "}{club.lodgeName} will send a quote for your school to review.
           </p>
         </CardContent>
       </Card>
@@ -166,8 +177,7 @@ export default function SchoolBookingRequestPage() {
         <CardTitle>School Group Booking Request</CardTitle>
         <CardDescription>
           Request a school group stay at {club.lodgeName}. We&apos;ll email you to confirm your
-          address, then confirm the booking and invoice the school. Nominated teachers are set up as
-          hut leaders for the stay.
+          address, then send a quote for your school to review.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -255,6 +265,25 @@ export default function SchoolBookingRequestPage() {
                 required
               />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label htmlFor="cateringPreference">Catering</Label>
+            <Select
+              value={cateringPreference}
+              onValueChange={(value) =>
+                setCateringPreference(value as "CATERED" | "NON_CATERED" | "QUOTE_BOTH")
+              }
+            >
+              <SelectTrigger id="cateringPreference">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="QUOTE_BOTH">Quote catered and non-catered</SelectItem>
+                <SelectItem value="CATERED">Catered</SelectItem>
+                <SelectItem value="NON_CATERED">Non-catered</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-3">

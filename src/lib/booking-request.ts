@@ -61,6 +61,15 @@ export const bookingRequestGuestSchema = z.object({
 
 export type BookingRequestGuest = z.infer<typeof bookingRequestGuestSchema>;
 
+export const bookingRequestLinkedGuestMemberSchema = z.object({
+  guestIndex: z.number().int().min(0),
+  memberId: z.string().min(1),
+});
+
+export type BookingRequestLinkedGuestMember = z.infer<
+  typeof bookingRequestLinkedGuestMemberSchema
+>;
+
 export class BookingRequestError extends Error {
   status: number;
 
@@ -86,6 +95,26 @@ export function parseBookingRequestGuests(raw: unknown): BookingRequestGuest[] {
     throw new BookingRequestError("Stored booking request guests are invalid", 500);
   }
   return parsed.data;
+}
+
+export function parseBookingRequestLinkedGuestMembers(
+  raw: unknown
+): BookingRequestLinkedGuestMember[] {
+  if (!raw) return [];
+  const parsed = z.array(bookingRequestLinkedGuestMemberSchema).safeParse(raw);
+  if (!parsed.success) {
+    throw new BookingRequestError("Stored linked booking request members are invalid", 500);
+  }
+  return parsed.data;
+}
+
+export function linkedGuestMemberMap(raw: unknown): Map<number, string> {
+  return new Map(
+    parseBookingRequestLinkedGuestMembers(raw).map((link) => [
+      link.guestIndex,
+      link.memberId,
+    ])
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +590,7 @@ export async function approveBookingRequest(input: {
   }
 
   const guests = parseBookingRequestGuests(request.guests);
+  const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   const priceCents = request.priceCents;
 
   // Non-login members never authenticate; store a random bcrypt hash so the
@@ -610,68 +640,109 @@ export async function approveBookingRequest(input: {
         );
       }
 
-      const capacityRanges = guests.map(() => ({
-        stayStart: request.checkIn,
-        stayEnd: request.checkOut,
-      }));
-      const capacity = await checkCapacityForGuestRanges(
-        request.checkIn,
-        request.checkOut,
-        capacityRanges,
-        undefined,
-        tx
-      );
-      if (!capacity.available) {
-        capacityFullNights = getCapacityFullNights(capacity.nightDetails);
-        throw new Error("CAPACITY_EXCEEDED_SENTINEL");
-      }
-
-      // Mirror approveMemberApplication(): a non-login member owns the
-      // booking. emailVerified is true because the address was verified in
-      // the request flow before it entered the queue.
-      const member = await tx.member.create({
-        data: {
-          email: request.contactEmail,
-          passwordHash: placeholderPasswordHash,
-          emailVerified: true,
-          firstName: request.contactFirstName,
-          lastName: request.contactLastName,
-          role: "MEMBER",
-          ageTier: AgeTier.ADULT,
-          active: true,
-          canLogin: false,
-          phoneNumber: request.contactPhone,
-        },
-        select: { id: true },
-      });
-
       const guestPriceCents = splitPriceAcrossGuests(priceCents, guests.length);
-      const booking = await tx.booking.create({
-        data: {
-          memberId: member.id,
-          checkIn: request.checkIn,
-          checkOut: request.checkOut,
-          status: BookingStatus.PENDING,
-          totalPriceCents: priceCents,
-          finalPriceCents: priceCents,
-          hasNonMembers: true,
-          nonMemberHoldUntil,
-          notes: request.message,
-          createdById: input.adminMemberId,
-          guests: {
-            create: guests.map((guest, index) => ({
-              firstName: guest.firstName,
-              lastName: guest.lastName,
-              ageTier: guest.ageTier,
-              isMember: false,
-              stayStart: request.checkIn,
-              stayEnd: request.checkOut,
-              priceCents: guestPriceCents[index],
-            })),
-          },
-        },
-        select: { id: true },
+      const guestCreates = guests.map((guest, index) => {
+        const memberId = linkedMembers.get(index);
+        return {
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          ageTier: guest.ageTier,
+          isMember: Boolean(memberId),
+          memberId,
+          stayStart: request.checkIn,
+          stayEnd: request.checkOut,
+          priceCents: guestPriceCents[index],
+        };
       });
+
+      let booking: { id: string };
+      let member: { id: string };
+
+      if (request.heldBookingId) {
+        const held = await tx.booking.findUnique({
+          where: { id: request.heldBookingId },
+          select: { id: true, memberId: true, status: true },
+        });
+        if (!held) {
+          throw new BookingRequestError("Held booking was not found", 409);
+        }
+        if (held.status !== BookingStatus.AWAITING_REVIEW) {
+          throw new BookingRequestError("Held booking is no longer available", 409);
+        }
+
+        await tx.bookingGuest.deleteMany({ where: { bookingId: held.id } });
+        booking = await tx.booking.update({
+          where: { id: held.id },
+          data: {
+            checkIn: request.checkIn,
+            checkOut: request.checkOut,
+            status: BookingStatus.PENDING,
+            totalPriceCents: priceCents,
+            finalPriceCents: priceCents,
+            hasNonMembers: true,
+            nonMemberHoldUntil,
+            notes: request.message,
+            createdById: input.adminMemberId,
+            guests: { create: guestCreates },
+          },
+          select: { id: true },
+        });
+        member = { id: held.memberId };
+      } else {
+        const capacityRanges = guests.map(() => ({
+          stayStart: request.checkIn,
+          stayEnd: request.checkOut,
+        }));
+        const capacity = await checkCapacityForGuestRanges(
+          request.checkIn,
+          request.checkOut,
+          capacityRanges,
+          undefined,
+          tx
+        );
+        if (!capacity.available) {
+          capacityFullNights = getCapacityFullNights(capacity.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
+        }
+
+        // Mirror approveMemberApplication(): a non-login member owns the
+        // booking. emailVerified is true because the address was verified in
+        // the request flow before it entered the queue.
+        member = await tx.member.create({
+          data: {
+            email: request.contactEmail,
+            passwordHash: placeholderPasswordHash,
+            emailVerified: true,
+            firstName: request.contactFirstName,
+            lastName: request.contactLastName,
+            role: "MEMBER",
+            ageTier: AgeTier.ADULT,
+            active: true,
+            canLogin: false,
+            phoneNumber: request.contactPhone,
+          },
+          select: { id: true },
+        });
+
+        booking = await tx.booking.create({
+          data: {
+            memberId: member.id,
+            checkIn: request.checkIn,
+            checkOut: request.checkOut,
+            status: BookingStatus.PENDING,
+            totalPriceCents: priceCents,
+            finalPriceCents: priceCents,
+            hasNonMembers: true,
+            nonMemberHoldUntil,
+            notes: request.message,
+            createdById: input.adminMemberId,
+            guests: {
+              create: guestCreates,
+            },
+          },
+          select: { id: true },
+        });
+      }
 
       await tx.payment.create({
         data: {
@@ -838,7 +909,14 @@ export function buildBookingRequestListWhere(
   if (filter === "QUEUE") {
     return {
       status: {
-        in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED],
+        in: [
+          BookingRequestStatus.VERIFIED,
+          BookingRequestStatus.PRICED,
+          BookingRequestStatus.QUOTED,
+          BookingRequestStatus.QUOTE_SENT,
+          BookingRequestStatus.QUERY_PENDING,
+          BookingRequestStatus.MODIFICATION_REQUESTED,
+        ],
       },
     };
   }
@@ -864,6 +942,10 @@ export function serializeBookingRequestForAdmin(request: BookingRequest) {
     status: request.status,
     schoolName: request.schoolName,
     teachers: parseAdminTeachers(request.teachers),
+    cateringPreference: request.cateringPreference,
+    linkedGuestMembers: parseBookingRequestLinkedGuestMembers(
+      request.linkedGuestMembers
+    ),
     contactFirstName: request.contactFirstName,
     contactLastName: request.contactLastName,
     contactEmail: request.contactEmail,
@@ -882,6 +964,13 @@ export function serializeBookingRequestForAdmin(request: BookingRequest) {
     declineReason: request.declineReason,
     convertedBookingId: request.convertedBookingId,
     convertedMemberId: request.convertedMemberId,
+    heldBookingId: request.heldBookingId,
+    acceptedQuoteId: request.acceptedQuoteId,
+    acceptedQuoteOptionId: request.acceptedQuoteOptionId,
+    acceptedPriceCents: request.acceptedPriceCents,
+    acceptedAt: request.acceptedAt?.toISOString() ?? null,
+    responseMessage: request.responseMessage,
+    responseMessageAt: request.responseMessageAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
   };
 }

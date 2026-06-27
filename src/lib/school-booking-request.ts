@@ -32,6 +32,7 @@ import {
   PaymentSource,
   PaymentStatus,
   Prisma,
+  SchoolCateringPreference,
 } from "@prisma/client";
 import { z } from "zod";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
@@ -40,6 +41,7 @@ import { logAudit } from "@/lib/audit";
 import {
   BOOKING_REQUEST_VERIFICATION_TTL_MS,
   BookingRequestError,
+  linkedGuestMemberMap,
   parseBookingRequestGuests,
   splitPriceAcrossGuests,
   type BookingRequestGuest,
@@ -109,6 +111,7 @@ export interface CreateSchoolBookingRequestInput {
   checkOut: Date;
   teachers: SchoolTeacherInput[];
   childCounts: SchoolChildCounts;
+  cateringPreference: SchoolCateringPreference;
   message?: string | null;
 }
 
@@ -301,6 +304,7 @@ export async function createSchoolBookingRequest(
       type: BookingRequestType.SCHOOL,
       schoolName,
       teachers: teachers as unknown as Prisma.InputJsonValue,
+      cateringPreference: input.cateringPreference,
       contactFirstName,
       contactLastName,
       contactEmail,
@@ -410,6 +414,7 @@ export async function approveSchoolBookingRequest(input: {
 
   const guests = parseBookingRequestGuests(request.guests);
   const teachers = parseSchoolTeachers(request.teachers);
+  const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   const schoolName =
     request.schoolName ?? `${request.contactFirstName} ${request.contactLastName}`;
 
@@ -499,67 +504,107 @@ export async function approveSchoolBookingRequest(input: {
         );
       }
 
-      const capacityRanges = guests.map(() => ({
-        stayStart: request.checkIn,
-        stayEnd: request.checkOut,
-      }));
-      const capacity = await checkCapacityForGuestRanges(
-        request.checkIn,
-        request.checkOut,
-        capacityRanges,
-        undefined,
-        tx
-      );
-      if (!capacity.available) {
-        capacityFullNights = getCapacityFullNights(capacity.nightDetails);
-        throw new Error("CAPACITY_EXCEEDED_SENTINEL");
-      }
-
-      // The school is the invoiced party and Xero contact: name = school,
-      // email = contact email. Owned by a non-login Member (canLogin: false).
-      const schoolMember = await tx.member.create({
-        data: {
-          email: request.contactEmail,
-          passwordHash: placeholderPasswordHash,
-          emailVerified: true,
-          firstName: schoolName.slice(0, 100),
-          lastName: "",
-          role: "MEMBER",
-          ageTier: AgeTier.ADULT,
-          active: true,
-          canLogin: false,
-          phoneNumber: request.contactPhone,
-        },
-        select: { id: true },
+      const guestCreates = guests.map((guest, index) => {
+        const memberId = linkedMembers.get(index);
+        return {
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          ageTier: guest.ageTier,
+          isMember: Boolean(memberId),
+          memberId,
+          stayStart: request.checkIn,
+          stayEnd: request.checkOut,
+          priceCents: guestPriceCents[index],
+        };
       });
 
-      // CONFIRMED holds capacity (issue #709 locked decision); pay-on-account
-      // via INTERNET_BANKING so the existing invoice/reconciliation path runs.
-      const booking = await tx.booking.create({
-        data: {
-          memberId: schoolMember.id,
-          checkIn: request.checkIn,
-          checkOut: request.checkOut,
-          status: BookingStatus.CONFIRMED,
-          totalPriceCents,
-          finalPriceCents: totalPriceCents,
-          hasNonMembers: true,
-          notes: request.message,
-          createdById: input.adminMemberId,
-          guests: {
-            create: guests.map((guest, index) => ({
-              firstName: guest.firstName,
-              lastName: guest.lastName,
-              ageTier: guest.ageTier,
-              isMember: false,
-              stayStart: request.checkIn,
-              stayEnd: request.checkOut,
-              priceCents: guestPriceCents[index],
-            })),
+      let booking: { id: string };
+      let schoolMember: { id: string };
+
+      if (request.heldBookingId) {
+        const held = await tx.booking.findUnique({
+          where: { id: request.heldBookingId },
+          select: { id: true, memberId: true, status: true },
+        });
+        if (!held) {
+          throw new BookingRequestError("Held booking was not found", 409);
+        }
+        if (held.status !== BookingStatus.AWAITING_REVIEW) {
+          throw new BookingRequestError("Held booking is no longer available", 409);
+        }
+
+        await tx.bookingGuest.deleteMany({ where: { bookingId: held.id } });
+        booking = await tx.booking.update({
+          where: { id: held.id },
+          data: {
+            checkIn: request.checkIn,
+            checkOut: request.checkOut,
+            status: BookingStatus.CONFIRMED,
+            totalPriceCents,
+            finalPriceCents: totalPriceCents,
+            hasNonMembers: true,
+            notes: request.message,
+            createdById: input.adminMemberId,
+            guests: { create: guestCreates },
           },
-        },
-        select: { id: true },
-      });
+          select: { id: true },
+        });
+        schoolMember = { id: held.memberId };
+      } else {
+        const capacityRanges = guests.map(() => ({
+          stayStart: request.checkIn,
+          stayEnd: request.checkOut,
+        }));
+        const capacity = await checkCapacityForGuestRanges(
+          request.checkIn,
+          request.checkOut,
+          capacityRanges,
+          undefined,
+          tx
+        );
+        if (!capacity.available) {
+          capacityFullNights = getCapacityFullNights(capacity.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
+        }
+
+        // The school is the invoiced party and Xero contact: name = school,
+        // email = contact email. Owned by a non-login Member (canLogin: false).
+        schoolMember = await tx.member.create({
+          data: {
+            email: request.contactEmail,
+            passwordHash: placeholderPasswordHash,
+            emailVerified: true,
+            firstName: schoolName.slice(0, 100),
+            lastName: "",
+            role: "MEMBER",
+            ageTier: AgeTier.ADULT,
+            active: true,
+            canLogin: false,
+            phoneNumber: request.contactPhone,
+          },
+          select: { id: true },
+        });
+
+        // CONFIRMED holds capacity (issue #709 locked decision); pay-on-account
+        // via INTERNET_BANKING so the existing invoice/reconciliation path runs.
+        booking = await tx.booking.create({
+          data: {
+            memberId: schoolMember.id,
+            checkIn: request.checkIn,
+            checkOut: request.checkOut,
+            status: BookingStatus.CONFIRMED,
+            totalPriceCents,
+            finalPriceCents: totalPriceCents,
+            hasNonMembers: true,
+            notes: request.message,
+            createdById: input.adminMemberId,
+            guests: {
+              create: guestCreates,
+            },
+          },
+          select: { id: true },
+        });
+      }
 
       await tx.payment.create({
         data: {

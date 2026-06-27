@@ -2308,6 +2308,39 @@ export function bookingRequestApprovedTemplate(data: {
   `);
 }
 
+export function bookingRequestQuoteTemplate(data: {
+  firstName: string;
+  respondUrl: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  options: Array<{ label: string; totalCents: number }>;
+  message?: string | null;
+  expiresAt: Date;
+  schoolName?: string | null;
+}): string {
+  const optionRows = data.options.map((option) => ({
+    label: option.label,
+    value: formatCents(option.totalCents),
+  }));
+
+  return layout(`
+    ${heading("Your Booking Quote Is Ready")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the club has prepared a quote for your lodge request.")}
+    ${infoTable([
+      ...(data.schoolName ? [{ label: "School", value: data.schoolName }] : []),
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      ...optionRows,
+    ])}
+    ${data.message ? multilineBlock("<strong>Note from the club:</strong>\n" + escapeHtml(data.message)) : ""}
+    ${paragraph("Use the secure link below to accept, cancel, request changes, or send a question about this quote.")}
+    ${button("Respond to Quote", data.respondUrl)}
+    ${muted("This quote link expires on " + escapeHtml(formatNZDateTime(data.expiresAt)) + ". If you have questions, just reply to this email or contact the club.")}
+  `);
+}
+
 export function bookingRequestDeclinedTemplate(data: {
   firstName: string;
   checkIn: Date;

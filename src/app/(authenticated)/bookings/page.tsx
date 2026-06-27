@@ -10,7 +10,13 @@ export default async function MyBookingsPage() {
   if (!session) return null;
 
   const bookings = await prisma.booking.findMany({
-    where: { memberId: session.user.id, deletedAt: null },
+    where: {
+      deletedAt: null,
+      OR: [
+        { memberId: session.user.id },
+        { guests: { some: { memberId: session.user.id } } },
+      ],
+    },
     include: { guests: true },
     // Newest start date first, with a stable createdAt tiebreaker (#771).
     orderBy: [{ checkIn: "desc" }, { createdAt: "desc" }],
@@ -31,11 +37,14 @@ export default async function MyBookingsPage() {
     guestCount: booking.guests.length,
     finalPriceCents: booking.finalPriceCents,
     status: booking.status,
-    linkLabel: booking.parentBookingId
-      ? "provisional-child"
-      : memberBookingIdsWithLinkedGuests.has(booking.id)
-        ? "linked-parent"
-        : null,
+    linkLabel:
+      booking.memberId !== session.user.id
+        ? "guest-linked"
+        : booking.parentBookingId
+          ? "provisional-child"
+          : memberBookingIdsWithLinkedGuests.has(booking.id)
+            ? "linked-parent"
+            : null,
   }));
 
   return (

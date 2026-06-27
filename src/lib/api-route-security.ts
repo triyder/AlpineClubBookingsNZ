@@ -64,6 +64,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Anonymous indicative non-member pricing quote for the booking request form, gated by the pricing-visibility setting and rate limited.",
   },
+  "src/app/api/booking-requests/respond/[token]/route.ts": {
+    boundary: "public",
+    reason:
+      "Token-bearing booking request quote response endpoint; only the matching SHA-256 quote token resolves the quote, invalid and superseded tokens do not enumerate request state, and actions are rate limited.",
+  },
   "src/app/api/booking-requests/route.ts": {
     boundary: "public",
     reason:

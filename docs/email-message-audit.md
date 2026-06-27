@@ -2278,6 +2278,36 @@ Triggers and frequency:
 
 - `POST /api/admin/booking-requests/[id]/approve`: when a booking officer approves a priced request and it converts to a PENDING booking with a tokenised payment link. Per booking request approval.
 
+### booking-request-quote
+
+Subject:
+
+```text
+Your booking quote is ready — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Booking Quote Ready
+
+Hi {{firstName}}, the club has prepared a quote for your lodge request.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+
+{{quoteOptions}}
+
+Respond to Quote: {{BASE_URL}}/booking-requests/respond/{{token}}
+
+This quote link expires on {{expiresAt}}. You can use it to accept, cancel, request changes, or send a question.
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/booking-requests/[id]/send-quote`: when a booking officer sends the latest versioned public booking request quote. Per quote version sent.
+
 ### booking-request-declined
 
 Subject:
