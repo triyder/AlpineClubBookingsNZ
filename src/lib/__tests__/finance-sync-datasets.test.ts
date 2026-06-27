@@ -28,11 +28,13 @@ import {
   FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
   FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
+  FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY,
   FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
   buildFinanceAccountsReceivableInvoicesSnapshot,
   buildFinanceAccountsPayableInvoicesSnapshot,
   buildFinanceAgedReceivablesSnapshot,
   buildFinanceAgedPayablesSnapshot,
+  buildFinanceChartOfAccountsSnapshot,
   buildFinanceReportSnapshot,
   syncFinanceAccountsReceivableInvoicesSnapshot,
   syncFinanceAccountsPayableInvoicesSnapshot,
@@ -40,6 +42,7 @@ import {
   syncFinanceAgedPayablesSnapshot,
   syncFinanceBalanceSheetSnapshot,
   syncFinanceBankBalancesSnapshot,
+  syncFinanceChartOfAccountsSnapshot,
   syncFinanceProfitAndLossMonthlySnapshot,
 } from "@/lib/finance-sync-xero-datasets";
 import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
@@ -57,6 +60,7 @@ function createFinanceSyncContext() {
         getReportBalanceSheet: vi.fn(),
         getReportBankSummary: vi.fn(),
         getInvoices: vi.fn(),
+        getAccounts: vi.fn(),
       },
     },
   };
@@ -119,6 +123,7 @@ describe("finance-sync-datasets", () => {
       FINANCE_SYNC_XERO_ACCOUNTS_RECEIVABLE_INVOICES_DATASET_KEY,
       FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
       FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
+      FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY,
     ]);
   });
 
@@ -1198,6 +1203,103 @@ describe("finance-sync-datasets", () => {
       payload: {
         invoiceCount: 1,
         contactCount: 1,
+      },
+    });
+  });
+
+  it("maps the chart of accounts into an AccountID-to-GL-code snapshot", () => {
+    const snapshot = buildFinanceChartOfAccountsSnapshot({
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      accounts: [
+        {
+          accountID: "acc-subs",
+          code: "203",
+          name: "Annual Subs",
+          type: "REVENUE",
+          _class: "REVENUE",
+          status: "ACTIVE",
+        },
+        {
+          accountID: "acc-hut",
+          code: "200",
+          name: "Hut Fees",
+          type: "REVENUE",
+          _class: "REVENUE",
+          status: "ACTIVE",
+        },
+        // Dropped: no AccountID means the row cannot be matched to a P&L line.
+        { accountID: "", code: "999", name: "Missing id" },
+        { code: "998", name: "No id field" },
+      ] as never,
+    });
+
+    expect(snapshot).toMatchObject({
+      snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 2,
+      payload: {
+        accountCount: 2,
+        // Sorted by GL code ascending.
+        accounts: [
+          {
+            accountId: "acc-hut",
+            code: "200",
+            name: "Hut Fees",
+            type: "REVENUE",
+            class: "REVENUE",
+            status: "ACTIVE",
+          },
+          {
+            accountId: "acc-subs",
+            code: "203",
+            name: "Annual Subs",
+          },
+        ],
+      },
+    });
+  });
+
+  it("fetches the chart of accounts through the operational Xero client", async () => {
+    const context = createFinanceSyncContext();
+    context.xero.accountingApi.getAccounts.mockResolvedValue({
+      body: {
+        accounts: [
+          {
+            accountID: "acc-subs",
+            code: "203",
+            name: "Annual Subs",
+            type: "REVENUE",
+            _class: "REVENUE",
+            status: "ACTIVE",
+          },
+          {
+            accountID: "acc-hut",
+            code: "200",
+            name: "Hut Fees",
+            type: "REVENUE",
+            _class: "REVENUE",
+            status: "ACTIVE",
+          },
+        ],
+      },
+    });
+
+    const snapshot = await syncFinanceChartOfAccountsSnapshot(context as never);
+
+    expect(context.xero.accountingApi.getAccounts).toHaveBeenCalledWith("tenant-123");
+    expect(mockCallXeroApi).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ operation: "getAccounts", resourceType: "ACCOUNT" })
+    );
+    expect(snapshot).toMatchObject({
+      snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 2,
+      payload: {
+        accountCount: 2,
+        accounts: [{ code: "200" }, { code: "203" }],
       },
     });
   });

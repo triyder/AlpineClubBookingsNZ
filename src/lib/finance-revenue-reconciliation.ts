@@ -8,6 +8,15 @@
  * investigate. Membership income is reported from Xero only, because the app
  * does not store a membership fee amount locally (only the paid count).
  *
+ * Matching P&L income lines to hut-fee / subscription income is done by GL code
+ * when possible: each P&L row carries the account's Xero AccountID, and the
+ * stored chart-of-accounts snapshot maps that AccountID to a GL code, which is
+ * compared against the configured hutFeesIncome / subscriptionIncome account
+ * codes. This is deterministic, unlike matching by account label (e.g. "Annual
+ * Subs" matches neither "subscription" nor "membership"). Label keyword matching
+ * is kept as a fallback for when the chart-of-accounts snapshot is unavailable or
+ * a profit-and-loss snapshot predates account-id capture.
+ *
  * Reconciling items to expect: stay-night recognition vs Xero invoice/accrual
  * timing, refunds/discounts (booking nights are gross), and any non-NZD lines.
  */
@@ -16,6 +25,7 @@ import { FinanceSnapshotType, SubscriptionStatus } from "@prisma/client";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { FINANCE_REALIZED_BOOKING_STATUSES } from "@/lib/finance-booking-metrics";
+import { getAccountMapping } from "@/lib/xero-mappings";
 import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
@@ -33,6 +43,19 @@ const INCOME_SECTION_KEYWORDS = ["income", "revenue"];
 const INCOME_SUMMARY_KEYWORDS = ["total income", "total revenue"];
 const HUT_FEE_LABEL_KEYWORDS = ["hut fee", "hut fees", "accommodation"];
 const SUBSCRIPTION_LABEL_KEYWORDS = ["subscription", "membership"];
+
+/** How a period's Xero income figures were matched to the booking categories. */
+export type FinanceIncomeMatchStrategy = "GL_CODE" | "LABEL";
+
+/** Resolved GL codes + AccountID-to-code map used for GL-code matching. */
+interface ChartOfAccountsContext {
+  /** Xero AccountID -> GL code, from the latest chart-of-accounts snapshot. */
+  accountCodeById: Map<string, string>;
+  /** Configured GL code for hut-fee income (default 200). */
+  hutFeesCode: string | null;
+  /** Configured GL code for subscription income (default 203). */
+  subscriptionCode: string | null;
+}
 
 const DEFAULT_RECONCILIATION_PERIODS = 6;
 const MAX_RECONCILIATION_PERIODS = 24;
@@ -59,6 +82,7 @@ export interface FinanceReconciliationPeriod {
   varianceCents: number | null;
   variancePct: number | null;
   status: FinanceReconciliationStatus;
+  incomeMatchStrategy: FinanceIncomeMatchStrategy;
 }
 
 export interface FinanceRevenueReconciliation {
@@ -118,27 +142,134 @@ function sumMatchingLineItems(
   return matched.reduce((total, item) => total + item.amountCents, 0);
 }
 
-function parseXeroIncome(snapshot: FinanceSnapshotRecord): {
+/** Sum income lines whose AccountID resolves to the target GL code. */
+function sumByGlCode(
+  lineItems: PnlLineItem[],
+  accountCodeById: Map<string, string>,
+  targetCode: string | null
+): number | null {
+  if (!targetCode) {
+    return null;
+  }
+
+  const matched = lineItems.filter((item) => {
+    if (!item.accountId) {
+      return false;
+    }
+    return accountCodeById.get(item.accountId) === targetCode;
+  });
+  if (matched.length === 0) {
+    return null;
+  }
+  return matched.reduce((total, item) => total + item.amountCents, 0);
+}
+
+function parseXeroIncome(
+  snapshot: FinanceSnapshotRecord,
+  chart: ChartOfAccountsContext
+): {
   hutFeesCents: number | null;
   subscriptionCents: number | null;
   totalCents: number | null;
+  strategy: FinanceIncomeMatchStrategy;
 } {
   const payload = readPnlReportPayload(snapshot.payload);
   if (!payload) {
-    return { hutFeesCents: null, subscriptionCents: null, totalCents: null };
+    return {
+      hutFeesCents: null,
+      subscriptionCents: null,
+      totalCents: null,
+      strategy: "LABEL",
+    };
   }
 
   const incomeSection = findPnlSection(payload.rows, INCOME_SECTION_KEYWORDS);
   if (!incomeSection) {
-    return { hutFeesCents: null, subscriptionCents: null, totalCents: null };
+    return {
+      hutFeesCents: null,
+      subscriptionCents: null,
+      totalCents: null,
+      strategy: "LABEL",
+    };
   }
 
   const lineItems = extractPnlLineItems(incomeSection);
+  const totalCents = extractPnlSectionTotalCents(
+    incomeSection,
+    INCOME_SUMMARY_KEYWORDS
+  );
+
+  // Prefer deterministic GL-code matching when the chart-of-accounts snapshot is
+  // available and the P&L rows carry account ids. Otherwise fall back to label
+  // keyword matching (older snapshots, or no chart snapshot synced yet).
+  const canUseGlCodes =
+    chart.accountCodeById.size > 0 && lineItems.some((item) => item.accountId);
+
+  if (canUseGlCodes) {
+    return {
+      hutFeesCents: sumByGlCode(lineItems, chart.accountCodeById, chart.hutFeesCode),
+      subscriptionCents: sumByGlCode(
+        lineItems,
+        chart.accountCodeById,
+        chart.subscriptionCode
+      ),
+      totalCents,
+      strategy: "GL_CODE",
+    };
+  }
+
   return {
     hutFeesCents: sumMatchingLineItems(lineItems, HUT_FEE_LABEL_KEYWORDS),
     subscriptionCents: sumMatchingLineItems(lineItems, SUBSCRIPTION_LABEL_KEYWORDS),
-    totalCents: extractPnlSectionTotalCents(incomeSection, INCOME_SUMMARY_KEYWORDS),
+    totalCents,
+    strategy: "LABEL",
   };
+}
+
+/** Read the latest chart-of-accounts snapshot into an AccountID -> GL code map. */
+function parseChartOfAccountsMap(payload: unknown): Map<string, string> {
+  const map = new Map<string, string>();
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return map;
+  }
+
+  const accounts = (payload as { accounts?: unknown }).accounts;
+  if (!Array.isArray(accounts)) {
+    return map;
+  }
+
+  for (const entry of accounts) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const accountId = (entry as { accountId?: unknown }).accountId;
+    const code = (entry as { code?: unknown }).code;
+    if (typeof accountId === "string" && accountId && typeof code === "string" && code) {
+      map.set(accountId, code);
+    }
+  }
+
+  return map;
+}
+
+async function loadChartOfAccountsContext(): Promise<ChartOfAccountsContext> {
+  const snapshots = await listFinanceSnapshots({
+    snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+    scope: DEFAULT_FINANCE_SNAPSHOT_SCOPE,
+    limit: 1,
+  });
+
+  const accountCodeById = parseChartOfAccountsMap(snapshots[0]?.payload);
+  if (accountCodeById.size === 0) {
+    return { accountCodeById, hutFeesCode: null, subscriptionCode: null };
+  }
+
+  const [hutFeesCode, subscriptionCode] = await Promise.all([
+    getAccountMapping("hutFeesIncome"),
+    getAccountMapping("subscriptionIncome"),
+  ]);
+
+  return { accountCodeById, hutFeesCode, subscriptionCode };
 }
 
 async function loadBookingHutFees(
@@ -201,6 +332,7 @@ function resolveStatus(
 
 async function buildPeriod(
   snapshot: FinanceSnapshotRecord,
+  chart: ChartOfAccountsContext,
   toleranceCents: number,
   tolerancePct: number
 ): Promise<FinanceReconciliationPeriod> {
@@ -209,7 +341,7 @@ async function buildPeriod(
   const periodLabel =
     (payload ? readPnlPeriodLabel(payload) : null) ?? formatMonthYear(end);
 
-  const xero = parseXeroIncome(snapshot);
+  const xero = parseXeroIncome(snapshot, chart);
   const bookingHutFees = await loadBookingHutFees(start, end);
   const paidSubscriptionCount = await prisma.memberSubscription.count({
     where: {
@@ -246,6 +378,7 @@ async function buildPeriod(
       toleranceCents,
       tolerancePct
     ),
+    incomeMatchStrategy: xero.strategy,
   };
 }
 
@@ -274,11 +407,14 @@ export async function buildFinanceRevenueReconciliation(input?: {
   const toleranceCents = input?.toleranceCents ?? DEFAULT_TOLERANCE_CENTS;
   const tolerancePct = input?.tolerancePct ?? DEFAULT_TOLERANCE_PCT;
 
-  const snapshots = await listFinanceSnapshots({
-    snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
-    scope: DEFAULT_FINANCE_SNAPSHOT_SCOPE,
-    limit: 100,
-  });
+  const [snapshots, chart] = await Promise.all([
+    listFinanceSnapshots({
+      snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
+      scope: DEFAULT_FINANCE_SNAPSHOT_SCOPE,
+      limit: 100,
+    }),
+    loadChartOfAccountsContext(),
+  ]);
 
   // Snapshots are newest-first; keep the latest one per calendar month so a
   // daily sync of the current month does not crowd out earlier months.
@@ -292,7 +428,9 @@ export async function buildFinanceRevenueReconciliation(input?: {
 
   const selected = Array.from(latestByMonth.values()).slice(0, periodsRequested);
   const periods = await Promise.all(
-    selected.map((snapshot) => buildPeriod(snapshot, toleranceCents, tolerancePct))
+    selected.map((snapshot) =>
+      buildPeriod(snapshot, chart, toleranceCents, tolerancePct)
+    )
   );
 
   return {

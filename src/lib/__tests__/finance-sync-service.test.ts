@@ -57,6 +57,7 @@ function createMockXeroClient(overrides?: {
       getReportBalanceSheet: vi.fn(),
       getReportBankSummary: vi.fn(),
       getInvoices: vi.fn(),
+      getAccounts: vi.fn(),
     },
   };
 }
@@ -323,6 +324,20 @@ describe("finance-sync-service", () => {
         };
       }
     );
+    xeroClient.accountingApi.getAccounts.mockResolvedValue({
+      body: {
+        accounts: [
+          {
+            accountID: "acc-1",
+            code: "200",
+            name: "Hut Fees",
+            type: "REVENUE",
+            _class: "REVENUE",
+            status: "ACTIVE",
+          },
+        ],
+      },
+    });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       tenantId: "tenant-123",
       xero: xeroClient,
@@ -334,7 +349,7 @@ describe("finance-sync-service", () => {
       datasets: getFinanceSyncDatasets(),
     });
 
-    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(7);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(8);
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -405,15 +420,24 @@ describe("finance-sync-service", () => {
         syncRunId: "run-1",
       })
     );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      8,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        syncRunId: "run-1",
+      })
+    );
     expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
       runId: "run-1",
       completedAt: expect.any(Date),
-      snapshotCount: 7,
-      totalRowCount: 7,
+      snapshotCount: 8,
+      totalRowCount: 8,
       resultSummary: {
-        datasetCount: 7,
+        datasetCount: 8,
         failedDatasetCount: 0,
-        successfulDatasetCount: 7,
+        successfulDatasetCount: 8,
         datasets: [
           {
             datasetKey: "xero-profit-and-loss-monthly",
@@ -456,6 +480,12 @@ describe("finance-sync-service", () => {
             snapshotCount: 1,
             totalRowCount: 1,
             snapshotTypes: [FinanceSnapshotType.ACCOUNTS_PAYABLE_INVOICES],
+          },
+          {
+            datasetKey: "xero-chart-of-accounts",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.CHART_OF_ACCOUNTS],
           },
         ],
       },

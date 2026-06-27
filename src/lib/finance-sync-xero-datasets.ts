@@ -1,5 +1,11 @@
 import { FinanceSnapshotType, Prisma } from "@prisma/client";
-import type { Invoice, ReportCell, ReportFields, ReportWithRow } from "xero-node";
+import type {
+  Account,
+  Invoice,
+  ReportCell,
+  ReportFields,
+  ReportWithRow,
+} from "xero-node";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { parseDateOnly } from "@/lib/date-only";
 import type {
@@ -27,6 +33,8 @@ export const FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY =
   "xero-aged-payables";
 export const FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY =
   "xero-accounts-payable-invoices";
+export const FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY =
+  "xero-chart-of-accounts";
 
 const FINANCE_XERO_PAGE_SIZE = 100;
 const FINANCE_AGED_INVOICE_STATUSES = [
@@ -1416,6 +1424,92 @@ export async function syncFinanceBankBalancesSnapshot(
     periodStart: window.periodStart,
     periodEnd: window.asOfDate,
     report: getRequiredReport(response.body, "getReportBankSummary"),
+  });
+}
+
+interface FinanceChartOfAccountsEntryPayload {
+  accountId: string;
+  code: string | null;
+  name: string | null;
+  type: string | null;
+  class: string | null;
+  status: string | null;
+}
+
+interface FinanceChartOfAccountsPayload {
+  accountCount: number;
+  accounts: FinanceChartOfAccountsEntryPayload[];
+}
+
+/**
+ * Map the operational chart of accounts into a JSON-safe snapshot. The stored
+ * AccountID-to-GL-code entries let revenue reconciliation match profit-and-loss
+ * rows (which carry an "account" cell attribute holding the AccountID) to their
+ * GL codes without a live Xero call. Mirrors the active-account selection used by
+ * the admin chart-of-accounts route, but keeps every account that has an
+ * AccountID (including archived ones) so historical reports still resolve.
+ */
+export function buildFinanceChartOfAccountsSnapshot(input: {
+  asOfDate: Date;
+  accounts: readonly Account[];
+}): FinanceSyncSnapshotInput {
+  const entries: FinanceChartOfAccountsEntryPayload[] = input.accounts
+    .map((account) => {
+      const accountId = toOptionalText(account.accountID);
+      if (!accountId) {
+        return null;
+      }
+
+      return {
+        accountId,
+        code: toOptionalText(account.code),
+        name: toOptionalText(account.name),
+        type: account.type != null ? String(account.type) : null,
+        class: account._class != null ? String(account._class) : null,
+        status: account.status != null ? String(account.status) : null,
+      } satisfies FinanceChartOfAccountsEntryPayload;
+    })
+    .filter((entry): entry is FinanceChartOfAccountsEntryPayload => entry !== null)
+    .sort(
+      (left, right) =>
+        compareNullableStrings(left.code, right.code) ||
+        compareNullableStrings(left.name, right.name)
+    );
+
+  const payload = {
+    accountCount: entries.length,
+    accounts: entries,
+  } as Prisma.InputJsonObject & FinanceChartOfAccountsPayload;
+
+  return {
+    snapshotType: FinanceSnapshotType.CHART_OF_ACCOUNTS,
+    asOfDate: input.asOfDate,
+    periodEnd: input.asOfDate,
+    rowCount: entries.length,
+    payload,
+  };
+}
+
+export async function syncFinanceChartOfAccountsSnapshot(
+  context: FinanceSyncDatasetContext
+): Promise<FinanceSyncSnapshotInput> {
+  const window = getFinanceReportWindow(context.startedAt);
+  // getAccounts only needs accounting.settings.read, which the operational Xero
+  // connection already holds, so this dataset works even before the one-time
+  // accounting.reports.read re-consent that the report datasets require.
+  const response = await callXeroApi(
+    () => context.xero.accountingApi.getAccounts(context.xeroTenantId),
+    {
+      operation: "getAccounts",
+      resourceType: "ACCOUNT",
+      workflow: context.workflow,
+      context: "financeSyncDatasets chartOfAccounts",
+    }
+  );
+
+  return buildFinanceChartOfAccountsSnapshot({
+    asOfDate: window.asOfDate,
+    accounts: response.body.accounts ?? [],
   });
 }
 

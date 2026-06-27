@@ -8,8 +8,20 @@
  * those callers agree on how a P&L is read.
  */
 
+export interface PnlReportAttribute {
+  id: string | null;
+  value: string | null;
+}
+
 export interface PnlReportCell {
   value: string | null;
+  /**
+   * Xero attaches structured attributes to report cells. The account-name cell
+   * of a leaf row carries an attribute with id "account" whose value is the
+   * account's Xero AccountID (a GUID). Revenue reconciliation uses this to match
+   * rows to GL codes via the chart-of-accounts snapshot.
+   */
+  attributes: PnlReportAttribute[];
 }
 
 export interface PnlReportRow {
@@ -35,6 +47,8 @@ export interface PnlReportPayload {
 export interface PnlLineItem {
   label: string;
   amountCents: number;
+  /** Xero AccountID for the row, when present; used for GL-code matching. */
+  accountId: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -43,6 +57,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readReportAttributes(value: unknown): PnlReportAttribute[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((attribute) => {
+    if (!isRecord(attribute)) {
+      return [];
+    }
+
+    return [
+      {
+        id: readOptionalString(attribute.id),
+        value: readOptionalString(attribute.value),
+      },
+    ];
+  });
 }
 
 function readReportCells(value: unknown): PnlReportCell[] {
@@ -55,7 +88,12 @@ function readReportCells(value: unknown): PnlReportCell[] {
       return [];
     }
 
-    return [{ value: readOptionalString(cell.value) }];
+    return [
+      {
+        value: readOptionalString(cell.value),
+        attributes: readReportAttributes(cell.attributes),
+      },
+    ];
   });
 }
 
@@ -168,6 +206,23 @@ export function readRowLabel(row: PnlReportRow): string | null {
   );
 }
 
+/**
+ * The Xero AccountID for a leaf row, read from the cell attribute with id
+ * "account". Returns null for header/summary rows or older snapshots stored
+ * before cell attributes were captured.
+ */
+export function readRowAccountId(row: PnlReportRow): string | null {
+  for (const cell of row.cells) {
+    for (const attribute of cell.attributes) {
+      if (attribute.id?.toLowerCase() === "account" && attribute.value) {
+        return attribute.value;
+      }
+    }
+  }
+
+  return null;
+}
+
 /** First section whose title contains any of the keywords (case-insensitive). */
 export function findPnlSection(
   rows: PnlReportRow[],
@@ -194,14 +249,26 @@ export function findPnlSection(
 
 /** Flatten all leaf "row" entries within a section into label/amount items. */
 export function extractPnlLineItems(section: PnlReportRow): PnlLineItem[] {
-  const lineItems = new Map<string, number>();
+  const lineItems = new Map<
+    string,
+    { amountCents: number; accountId: string | null }
+  >();
 
   const visit = (row: PnlReportRow) => {
     if (row.rowType?.toLowerCase() === "row") {
       const label = readRowLabel(row);
       const amountCents = readRowAmountCents(row);
       if (label && amountCents !== null && !label.toLowerCase().includes("total")) {
-        lineItems.set(label, (lineItems.get(label) ?? 0) + amountCents);
+        const accountId = readRowAccountId(row);
+        const existing = lineItems.get(label);
+        if (existing) {
+          existing.amountCents += amountCents;
+          if (!existing.accountId && accountId) {
+            existing.accountId = accountId;
+          }
+        } else {
+          lineItems.set(label, { amountCents, accountId });
+        }
       }
     }
 
@@ -215,7 +282,11 @@ export function extractPnlLineItems(section: PnlReportRow): PnlLineItem[] {
   }
 
   return Array.from(lineItems.entries())
-    .map(([label, amountCents]) => ({ label, amountCents }))
+    .map(([label, item]) => ({
+      label,
+      amountCents: item.amountCents,
+      accountId: item.accountId,
+    }))
     .sort((left, right) => right.amountCents - left.amountCents);
 }
 
