@@ -220,13 +220,6 @@ async function collectAgeTiers(
   }));
 }
 
-function printEnvRecommendations(recommendations: Record<string, string>) {
-  console.log("\nSuggested env updates. Add these manually to .env, host env, or deployment secrets:");
-  for (const [key, value] of Object.entries(recommendations)) {
-    console.log(`${key}=${value}`);
-  }
-}
-
 async function runWizard() {
   const defaults = loadDefaultConfig();
   const rl = createInterface({ input, output });
@@ -254,9 +247,6 @@ async function runWizard() {
       "Total bunk/bed capacity",
       defaults.beds.reduce((total, bed) => total + bed.capacity, 0),
     );
-    const waitlistEnabled = await askBoolean(rl, "Enable waitlist feature", true);
-    const xeroEnabled = await askBoolean(rl, "Enable operational Xero feature", false);
-    const financeEnabled = await askBoolean(rl, "Enable finance dashboard feature", false);
     const ageTiers = await collectAgeTiers(rl, defaults.ageTiers);
 
     const nextConfig: ClubConfig = {
@@ -296,12 +286,6 @@ async function runWizard() {
     );
     console.log(`\nWrote ${CLUB_CONFIG_PATH}`);
 
-    printEnvRecommendations({
-      FEATURE_WAITLIST: String(waitlistEnabled),
-      FEATURE_XERO_INTEGRATION: String(xeroEnabled),
-      FEATURE_FINANCE_DASHBOARD: String(financeEnabled),
-    });
-
     const missingEnv = getSetupRequiredEnvNames().filter((name) => {
       if (name === "AUTH_SECRET or NEXTAUTH_SECRET") {
         return !process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET;
@@ -318,7 +302,7 @@ async function runWizard() {
     console.log("\nNext steps:");
     console.log("- Set env values manually; do not commit secrets.");
     console.log("- Run npm run db:migrate && npm run db:seed.");
-    console.log("- Log in as the seeded admin and finish /admin/setup.");
+    console.log("- Log in as the seeded admin and finish /admin/setup and /admin/modules.");
   } finally {
     rl.close();
   }

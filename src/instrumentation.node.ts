@@ -548,8 +548,8 @@ export async function register() {
     );
     } else {
       logger.info(
-        { featureFlag: "FEATURE_XERO_INTEGRATION" },
-        "Xero cron registration skipped because the feature flag is off"
+        { moduleKey: "xeroIntegration" },
+        "Xero cron registration skipped because the module is off"
       );
     }
 
@@ -564,8 +564,8 @@ export async function register() {
       });
     } else {
       logger.info(
-        { featureFlag: "FEATURE_FINANCE_DASHBOARD", job: "finance-sync" },
-        "Finance sync cron registration skipped because the feature flag is off"
+        { moduleKey: "financeDashboard", job: "finance-sync" },
+        "Finance sync cron registration skipped because the module is off"
       );
     }
 
@@ -1059,8 +1059,8 @@ export async function register() {
     logger.info({ job: "waitlist-processor" }, "Scheduled waitlist processor (every 30 minutes)");
     } else {
       logger.info(
-        { featureFlag: "FEATURE_WAITLIST", job: "waitlist-processor" },
-        "Waitlist cron registration skipped because the feature flag is off"
+        { moduleKey: "waitlist", job: "waitlist-processor" },
+        "Waitlist cron registration skipped because the module is off"
       );
     }
   }

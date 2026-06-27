@@ -55,7 +55,7 @@ describe("admin cron health", () => {
       cronDefinition({
         jobName: "disabled",
         enabled: false,
-        disabledReason: "Disabled by feature flag.",
+        disabledReason: "Disabled by module setting.",
       }),
       cronDefinition({ jobName: "missing" }),
       cronDefinition({
@@ -114,7 +114,7 @@ describe("admin cron health", () => {
       "error"
     );
     expect(report.jobs.find((job) => job.jobName === "disabled")?.summary).toBe(
-      "Disabled by feature flag."
+      "Disabled by module setting."
     );
   });
 

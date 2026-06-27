@@ -83,21 +83,10 @@ Set at least these values in `.env` before running a database-backed app:
 External integrations can stay disabled or use test/demo credentials while you
 bring up the core app.
 
-Feature flags are explicit strings:
-
-```text
-FEATURE_KIOSK=false
-FEATURE_CHORES=false
-FEATURE_FINANCE_DASHBOARD=false
-FEATURE_WAITLIST=false
-FEATURE_XERO_INTEGRATION=false
-FEATURE_BED_ALLOCATION=false
-FEATURE_INTERNET_BANKING_PAYMENTS=false
-```
-
-Only the literal value `true` enables a feature.
-The env value is a deploy-time capability gate. After migrations run, admins can
-activate or deactivate allowed optional modules at `/admin/modules`.
+After migrations and seed data run, admins activate or deactivate optional
+modules at `/admin/modules`. Kiosk, chores, finance dashboard, waitlist, Xero,
+bed allocation, and Internet Banking payments default off until an admin
+enables them. General-purpose modules default on and can be disabled there.
 Internet Banking payments also require operational Xero to be enabled,
 configured, and connected because invoice issuing and settlement reconciliation
 run through that integration.

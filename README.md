@@ -62,21 +62,13 @@ fork for another organisation. See `NOTICE.md`.
    `public/branding/` with your own favicon, Open Graph image, and public
    website photos. Keep the `*.example.*` files as reusable placeholders for
    forks.
-4. Set deploy capability flags in `.env`. Core capability gates
-   (`FEATURE_KIOSK`, `FEATURE_CHORES`, `FEATURE_FINANCE_DASHBOARD`,
-   `FEATURE_WAITLIST`, `FEATURE_XERO_INTEGRATION`, `FEATURE_BED_ALLOCATION`,
-   and `FEATURE_INTERNET_BANKING_PAYMENTS`) default off and require the literal
-   value `true`. Newer general-purpose modules (`FEATURE_GROUP_BOOKINGS`,
-   `FEATURE_LOCKERS`, `FEATURE_INDUCTION`, `FEATURE_WORK_PARTIES`,
-   `FEATURE_PROMO_CODES`, `FEATURE_HUT_LEADERS`, `FEATURE_COMMUNICATIONS`,
-   and `FEATURE_SKIFIELD_CONDITIONS`) default on and can be hard-disabled with
-   the literal value `false`.
-5. Set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and `SEED_LODGE_PASSWORD`,
+4. Set `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and `SEED_LODGE_PASSWORD`,
    run the seed command, then change the seeded admin password on first login.
-6. After sign-in, use **Admin > Modules** to set club-level activation for
-   optional modules. Optional modules are active only when both the `.env`
-   capability and the Admin Modules activation are enabled.
-7. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
+5. After sign-in, use **Admin > Modules** to set club-level activation for
+   optional modules. Kiosk, chores, finance dashboard, waitlist, Xero, bed
+   allocation, and Internet Banking payments default off until an admin enables
+   them. General-purpose modules default on and can be disabled there.
+6. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 
 You can use the setup helpers for a guided path:

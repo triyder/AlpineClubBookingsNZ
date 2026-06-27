@@ -392,9 +392,6 @@ describe("OBS-03: cron job run recording", () => {
   const ENV_KEYS = [
     "NEXT_RUNTIME",
     "CRON_ENABLED",
-    "FEATURE_FINANCE_DASHBOARD",
-    "FEATURE_WAITLIST",
-    "FEATURE_XERO_INTEGRATION",
   ] as const;
   const originalEnv = Object.fromEntries(
     ENV_KEYS.map((key) => [key, process.env[key]])
@@ -430,9 +427,6 @@ describe("OBS-03: cron job run recording", () => {
   async function registerCronJobs() {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.CRON_ENABLED = "true";
-    delete process.env.FEATURE_FINANCE_DASHBOARD;
-    delete process.env.FEATURE_WAITLIST;
-    delete process.env.FEATURE_XERO_INTEGRATION;
 
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([{ ok: 1 }] as any);
     const { register } = await import("@/instrumentation.node");

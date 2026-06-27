@@ -700,11 +700,6 @@ validate_env_contract() {
   require_http_url_env_key NEXTAUTH_URL
   require_one_of_env_keys "AUTH_SECRET or NEXTAUTH_SECRET" AUTH_SECRET NEXTAUTH_SECRET
   require_non_placeholder_env_key CRON_SECRET
-  require_boolean_env_key FEATURE_KIOSK
-  require_boolean_env_key FEATURE_CHORES
-  require_boolean_env_key FEATURE_FINANCE_DASHBOARD
-  require_boolean_env_key FEATURE_WAITLIST
-  require_boolean_env_key FEATURE_XERO_INTEGRATION
   require_non_placeholder_env_key STRIPE_SECRET_KEY
   require_non_placeholder_env_key NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   require_non_placeholder_env_key STRIPE_WEBHOOK_SECRET
@@ -1316,18 +1311,6 @@ verify_cron_registration() {
     "Scheduled credit reconciliation"
   )
 
-  if env_key_is_true FEATURE_FINANCE_DASHBOARD false; then
-    patterns+=("Scheduled daily finance sync")
-  else
-    patterns+=("Finance sync cron registration skipped because the feature flag is off")
-  fi
-
-  if env_key_is_true FEATURE_WAITLIST false; then
-    patterns+=("Scheduled waitlist processor")
-  else
-    patterns+=("Waitlist cron registration skipped because the feature flag is off")
-  fi
-
   while true; do
     logs="$(docker compose logs "$CRON_SERVICE" --tail 200)"
     missing=""
@@ -1353,9 +1336,21 @@ verify_cron_registration() {
 
   assert_logs_contain_any \
     "$logs" \
+    "finance sync registration" \
+    "Scheduled daily finance sync" \
+    "Finance sync cron registration skipped because the module is off"
+
+  assert_logs_contain_any \
+    "$logs" \
+    "waitlist processor registration" \
+    "Scheduled waitlist processor" \
+    "Waitlist cron registration skipped because the module is off"
+
+  assert_logs_contain_any \
+    "$logs" \
     "Xero membership refresh registration" \
     "Scheduled Xero membership refresh" \
-    "Xero cron registration skipped because the feature flag is off" \
+    "Xero cron registration skipped because the module is off" \
     "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
 }
 

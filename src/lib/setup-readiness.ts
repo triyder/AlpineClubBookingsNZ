@@ -465,7 +465,7 @@ function formatModuleActivationDetail(
 ) {
   if (!db) return "Admin Modules activation: not checked";
   if (!db.adminModuleSettings) {
-    return "Admin Modules activation: default active until settings are saved";
+    return "Admin Modules activation: first-install defaults until settings are saved";
   }
   return `Admin Modules activation: ${enabled ? "enabled" : "disabled"}`;
 }

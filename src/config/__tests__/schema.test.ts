@@ -206,6 +206,14 @@ describe("featureFlagsSchema", () => {
       xeroIntegration: false,
       bedAllocation: false,
       internetBankingPayments: false,
+      groupBookings: true,
+      lockers: true,
+      induction: true,
+      workParties: true,
+      promoCodes: true,
+      hutLeaders: true,
+      communications: true,
+      skifieldConditions: true,
       mystery: true,
     });
     expect(result.success).toBe(false);
@@ -220,6 +228,14 @@ describe("featureFlagsSchema", () => {
       xeroIntegration: false,
       bedAllocation: false,
       internetBankingPayments: false,
+      groupBookings: true,
+      lockers: true,
+      induction: true,
+      workParties: true,
+      promoCodes: true,
+      hutLeaders: true,
+      communications: true,
+      skifieldConditions: true,
     });
     expect(result.success).toBe(false);
   });

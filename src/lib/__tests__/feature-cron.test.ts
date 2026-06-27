@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { getOptionalCronRegistrationState } from "@/instrumentation.node";
+import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
+const allModulesOn = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, true]),
+) as FeatureFlags;
+
 describe("feature-aware cron registration", () => {
-  it("skips optional cron groups when their feature flags are off", () => {
+  it("skips optional cron groups when their module state is off", () => {
     const flags: FeatureFlags = {
-      kiosk: true,
-      chores: true,
+      ...allModulesOn,
       financeDashboard: false,
       waitlist: false,
       xeroIntegration: false,
-      bedAllocation: false,
-      internetBankingPayments: false,
     };
 
     expect(getOptionalCronRegistrationState(flags)).toEqual({
@@ -21,18 +23,8 @@ describe("feature-aware cron registration", () => {
     });
   });
 
-  it("registers optional cron groups when their feature flags are on", () => {
-    const flags: FeatureFlags = {
-      kiosk: true,
-      chores: true,
-      financeDashboard: true,
-      waitlist: true,
-      xeroIntegration: true,
-      bedAllocation: true,
-      internetBankingPayments: true,
-    };
-
-    expect(getOptionalCronRegistrationState(flags)).toEqual({
+  it("registers optional cron groups when their module state is on", () => {
+    expect(getOptionalCronRegistrationState(allModulesOn)).toEqual({
       financeDailySync: true,
       waitlistProcessor: true,
       xeroIntegration: true,

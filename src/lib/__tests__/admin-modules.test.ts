@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  ADMIN_MODULE_KEYS,
   getEffectiveModuleState,
   loadAdminModuleSettings,
   normalizeAdminModuleSettings,
@@ -7,13 +8,12 @@ import {
 import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-// All modules on. Derived from DEFAULT_MODULE_SETTINGS (every module defaults
-// true) so these fixtures cover every module key and never drift when new
-// modules are added.
-const allCapabilitiesOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
+const allCapabilitiesOn = Object.fromEntries(
+  ADMIN_MODULE_KEYS.map((key) => [key, true]),
+) as FeatureFlags;
 
 describe("Admin Modules effective state", () => {
-  it("defaults missing module settings to active for upgrade-safe fallback", () => {
+  it("defaults missing module settings to the hardened first-install defaults", () => {
     expect(normalizeAdminModuleSettings(null)).toEqual(DEFAULT_MODULE_SETTINGS);
   });
 
@@ -72,7 +72,7 @@ describe("Admin Modules effective state", () => {
     });
   });
 
-  it("falls back to active defaults if persisted settings cannot be read", async () => {
+  it("falls back to hardened defaults if persisted settings cannot be read", async () => {
     await expect(
       loadAdminModuleSettings({
         clubModuleSettings: {

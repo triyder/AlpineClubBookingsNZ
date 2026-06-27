@@ -4,12 +4,12 @@ import {
   getRequiredFeaturesForPath,
   isFeatureHrefVisible,
 } from "@/config/feature-routes";
-import { DEFAULT_MODULE_SETTINGS, getEffectiveModuleFlags } from "@/config/modules";
+import { MODULE_KEYS, getEffectiveModuleFlags } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 
-// Every module on; derived so the fixture covers all module keys and never
-// drifts when new modules are added.
-const allOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
+const allOn = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, true]),
+) as FeatureFlags;
 
 describe("feature route map", () => {
   it("maps optional module routes to the expected feature flags", () => {

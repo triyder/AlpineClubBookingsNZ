@@ -11,12 +11,13 @@ import {
   SECURITY_HEADERS,
 } from "@/lib/csp";
 import { FEATURE_ROUTE_RULES } from "@/config/feature-routes";
-import { DEFAULT_MODULE_SETTINGS } from "@/config/modules";
+import { MODULE_KEYS } from "@/config/modules";
 import proxy, { config, getFeatureFlagBlockResponse } from "../../proxy";
 import type { FeatureFlags } from "@/config/schema";
 
-// Every module on; derived so it covers every module key without drifting.
-const allFeaturesOn: FeatureFlags = { ...DEFAULT_MODULE_SETTINGS };
+const allFeaturesOn = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, true]),
+) as FeatureFlags;
 
 function directive(policy: string, name: string) {
   const match = policy

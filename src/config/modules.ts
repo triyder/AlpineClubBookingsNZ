@@ -49,7 +49,6 @@ export interface ModuleDefinition {
   key: ModuleKey;
   label: string;
   description: string;
-  envVar: string;
   dependencies: string[];
 }
 
@@ -58,21 +57,18 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "kiosk",
     label: "Lodge kiosk",
     description: "Guest arrival, departure, and lodge access screens.",
-    envVar: "FEATURE_KIOSK",
     dependencies: [],
   },
   chores: {
     key: "chores",
     label: "Chores and roster",
     description: "Roster generation, chore templates, and guest chore tracking.",
-    envVar: "FEATURE_CHORES",
     dependencies: [],
   },
   financeDashboard: {
     key: "financeDashboard",
     label: "Finance dashboard",
     description: "Finance reports, sync diagnostics, and finance-only dashboards.",
-    envVar: "FEATURE_FINANCE_DASHBOARD",
     dependencies: [
       "Finance access levels and finance data sync are configured separately.",
     ],
@@ -81,14 +77,12 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "waitlist",
     label: "Waitlist",
     description: "Waitlist booking state, admin queue, and offer handling.",
-    envVar: "FEATURE_WAITLIST",
     dependencies: [],
   },
   xeroIntegration: {
     key: "xeroIntegration",
     label: "Xero integration",
     description: "Operational Xero linking, sync actions, and reconciliation tools.",
-    envVar: "FEATURE_XERO_INTEGRATION",
     dependencies: [
       "Xero OAuth credentials, tenant tokens, and account mappings are configured outside this table.",
     ],
@@ -97,7 +91,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "bedAllocation",
     label: "Bed allocation",
     description: "Room and bed setup plus admin guest-to-bed allocation.",
-    envVar: "FEATURE_BED_ALLOCATION",
     dependencies: [
       "Room and bed inventory is configured separately.",
     ],
@@ -106,7 +99,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "internetBankingPayments",
     label: "Internet Banking payments",
     description: "Member Internet Banking payment option backed by Xero invoices.",
-    envVar: "FEATURE_INTERNET_BANKING_PAYMENTS",
     dependencies: [
       "Operational Xero must be active before invoices can be issued.",
     ],
@@ -116,7 +108,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Group bookings",
     description:
       "Organisers open a booking as a group and share a join code so members and guests can add themselves.",
-    envVar: "FEATURE_GROUP_BOOKINGS",
     dependencies: [
       "Organiser-paid settlement also requires Xero integration and Internet Banking payments.",
     ],
@@ -126,7 +117,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Lockers",
     description:
       "Record physical lockers and allocate them to members; allocations show on the member dashboard.",
-    envVar: "FEATURE_LOCKERS",
     dependencies: [],
   },
   induction: {
@@ -134,7 +124,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Lodge induction",
     description:
       "New-member lodge induction checklists, self-assessment, and sponsor sign-off.",
-    envVar: "FEATURE_INDUCTION",
     dependencies: [
       "When off, inductions are no longer auto-created for newly approved members.",
     ],
@@ -144,7 +133,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Work parties",
     description:
       "Organised volunteer working bees and the booking discounts they grant.",
-    envVar: "FEATURE_WORK_PARTIES",
     dependencies: [],
   },
   promoCodes: {
@@ -152,7 +140,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Promo codes",
     description:
       "Discount codes members can apply to bookings, plus admin management.",
-    envVar: "FEATURE_PROMO_CODES",
     dependencies: [],
   },
   hutLeaders: {
@@ -160,7 +147,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Hut leaders",
     description:
       "Daily hut-leader assignments, kiosk access, and auto-assignment. Roster generation stays under the Chores module.",
-    envVar: "FEATURE_HUT_LEADERS",
     dependencies: [],
   },
   communications: {
@@ -168,7 +154,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Communications",
     description:
       "Admin bulk email to members. Does not affect transactional notifications.",
-    envVar: "FEATURE_COMMUNICATIONS",
     dependencies: [],
   },
   skifieldConditions: {
@@ -176,7 +161,6 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     label: "Ski-field conditions",
     description:
       "Live mountain/road status panel and widgets, plus the admin conditions cache.",
-    envVar: "FEATURE_SKIFIELD_CONDITIONS",
     dependencies: [],
   },
 };

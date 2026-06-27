@@ -27,7 +27,6 @@ interface ModuleStatus {
   key: ModuleKey;
   label: string;
   description: string;
-  envVar: string;
   adminEnabled: boolean;
   effectiveEnabled: boolean;
   readiness: {

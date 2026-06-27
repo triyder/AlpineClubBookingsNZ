@@ -104,22 +104,29 @@ describe("Admin modules schema contract", () => {
       "prisma/migrations/20260518113000_add_club_module_settings/migration.sql",
     );
 
-    expect(model).toContain("kiosk                   Boolean  @default(true)");
-    expect(model).toContain("chores                  Boolean  @default(true)");
-    expect(model).toContain("financeDashboard        Boolean  @default(true)");
-    expect(model).toContain("waitlist                Boolean  @default(true)");
-    expect(model).toContain("xeroIntegration         Boolean  @default(true)");
-    expect(model).toContain("bedAllocation           Boolean  @default(true)");
-    expect(model).toContain("internetBankingPayments Boolean  @default(true)");
+    expect(model).toContain("kiosk                   Boolean  @default(false)");
+    expect(model).toContain("chores                  Boolean  @default(false)");
+    expect(model).toContain("financeDashboard        Boolean  @default(false)");
+    expect(model).toContain("waitlist                Boolean  @default(false)");
+    expect(model).toContain("xeroIntegration         Boolean  @default(false)");
+    expect(model).toContain("bedAllocation           Boolean  @default(false)");
+    expect(model).toContain("internetBankingPayments Boolean  @default(false)");
+    expect(model).toContain("groupBookings           Boolean  @default(true)");
     expect(model).not.toMatch(/secret|token|credential|tenant/i);
     expect(migration).toContain('CREATE TABLE IF NOT EXISTS "ClubModuleSettings"');
-    expect(migration).toContain('"financeDashboard" BOOLEAN NOT NULL DEFAULT true');
     expect(migration).toContain('INSERT INTO "ClubModuleSettings" ("id")');
     expect(
       readRepoFile(
         "prisma/migrations/20260607120000_add_bed_allocation_and_internet_banking_modules/migration.sql",
       ),
     ).toContain('"internetBankingPayments" BOOLEAN NOT NULL DEFAULT true');
+    const defaultRepairMigration = readRepoFile(
+      "prisma/migrations/20260627120000_core_module_defaults_off/migration.sql",
+    );
+    expect(defaultRepairMigration).toContain(
+      'ALTER COLUMN "financeDashboard" SET DEFAULT false',
+    );
+    expect(defaultRepairMigration).toContain('"updatedByMemberId" IS NULL');
   });
 });
 
@@ -180,9 +187,9 @@ describe("Admin modules API", () => {
       expect.objectContaining({
         key: "kiosk",
         adminEnabled: true,
-        envVar: "FEATURE_KIOSK",
       }),
     );
+    expect(body.modules[0]).not.toHaveProperty("envVar");
   });
 
   it("rejects invalid update payloads before writing", async () => {
