@@ -28,6 +28,7 @@ export async function POST(
       version: quote.version,
       status: quote.status,
       expiresAt: quote.responseTokenExpiresAt?.toISOString() ?? null,
+      emailDelivered: quote.emailDelivered,
       options: parseBookingRequestQuoteOptions(quote.options),
     });
   } catch (err) {

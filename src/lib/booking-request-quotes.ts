@@ -509,6 +509,7 @@ export async function sendBookingRequestQuote(input: {
     return saved;
   });
 
+  let emailDelivered = true;
   try {
     await sendBookingRequestQuoteEmail({
       email: quote.bookingRequest.contactEmail,
@@ -524,6 +525,7 @@ export async function sendBookingRequestQuote(input: {
       expiresAt,
     });
   } catch (err) {
+    emailDelivered = false;
     logger.error(
       { err, bookingRequestId: quote.bookingRequestId, quoteId: quote.id },
       "Failed to send booking request quote email"
@@ -538,16 +540,19 @@ export async function sendBookingRequestQuote(input: {
     entityType: "BookingRequest",
     entityId: quote.bookingRequestId,
     category: "booking",
-    outcome: "success",
-    summary: "Booking request quote sent",
+    outcome: emailDelivered ? "success" : "failure",
+    summary: emailDelivered
+      ? "Booking request quote sent"
+      : "Booking request quote saved but the email could not be delivered",
     metadata: {
       quoteId: quote.id,
       version: quote.version,
       expiresAt: expiresAt.toISOString(),
+      emailDelivered,
     },
   });
 
-  return { ...updated, options, responseTokenExpiresAt: expiresAt };
+  return { ...updated, options, responseTokenExpiresAt: expiresAt, emailDelivered };
 }
 
 async function loadSentQuoteByToken(token: string) {
@@ -560,12 +565,13 @@ async function loadSentQuoteByToken(token: string) {
   if (!quote) {
     throw new BookingRequestQuoteError("This quote is not valid.", 404);
   }
-  if (
-    quote.status !== BookingRequestQuoteStatus.SENT ||
-    !quote.responseTokenExpiresAt ||
-    quote.responseTokenExpiresAt < new Date()
-  ) {
-    throw new BookingRequestQuoteError("This quote is not valid.", 404);
+  if (quote.status !== BookingRequestQuoteStatus.SENT) {
+    // Cancelled, accepted, or superseded by a newer quote: the requester should
+    // use the most recent quote email rather than this stale link.
+    throw new BookingRequestQuoteError("This quote is no longer active.", 409);
+  }
+  if (!quote.responseTokenExpiresAt || quote.responseTokenExpiresAt < new Date()) {
+    throw new BookingRequestQuoteError("This quote has expired.", 410);
   }
 
   return quote;
@@ -640,6 +646,21 @@ export async function respondToBookingRequestQuote(input: {
         });
       }
     });
+    logAudit({
+      action: "booking_request.quote_cancelled",
+      targetId: quote.bookingRequestId,
+      entityType: "BookingRequest",
+      entityId: quote.bookingRequestId,
+      category: "booking",
+      outcome: "success",
+      summary: "Requester cancelled the booking request from the quote link",
+      metadata: {
+        actor: "requester",
+        quoteId: quote.id,
+        version: quote.version,
+        releasedHeldBooking: Boolean(quote.bookingRequest.heldBookingId),
+      },
+    });
     return { outcome: "cancelled" as const };
   }
 
@@ -663,6 +684,27 @@ export async function respondToBookingRequestQuote(input: {
           responseMessageAt: respondedAt,
         },
       });
+    });
+    logAudit({
+      action:
+        input.action === "MODIFY"
+          ? "booking_request.quote_modification_requested"
+          : "booking_request.quote_query_raised",
+      targetId: quote.bookingRequestId,
+      entityType: "BookingRequest",
+      entityId: quote.bookingRequestId,
+      category: "booking",
+      outcome: "success",
+      summary:
+        input.action === "MODIFY"
+          ? "Requester asked for changes to the quote"
+          : "Requester sent a question about the quote",
+      metadata: {
+        actor: "requester",
+        quoteId: quote.id,
+        version: quote.version,
+        hasMessage: Boolean(message),
+      },
     });
     return {
       outcome:
@@ -719,8 +761,27 @@ export async function respondToBookingRequestQuote(input: {
         acceptedAt: null,
       },
     });
+    logAudit({
+      action: "booking_request.quote_accept_capacity_blocked",
+      targetId: quote.bookingRequestId,
+      entityType: "BookingRequest",
+      entityId: quote.bookingRequestId,
+      category: "booking",
+      outcome: "blocked",
+      summary:
+        "Quote acceptance reverted because the lodge filled before confirmation",
+      metadata: {
+        actor: "requester",
+        quoteId: quote.id,
+        optionId: option.id,
+        fullNights: conversion.fullNights,
+      },
+    });
+    const nights = conversion.fullNights.join(", ");
     throw new BookingRequestQuoteError(
-      "The lodge is now at capacity for one or more of the requested nights.",
+      nights
+        ? `The lodge filled up before your acceptance could be confirmed. These nights are now full: ${nights}. Your quote link is still active — reply to the booking team to discuss alternative dates.`
+        : "The lodge filled up before your acceptance could be confirmed. Your quote link is still active — reply to the booking team to discuss alternative dates.",
       409
     );
   }
@@ -730,6 +791,24 @@ export async function respondToBookingRequestQuote(input: {
     data: {
       status: BookingRequestQuoteStatus.ACCEPTED,
       acceptedAt: respondedAt,
+    },
+  });
+
+  logAudit({
+    action: "booking_request.quote_accepted",
+    targetId: quote.bookingRequestId,
+    entityType: "BookingRequest",
+    entityId: quote.bookingRequestId,
+    category: "booking",
+    outcome: "success",
+    summary: "Requester accepted the quote",
+    metadata: {
+      actor: "requester",
+      quoteId: quote.id,
+      version: quote.version,
+      optionId: option.id,
+      priceCents: option.totalCents,
+      bookingId: conversion.bookingId,
     },
   });
 

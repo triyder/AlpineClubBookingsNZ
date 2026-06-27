@@ -43,7 +43,7 @@ interface QuoteContext {
   options: QuoteOption[];
 }
 
-type LoadState = "loading" | "ready" | "invalid" | "error";
+type LoadState = "loading" | "ready" | "invalid" | "expired" | "error";
 type Action = "ACCEPT" | "CANCEL" | "MODIFY" | "QUERY";
 
 export default function BookingRequestQuoteResponsePage() {
@@ -63,7 +63,9 @@ export default function BookingRequestQuoteResponsePage() {
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
-        if (res.status === 404) {
+        if (res.status === 410) {
+          setState("expired");
+        } else if (res.status === 404) {
           setState("invalid");
         } else if (res.ok) {
           setContext(data);
@@ -87,6 +89,14 @@ export default function BookingRequestQuoteResponsePage() {
     () => context?.options.find((option) => option.id === selectedOptionId) ?? null,
     [context, selectedOptionId],
   );
+
+  const expiresInLabel = useMemo(() => {
+    if (!context) return null;
+    const remainingMs = new Date(context.expiresAt).getTime() - Date.now();
+    if (remainingMs <= 0) return "expired";
+    const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+    return days <= 1 ? "expires today" : `expires in ${days} days`;
+  }, [context]);
 
   async function respond(action: Action) {
     setActioning(action);
@@ -140,6 +150,17 @@ export default function BookingRequestQuoteResponsePage() {
               </p>
             </div>
           </div>
+        ) : state === "expired" ? (
+          <div className="flex gap-3 text-amber-800">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div className="space-y-1">
+              <p className="font-medium">This quote has expired.</p>
+              <p className="text-sm text-muted-foreground">
+                Quotes are only valid for a limited time. Please contact the club
+                to ask for an updated quote, and we will send you a fresh link.
+              </p>
+            </div>
+          </div>
         ) : state === "error" || !context ? (
           <div className="flex gap-3 text-amber-800">
             <HelpCircle className="mt-0.5 h-5 w-5 shrink-0" />
@@ -171,6 +192,9 @@ export default function BookingRequestQuoteResponsePage() {
               <p>
                 <span className="text-muted-foreground">Expires:</span>{" "}
                 {formatNZDateTime(new Date(context.expiresAt))}
+                {expiresInLabel ? (
+                  <span className="text-muted-foreground"> ({expiresInLabel})</span>
+                ) : null}
               </p>
             </div>
 

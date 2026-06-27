@@ -305,6 +305,62 @@ describe("sendBookingRequestQuote", () => {
     const emailArgs = mockSendQuoteEmail.mock.calls[0][0] as { token: string };
     expect(updateData.responseTokenHash).toBe(hashActionToken(emailArgs.token));
   });
+
+  function mockDraftQuoteForSend() {
+    vi.mocked(prisma.bookingRequestQuote.findFirst).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.DRAFT,
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 1000,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      message: null,
+      createdByMemberId: "admin-1",
+      bookingRequest: baseRequest(),
+    } as never);
+    vi.mocked(prisma.bookingRequestQuote.update).mockResolvedValue({
+      id: "quote-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      options: [],
+      responseTokenExpiresAt: new Date("2026-08-01T00:00:00.000Z"),
+    } as never);
+  }
+
+  it("reports emailDelivered true when the quote email sends", async () => {
+    mockDraftQuoteForSend();
+    mockSendQuoteEmail.mockResolvedValue(undefined);
+
+    const result = await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result.emailDelivered).toBe(true);
+  });
+
+  it("still marks the quote SENT but reports emailDelivered false when delivery fails", async () => {
+    mockDraftQuoteForSend();
+    mockSendQuoteEmail.mockRejectedValue(new Error("SES unavailable"));
+
+    const result = await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result.emailDelivered).toBe(false);
+    const updateData = vi.mocked(prisma.bookingRequestQuote.update).mock.calls[0][0]
+      .data as { status: BookingRequestQuoteStatus };
+    expect(updateData.status).toBe(BookingRequestQuoteStatus.SENT);
+  });
 });
 
 describe("public quote response", () => {
@@ -391,6 +447,82 @@ describe("public quote response", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           status: BookingRequestQuoteStatus.ACCEPTED,
+        }),
+      })
+    );
+  });
+
+  it("rejects an expired token with a distinct 410 status", async () => {
+    const token = "c".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      status: BookingRequestQuoteStatus.SENT,
+      responseTokenExpiresAt: new Date(Date.now() - 60_000),
+      options: [],
+      bookingRequest: baseRequest(),
+    } as never);
+
+    await expect(getBookingRequestQuoteContext(token)).rejects.toMatchObject({
+      status: 410,
+      message: "This quote has expired.",
+    });
+  });
+
+  it("rejects a superseded quote with a 409 'no longer active' status", async () => {
+    const token = "d".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      status: BookingRequestQuoteStatus.SUPERSEDED,
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [],
+      bookingRequest: baseRequest(),
+    } as never);
+
+    await expect(getBookingRequestQuoteContext(token)).rejects.toMatchObject({
+      status: 409,
+      message: "This quote is no longer active.",
+    });
+  });
+
+  it("reverts to QUOTE_SENT and names the full nights when capacity is lost on accept", async () => {
+    const token = "e".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      createdByMemberId: "admin-1",
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 2500,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      bookingRequest: baseRequest(),
+    } as never);
+    mockApproveBookingRequest.mockResolvedValue({
+      type: "capacityExceeded",
+      fullNights: ["2026-08-01", "2026-08-02"],
+    });
+
+    await expect(
+      respondToBookingRequestQuote({ token, action: "ACCEPT", optionId: "STANDARD" })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("2026-08-01, 2026-08-02"),
+    });
+
+    expect(prisma.bookingRequest.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: BookingRequestStatus.QUOTE_SENT,
+          acceptedQuoteId: null,
+          acceptedPriceCents: null,
         }),
       })
     );

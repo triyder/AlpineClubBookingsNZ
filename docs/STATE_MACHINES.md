@@ -55,6 +55,35 @@ admin review path -> REQUESTED -> APPROVED or REJECTED
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.
 
+## Public Booking Request Quote Lifecycle
+
+A `BookingRequest` from the public form can be priced through one or more
+`BookingRequestQuote` versions. Known quote statuses: `DRAFT`, `SENT`,
+`ACCEPTED`, `CANCELLED`, `SUPERSEDED`.
+
+```text
+DRAFT -> SENT (admin sends; a SHA-256 response token is issued, time-limited)
+SENT  -> ACCEPTED (requester accepts an option; booking conversion runs)
+SENT  -> CANCELLED (requester cancels; any held booking is released)
+SENT  -> SUPERSEDED (requester asks a question / requests changes, or admin issues a newer quote)
+```
+
+Token-link outcomes the requester can see:
+
+- Valid `SENT` link: the quote is shown with options, price, and an expiry hint.
+- Not found: `404` "This quote is not valid."
+- Status no longer `SENT`: `409` "This quote is no longer active." (use the latest quote email).
+- Past expiry: `410` "This quote has expired." with a recover-by-contacting-the-club path.
+- Accept after the lodge fills: the request reverts to `QUOTE_SENT`, the link stays
+  active, and the requester is told which nights are now full.
+
+Every requester transition (accept, cancel, modification request, question) and the
+capacity-blocked accept revert is written to AuditLog with `actor: "requester"`. The
+parent `BookingRequest` moves NEW -> VERIFIED -> QUOTED -> QUOTE_SENT and then PRICED
+(accept), CANCELLED (cancel), MODIFICATION_REQUESTED, or QUERY_PENDING. When an admin
+sends a quote, the email-delivery result is recorded so the team can tell whether the
+requester actually received the link.
+
 ## Payment Lifecycle
 
 Known statuses: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `REFUNDED`,

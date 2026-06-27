@@ -401,7 +401,13 @@ export function PublicBookingRequestsPanel({
       if (!response.ok) {
         throw new Error(data.error || "Failed to send quote");
       }
-      setSuccess("Quote sent");
+      if (data.emailDelivered === false) {
+        setError(
+          "The quote was saved and its link is active, but the email could not be delivered — the requester has not received it. Check the contact email address, then send again or reach them another way.",
+        );
+      } else {
+        setSuccess("Quote sent");
+      }
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send quote");
