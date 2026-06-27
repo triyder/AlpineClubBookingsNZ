@@ -6,9 +6,17 @@ import {
 } from "@/lib/booking-request";
 import { requireAdmin } from "@/lib/session-guards";
 
-const settingsSchema = z.object({
-  showPricingToNonMembers: z.boolean(),
-});
+const settingsSchema = z
+  .object({
+    showPricingToNonMembers: z.boolean(),
+    quoteResponseTtlDays: z.number().int().min(1).max(60),
+    quoteReminderLeadDays: z.number().int().min(0).max(30),
+  })
+  .refine((value) => value.quoteReminderLeadDays < value.quoteResponseTtlDays, {
+    message:
+      "The reminder lead time must be shorter than the quote response window.",
+    path: ["quoteReminderLeadDays"],
+  });
 
 export async function GET() {
   const guard = await requireAdmin();
@@ -40,6 +48,8 @@ export async function PUT(req: NextRequest) {
 
   const settings = await updateBookingRequestSettings({
     showPricingToNonMembers: parsed.data.showPricingToNonMembers,
+    quoteResponseTtlDays: parsed.data.quoteResponseTtlDays,
+    quoteReminderLeadDays: parsed.data.quoteReminderLeadDays,
     adminMemberId: session.user.id,
   });
 

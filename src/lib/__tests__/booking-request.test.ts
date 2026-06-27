@@ -177,21 +177,33 @@ describe("booking request settings", () => {
   it("defaults to hidden pricing when no settings row exists", async () => {
     mockedSettingsFindUnique.mockResolvedValue(null);
     const settings = await getBookingRequestSettings();
-    expect(settings).toEqual({ showPricingToNonMembers: false });
+    expect(settings).toEqual({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+    });
   });
 
   it("updates and audits the pricing visibility setting", async () => {
     mockedSettingsUpsert.mockResolvedValue({
       id: "default",
       showPricingToNonMembers: true,
+      quoteResponseTtlDays: 10,
+      quoteReminderLeadDays: 2,
     } as never);
 
     const result = await updateBookingRequestSettings({
       showPricingToNonMembers: true,
+      quoteResponseTtlDays: 10,
+      quoteReminderLeadDays: 2,
       adminMemberId: "admin-1",
     });
 
-    expect(result).toEqual({ showPricingToNonMembers: true });
+    expect(result).toEqual({
+      showPricingToNonMembers: true,
+      quoteResponseTtlDays: 10,
+      quoteReminderLeadDays: 2,
+    });
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking_request.settings_updated",

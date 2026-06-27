@@ -1093,6 +1093,7 @@ model BookingRequestQuote {
   responseTokenHash      String?                   @unique
   responseTokenExpiresAt DateTime?
   sentAt                 DateTime?
+  reminderSentAt         DateTime?
   supersededAt           DateTime?
   acceptedAt             DateTime?
   cancelledAt            DateTime?
@@ -1133,6 +1134,8 @@ model PaymentLink {
 model BookingRequestSettings {
   id                      String   @id @default("default")
   showPricingToNonMembers Boolean  @default(false)
+  quoteResponseTtlDays    Int      @default(14)
+  quoteReminderLeadDays   Int      @default(3)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt

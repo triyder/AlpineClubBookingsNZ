@@ -2318,6 +2318,7 @@ export function bookingRequestQuoteTemplate(data: {
   message?: string | null;
   expiresAt: Date;
   schoolName?: string | null;
+  isReminder?: boolean;
 }): string {
   const optionRows = data.options.map((option) => ({
     label: option.label,
@@ -2325,8 +2326,14 @@ export function bookingRequestQuoteTemplate(data: {
   }));
 
   return layout(`
-    ${heading("Your Booking Quote Is Ready")}
-    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the club has prepared a quote for your lodge request.")}
+    ${heading(data.isReminder ? "Reminder: Your Booking Quote Is Expiring Soon" : "Your Booking Quote Is Ready")}
+    ${paragraph(
+      data.isReminder
+        ? "Hi " +
+            escapeHtml(data.firstName) +
+            ", this is a reminder that your lodge quote is still waiting and will expire soon. We have included a fresh secure link below so you do not need to find the original email."
+        : "Hi " + escapeHtml(data.firstName) + ", the club has prepared a quote for your lodge request.",
+    )}
     ${infoTable([
       ...(data.schoolName ? [{ label: "School", value: data.schoolName }] : []),
       { label: "Check-in", value: formatNZDate(data.checkIn) },

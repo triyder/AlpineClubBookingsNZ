@@ -179,6 +179,17 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        jobName: "quote-expiry-reminders",
+        label: "Quote expiry reminders",
+        schedule: "0 */3 * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "payment-recovery",
         label: "Stripe payment recovery",
         schedule: "*/5 * * * *",
