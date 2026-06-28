@@ -4,18 +4,21 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   pageContentFindUnique: vi.fn(),
+  pageContentFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     pageContent: {
       findUnique: mocks.pageContentFindUnique,
+      findMany: mocks.pageContentFindMany,
     },
   },
 }));
 
 import {
   getSanitizedPageContentByPath,
+  listWebsiteMenuPages,
   pageContentHtmlToPlainText,
   sanitizePageContentHtml,
 } from "../page-content-html";
@@ -128,5 +131,25 @@ describe("getSanitizedPageContentByPath", () => {
 
     expect(page?.contentHtml).toBe("<p>ok</p>");
     expect(page?.headerText).toBe('<img src="x" />Welcome');
+  });
+});
+
+describe("listWebsiteMenuPages", () => {
+  beforeEach(() => {
+    mocks.pageContentFindMany.mockReset();
+  });
+
+  it("queries only published pages and keeps those with a menu title", async () => {
+    mocks.pageContentFindMany.mockResolvedValue([
+      { slug: "about", menuTitle: "About", title: "About", path: "/about" },
+      { slug: "secret", menuTitle: "", title: "Secret", path: "/secret" },
+    ]);
+
+    const pages = await listWebsiteMenuPages();
+
+    expect(mocks.pageContentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { published: true } }),
+    );
+    expect(pages.map((page) => page.slug)).toEqual(["about"]);
   });
 });

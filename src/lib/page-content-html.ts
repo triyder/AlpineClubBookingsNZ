@@ -166,6 +166,7 @@ function toEditablePageRecord(record: {
   path: string;
   sortOrder: number;
   contentHtml: string;
+  published: boolean;
   updatedAt: Date;
   updatedByMemberId: string | null;
 }): EditablePageRecord {
@@ -179,6 +180,7 @@ function toEditablePageRecord(record: {
     path: record.path,
     sortOrder: record.sortOrder,
     contentHtml: record.contentHtml,
+    published: record.published,
     updatedAt: record.updatedAt.toISOString(),
     updatedByMemberId: record.updatedByMemberId,
   };
@@ -194,6 +196,7 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
   path: string;
   sortOrder: number;
   contentHtml: string;
+  published: boolean;
 } | null> {
   const record = await prisma.pageContent.findUnique({
     where: { path },
@@ -207,6 +210,7 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
       path: true,
       sortOrder: true,
       contentHtml: true,
+      published: true,
     },
   });
 
@@ -230,6 +234,8 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
     path: record.path,
     sortOrder: record.sortOrder,
     contentHtml: safeContentHtml,
+    // Defaults to true for legacy rows written before this column existed.
+    published: record.published ?? true,
   };
 }
 
@@ -250,6 +256,8 @@ export async function listEditablePageContent() {
 
 export async function listWebsiteMenuPages() {
   const records = await prisma.pageContent.findMany({
+    // Hidden (unpublished) pages drop out of the public navigation.
+    where: { published: true },
     orderBy: [{ sortOrder: "asc" }, { title: "asc" }],
     select: {
       slug: true,

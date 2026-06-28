@@ -32,7 +32,13 @@ async function getPageForParams(props: DynamicPageProps) {
     return null;
   }
 
-  return getSanitizedPageContentByPath(`/${slug}`);
+  const page = await getSanitizedPageContentByPath(`/${slug}`);
+  // Unpublished (hidden) admin pages 404 for the public, just like a missing
+  // page; only an explicit false hides it, so legacy rows stay visible.
+  if (!page || page.published === false) {
+    return null;
+  }
+  return page;
 }
 
 function pageSlugFromPath(path: string) {

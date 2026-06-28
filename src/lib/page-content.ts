@@ -8,6 +8,7 @@ export type EditablePageRecord = {
   path: string;
   sortOrder: number;
   contentHtml: string;
+  published: boolean;
   updatedAt: string | null;
   updatedByMemberId: string | null;
 };
@@ -23,6 +24,34 @@ export const SYSTEM_PAGE_SLUGS: ReadonlyMap<string, number> = new Map([
 
 export function isSystemPageSlug(slug: string): boolean {
   return SYSTEM_PAGE_SLUGS.has(slug);
+}
+
+/**
+ * Built-in pages seeded from starter content and linked from code-backed
+ * routes, the footer, and the sitemap. Admins may edit their copy, but they
+ * must not be unpublished/hidden — those links would 404. Only admin-created
+ * pages can be hidden. (`home` is also a system page; listed here for clarity.)
+ */
+export const BUILTIN_PAGE_SLUGS: ReadonlySet<string> = new Set([
+  "home",
+  "about",
+  "join",
+  "join/apply",
+  "rules",
+  "contact",
+  "committee",
+]);
+
+export function isBuiltinPageSlug(slug: string): boolean {
+  return BUILTIN_PAGE_SLUGS.has(slug);
+}
+
+/**
+ * Only admin-created content pages may be hidden from the public site. System
+ * pages (home, 404) and built-in design pages must always remain published.
+ */
+export function canUnpublishPage(slug: string): boolean {
+  return !isSystemPageSlug(slug) && !isBuiltinPageSlug(slug);
 }
 
 export const PAGE_SLUG_PATTERN =

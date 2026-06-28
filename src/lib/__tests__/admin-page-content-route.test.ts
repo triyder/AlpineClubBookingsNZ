@@ -50,9 +50,9 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { POST, PUT } from "@/app/api/admin/page-content/route";
+import { PATCH, POST, PUT } from "@/app/api/admin/page-content/route";
 
-function jsonRequest(method: "POST" | "PUT", body: unknown) {
+function jsonRequest(method: "POST" | "PUT" | "PATCH", body: unknown) {
   return new NextRequest("http://localhost/api/admin/page-content", {
     method,
     headers: { "content-type": "application/json" },
@@ -175,5 +175,120 @@ describe("PUT /api/admin/page-content", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("PATCH /api/admin/page-content (publish toggle)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.requireActiveSessionUser.mockResolvedValue(null);
+    mocks.pageContentUpdate.mockImplementation(async ({ data }) => ({
+      id: "page-1",
+      slug: "trip-reports",
+      path: "/trip-reports",
+      ...data,
+      updatedAt: new Date("2026-06-28T00:00:00Z"),
+    }));
+    mocks.auditLogCreate.mockResolvedValue({});
+  });
+
+  it("requires an admin session", async () => {
+    mocks.auth.mockResolvedValue(null);
+    const response = await PATCH(
+      jsonRequest("PATCH", { id: "page-1", published: false }),
+    );
+    expect(response.status).toBe(401);
+    expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the page does not exist", async () => {
+    mocks.pageContentFindUnique.mockResolvedValue(null);
+    const response = await PATCH(
+      jsonRequest("PATCH", { id: "missing", published: false }),
+    );
+    expect(response.status).toBe(404);
+    expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("hides an admin-created page and audits the change", async () => {
+    mocks.pageContentFindUnique.mockResolvedValue({
+      id: "page-1",
+      slug: "trip-reports",
+      path: "/trip-reports",
+      published: true,
+    });
+
+    const response = await PATCH(
+      jsonRequest("PATCH", { id: "page-1", published: false }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.pageContentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ published: false }),
+      }),
+    );
+    expect(mocks.buildStructuredAuditLogCreateArgs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "PAGE_CONTENT_VISIBILITY_CHANGED",
+        metadata: expect.objectContaining({
+          slug: "trip-reports",
+          published: false,
+        }),
+      }),
+    );
+  });
+
+  it("blocks hiding a system page", async () => {
+    mocks.pageContentFindUnique.mockResolvedValue({
+      id: "home-id",
+      slug: "home",
+      path: "/home",
+      published: true,
+    });
+
+    const response = await PATCH(
+      jsonRequest("PATCH", { id: "home-id", published: false }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("blocks hiding a built-in design page", async () => {
+    mocks.pageContentFindUnique.mockResolvedValue({
+      id: "about-id",
+      slug: "about",
+      path: "/about",
+      published: true,
+    });
+
+    const response = await PATCH(
+      jsonRequest("PATCH", { id: "about-id", published: false }),
+    );
+
+    expect(response.status).toBe(422);
+    expect(mocks.pageContentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("re-publishes a built-in page without the guard blocking it", async () => {
+    mocks.pageContentFindUnique.mockResolvedValue({
+      id: "about-id",
+      slug: "about",
+      path: "/about",
+      published: false,
+    });
+
+    const response = await PATCH(
+      jsonRequest("PATCH", { id: "about-id", published: true }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.pageContentUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ published: true }),
+      }),
+    );
   });
 });

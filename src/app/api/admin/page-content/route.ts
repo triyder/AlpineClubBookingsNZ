@@ -7,6 +7,7 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
+  canUnpublishPage,
   isReservedPageSlug,
   isSystemPageSlug,
   isValidPageSlug,
@@ -40,6 +41,13 @@ const updateSchema = z
     slug: z.string().trim().min(1).max(80),
     sortOrder: z.number().int().min(0).max(9999),
     contentHtml: z.string().max(200000),
+  })
+  .strict();
+
+const patchSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    published: z.boolean(),
   })
   .strict();
 
@@ -169,6 +177,7 @@ export async function POST(request: NextRequest) {
         headerText: created.headerText,
         sortOrder: created.sortOrder,
         contentHtml: created.contentHtml,
+        published: created.published,
         updatedAt: created.updatedAt.toISOString(),
         updatedByMemberId: created.updatedByMemberId,
       },
@@ -318,6 +327,94 @@ export async function PUT(request: NextRequest) {
       headerText: updated.headerText,
       sortOrder: updated.sortOrder,
       contentHtml: updated.contentHtml,
+      published: updated.published,
+      updatedAt: updated.updatedAt.toISOString(),
+      updatedByMemberId: updated.updatedByMemberId,
+    },
+  });
+}
+
+// Toggles a page's public visibility (publish/unpublish). Only admin-created
+// pages can be hidden; system and built-in pages must always stay published.
+export async function PATCH(request: NextRequest) {
+  const guard = await requireAdmin(adminGuardOptions);
+  if (!guard.ok) {
+    return guard.response;
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = patchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const existing = await prisma.pageContent.findUnique({
+    where: { id: parsed.data.id },
+  });
+
+  if (!existing) {
+    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+  }
+
+  // System pages (home, 404) and built-in design pages are linked from code
+  // routes, the footer, and the sitemap, so they cannot be hidden.
+  if (!parsed.data.published && !canUnpublishPage(existing.slug)) {
+    return NextResponse.json(
+      { error: "This page cannot be hidden from the public site" },
+      { status: 422 },
+    );
+  }
+
+  const updated = await prisma.pageContent.update({
+    where: { id: parsed.data.id },
+    data: {
+      published: parsed.data.published,
+      updatedByMemberId: guard.session.user.id,
+    },
+  });
+
+  await prisma.auditLog.create(
+    buildStructuredAuditLogCreateArgs({
+      action: "PAGE_CONTENT_VISIBILITY_CHANGED",
+      actor: { memberId: guard.session.user.id },
+      entity: {
+        type: "PageContent",
+        id: updated.id,
+      },
+      category: "admin",
+      severity: "important",
+      outcome: "success",
+      summary: `Page ${updated.published ? "published" : "unpublished"} for ${existing.slug}`,
+      metadata: {
+        slug: existing.slug,
+        path: existing.path,
+        published: updated.published,
+      },
+      request: getAuditRequestContext(request),
+    }),
+  );
+
+  return NextResponse.json({
+    page: {
+      id: updated.id,
+      slug: updated.slug,
+      path: updated.path,
+      caption: updated.caption,
+      menuTitle: updated.menuTitle,
+      title: updated.title,
+      headerText: updated.headerText,
+      sortOrder: updated.sortOrder,
+      contentHtml: updated.contentHtml,
+      published: updated.published,
       updatedAt: updated.updatedAt.toISOString(),
       updatedByMemberId: updated.updatedByMemberId,
     },
