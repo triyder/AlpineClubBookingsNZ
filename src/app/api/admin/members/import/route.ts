@@ -534,6 +534,28 @@ export async function POST(req: NextRequest) {
             rowNum: row.rowNum,
             rowNote: row.rowNote,
           });
+
+          await createAuditLog(
+            {
+              action: "member.imported",
+              memberId: session.user.id,
+              targetId: member.id,
+              entityType: "Member",
+              entityId: member.id,
+              category: "admin",
+              severity: "important",
+              outcome: "success",
+              summary: "Member imported",
+              details: `Imported member: ${member.firstName} ${member.lastName} (${member.email})`,
+              metadata: {
+                memberId: member.id,
+                email: member.email,
+                sendInvites,
+                canLogin: row.canLogin,
+              },
+            },
+            tx,
+          );
         }
         return created;
       },
@@ -557,27 +579,9 @@ export async function POST(req: NextRequest) {
         : [],
     );
 
-    // Audit log and invite emails (outside transaction)
+    // Invite emails remain post-commit best-effort; import/audit durability is
+    // handled inside the transaction above.
     for (const member of createdMembers) {
-      await createAuditLog({
-        action: "member.imported",
-        memberId: session.user.id,
-        targetId: member.id,
-        entityType: "Member",
-        entityId: member.id,
-        category: "admin",
-        severity: "important",
-        outcome: "success",
-        summary: "Member imported",
-        details: `Imported member: ${member.firstName} ${member.lastName} (${member.email})`,
-        metadata: {
-          memberId: member.id,
-          email: member.email,
-          sendInvites,
-          canLogin: member.canLogin,
-        },
-      });
-
       if (sendInvites && member.canLogin) {
         try {
           const { token, tokenHash } = issueActionToken();

@@ -931,8 +931,64 @@ describe("Phase 3: Admin Member Management", () => {
           action: "member.imported",
           memberId: "admin1",
           targetId: "new1",
-        })
+        }),
+        expect.objectContaining({
+          member: expect.objectContaining({ create: expect.any(Function) }),
+        }),
       );
+    });
+
+    it("rolls back the import path when transactional audit logging fails", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      const createMember = vi.fn(async ({ data }: any) => ({
+        id: "new-audit-failure",
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        canLogin: data.canLogin,
+      }));
+      const tx = {
+        member: { create: createMember },
+      };
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) =>
+        fn(tx),
+      );
+      vi.mocked(createAuditLog).mockRejectedValueOnce(
+        new Error("audit failed"),
+      );
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [
+            {
+              firstName: "Audit",
+              lastName: "Failure",
+              email: "audit@test.com",
+            },
+          ],
+          sendInvites: true,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await importMembers(req);
+      const body = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(body.error).toContain("no members were created");
+      expect(createMember).toHaveBeenCalledTimes(1);
+      expect(createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "member.imported",
+          targetId: "new-audit-failure",
+        }),
+        tx,
+      );
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+      expect(mockedSendMemberSetupInviteEmail).not.toHaveBeenCalled();
     });
 
     it("creates imported members as login-enabled primary accounts", async () => {
