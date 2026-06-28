@@ -12,6 +12,7 @@ export interface ExistingBookingEditGuest {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string | null;
+  forceNonMemberRate?: boolean;
   stayStart?: Date | null;
   stayEnd?: Date | null;
   priceCents: number;
@@ -23,6 +24,7 @@ export interface AddedBookingEditGuest {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string | null;
+  forceNonMemberRate?: boolean;
 }
 
 export interface ProposedExistingGuestRange {
@@ -89,7 +91,7 @@ function minDate(a: Date, b: Date): Date {
 function priceGuestRangeCents(
   start: Date,
   end: Date,
-  guest: Pick<ExistingBookingEditGuest, "ageTier" | "isMember">,
+  guest: Pick<ExistingBookingEditGuest, "ageTier" | "isMember" | "forceNonMemberRate">,
   seasons: SeasonRateData[]
 ): number {
   const normalizedStart = normalizeDateOnlyForTimeZone(start);
@@ -101,7 +103,11 @@ function priceGuestRangeCents(
   return calculateBookingPrice(
     normalizedStart,
     normalizedEnd,
-    [{ ageTier: guest.ageTier, isMember: guest.isMember }],
+    [{
+      ageTier: guest.ageTier,
+      isMember: guest.isMember,
+      forceNonMemberRate: guest.forceNonMemberRate,
+    }],
     seasons
   ).totalPriceCents;
 }

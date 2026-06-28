@@ -39,6 +39,7 @@ import {
   sendBookingRequestVerificationEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { assertMembershipTypeBookingAllowed } from "@/lib/membership-type-policy";
 import {
   priceBookingGuests,
   toSeasonRateData,
@@ -46,6 +47,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
+import { getSeasonYear } from "@/lib/utils";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
@@ -669,6 +671,10 @@ export async function approveBookingRequest(input: {
           stayEnd: request.checkOut,
           priceCents: guestPriceCents[index],
         };
+      });
+      await assertMembershipTypeBookingAllowed(tx, {
+        guests: guestCreates,
+        seasonYear: getSeasonYear(request.checkIn),
       });
 
       let booking: { id: string };

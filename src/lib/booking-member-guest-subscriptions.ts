@@ -4,6 +4,7 @@ import {
   isSubscriptionEnforcementActive,
   requiresPaidSubscriptionForAgeTier,
 } from "@/lib/member-subscription-eligibility";
+import { resolveMembershipTypePoliciesForMembers } from "@/lib/membership-type-policy";
 import { getSeasonYear } from "@/lib/utils";
 
 interface BookingGuestLike {
@@ -79,11 +80,12 @@ export async function findUnpaidMemberGuests(
   }
 
   const uniqueIds = [...new Set(memberGuestIds)];
+  const seasonYear = getSeasonYear(params.checkIn);
   const ageTierSettings = await getAgeTierSettings();
   const subscriptions = await db.memberSubscription.findMany({
     where: {
       memberId: { in: uniqueIds },
-      seasonYear: getSeasonYear(params.checkIn),
+      seasonYear,
     },
     select: {
       memberId: true,
@@ -91,6 +93,10 @@ export async function findUnpaidMemberGuests(
       xeroOnlineInvoiceUrl: true,
       xeroInvoiceNumber: true,
     },
+  });
+  const membershipTypePolicies = await resolveMembershipTypePoliciesForMembers(db, {
+    memberIds: uniqueIds,
+    seasonYear,
   });
 
   const subscriptionById = new Map(
@@ -103,12 +109,18 @@ export async function findUnpaidMemberGuests(
 
   const memberById = new Map(linkedMembers.map((member) => [member.id, member]));
   const billableUnpaidMemberIds = uniqueIds.filter(
-    (id) => subscriptionById.get(id)?.status !== "PAID"
-      && (!memberById.has(id)
-        || requiresPaidSubscriptionForAgeTier(
-          memberById.get(id)!.ageTier,
-          ageTierSettings
-        ))
+    (id) => {
+      const policy = membershipTypePolicies.get(id);
+      if (policy?.subscriptionBehavior === "NOT_REQUIRED") {
+        return false;
+      }
+      return subscriptionById.get(id)?.status !== "PAID"
+        && (!memberById.has(id)
+          || requiresPaidSubscriptionForAgeTier(
+            memberById.get(id)!.ageTier,
+            ageTierSettings
+          ));
+    }
   );
 
   if (billableUnpaidMemberIds.length === 0) {

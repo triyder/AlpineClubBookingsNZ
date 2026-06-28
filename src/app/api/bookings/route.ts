@@ -16,7 +16,12 @@ import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
-import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
+import {
+  assertMembershipTypeBookingAllowed,
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+  requiresPaidSubscriptionForMemberForBooking,
+} from "@/lib/membership-type-policy";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -252,11 +257,31 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  try {
+    await assertMembershipTypeBookingAllowed(prisma, {
+      ownerMemberId: effectiveMemberId,
+      guests: guestInputs,
+      seasonYear: getSeasonYear(checkIn),
+    });
+  } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
+    throw err;
+  }
+
   // Subscription gate for the booking owner. Bypassed when the Xero module
   // is effectively off, because subscriptions are invoiced through Xero.
   if (
     session.user.role !== "ADMIN" &&
-    await requiresPaidSubscriptionForBooking(effectiveMemberAgeTier)
+    await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: effectiveMemberId,
+      seasonYear: getSeasonYear(checkIn),
+      ageTier: effectiveMemberAgeTier,
+    })
   ) {
     const seasonYear = getSeasonYear(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
@@ -349,6 +374,12 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
+      if (err instanceof MembershipTypeBookingPolicyError) {
+        return NextResponse.json(
+          getMembershipTypeBookingPolicyErrorBody(err),
+          { status: err.status },
+        );
+      }
       if (err instanceof BookingReviewJustificationRequiredError) {
         return NextResponse.json(
           { error: err.message, code: "REVIEW_JUSTIFICATION_REQUIRED" },
@@ -469,6 +500,12 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json(waitlisted.booking, { status: 201 });
     } catch (waitlistErr) {
+      if (waitlistErr instanceof MembershipTypeBookingPolicyError) {
+        return NextResponse.json(
+          getMembershipTypeBookingPolicyErrorBody(waitlistErr),
+          { status: waitlistErr.status },
+        );
+      }
       if (waitlistErr instanceof BookingReviewJustificationRequiredError) {
         return NextResponse.json(
           { error: waitlistErr.message, code: "REVIEW_JUSTIFICATION_REQUIRED" },
@@ -482,6 +519,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to create waitlisted booking" }, { status: 500 });
     }
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     if (err instanceof BookingReviewJustificationRequiredError) {
       return NextResponse.json(
         { error: err.message, code: "REVIEW_JUSTIFICATION_REQUIRED" },

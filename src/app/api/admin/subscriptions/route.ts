@@ -63,14 +63,30 @@ type SubscriptionCandidate = {
     ageTier: string;
     role: string;
     xeroContactId: string | null;
+    seasonalMembershipAssignments?: Array<{
+      membershipType: { subscriptionBehavior: string };
+    }>;
   };
 };
 
 function isNotRequiredMember(
-  member: { role: string; ageTier: string },
+  member: {
+    role: string;
+    ageTier: string;
+    seasonalMembershipAssignments?: Array<{
+      membershipType: { subscriptionBehavior: string };
+    }>;
+  },
   notRequiredAgeTiers: Set<string>
 ) {
-  return roleNeverRequiresSubscription(member.role) || notRequiredAgeTiers.has(member.ageTier);
+  return (
+    roleNeverRequiresSubscription(member.role) ||
+    notRequiredAgeTiers.has(member.ageTier) ||
+    member.seasonalMembershipAssignments?.some(
+      (assignment) =>
+        assignment.membershipType.subscriptionBehavior === "NOT_REQUIRED"
+    ) === true
+  );
 }
 
 function compareValues(left: string | number | Date | null, right: string | number | Date | null) {
@@ -179,6 +195,14 @@ export async function GET(request: NextRequest) {
       ...memberWhere,
       OR: [
         { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
+        {
+          seasonalMembershipAssignments: {
+            some: {
+              seasonYear,
+              membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
+            },
+          },
+        },
         ...(notRequiredAgeTiers.size > 0
           ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
           : []),
@@ -197,6 +221,15 @@ export async function GET(request: NextRequest) {
               ageTier: true,
               role: true,
               xeroContactId: true,
+              seasonalMembershipAssignments: {
+                where: { seasonYear },
+                select: {
+                  membershipType: {
+                    select: { subscriptionBehavior: true },
+                  },
+                },
+                take: 1,
+              },
             },
           },
         },
@@ -211,6 +244,15 @@ export async function GET(request: NextRequest) {
           ageTier: true,
           role: true,
           xeroContactId: true,
+          seasonalMembershipAssignments: {
+            where: { seasonYear },
+            select: {
+              membershipType: {
+                select: { subscriptionBehavior: true },
+              },
+            },
+            take: 1,
+          },
         },
       }),
     ]);
@@ -225,9 +267,9 @@ export async function GET(request: NextRequest) {
         memberId: subscription.memberId,
         seasonYear: subscription.seasonYear,
         status: displayStatus as SubscriptionCandidate["status"],
-        xeroInvoiceId: displayStatus === "NOT_REQUIRED" ? null : subscription.xeroInvoiceId,
-        xeroInvoiceNumber: displayStatus === "NOT_REQUIRED" ? null : subscription.xeroInvoiceNumber,
-        paidAt: displayStatus === "NOT_REQUIRED" ? null : subscription.paidAt,
+        xeroInvoiceId: subscription.xeroInvoiceId,
+        xeroInvoiceNumber: subscription.xeroInvoiceNumber,
+        paidAt: subscription.paidAt,
         xeroContactGroupsLoaded: true,
         xeroContactGroups: [],
         member: subscription.member,

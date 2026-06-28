@@ -288,7 +288,9 @@ describe("booking profile gate route integration", () => {
 
     expect(gateIndex).toBeGreaterThan(-1);
     expect(normalizeIndex).toBeGreaterThan(gateIndex);
-    expect(gateIndex).toBeLessThan(helperSource.indexOf("calculateBookingPrice("));
+    expect(gateIndex).toBeLessThan(
+      helperSource.indexOf("priceBookingGuestsWithMembershipTypePolicy(", gateIndex)
+    );
     expect(gateIndex).toBeLessThan(helperSource.indexOf("tx.bookingGuest.create"));
     expect(routeSource).toContain("getBookingGuestValidationErrorResponse(err)");
     expect(helperSource).toContain("onBehalfOfMemberId:");
@@ -304,7 +306,9 @@ describe("booking profile gate route integration", () => {
 
     expect(gateIndex).toBeGreaterThan(-1);
     expect(normalizeIndex).toBeGreaterThan(gateIndex);
-    expect(gateIndex).toBeLessThan(source.indexOf("calculateBookingPrice("));
+    expect(gateIndex).toBeLessThan(
+      source.indexOf("priceBookingGuestsWithMembershipTypePolicy(", gateIndex)
+    );
     expect(source).toContain("getBookingGuestValidationErrorResponse(error)");
     expect(source).toContain("onBehalfOfMemberId:");
   });

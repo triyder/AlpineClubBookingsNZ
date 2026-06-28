@@ -41,6 +41,8 @@ export interface SeasonRateSource {
 export interface GuestPricingSource {
   ageTier: AgeTier;
   isMember: boolean;
+  memberId?: string | null;
+  forceNonMemberRate?: boolean;
   stayStart?: Date | null;
   stayEnd?: Date | null;
   // Explicit included nights (issue #713). Passed through to pricing so a
@@ -80,6 +82,8 @@ export function toGuestPricingInputs(guests: GuestPricingSource[]): GuestInput[]
   return guests.map((guest) => ({
     ageTier: guest.ageTier,
     isMember: guest.isMember,
+    memberId: guest.memberId ?? undefined,
+    forceNonMemberRate: guest.forceNonMemberRate,
     stayStart: guest.stayStart ?? undefined,
     stayEnd: guest.stayEnd ?? undefined,
     nights: guest.nights ?? undefined,

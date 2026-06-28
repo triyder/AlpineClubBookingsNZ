@@ -41,9 +41,13 @@ import {
 import { calculateChangeFee } from "@/lib/change-fee";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
-  calculateBookingPrice,
   type SeasonRateData,
 } from "@/lib/pricing";
+import {
+  applyMembershipTypeRatePolicyToGuests,
+  assertMembershipTypeBookingAllowed,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import {
   deletePromoRedemptionAndAdjustCount,
   redeemPromoCode,
@@ -79,6 +83,7 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getSeasonYear } from "@/lib/utils";
 
 export type BatchModifyInput = {
   checkIn?: string;
@@ -909,6 +914,31 @@ export async function calculateModifiedPricing(
     seasonRateData: SeasonRateData[];
   },
 ): Promise<PricingResult> {
+  const seasonYear = getSeasonYear(newCheckIn);
+  await assertMembershipTypeBookingAllowed(tx, {
+    ownerMemberId: booking.memberId,
+    guests: guestsForPricing,
+    seasonYear,
+  });
+
+  const policyAdjustedGuestsForPricing = await applyMembershipTypeRatePolicyToGuests(tx, {
+    seasonYear,
+    guests: guestsForPricing,
+  });
+  const policyAdjustedAddGuests = normalizedAddGuests
+    ? await applyMembershipTypeRatePolicyToGuests(tx, {
+        seasonYear,
+        guests: normalizedAddGuests,
+      })
+    : undefined;
+  const policyAdjustedExistingGuests = await applyMembershipTypeRatePolicyToGuests(tx, {
+    seasonYear,
+    guests: booking.guests.map((guest) => ({
+      ...guest,
+      ageTier: guest.ageTier as AgeTier,
+    })),
+  });
+
   let inProgressPlan: BookingEditGuestRangePlan | null = null;
   if (isInProgressEdit && editableFrom) {
     inProgressPlan = buildInProgressGuestRangePlan({
@@ -919,14 +949,11 @@ export async function calculateModifiedPricing(
         discountCents: booking.discountCents,
         promoAdjustmentCents: booking.promoAdjustmentCents,
         finalPriceCents: booking.finalPriceCents,
-        guests: booking.guests.map((guest) => ({
-          ...guest,
-          ageTier: guest.ageTier as AgeTier,
-        })),
+        guests: policyAdjustedExistingGuests,
       },
       editableFrom,
       newCheckOut,
-      addGuests: normalizedAddGuests,
+      addGuests: policyAdjustedAddGuests,
       removeGuestIds,
       seasons: seasonRateData,
     });
@@ -945,7 +972,7 @@ export async function calculateModifiedPricing(
       : await checkCapacityForGuestRanges(
           newCheckIn,
           newCheckOut,
-          guestsForPricing,
+          policyAdjustedGuestsForPricing,
           bookingId,
           tx,
         );
@@ -967,7 +994,14 @@ export async function calculateModifiedPricing(
             ),
           ],
         }
-      : calculateBookingPrice(newCheckIn, newCheckOut, guestsForPricing, seasonRateData);
+      : await priceBookingGuestsWithMembershipTypePolicy(tx, {
+          ownerMemberId: booking.memberId,
+          checkIn: newCheckIn,
+          checkOut: newCheckOut,
+          guests: policyAdjustedGuestsForPricing,
+          seasons: seasonRateData,
+          seasonYear,
+        });
   } catch {
     throw new ApiError("No season rate found for the requested dates", 400);
   }

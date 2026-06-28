@@ -9,6 +9,10 @@ import {
   getBookingGuestValidationErrorResponse,
 } from "@/lib/booking-guests";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import {
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+} from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
@@ -107,6 +111,12 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     if (err instanceof BookingGuestValidationError) {
       return NextResponse.json(getBookingGuestValidationErrorResponse(err), {
         status: err.status,

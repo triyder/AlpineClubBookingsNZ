@@ -249,11 +249,16 @@ waitlist records, current subscription state, and recent subscription history,
 then require an admin reason before the audited save. The membership-type
 settings page can roll assignments forward from one season to another
 idempotently, skipping existing target-season assignments and reporting missing
-or inactive-type exceptions. Current booking pricing, subscription lockout,
-Xero sync, and authorization still use their pre-existing role/subscription
-paths until the follow-up enforcement work is merged; seasonal type changes do
-not automatically reprice existing future bookings. Committee assignments
-remain separate public/contact metadata.
+or inactive-type exceptions. Booking pricing and booking gates resolve the
+member's effective seasonal type for the booking season: `MEMBER_RATE` uses
+normal member rates, `NON_MEMBER_RATE` uses non-member nightly rates while
+preserving member identity, and `BLOCK_BOOKING` returns a structured policy
+error before the booking is created or repriced. Subscription displays and
+booking lockout also resolve the seasonal type: `NOT_REQUIRED` is an effective
+status layered over the raw `MemberSubscription`/Xero history, which remains
+stored and visible for audit. Seasonal type changes do not automatically
+reprice existing future bookings. Committee assignments remain separate
+public/contact metadata.
 
 Membership cancellation is a member-initiated account lifecycle workflow.
 Requests can include the requester, dependants, non-login adults, and related

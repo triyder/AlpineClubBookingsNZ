@@ -600,7 +600,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.members[0].subscriptionStatus).toBe("NOT_REQUIRED");
-      expect(body.members[0].subscriptionXeroInvoiceId).toBeNull();
+      expect(body.members[0].subscriptionXeroInvoiceId).toBe("inv-1");
     });
 
   });

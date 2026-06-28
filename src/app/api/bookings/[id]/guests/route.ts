@@ -11,9 +11,14 @@ import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
-  calculateBookingPrice,
   type SeasonRateData,
 } from "@/lib/pricing";
+import {
+  assertMembershipTypeBookingAllowed,
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import {
   deletePromoRedemptionAndAdjustCount,
   replacePromoRedemptionAllocations,
@@ -46,6 +51,7 @@ import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
+import { getSeasonYear } from "@/lib/utils";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -244,6 +250,19 @@ export async function POST(
         throw error;
       }
 
+      const seasonYear = getSeasonYear(booking.checkIn);
+      await assertMembershipTypeBookingAllowed(tx, {
+        ownerMemberId: booking.memberId,
+        guests: [
+          ...booking.guests,
+          ...normalizedNewGuests.map((guest) => ({
+            isMember: guest.isMember,
+            memberId: guest.memberId ?? null,
+          })),
+        ],
+        seasonYear,
+      });
+
       if (session.user.role !== "ADMIN") {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
           bookingMemberId: booking.memberId,
@@ -307,12 +326,14 @@ export async function POST(
 
       let newGuestPrice;
       try {
-        newGuestPrice = calculateBookingPrice(
-          booking.checkIn,
-          booking.checkOut,
-          newGuestInputs,
-          seasonRateData
-        );
+        newGuestPrice = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+          ownerMemberId: booking.memberId,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          guests: newGuestInputs,
+          seasons: seasonRateData,
+          seasonYear,
+        });
       } catch {
         throw new ApiError(
           "No season rate found for the booking dates",
@@ -357,12 +378,14 @@ export async function POST(
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;
 
-      const fullPriceBreakdown = calculateBookingPrice(
-        booking.checkIn,
-        booking.checkOut,
-        allGuestsForPricing,
-        seasonRateData
-      );
+      const fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+        ownerMemberId: booking.memberId,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        guests: allGuestsForPricing,
+        seasons: seasonRateData,
+        seasonYear,
+      });
       const guestNightRates = allGuestsForPricing.map((guest, index) => ({
         bookingGuestId: guest.bookingGuestId,
         memberId: guest.memberId ?? null,
@@ -704,6 +727,12 @@ export async function POST(
       promoRemoved: result.promoRemoved,
     });
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     if (err instanceof BookingGuestValidationError) {
       return NextResponse.json(
         getBookingGuestValidationErrorResponse(err),

@@ -1,8 +1,11 @@
 import type { AgeTier, Prisma } from "@prisma/client";
 import {
-  calculateBookingPrice,
   type SeasonRateData,
 } from "@/lib/pricing";
+import {
+  assertMembershipTypeBookingAllowed,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import {
   deletePromoRedemptionAndAdjustCount,
   replacePromoRedemptionAllocations,
@@ -15,6 +18,7 @@ import {
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { calculateGuestRemovalPaymentImpact } from "@/lib/booking-guest-removal-payment";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { getSeasonYear } from "@/lib/utils";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -174,13 +178,21 @@ export async function removeBookingGuestInTransaction({
     isMember: guest.isMember,
     memberId: guest.memberId ?? null,
   }));
+  const seasonYear = getSeasonYear(booking.checkIn);
+  await assertMembershipTypeBookingAllowed(tx, {
+    ownerMemberId: booking.memberId,
+    guests: guestsForPricing,
+    seasonYear,
+  });
 
-  const priceBreakdown = calculateBookingPrice(
-    booking.checkIn,
-    booking.checkOut,
-    guestsForPricing,
-    seasonRateData
-  );
+  const priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+    ownerMemberId: booking.memberId,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    guests: guestsForPricing,
+    seasons: seasonRateData,
+    seasonYear,
+  });
   const guestNightRates = guestsForPricing.map((guest, index) => ({
     bookingGuestId: guest.bookingGuestId,
     memberId: guest.memberId ?? null,

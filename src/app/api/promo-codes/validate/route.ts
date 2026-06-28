@@ -3,10 +3,14 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
-  calculateBookingPrice,
   type GroupDiscountConfig,
   type SeasonRateData,
 } from "@/lib/pricing";
+import {
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
@@ -184,13 +188,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const price = calculateBookingPrice(
+    const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+      ownerMemberId: effectiveMemberId,
       checkIn,
       checkOut,
       guests,
-      seasonData,
-      groupDiscount
-    );
+      seasons: seasonData,
+      groupDiscount,
+    });
 
     const promoGuests = price.guests.map((g, index) => ({
       memberId: guests[index].memberId ?? null,
@@ -250,6 +255,12 @@ export async function POST(req: NextRequest) {
       finalPriceCents: price.totalPriceCents + promoResult.priceAdjustmentCents,
     });
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to calculate price";
     return NextResponse.json({ error: message }, { status: 400 });
   }

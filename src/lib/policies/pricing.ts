@@ -27,6 +27,8 @@ export interface GroupDiscountConfig {
 export interface GuestInput {
   ageTier: AgeTier;
   isMember: boolean;
+  memberId?: string | null;
+  forceNonMemberRate?: boolean;
   stayStart?: Date | null;
   stayEnd?: Date | null;
   // Explicit included nights (issue #713). When present and non-empty, the
@@ -295,8 +297,10 @@ export function calculateBookingPrice(
       const activeGuestCount = countActiveGuestsForNight(guests, night, bookingRange);
       // Group discount: if applicable, treat all guests as members for rate lookup
       const effectiveIsMember =
-        guest.isMember ||
-        isGroupDiscountApplicable(activeGuestCount, night, seasons, groupDiscount);
+        guest.forceNonMemberRate
+          ? false
+          : guest.isMember ||
+            isGroupDiscountApplicable(activeGuestCount, night, seasons, groupDiscount);
 
       const rate = findRateForNight(night, guest.ageTier, effectiveIsMember, seasons);
       if (rate === null) {

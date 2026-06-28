@@ -57,11 +57,14 @@ import {
   resolveLinkedBookingMembers,
   type BookingGuestInput,
 } from "@/lib/booking-guests";
-import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import {
+  assertMembershipTypeBookingAllowed,
+  priceBookingGuestsWithMembershipTypePolicy,
+  requiresPaidSubscriptionForMemberForBooking,
+} from "@/lib/membership-type-policy";
+import {
   calculateBookingHoldDecision,
-  priceBookingGuests,
   toGroupDiscountConfig,
   toGuestPricingInputs,
   toSeasonRateData,
@@ -561,10 +564,22 @@ export async function joinGroupBookingAsMember(
     );
   }
 
+  const seasonYear = getSeasonYear(checkIn);
+  await assertMembershipTypeBookingAllowed(prisma, {
+    ownerMemberId: sessionUserId,
+    guests,
+    seasonYear,
+  });
+
   // Same eligibility gates as POST /api/bookings (skipped for admins).
   if (sessionRole !== "ADMIN") {
-    if (await requiresPaidSubscriptionForBooking(joiner.ageTier)) {
-      const seasonYear = getSeasonYear(checkIn);
+    if (
+      await requiresPaidSubscriptionForMemberForBooking(prisma, {
+        memberId: sessionUserId,
+        seasonYear,
+        ageTier: joiner.ageTier,
+      })
+    ) {
       const paidSub = await prisma.memberSubscription.findFirst({
         where: { memberId: sessionUserId, seasonYear, status: "PAID" },
         select: { id: true },
@@ -1028,7 +1043,7 @@ export async function verifyAndCreateNonMemberJoin(
     include: { rates: true },
   });
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
-  const price = priceBookingGuests({
+  const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
     checkIn,
     checkOut,
     guests: toGuestPricingInputs(guests),

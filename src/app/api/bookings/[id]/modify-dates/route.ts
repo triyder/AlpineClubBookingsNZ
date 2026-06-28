@@ -4,6 +4,10 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { modifyBookingDates } from "@/lib/booking-date-modification-service";
+import {
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+} from "@/lib/membership-type-policy";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const modifyDatesSchema = z
@@ -65,6 +69,12 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

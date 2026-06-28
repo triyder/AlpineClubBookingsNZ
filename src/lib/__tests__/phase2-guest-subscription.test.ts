@@ -580,7 +580,8 @@ describe("P2.3: Guest subscription check", () => {
           stayEnd: new Date("2026-12-04T00:00:00.000Z"),
         }),
       ],
-      expect.any(Array)
+      expect.any(Array),
+      undefined
     );
   });
 

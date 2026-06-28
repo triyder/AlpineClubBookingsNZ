@@ -245,6 +245,14 @@ export async function listAdminMembers(
   );
   const notRequiredSubscriptionConditions = [
     { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
+    {
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: currentSeasonYear,
+          membershipType: { subscriptionBehavior: "NOT_REQUIRED" },
+        },
+      },
+    },
     ...(notRequiredAgeTiers.size > 0
       ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
       : []),
@@ -426,6 +434,7 @@ export async function listAdminMembers(
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
       { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
+      { NOT: { OR: notRequiredSubscriptionConditions } },
       {
         subscriptions: { none: { seasonYear: currentSeasonYear } },
       },
@@ -438,6 +447,7 @@ export async function listAdminMembers(
   ) {
     andConditions.push(
       { role: { notIn: [...OPERATIONAL_ROLE_VALUES] } },
+      { NOT: { OR: notRequiredSubscriptionConditions } },
       {
         subscriptions: {
           some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
@@ -565,6 +575,15 @@ export async function listAdminMembers(
       select: { status: true, seasonYear: true, xeroInvoiceId: true },
       take: 1,
     },
+    seasonalMembershipAssignments: {
+      where: { seasonYear: currentSeasonYear },
+      select: {
+        membershipType: {
+          select: { subscriptionBehavior: true },
+        },
+      },
+      take: 1,
+    },
     passwordResetTokens: {
       orderBy: { createdAt: "desc" as const },
       take: 1,
@@ -623,23 +642,30 @@ export async function listAdminMembers(
       latestToken.expiresAt > now
         ? latestToken.expiresAt
         : null;
+    const membershipTypeNotRequired = (m.seasonalMembershipAssignments ?? []).some(
+      (assignment) =>
+        assignment.membershipType.subscriptionBehavior === "NOT_REQUIRED",
+    );
+    const subscriptionNotRequired =
+      roleNeverRequiresSubscription(m.role) ||
+      notRequiredAgeTiers.has(m.ageTier) ||
+      membershipTypeNotRequired;
 
     return {
       ...m,
       subscriptionStatus:
-        roleNeverRequiresSubscription(m.role) || notRequiredAgeTiers.has(m.ageTier)
+        subscriptionNotRequired
           ? "NOT_REQUIRED"
           : (m.subscriptions[0]?.status ?? null),
       subscriptionXeroInvoiceId:
-        roleNeverRequiresSubscription(m.role) || notRequiredAgeTiers.has(m.ageTier)
-          ? null
-          : (m.subscriptions[0]?.xeroInvoiceId ?? null),
+        m.subscriptions[0]?.xeroInvoiceId ?? null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,
       })),
       parentLinks: buildParentLinks(m),
       subscriptions: undefined,
+      seasonalMembershipAssignments: undefined,
       familyGroupMemberships: undefined,
       passwordResetTokens: undefined,
       passwordChangedAt: undefined,

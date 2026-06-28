@@ -6,10 +6,16 @@ import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
-  calculateBookingPrice,
   getStayNights,
   type SeasonRateData,
 } from "@/lib/pricing";
+import {
+  applyMembershipTypeRatePolicyToGuests,
+  assertMembershipTypeBookingAllowed,
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import { calculateChangeFee } from "@/lib/change-fee";
 import {
   daysUntilDate,
@@ -51,6 +57,7 @@ import {
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
 import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import { getSeasonYear } from "@/lib/utils";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -511,6 +518,7 @@ export async function POST(
   ];
 
   const totalGuestCount = guestsForPricing.length;
+  const seasonYear = getSeasonYear(newCheckIn);
 
   const lodgeCapacity = await getLodgeCapacity();
   if (totalGuestCount > lodgeCapacity) {
@@ -518,6 +526,22 @@ export async function POST(
       { error: `A booking cannot exceed ${lodgeCapacity} guests` },
       { status: 400 }
     );
+  }
+
+  try {
+    await assertMembershipTypeBookingAllowed(prisma, {
+      ownerMemberId: booking.memberId,
+      guests: guestsForPricing,
+      seasonYear,
+    });
+  } catch (error) {
+    if (error instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(error),
+        { status: error.status },
+      );
+    }
+    throw error;
   }
 
   if (session.user.role !== "ADMIN") {
@@ -564,6 +588,24 @@ export async function POST(
     })),
   }));
 
+  const policyAdjustedGuestsForPricing = await applyMembershipTypeRatePolicyToGuests(prisma, {
+    seasonYear,
+    guests: guestsForPricing,
+  });
+  const policyAdjustedAddGuests = normalizedAddGuestsWithRanges
+    ? await applyMembershipTypeRatePolicyToGuests(prisma, {
+        seasonYear,
+        guests: normalizedAddGuestsWithRanges,
+      })
+    : undefined;
+  const policyAdjustedExistingGuests = await applyMembershipTypeRatePolicyToGuests(prisma, {
+    seasonYear,
+    guests: booking.guests.map((guest) => ({
+      ...guest,
+      ageTier: guest.ageTier as AgeTier,
+    })),
+  });
+
   let inProgressPlan: BookingEditGuestRangePlan | null = null;
   try {
     inProgressPlan =
@@ -576,14 +618,11 @@ export async function POST(
             discountCents: booking.discountCents,
             promoAdjustmentCents: booking.promoAdjustmentCents,
             finalPriceCents: booking.finalPriceCents,
-            guests: booking.guests.map((guest) => ({
-              ...guest,
-              ageTier: guest.ageTier as AgeTier,
-            })),
+            guests: policyAdjustedExistingGuests,
           },
           editableFrom,
           newCheckOut,
-          addGuests: normalizedAddGuests,
+          addGuests: policyAdjustedAddGuests,
           removeGuestIds,
           seasons: seasonRateData,
         })
@@ -613,7 +652,7 @@ export async function POST(
       : await checkCapacityForGuestRanges(
           newCheckIn,
           newCheckOut,
-          guestsForPricing,
+          policyAdjustedGuestsForPricing,
           bookingId
         );
 
@@ -627,15 +666,23 @@ export async function POST(
     if (inProgressPlan) {
       newTotalPriceCents = inProgressPlan.newTotalPriceCents;
     } else {
-      priceBreakdown = calculateBookingPrice(
-        newCheckIn,
-        newCheckOut,
-        guestsForPricing,
-        seasonRateData
-      );
+      priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+        ownerMemberId: booking.memberId,
+        checkIn: newCheckIn,
+        checkOut: newCheckOut,
+        guests: policyAdjustedGuestsForPricing,
+        seasons: seasonRateData,
+        seasonYear,
+      });
       newTotalPriceCents = priceBreakdown.totalPriceCents;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(error),
+        { status: error.status },
+      );
+    }
     return NextResponse.json(
       { error: "No season rate found for the requested dates" },
       { status: 400 }
@@ -685,29 +732,34 @@ export async function POST(
     const oldRemainingForPricing = remainingGuests.map((g) => ({
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
+      memberId: g.memberId ?? null,
       stayStart: normalizeDateOnlyForTimeZone(g.stayStart ?? booking.checkIn),
       stayEnd: normalizeDateOnlyForTimeZone(g.stayEnd ?? booking.checkOut),
     }));
     const newRemainingForPricing = proposedRemainingGuests.map((entry) => ({
       ageTier: entry.guest.ageTier as AgeTier,
       isMember: entry.guest.isMember,
+      memberId: entry.guest.memberId ?? null,
       stayStart: entry.stayStart,
       stayEnd: entry.stayEnd,
     }));
 
     try {
-      const oldPriceForRemaining = calculateBookingPrice(
-        booking.checkIn,
-        booking.checkOut,
-        oldRemainingForPricing,
-        seasonRateData
-      );
-      const newPriceForRemaining = calculateBookingPrice(
-        newCheckIn,
-        newCheckOut,
-        newRemainingForPricing,
-        seasonRateData
-      );
+      const oldPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+        ownerMemberId: booking.memberId,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        guests: oldRemainingForPricing,
+        seasons: seasonRateData,
+      });
+      const newPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+        ownerMemberId: booking.memberId,
+        checkIn: newCheckIn,
+        checkOut: newCheckOut,
+        guests: newRemainingForPricing,
+        seasons: seasonRateData,
+        seasonYear,
+      });
       const dateChangeCost =
         newPriceForRemaining.totalPriceCents -
         oldPriceForRemaining.totalPriceCents;
@@ -764,19 +816,22 @@ export async function POST(
   } else if (normalizedAddGuestsWithRanges && normalizedAddGuestsWithRanges.length > 0) {
     for (const guest of normalizedAddGuestsWithRanges) {
       try {
-        const guestPrice = calculateBookingPrice(
-          newCheckIn,
-          newCheckOut,
-          [
+        const guestPrice = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+          ownerMemberId: booking.memberId,
+          checkIn: newCheckIn,
+          checkOut: newCheckOut,
+          guests: [
             {
               ageTier: guest.ageTier,
               isMember: guest.isMember,
+              memberId: guest.memberId ?? null,
               stayStart: guest.stayStart,
               stayEnd: guest.stayEnd,
             },
           ],
-          seasonRateData
-        );
+          seasons: seasonRateData,
+          seasonYear,
+        });
         const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
         const memberLabel = guest.isMember ? "Member" : "Non-member";
         itemizedChanges.push({

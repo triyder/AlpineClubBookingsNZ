@@ -40,12 +40,16 @@ import {
 } from "@/lib/promo";
 import { prisma } from "@/lib/prisma";
 import {
-  calculateBookingPrice,
   type SeasonRateData,
 } from "@/lib/pricing";
+import {
+  assertMembershipTypeBookingAllowed,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { getSeasonYear } from "@/lib/utils";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -274,15 +278,23 @@ export async function modifyBookingDates({
       isMember: g.isMember,
       memberId: g.memberId ?? null,
     }));
+    const seasonYear = getSeasonYear(newCheckIn);
+    await assertMembershipTypeBookingAllowed(tx, {
+      ownerMemberId: booking.memberId,
+      guests: guestsForPricing,
+      seasonYear,
+    });
 
     let priceBreakdown;
     try {
-      priceBreakdown = calculateBookingPrice(
-        newCheckIn,
-        newCheckOut,
-        guestsForPricing,
-        seasonRateData,
-      );
+      priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+        ownerMemberId: booking.memberId,
+        checkIn: newCheckIn,
+        checkOut: newCheckOut,
+        guests: guestsForPricing,
+        seasons: seasonRateData,
+        seasonYear,
+      });
     } catch {
       throw new ApiError(
         "No season rate found for the requested dates",

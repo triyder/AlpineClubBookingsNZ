@@ -10,6 +10,10 @@ import {
   BookingGuestRemovalError,
   removeBookingGuestInTransaction,
 } from "@/lib/booking-guest-removal-service";
+import {
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+} from "@/lib/membership-type-policy";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
 import { enqueueBookingModificationRefundRecovery } from "@/lib/payment-recovery";
 
@@ -152,6 +156,12 @@ export async function DELETE(
       choreWarnings: result.choreWarnings,
     });
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     if (err instanceof BookingGuestRemovalError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

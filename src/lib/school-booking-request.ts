@@ -56,6 +56,7 @@ import {
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 import logger from "@/lib/logger";
+import { assertMembershipTypeBookingAllowed } from "@/lib/membership-type-policy";
 import {
   priceBookingGuests,
   toGroupDiscountConfig,
@@ -68,6 +69,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { nameField } from "@/lib/zod-helpers";
+import { getSeasonYear } from "@/lib/utils";
 
 /** Age tiers a school can request counts for. Teachers are always ADULT. */
 export const SCHOOL_CHILD_TIERS = [
@@ -543,6 +545,10 @@ export async function approveSchoolBookingRequest(input: {
           stayEnd: request.checkOut,
           priceCents: guestPriceCents[index],
         };
+      });
+      await assertMembershipTypeBookingAllowed(tx, {
+        guests: guestCreates,
+        seasonYear: getSeasonYear(request.checkIn),
       });
 
       let booking: { id: string };

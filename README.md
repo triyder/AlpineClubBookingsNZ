@@ -70,12 +70,13 @@ fork for another organisation. See `NOTICE.md`.
    until an admin enables them. General-purpose modules default on and can be
    disabled there.
 6. Use **Admin > Membership Types** to review the seeded seasonal membership
-   types: Full, Associate, Reserve, and Life. These records store future
-   booking-rate and subscription policy without changing access roles or
-   current booking/subscription enforcement. Admins assign a member's seasonal
-   type from that member's admin detail page after previewing affected future
-   bookings, drafts, waitlist records, and subscription history; existing future
-   bookings are not automatically repriced by this change.
+   types: Full, Associate, Reserve, and Life. These records drive
+   season-aware booking policy (`MEMBER_RATE`, `NON_MEMBER_RATE`,
+   `BLOCK_BOOKING`) and subscription policy (`REQUIRED`, `NOT_REQUIRED`)
+   without changing access roles. Admins assign a member's seasonal type from
+   that member's admin detail page after previewing affected future bookings,
+   drafts, waitlist records, and subscription history; existing future bookings
+   are not automatically repriced by this change.
 7. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 

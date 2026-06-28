@@ -32,6 +32,7 @@ import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
+import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -155,7 +156,14 @@ export default async function ProfilePage({
   if (!member) redirect("/login");
 
   const currentSub = member.subscriptions.find(s => s.seasonYear === currentSeasonYear);
-  const subscriptionStatus = currentSub?.status ?? null;
+  const subscriptionRequired = await requiresPaidSubscriptionForMemberForBooking(prisma, {
+    memberId: member.id,
+    seasonYear: currentSeasonYear,
+    ageTier: member.ageTier,
+  });
+  const subscriptionStatus = subscriptionRequired
+    ? currentSub?.status ?? null
+    : "NOT_REQUIRED";
   const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);

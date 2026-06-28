@@ -3,8 +3,11 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
-import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
+import {
+  requiresPaidSubscriptionForMemberForBooking,
+  resolveMembershipTypePolicyForMember,
+} from "@/lib/membership-type-policy";
 
 export async function GET() {
   const session = await auth();
@@ -40,17 +43,41 @@ export async function GET() {
   });
 
   const sub = member?.subscriptions[0] ?? null;
-  // Reports NOT_REQUIRED when the Xero module is effectively off so the
-  // booking UI never blocks on a subscription that cannot be invoiced.
-  const subscriptionRequired =
-    !roleNeverRequiresSubscription(member?.role ?? "MEMBER") &&
-    await requiresPaidSubscriptionForBooking(member?.ageTier);
+  const membershipTypePolicy = await resolveMembershipTypePolicyForMember(prisma, {
+    memberId: session.user.id,
+    seasonYear,
+  });
+  // Reports NOT_REQUIRED when the effective booking lockout does not apply:
+  // operational roles, membership types that opt out, non-billable age tiers,
+  // or Xero/lockout disabled. Raw invoice fields remain available below.
+  const subscriptionRequired = await requiresPaidSubscriptionForMemberForBooking(prisma, {
+    memberId: session.user.id,
+    seasonYear,
+    ageTier: member?.ageTier,
+  });
   const status = sub?.status ?? "NOT_INVOICED";
+  const effectiveStatus = subscriptionRequired ? status : "NOT_REQUIRED";
+  const effectiveStatusReason = subscriptionRequired
+    ? "REQUIRED"
+    : roleNeverRequiresSubscription(member?.role ?? "MEMBER")
+      ? "ROLE_NOT_REQUIRED"
+      : membershipTypePolicy?.subscriptionBehavior === "NOT_REQUIRED"
+        ? "MEMBERSHIP_TYPE_NOT_REQUIRED"
+        : "LOCKOUT_DISABLED_OR_AGE_TIER_NOT_REQUIRED";
 
   return NextResponse.json({
-    status: subscriptionRequired ? status : "NOT_REQUIRED",
+    status: effectiveStatus,
+    rawStatus: status,
+    subscriptionRequired,
+    effectiveStatusReason,
     seasonDisplay,
     invoiceUrl: subscriptionRequired ? sub?.xeroOnlineInvoiceUrl ?? null : null,
     invoiceNumber: subscriptionRequired ? sub?.xeroInvoiceNumber ?? null : null,
+    rawInvoiceUrl: sub?.xeroOnlineInvoiceUrl ?? null,
+    rawInvoiceNumber: sub?.xeroInvoiceNumber ?? null,
+    membershipTypeKey: membershipTypePolicy?.membershipType.key ?? null,
+    membershipTypeName: membershipTypePolicy?.membershipType.name ?? null,
+    membershipTypeSubscriptionBehavior:
+      membershipTypePolicy?.subscriptionBehavior ?? null,
   });
 }

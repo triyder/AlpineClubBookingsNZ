@@ -124,8 +124,9 @@ season roll-forward dry-run -> reviewed exceptions -> idempotent copy
 The preview reports future confirmed bookings, draft bookings, waitlist records,
 current subscription state, recent subscription history, and resulting booking
 and subscription behavior. The save does not reprice existing future bookings,
-rewrite subscription/payment/Xero history, or enforce the resulting behavior;
-those transitions belong to later enforcement work.
+rewrite subscription/payment/Xero history, or call provider systems. The saved
+assignment is enforced the next time a booking is quoted, created, confirmed
+from draft, joined, or repriced by an allowed modification path.
 
 ## Refund And Credit Lifecycle
 
@@ -198,19 +199,23 @@ To verify: duplicate applicant behavior, nomination expiry, setup invite
 creation, Xero entrance-fee invoice path, reminder renewal, admin refresh,
 nominator replacement, and email retry behavior.
 
-## Seasonal Membership Type Foundation
+## Seasonal Membership Type Policy
 
 ```text
 built-in type seeded -> admin reviews policy -> type edited/reordered
 custom type created -> active -> archived -> reactivated
 member role backfill -> current-season assignment created if missing
+booking quote/create/modify -> resolve season assignment/default -> member rate, non-member rate, or block
+subscription display/gate -> resolve season assignment/default -> required or not required
 ```
 
-The foundation stores type policy and assignments only. It does not transition
-booking, subscription, Xero, or access-control state. `ADMIN` and `LODGE`
-current-season assignments seed as Full, but their operational subscription
-exemption remains governed by the existing role-based helper until the
-enforcement state machine is added.
+Runtime booking paths resolve the policy for the booking season. `BLOCK_BOOKING`
+stops owners or linked member guests with a structured policy error.
+`NON_MEMBER_RATE` uses non-member nightly rates while keeping the stored member
+identity. `NOT_REQUIRED` changes effective subscription lockout and display
+without deleting raw subscription, payment, or Xero invoice history. `ADMIN` and
+`LODGE` operational subscription exemptions remain governed by the role-based
+helper, separate from seasonal type policy.
 
 ## Nomination Lifecycle
 

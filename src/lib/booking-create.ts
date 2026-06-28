@@ -32,10 +32,10 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
-  priceBookingGuests,
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
+import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   redeemPromoCode,
@@ -655,7 +655,14 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     });
     const seasonData = toSeasonRateData(seasons);
     const guestInputs = toGuestPricingInputs(guests);
-    const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
+    const price = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+      ownerMemberId: effectiveMemberId,
+      checkIn,
+      checkOut,
+      guests: guestInputs,
+      seasons: seasonData,
+      groupDiscount,
+    });
 
     let discountCents = 0;
     let promoAdjustmentCents = 0;
@@ -962,7 +969,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       });
       const seasonData = toSeasonRateData(seasons);
       const guestInputs = toGuestPricingInputs(primaryGuests);
-      const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
+      const price = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+        ownerMemberId: effectiveMemberId,
+        checkIn,
+        checkOut,
+        guests: guestInputs,
+        seasons: seasonData,
+        groupDiscount,
+      });
 
       let discountCents = 0;
       let promoAdjustmentCents = 0;
@@ -1172,7 +1186,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // with the member booking that is charged up front.
       if (splitBooking) {
         const childGuestInputs = toGuestPricingInputs(nonMemberGuests);
-        const childPrice = priceBookingGuests({
+        const childPrice = await priceBookingGuestsWithMembershipTypePolicy(tx, {
           checkIn,
           checkOut,
           guests: childGuestInputs,
@@ -1464,7 +1478,14 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   });
   const seasonData = toSeasonRateData(seasons);
   const guestInputs = toGuestPricingInputs(guests);
-  const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
+  const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+    ownerMemberId: effectiveMemberId,
+    checkIn,
+    checkOut,
+    guests: guestInputs,
+    seasons: seasonData,
+    groupDiscount,
+  });
 
   let discountCents = 0;
   let promoAdjustmentCents = 0;

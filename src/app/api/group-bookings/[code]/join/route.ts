@@ -19,6 +19,10 @@ import {
   BookingReviewJustificationRequiredError,
 } from "@/lib/booking-create";
 import {
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+} from "@/lib/membership-type-policy";
+import {
   BOOKING_PAYMENT_METHOD_VALUES,
   DEFAULT_BOOKING_PAYMENT_METHOD,
 } from "@/lib/booking-payment-methods";
@@ -107,6 +111,12 @@ export async function POST(
     );
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     if (err instanceof GroupBookingError) {
       return NextResponse.json(
         { error: err.message, code: err.code, details: err.details },

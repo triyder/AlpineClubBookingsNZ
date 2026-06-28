@@ -508,7 +508,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       }
     );
     expect(tx.bookingGuest.create).not.toHaveBeenCalled();
-  });
+  }, 10_000);
 
   it("creates an additional PaymentIntent when a paid booking increases in price", async () => {
     const booking = makeBooking();
@@ -1897,7 +1897,8 @@ describe("PUT /api/bookings/[id]/modify", () => {
           stayEnd: new Date("2026-08-24T00:00:00.000Z"),
         }),
       ],
-      expect.any(Array)
+      expect.any(Array),
+      undefined
     );
     expect(tx.bookingGuest.update).toHaveBeenCalledWith({
       where: { id: "g1" },

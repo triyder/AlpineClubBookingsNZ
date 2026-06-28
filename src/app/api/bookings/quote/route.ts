@@ -4,10 +4,14 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
   isGroupDiscountAppliedToBooking,
-  priceBookingGuests,
   toGroupDiscountConfig,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
+import {
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+  priceBookingGuestsWithMembershipTypePolicy,
+} from "@/lib/membership-type-policy";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
@@ -138,7 +142,8 @@ export async function POST(request: NextRequest) {
   const groupDiscount = toGroupDiscountConfig(gds);
 
   try {
-    const price = priceBookingGuests({
+    const price = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
+      ownerMemberId: effectiveMemberId,
       checkIn,
       checkOut,
       guests,
@@ -161,6 +166,12 @@ export async function POST(request: NextRequest) {
       groupDiscountApplied,
     });
   } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to calculate price";
     return NextResponse.json({ error: message }, { status: 400 });
   }

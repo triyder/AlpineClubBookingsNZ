@@ -991,7 +991,8 @@ describe("POST /api/bookings/[id]/guests", () => {
       booking.checkIn,
       booking.checkOut,
       [expect.objectContaining({ isMember: false, ageTier: "ADULT", memberId: null })],
-      expect.any(Array)
+      expect.any(Array),
+      undefined
     );
     expect(tx.bookingGuest.create).toHaveBeenCalledWith(
       expect.objectContaining({

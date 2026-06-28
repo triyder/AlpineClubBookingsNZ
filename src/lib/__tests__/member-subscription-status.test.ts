@@ -25,6 +25,9 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
       mockLoadEffectiveModuleFlags(...args),
   };
 });
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: vi.fn(async () => 3),
+}));
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -75,12 +78,20 @@ describe("GET /api/member/subscription-status", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body).toEqual({
+    expect(body).toEqual(expect.objectContaining({
       status: "UNPAID",
+      rawStatus: "UNPAID",
+      subscriptionRequired: true,
+      effectiveStatusReason: "REQUIRED",
       seasonDisplay: "2026/2027",
       invoiceUrl: "https://pay.xero.com/invoice/inv-1",
       invoiceNumber: "INV-0042",
-    });
+      rawInvoiceUrl: "https://pay.xero.com/invoice/inv-1",
+      rawInvoiceNumber: "INV-0042",
+      membershipTypeKey: null,
+      membershipTypeName: null,
+      membershipTypeSubscriptionBehavior: null,
+    }));
     expect(mockFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "member-1" },
@@ -119,6 +130,7 @@ describe("GET /api/member/subscription-status", () => {
 
     expect(mockFindUnique).toHaveBeenCalledTimes(1);
     expect(body.invoiceUrl).toBeNull();
+    expect(body.rawInvoiceNumber).toBe("INV-0042");
   });
 
   it("returns not required for members whose age tier does not require subscriptions", async () => {
@@ -134,6 +146,8 @@ describe("GET /api/member/subscription-status", () => {
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("NOT_REQUIRED");
+    expect(body.subscriptionRequired).toBe(false);
+    expect(body.rawStatus).toBe("NOT_INVOICED");
     expect(body.invoiceUrl).toBeNull();
   });
 
@@ -166,8 +180,12 @@ describe("GET /api/member/subscription-status", () => {
 
     expect(res.status).toBe(200);
     expect(body.status).toBe("NOT_REQUIRED");
+    expect(body.rawStatus).toBe("UNPAID");
+    expect(body.subscriptionRequired).toBe(false);
     expect(body.invoiceUrl).toBeNull();
     expect(body.invoiceNumber).toBeNull();
+    expect(body.rawInvoiceUrl).toBe("https://pay.xero.com/invoice/inv-1");
+    expect(body.rawInvoiceNumber).toBe("INV-0042");
   });
 
   it("returns 401 when unauthenticated", async () => {

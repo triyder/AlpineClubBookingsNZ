@@ -11,7 +11,12 @@ import {
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
+import {
+  assertMembershipTypeBookingAllowed,
+  getMembershipTypeBookingPolicyErrorBody,
+  MembershipTypeBookingPolicyError,
+  requiresPaidSubscriptionForMemberForBooking,
+} from "@/lib/membership-type-policy";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(
@@ -54,15 +59,35 @@ export async function POST(
     );
   }
 
+  const seasonYear = getSeasonYear(new Date(booking.checkIn));
+  try {
+    await assertMembershipTypeBookingAllowed(prisma, {
+      ownerMemberId: booking.memberId,
+      guests: booking.guests,
+      seasonYear,
+    });
+  } catch (err) {
+    if (err instanceof MembershipTypeBookingPolicyError) {
+      return NextResponse.json(
+        getMembershipTypeBookingPolicyErrorBody(err),
+        { status: err.status },
+      );
+    }
+    throw err;
+  }
+
   // Subscription check (non-admins only; bypassed when the Xero module is
   // effectively off, because subscriptions are invoiced through Xero)
   if (
     session.user.role !== "ADMIN" &&
-    await requiresPaidSubscriptionForBooking(booking.member.ageTier)
+    await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: booking.memberId,
+      seasonYear,
+      ageTier: booking.member.ageTier,
+    })
   ) {
-    const seasonYear = getSeasonYear(new Date(booking.checkIn));
     const paidSub = await prisma.memberSubscription.findFirst({
-      where: { memberId: session.user.id, seasonYear, status: "PAID" },
+      where: { memberId: booking.memberId, seasonYear, status: "PAID" },
     });
     if (!paidSub) {
       const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;

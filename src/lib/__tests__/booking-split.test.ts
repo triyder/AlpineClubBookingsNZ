@@ -98,6 +98,25 @@ import { createConfirmedBooking, type BookingGuestInput } from "@/lib/booking-cr
 
 const checkIn = new Date("2026-09-10T00:00:00.000Z");
 const checkOut = new Date("2026-09-12T00:00:00.000Z");
+const mockSeasons = [
+  {
+    id: "season-1",
+    startDate: new Date("2026-09-01T00:00:00.000Z"),
+    endDate: new Date("2026-09-30T00:00:00.000Z"),
+    rates: [
+      {
+        ageTier: AgeTier.ADULT,
+        isMember: true,
+        pricePerNightCents: 2500,
+      },
+      {
+        ageTier: AgeTier.ADULT,
+        isMember: false,
+        pricePerNightCents: 5000,
+      },
+    ],
+  },
+];
 
 let createdCount = 0;
 const tx = {
@@ -151,7 +170,7 @@ describe("createConfirmedBooking split bookings (#738)", () => {
     createdCount = 0;
     h.transaction.mockImplementation(async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx));
     h.executeRaw.mockResolvedValue(undefined);
-    h.seasonFindMany.mockResolvedValue([]);
+    h.seasonFindMany.mockResolvedValue(mockSeasons);
     h.checkCapacityForGuestRanges.mockResolvedValue({ available: true, nightDetails: [] });
     h.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     h.bookingUpdate.mockResolvedValue({});
