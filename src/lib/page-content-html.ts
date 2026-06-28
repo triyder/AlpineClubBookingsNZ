@@ -3,6 +3,10 @@ import "server-only";
 import sanitizeHtml from "sanitize-html";
 import { prisma } from "@/lib/prisma";
 import type { EditablePageRecord } from "@/lib/page-content";
+import {
+  toStructuredContentValues,
+  type StructuredContentValues,
+} from "@/lib/page-content-schema";
 
 function extractPixelDimension(
   style: string,
@@ -156,6 +160,65 @@ export function pageContentHtmlToPlainText(html: string): string {
     .trim();
 }
 
+/**
+ * Strips markup from a structured-content string while PRESERVING newlines and
+ * decoding entities back to plain characters. Unlike pageContentHtmlToPlainText
+ * (used for meta descriptions) this keeps paragraph/line breaks intact for the
+ * multi-line body sections, and decodes &amp;/&lt;/&gt;/&quot;/&#39; so an
+ * ampersand stays an ampersand rather than rendering as "&amp;". Design pages
+ * render the result as escaped React text, so this is plain-text hygiene, not
+ * the security boundary.
+ */
+function toStructuredPlainText(value: string): string {
+  const lineBreakNormalized = value.replace(/<br\s*\/?>/gi, "\n");
+  const stripped = sanitizeHtml(lineBreakNormalized, {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
+  return (
+    stripped
+      // Decode the entities sanitize-html emits for text (decode &amp; last).
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#0?39;|&apos;/gi, "'")
+      .replace(/&amp;/gi, "&")
+      // Normalise line endings, trim trailing spaces, cap blank-line runs.
+      .replace(/\r\n?/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
+}
+
+/**
+ * Plain-text only: strips all markup from every string in a structured-content
+ * object (scalar values and every cell of every row). Design pages render these
+ * as escaped React text, never as HTML, so this is belt-and-braces against any
+ * markup sneaking in through the API or a hand-edited record.
+ */
+export function sanitizeStructuredContent(
+  value: unknown,
+): StructuredContentValues {
+  const coerced = toStructuredContentValues(value);
+  const out: StructuredContentValues = {};
+  for (const [key, raw] of Object.entries(coerced)) {
+    if (typeof raw === "string") {
+      out[key] = toStructuredPlainText(raw);
+    } else {
+      out[key] = raw.map((row) => {
+        const cleaned: Record<string, string> = {};
+        for (const [cellKey, cellValue] of Object.entries(row)) {
+          cleaned[cellKey] = toStructuredPlainText(cellValue);
+        }
+        return cleaned;
+      });
+    }
+  }
+  return out;
+}
+
 function toEditablePageRecord(record: {
   id: string;
   slug: string;
@@ -166,6 +229,7 @@ function toEditablePageRecord(record: {
   path: string;
   sortOrder: number;
   contentHtml: string;
+  structuredContent: unknown;
   updatedAt: Date;
   updatedByMemberId: string | null;
 }): EditablePageRecord {
@@ -179,6 +243,8 @@ function toEditablePageRecord(record: {
     path: record.path,
     sortOrder: record.sortOrder,
     contentHtml: record.contentHtml,
+    // Re-strip on read: editor and public render both treat these as plain text.
+    structuredContent: sanitizeStructuredContent(record.structuredContent),
     updatedAt: record.updatedAt.toISOString(),
     updatedByMemberId: record.updatedByMemberId,
   };
@@ -194,6 +260,7 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
   path: string;
   sortOrder: number;
   contentHtml: string;
+  structuredContent: StructuredContentValues;
 } | null> {
   const record = await prisma.pageContent.findUnique({
     where: { path },
@@ -207,6 +274,7 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
       path: true,
       sortOrder: true,
       contentHtml: true,
+      structuredContent: true,
     },
   });
 
@@ -230,6 +298,8 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
     path: record.path,
     sortOrder: record.sortOrder,
     contentHtml: safeContentHtml,
+    // Design pages render these as escaped React text; strip markup anyway.
+    structuredContent: sanitizeStructuredContent(record.structuredContent),
   };
 }
 

@@ -55,6 +55,12 @@ import {
 } from "@/components/ui/dialog";
 import type { EditablePageRecord } from "@/lib/page-content";
 import { isSystemPageSlug, SYSTEM_PAGE_SLUGS } from "@/lib/page-content";
+import {
+  buildEditableStructuredValues,
+  getPageContentSchema,
+  type StructuredContentValues,
+} from "@/lib/page-content-schema";
+import { StructuredContentEditor } from "@/components/admin/structured-content-editor";
 
 function stripHtml(html: string): string {
   return html
@@ -1356,6 +1362,8 @@ export function PageContentPanel() {
   const [draftSlug, setDraftSlug] = useState("");
   const [draftSortOrder, setDraftSortOrder] = useState(100);
   const [draftContent, setDraftContent] = useState("");
+  const [draftStructured, setDraftStructured] =
+    useState<StructuredContentValues>({});
   const [newCaption, setNewCaption] = useState("");
   const [newMenuTitle, setNewMenuTitle] = useState("");
   const [newTitle, setNewTitle] = useState("");
@@ -1368,6 +1376,13 @@ export function PageContentPanel() {
   const selectedPage = useMemo(
     () => pages.find((page) => page.id === selectedPageId) ?? null,
     [pages, selectedPageId],
+  );
+
+  // Schema-backed pages open the plain-text structured editor; everything else
+  // keeps the rich-text HTML editor.
+  const selectedSchema = useMemo(
+    () => (selectedPage ? getPageContentSchema(selectedPage.path) : null),
+    [selectedPage],
   );
 
   async function loadPages() {
@@ -1406,12 +1421,24 @@ export function PageContentPanel() {
     // Always use the canonical sort order for system pages regardless of DB value.
     setDraftSortOrder(SYSTEM_PAGE_SLUGS.get(page.slug) ?? page.sortOrder);
     setDraftContent(page.contentHtml ?? "");
+    // Design pages: pre-fill the structured editor with stored values or the
+    // in-code defaults so it always opens showing real copy.
+    const schema = getPageContentSchema(page.path);
+    setDraftStructured(
+      schema
+        ? buildEditableStructuredValues(schema, page.structuredContent)
+        : {},
+    );
     setDialogOpen(true);
   }
 
   async function saveContent() {
     if (!selectedPage) return;
 
+    const isDesignPage = Boolean(selectedSchema);
+    // Design pages send their existing contentHtml/headerText unchanged (the
+    // PUT schema requires them) plus the structured values; the rich-text
+    // editors are not rendered for them, so the refs are null.
     const currentContent = bodyEditorRef.current?.getHtml() ?? draftContent;
     const currentHeaderText =
       headerEditorRef.current?.getHtml() ?? draftHeaderText;
@@ -1433,6 +1460,7 @@ export function PageContentPanel() {
           slug: draftSlug.trim().toLowerCase(),
           sortOrder: draftSortOrder,
           contentHtml: currentContent,
+          ...(isDesignPage ? { structuredContent: draftStructured } : {}),
         }),
       });
 
@@ -1455,6 +1483,9 @@ export function PageContentPanel() {
                   path: body.page?.path ?? page.path,
                   sortOrder: body.page?.sortOrder ?? draftSortOrder,
                   contentHtml: body.page?.contentHtml ?? draftContent,
+                  structuredContent:
+                    body.page?.structuredContent ??
+                    (selectedSchema ? draftStructured : page.structuredContent),
                   updatedAt: body.page?.updatedAt ?? new Date().toISOString(),
                   updatedByMemberId:
                     body.page?.updatedByMemberId ?? page.updatedByMemberId,
@@ -1533,6 +1564,41 @@ export function PageContentPanel() {
       );
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function deletePage(page: EditablePageRecord) {
+    if (
+      !window.confirm(
+        `Delete "${page.title}"? This permanently removes the page and its content and cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/admin/page-content?id=${encodeURIComponent(page.id)}`,
+        {
+          method: "DELETE",
+          credentials: "same-origin",
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to delete page");
+      }
+
+      setPages((current) => current.filter((item) => item.id !== page.id));
+      if (selectedPageId === page.id) {
+        setSelectedPageId(null);
+        setDialogOpen(false);
+      }
+      toast.success(`Deleted ${page.title}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete page",
+      );
     }
   }
 
@@ -1684,17 +1750,6 @@ export function PageContentPanel() {
             </p>
             <p>
               <i>
-                <b>skifield-whakapapa</b>
-              </i>
-              <br />
-              This will fetch the Whakapapa report and render a parsed curlData
-              JSON object.
-              <br />
-              On this editor page do the following:{" "}
-              <code>{"{{skifield-whakapapa}}"}</code>
-            </p>
-            <p>
-              <i>
                 <b>photo-gallery</b>
               </i>
               <br />
@@ -1730,6 +1785,9 @@ export function PageContentPanel() {
           const textPreview = stripHtml(page.contentHtml);
           const hasContent = textPreview.length > 0;
           const isSystem = isSystemPageSlug(page.slug);
+          // Only admin-created content pages are deletable: system pages and
+          // built-in design pages (schema-backed) stay locked.
+          const canDelete = !isSystem && !getPageContentSchema(page.path);
           const hasMenuTitle = page.menuTitle.trim().length > 0;
 
           return (
@@ -1775,10 +1833,23 @@ export function PageContentPanel() {
                 <p className="text-xs text-slate-500">
                   Updated: {formatUpdatedAt(page.updatedAt)}
                 </p>
-                <Button type="button" onClick={() => openEditor(page)}>
-                  <Edit3 className="h-4 w-4" />
-                  Edit {page.title}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" onClick={() => openEditor(page)}>
+                    <Edit3 className="h-4 w-4" />
+                    Edit {page.title}
+                  </Button>
+                  {canDelete && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => deletePage(page)}
+                      className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
           );
@@ -1973,29 +2044,45 @@ export function PageContentPanel() {
                     />
                   </label>
                 </div>
-                <div className="space-y-1 md:col-span-2">
-                  <span className="text-xs font-medium text-slate-700">
-                    Header text
-                  </span>
-                  <WysiwygEditor
-                    ref={headerEditorRef}
-                    key={`header-${selectedPageId ?? "none"}`}
-                    value={draftHeaderText}
-                    onChange={setDraftHeaderText}
-                    placeholder="Short intro text shown under the title"
-                    editorClassName="min-h-28"
-                  />
-                </div>
+                {selectedSchema ? null : (
+                  <div className="space-y-1 md:col-span-2">
+                    <span className="text-xs font-medium text-slate-700">
+                      Header text
+                    </span>
+                    <WysiwygEditor
+                      ref={headerEditorRef}
+                      key={`header-${selectedPageId ?? "none"}`}
+                      value={draftHeaderText}
+                      onChange={setDraftHeaderText}
+                      placeholder="Short intro text shown under the title"
+                      editorClassName="min-h-28"
+                    />
+                  </div>
+                )}
               </div>
 
-              <WysiwygEditor
-                ref={bodyEditorRef}
-                key={selectedPageId ?? "none"}
-                value={draftContent}
-                onChange={setDraftContent}
-                placeholder="Enter page HTML here"
-                editorClassName="min-h-[320px]"
-              />
+              {selectedSchema ? (
+                <div className="space-y-2">
+                  <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    This page has structured copy slots for code-backed
+                    rendering. Edit the plain-text values below.
+                  </p>
+                  <StructuredContentEditor
+                    schema={selectedSchema}
+                    values={draftStructured}
+                    onChange={setDraftStructured}
+                  />
+                </div>
+              ) : (
+                <WysiwygEditor
+                  ref={bodyEditorRef}
+                  key={selectedPageId ?? "none"}
+                  value={draftContent}
+                  onChange={setDraftContent}
+                  placeholder="Enter page HTML here"
+                  editorClassName="min-h-[320px]"
+                />
+              )}
 
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                 <p className="font-medium text-slate-700">Embed Tokens</p>
@@ -2005,9 +2092,6 @@ export function PageContentPanel() {
                   {" {{token}}"}:
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
-                    skifield-whakapapa
-                  </span>
                   <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
                     skifield-conditions
                   </span>
@@ -2030,10 +2114,6 @@ export function PageContentPanel() {
                     photo-slideshow
                   </span>
                 </div>
-                <p className="mt-2 text-[11px] text-slate-500">
-                  Optional hash override:
-                  {" {{skifield-conditions:4297a04af31a54b9b4dc710057f5a492}}"}
-                </p>
               </div>
 
               <div className="flex justify-end gap-2">

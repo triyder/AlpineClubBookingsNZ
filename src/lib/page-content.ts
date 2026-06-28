@@ -1,3 +1,5 @@
+import type { StructuredContentValues } from "@/lib/page-content-schema";
+
 export type EditablePageRecord = {
   id: string;
   slug: string;
@@ -8,6 +10,7 @@ export type EditablePageRecord = {
   path: string;
   sortOrder: number;
   contentHtml: string;
+  structuredContent: StructuredContentValues;
   updatedAt: string | null;
   updatedByMemberId: string | null;
 };

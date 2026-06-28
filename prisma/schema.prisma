@@ -2181,6 +2181,7 @@ model PageContent {
   headerText        String   @default("")
   sortOrder         Int      @default(100)
   contentHtml       String
+  structuredContent Json     @default("{}")
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
