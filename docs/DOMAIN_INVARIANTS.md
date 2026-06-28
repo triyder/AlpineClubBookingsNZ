@@ -67,6 +67,9 @@ stores per-season membership policy, and committee assignment controls public
 committee/contact presentation only. Do not add committee positions to
 `Member.role`, and do not make booking, subscription, or Xero behavior depend on
 membership type until the explicit enforcement issue changes those paths.
+Seasonal membership type changes require a guarded admin preview and reasoned
+audit record. Existing future bookings are not automatically repriced by a type
+change.
 
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do

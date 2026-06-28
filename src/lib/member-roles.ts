@@ -23,6 +23,17 @@ export const OPERATIONAL_ROLE_VALUES = [
   "LODGE",
 ] as const satisfies readonly Role[];
 
+export const ASSIGNABLE_ACCESS_ROLE_VALUES = [
+  "MEMBER",
+  "ADMIN",
+  "LODGE",
+] as const satisfies readonly Role[];
+
+export const LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES = [
+  "ASSOCIATE",
+  "LIFE",
+] as const satisfies readonly Role[];
+
 export const MEMBER_IMPORT_ROLE_VALUES = [
   "MEMBER",
   "ADMIN",
@@ -54,4 +65,36 @@ export function isOperationalRole(
   return OPERATIONAL_ROLE_VALUES.includes(
     role as (typeof OPERATIONAL_ROLE_VALUES)[number],
   );
+}
+
+export function isLegacyMembershipCategoryRole(
+  role: string | null | undefined,
+): role is (typeof LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES)[number] {
+  return LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES.includes(
+    role as (typeof LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES)[number],
+  );
+}
+
+export function getAccessRoleOptions(currentRole?: AppRole | null): Array<{
+  value: AppRole;
+  label: string;
+  legacyMembershipCategory: boolean;
+}> {
+  const values: AppRole[] = [...ASSIGNABLE_ACCESS_ROLE_VALUES];
+
+  if (
+    currentRole &&
+    isLegacyMembershipCategoryRole(currentRole) &&
+    !values.includes(currentRole)
+  ) {
+    values.push(currentRole);
+  }
+
+  return values.map((value) => ({
+    value,
+    label: isLegacyMembershipCategoryRole(value)
+      ? `${ROLE_LABELS[value]} (legacy category)`
+      : ROLE_LABELS[value],
+    legacyMembershipCategory: isLegacyMembershipCategoryRole(value),
+  }));
 }

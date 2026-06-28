@@ -31,6 +31,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address";
+import { getAccessRoleOptions } from "@/lib/member-roles";
 import {
   linkMemberXeroContact,
   pushMemberToXero,
@@ -832,11 +833,13 @@ export function MemberEditorDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="MEMBER">Member</SelectItem>
-                    <SelectItem value="ADMIN">Admin</SelectItem>
-                    <SelectItem value="LODGE">Lodge</SelectItem>
-                    <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
-                    <SelectItem value="LIFE">Life Member</SelectItem>
+                    {getAccessRoleOptions(
+                      currentEditingMember?.role ?? form.role,
+                    ).map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

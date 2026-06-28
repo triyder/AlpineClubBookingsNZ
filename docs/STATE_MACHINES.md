@@ -111,6 +111,22 @@ SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.
 
+## Seasonal Membership Assignment Lifecycle
+
+```text
+seed/backfill creates current-season assignment
+admin previews member seasonal type change
+admin enters reason and saves with matching preview token
+audited assignment create/update
+season roll-forward dry-run -> reviewed exceptions -> idempotent copy
+```
+
+The preview reports future confirmed bookings, draft bookings, waitlist records,
+current subscription state, recent subscription history, and resulting booking
+and subscription behavior. The save does not reprice existing future bookings,
+rewrite subscription/payment/Xero history, or enforce the resulting behavior;
+those transitions belong to later enforcement work.
+
 ## Refund And Credit Lifecycle
 
 Known credit types: `CANCELLATION_REFUND`,

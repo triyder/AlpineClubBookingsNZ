@@ -42,6 +42,7 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import { genderEnum, titleEnum } from "@/lib/member-enums";
 import { ROLE_VALUES } from "@/lib/member-roles";
+import { serializeSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -336,6 +337,24 @@ export async function getAdminMemberDetail(params: {
         subscriptions: {
           orderBy: { seasonYear: "desc" },
         },
+        seasonalMembershipAssignments: {
+          orderBy: { seasonYear: "desc" },
+          include: {
+            membershipType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                description: true,
+                isActive: true,
+                isBuiltIn: true,
+                bookingBehavior: true,
+                subscriptionBehavior: true,
+                sortOrder: true,
+              },
+            },
+          },
+        },
         dependents: {
           orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
           select: {
@@ -515,6 +534,10 @@ export async function getAdminMemberDetail(params: {
       name: fg.familyGroup.name,
     })),
     familyGroupMemberships: undefined,
+    currentSeasonYear: getSeasonYear(),
+    seasonalMembershipAssignments: (
+      member.seasonalMembershipAssignments ?? []
+    ).map((assignment) => serializeSeasonalMembershipAssignment(assignment)),
     bookings,
     promoCodes: assignedPromoCodes,
     auditLogs: auditLogsWithActors,

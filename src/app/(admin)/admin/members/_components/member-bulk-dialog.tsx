@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { getAccessRoleOptions } from "@/lib/member-roles"
 import type { BulkAction, MemberRole } from "../_types"
 
 interface MemberBulkDialogProps {
@@ -85,11 +86,11 @@ export function MemberBulkDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="MEMBER">Member</SelectItem>
-                <SelectItem value="ADMIN">Admin</SelectItem>
-                <SelectItem value="LODGE">Lodge</SelectItem>
-                <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
-                <SelectItem value="LIFE">Life Member</SelectItem>
+                {getAccessRoleOptions().map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

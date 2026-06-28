@@ -243,6 +243,13 @@ assignment are separate axes:
   (`REQUIRED`, `NOT_REQUIRED`).
 - `SeasonalMembershipAssignment` records one membership type per member per
   membership `seasonYear`.
+- Admin member detail pages show access role separately from seasonal
+  membership type. Changing the seasonal type requires a preview and admin
+  reason; the preview counts future confirmed bookings, drafts, waitlist
+  records, and subscription history before the save is audited.
+- `/admin/membership-types` includes an idempotent roll-forward tool that copies
+  missing assignments from one season to another while leaving existing target
+  assignments unchanged and flagging missing or inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
 
@@ -251,6 +258,9 @@ lockout, Xero sync, or role-based authorization. `ADMIN` and `LODGE` are
 backfilled to the Full membership type for future policy alignment, but their
 current operational `NOT_REQUIRED` subscription behavior still comes from
 `roleNeverRequiresSubscription()` until the enforcement issue changes it.
+Seasonal membership type changes do not automatically reprice existing future
+bookings, rewrite subscription/Xero/payment history, or call external
+providers.
 
 ## Member Import And Addresses
 

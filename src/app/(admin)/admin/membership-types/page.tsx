@@ -5,6 +5,7 @@ import {
   Archive,
   ArrowDown,
   ArrowUp,
+  Eye,
   Loader2,
   Plus,
   RefreshCw,
@@ -32,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { getSeasonYear } from "@/lib/utils";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED";
@@ -51,6 +53,26 @@ interface MembershipType {
 
 interface MembershipTypesResponse {
   membershipTypes: MembershipType[];
+}
+
+interface RollForwardException {
+  code: "missing_prior_assignment" | "inactive_membership_type";
+  memberId: string;
+  memberName: string;
+  memberEmail: string;
+  membershipTypeName?: string;
+}
+
+interface RollForwardResponse {
+  fromSeasonYear: number;
+  toSeasonYear: number;
+  dryRun: boolean;
+  sourceAssignmentCount: number;
+  wouldCopyCount: number;
+  copiedCount: number;
+  skippedExistingCount: number;
+  exceptionCount: number;
+  exceptions: RollForwardException[];
 }
 
 interface DraftMembershipType {
@@ -112,7 +134,19 @@ function isDirty(type: MembershipType, draft: DraftMembershipType) {
   );
 }
 
+function formatSeasonLabel(seasonYear: number) {
+  return `${seasonYear}/${seasonYear + 1}`;
+}
+
+function rollForwardExceptionLabel(exception: RollForwardException) {
+  if (exception.code === "inactive_membership_type") {
+    return `Inactive type${exception.membershipTypeName ? `: ${exception.membershipTypeName}` : ""}`;
+  }
+  return "Missing prior assignment";
+}
+
 export default function AdminMembershipTypesPage() {
+  const defaultSeasonYear = getSeasonYear(new Date());
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftMembershipType>>({});
   const [newDraft, setNewDraft] = useState<DraftMembershipType>(emptyDraft);
@@ -120,6 +154,16 @@ export default function AdminMembershipTypesPage() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [reordering, setReordering] = useState(false);
+  const [rollForwardFromSeasonYear, setRollForwardFromSeasonYear] =
+    useState(defaultSeasonYear);
+  const [rollForwardToSeasonYear, setRollForwardToSeasonYear] = useState(
+    defaultSeasonYear + 1,
+  );
+  const [rollForwardMode, setRollForwardMode] = useState<
+    "preview" | "run" | null
+  >(null);
+  const [rollForwardResult, setRollForwardResult] =
+    useState<RollForwardResponse | null>(null);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
 
@@ -328,6 +372,59 @@ export default function AdminMembershipTypesPage() {
     void reorder(next);
   }
 
+  async function rollForwardAssignments(dryRun: boolean) {
+    setRollForwardMode(dryRun ? "preview" : "run");
+    setError("");
+    setSavedMessage("");
+
+    try {
+      const response = await fetch("/api/admin/membership-types/roll-forward", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromSeasonYear: rollForwardFromSeasonYear,
+          toSeasonYear: rollForwardToSeasonYear,
+          dryRun,
+        }),
+      });
+      const body = (await response.json()) as
+        | RollForwardResponse
+        | { error?: string };
+      if (!response.ok || !("wouldCopyCount" in body)) {
+        throw new Error(
+          responseErrorMessage(
+            body,
+            dryRun
+              ? "Failed to preview seasonal assignment roll-forward"
+              : "Failed to roll forward seasonal assignments",
+          ),
+        );
+      }
+      setRollForwardResult(body);
+      if (!dryRun) {
+        await loadMembershipTypes();
+      }
+      setSavedMessage(
+        dryRun
+          ? "Roll-forward preview ready."
+          : `Rolled forward ${body.copiedCount} seasonal assignment${
+              body.copiedCount === 1 ? "" : "s"
+            }.`,
+      );
+    } catch (rollForwardError) {
+      setError(
+        rollForwardError instanceof Error
+          ? rollForwardError.message
+          : dryRun
+            ? "Failed to preview seasonal assignment roll-forward"
+            : "Failed to roll forward seasonal assignments",
+      );
+    } finally {
+      setRollForwardMode(null);
+    }
+  }
+
   if (loading && membershipTypes.length === 0) {
     return (
       <div className="flex min-h-[320px] items-center justify-center">
@@ -371,6 +468,156 @@ export default function AdminMembershipTypesPage() {
           {error || savedMessage}
         </div>
       )}
+
+      <section className="rounded-md border border-slate-200 bg-white p-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">
+              Roll forward seasonal assignments
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-500">
+              Copy missing member membership-type assignments from one season to
+              the next. Existing target-season assignments are kept.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[150px_150px_auto_auto] sm:items-end">
+            <div className="space-y-2">
+              <Label htmlFor="roll-forward-from-season">From season</Label>
+              <Input
+                id="roll-forward-from-season"
+                type="number"
+                min={2020}
+                max={2040}
+                value={rollForwardFromSeasonYear}
+                onChange={(event) =>
+                  setRollForwardFromSeasonYear(
+                    Number.parseInt(event.target.value, 10) || 2020,
+                  )
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="roll-forward-to-season">To season</Label>
+              <Input
+                id="roll-forward-to-season"
+                type="number"
+                min={2020}
+                max={2040}
+                value={rollForwardToSeasonYear}
+                onChange={(event) =>
+                  setRollForwardToSeasonYear(
+                    Number.parseInt(event.target.value, 10) || 2020,
+                  )
+                }
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void rollForwardAssignments(true)}
+              disabled={
+                rollForwardMode !== null ||
+                rollForwardFromSeasonYear === rollForwardToSeasonYear
+              }
+            >
+              {rollForwardMode === "preview" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Eye className="mr-2 h-4 w-4" />
+              )}
+              Preview
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void rollForwardAssignments(false)}
+              disabled={
+                rollForwardMode !== null ||
+                rollForwardFromSeasonYear === rollForwardToSeasonYear
+              }
+            >
+              {rollForwardMode === "run" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RotateCcw className="mr-2 h-4 w-4" />
+              )}
+              Run
+            </Button>
+          </div>
+        </div>
+
+        {rollForwardResult && (
+          <div className="mt-4 space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+              <div>
+                <div className="text-xs font-medium uppercase text-slate-500">
+                  Seasons
+                </div>
+                <div className="mt-1 text-slate-900">
+                  {formatSeasonLabel(rollForwardResult.fromSeasonYear)} to{" "}
+                  {formatSeasonLabel(rollForwardResult.toSeasonYear)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase text-slate-500">
+                  Source
+                </div>
+                <div className="mt-1 text-slate-900">
+                  {rollForwardResult.sourceAssignmentCount}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase text-slate-500">
+                  Would copy
+                </div>
+                <div className="mt-1 text-slate-900">
+                  {rollForwardResult.wouldCopyCount}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase text-slate-500">
+                  Copied
+                </div>
+                <div className="mt-1 text-slate-900">
+                  {rollForwardResult.copiedCount}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase text-slate-500">
+                  Existing target
+                </div>
+                <div className="mt-1 text-slate-900">
+                  {rollForwardResult.skippedExistingCount}
+                </div>
+              </div>
+            </div>
+
+            {rollForwardResult.exceptionCount > 0 && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                <div className="text-sm font-medium text-amber-900">
+                  Exceptions ({rollForwardResult.exceptionCount})
+                </div>
+                <div className="mt-2 space-y-1">
+                  {rollForwardResult.exceptions.slice(0, 10).map((exception) => (
+                    <div
+                      key={`${exception.code}-${exception.memberId}`}
+                      className="text-xs text-amber-900"
+                    >
+                      {exception.memberName} ({exception.memberEmail}) -{" "}
+                      {rollForwardExceptionLabel(exception)}
+                    </div>
+                  ))}
+                </div>
+                {rollForwardResult.exceptionCount > 10 && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    {rollForwardResult.exceptionCount - 10} more not shown.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       <section className="rounded-md border border-slate-200 bg-white p-4">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_220px_220px_auto] lg:items-end">

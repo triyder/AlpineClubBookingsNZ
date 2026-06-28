@@ -27,6 +27,7 @@ import { MemberAddressFields } from "@/components/member-address-fields";
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import { getMissingFieldsForXeroCreate } from "@/lib/admin-member-detail-helpers";
 import type { MemberAddressValues } from "@/lib/member-address";
+import { getAccessRoleOptions } from "@/lib/member-roles";
 import type { FinanceAccessLevel } from "@prisma/client";
 import type {
   EditForm,
@@ -544,11 +545,11 @@ export function MemberEditDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="MEMBER">Member</SelectItem>
-                  <SelectItem value="ADMIN">Admin</SelectItem>
-                  <SelectItem value="LODGE">Lodge</SelectItem>
-                  <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
-                  <SelectItem value="LIFE">Life Member</SelectItem>
+                  {getAccessRoleOptions(form.role).map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               {isSelf && (

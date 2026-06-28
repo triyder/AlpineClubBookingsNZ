@@ -1,4 +1,10 @@
-import type { FinanceAccessLevel, Gender, Title } from "@prisma/client";
+import type {
+  FinanceAccessLevel,
+  Gender,
+  MembershipTypeBookingBehavior,
+  MembershipTypeSubscriptionBehavior,
+  Title,
+} from "@prisma/client";
 import type {
   AdminActor,
   AuditLogEntry,
@@ -97,6 +103,29 @@ export interface MemberPromoCode {
   statusReason: string;
 }
 
+export interface MembershipTypeSummary {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  isBuiltIn: boolean;
+  bookingBehavior: MembershipTypeBookingBehavior;
+  subscriptionBehavior: MembershipTypeSubscriptionBehavior;
+  sortOrder: number;
+}
+
+export interface SeasonalMembershipAssignmentSummary {
+  id: string;
+  memberId: string;
+  seasonYear: number;
+  membershipTypeId: string;
+  assignedByMemberId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  membershipType: MembershipTypeSummary;
+}
+
 export interface MemberDetail {
   id: string;
   title: Title | null;
@@ -141,6 +170,8 @@ export interface MemberDetail {
     email: string;
   } | null;
   familyGroups: { id: string; name: string | null }[];
+  currentSeasonYear: number;
+  seasonalMembershipAssignments: SeasonalMembershipAssignmentSummary[];
   subscriptions: Array<{
     id: string;
     seasonYear: number;

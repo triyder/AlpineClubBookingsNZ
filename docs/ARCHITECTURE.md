@@ -243,10 +243,17 @@ stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, and subscription behavior for built-in and admin-defined
 types. `SeasonalMembershipAssignment` records a member's type for a membership
 `seasonYear`. The initial backfill maps existing roles to current-season
-assignments, but current booking pricing, subscription lockout, Xero sync, and
-authorization still use their pre-existing role/subscription paths until the
-follow-up enforcement work is merged. Committee assignments remain separate
-public/contact metadata.
+assignments. Admin changes to an individual member's seasonal type go through a
+preview that reports affected future confirmed bookings, draft bookings,
+waitlist records, current subscription state, and recent subscription history,
+then require an admin reason before the audited save. The membership-type
+settings page can roll assignments forward from one season to another
+idempotently, skipping existing target-season assignments and reporting missing
+or inactive-type exceptions. Current booking pricing, subscription lockout,
+Xero sync, and authorization still use their pre-existing role/subscription
+paths until the follow-up enforcement work is merged; seasonal type changes do
+not automatically reprice existing future bookings. Committee assignments
+remain separate public/contact metadata.
 
 Membership cancellation is a member-initiated account lifecycle workflow.
 Requests can include the requester, dependants, non-login adults, and related
