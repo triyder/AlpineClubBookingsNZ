@@ -27,12 +27,19 @@ function mockJsonResponse(body: unknown) {
   };
 }
 
-function buildFetchMock() {
+function buildFetchMock(options: { familyRequestCount?: number } = {}) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
 
     if (url.includes("/api/admin/family-groups/requests")) {
-      return mockJsonResponse({ requests: [] });
+      return mockJsonResponse({
+        requests: Array.from(
+          { length: options.familyRequestCount ?? 0 },
+          (_, index) => ({
+            id: `family-request-${index + 1}`,
+          }),
+        ),
+      });
     }
     if (url.includes("/api/admin/member-applications")) {
       return mockJsonResponse({ pendingCount: 0 });
@@ -118,5 +125,22 @@ describe("AdminSidebar", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps pending family group requests visible while Members is collapsed", async () => {
+    vi.stubGlobal("fetch", buildFetchMock({ familyRequestCount: 2 }));
+
+    render(<AdminSidebar features={allOn} />);
+
+    const membersToggle = screen.getByRole("button", { name: "Members" });
+    expect(membersToggle.getAttribute("aria-expanded")).toBe("false");
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole("link", { name: /Family Groups/ }),
+    ).not.toBeNull();
+    expect(screen.getByText("2")).not.toBeNull();
   });
 });

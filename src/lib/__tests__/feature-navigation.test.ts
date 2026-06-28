@@ -109,6 +109,7 @@ describe("feature-aware navigation", () => {
 
     const withPending = getRenderedAdminNavSections(allOn, {
       "/admin/booking-requests": 2,
+      "/admin/family-groups": 3,
       "/admin/issue-reports": 1,
     });
     const needsAttention = withPending.find(
@@ -117,6 +118,7 @@ describe("feature-aware navigation", () => {
 
     expect(needsAttention?.items.map((item) => item.href)).toEqual([
       "/admin/booking-requests",
+      "/admin/family-groups",
       "/admin/issue-reports",
     ]);
   });
