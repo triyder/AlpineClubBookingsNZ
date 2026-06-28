@@ -1296,7 +1296,7 @@ verify_cron_registration() {
   local waited=0
   local timeout="${CRON_REGISTRATION_TIMEOUT_SECONDS:-60}"
   local patterns=(
-    "Scheduled pending booking confirmation"
+    "Scheduled booking and public-request cron cycle"
     "Scheduled database backup"
     "Scheduled data pruning"
     "Scheduled draft cleanup"
