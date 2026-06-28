@@ -127,6 +127,13 @@ npm run db:seed
 npm run dev
 ```
 
+For a disposable local showcase database, run `npm run db:seed:demo` after
+migrations and the first-run seed. The demo seed refuses non-local
+`DATABASE_URL` hosts and deletes demo plus transactional rows before rebuilding
+sample members, bookings, payments, credits, requests, inductions, and public
+booking requests. It must not be used against shared, staging, or production
+databases.
+
 Do not start a development server in a shared, staging, or production checkout
 unless you own that environment and intend to expose it.
 

@@ -38,6 +38,7 @@ prisma/
   schema.prisma                 database schema
   migrations/                   deployable migration history
   seed.ts                       local/staging seed data
+  demo-seed.ts                  destructive local-only showcase seed data
 src/
   app/                          Next.js App Router pages and API routes
   components/                   shared UI and feature components

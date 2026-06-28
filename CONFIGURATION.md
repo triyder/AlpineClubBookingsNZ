@@ -150,6 +150,7 @@ test/demo mode or disabled:
 | `SEED_ADMIN_FIRST_NAME` | Optional first name for the seeded admin; defaults to `Admin`.   |
 | `SEED_ADMIN_LAST_NAME`  | Optional last name for the seeded admin; defaults to `User`.     |
 | `SEED_LODGE_PASSWORD`   | Initial password for the seeded shared lodge kiosk account.      |
+| `DEMO_SEED_PASSWORD`    | Optional local-only password for `npm run db:seed:demo` users.   |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
 `SEED_ADMIN_PASSWORD` is unset, and fails before creating the lodge kiosk
@@ -164,6 +165,13 @@ The whole seed is create-if-missing: re-running it against a populated
 database never deletes, overwrites, or duplicates data. Committee entries and
 chore templates are seeded as generic placeholders only when their tables are
 empty; replace them through the admin screens after first login.
+
+`npm run db:seed:demo` is separate from the first-run seed. It is intended only
+for disposable local demo databases, refuses to run unless `DATABASE_URL`
+points at `localhost`, `127.0.0.1`, or `::1`, and deletes demo plus
+transactional rows before rebuilding a broad sample dataset. The demo seed uses
+fake emails under `demo.alpineclub.test` and fake provider identifiers only.
+Set `DEMO_SEED_PASSWORD` to override the default local demo password.
 
 ## Setup Readiness
 

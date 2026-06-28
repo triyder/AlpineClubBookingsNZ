@@ -139,6 +139,19 @@ SEED_LODGE_PASSWORD=replace-with-a-local-kiosk-password \
 npm run dev
 ```
 
+For richer local-only demo data, run the destructive demo seed against a
+throwaway PostgreSQL database whose `DATABASE_URL` host is `localhost`,
+`127.0.0.1`, or `::1`:
+
+```bash
+npm run db:seed:demo
+```
+
+The demo seed clears demo and transactional rows before rebuilding sample
+members, bookings, payments, requests, credits, inductions, and public booking
+requests. It does not contain live provider credentials. Demo users use
+`demo1234` unless `DEMO_SEED_PASSWORD` is set.
+
 ## Daily Commands
 
 ```bash

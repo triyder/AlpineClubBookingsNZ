@@ -39,6 +39,7 @@
     "review:staging:a11y": "bash scripts/run-staging-accessibility-checks.sh",
     "db:generate": "prisma generate",
     "db:seed": "npx tsx prisma/seed.ts",
+    "db:seed:demo": "npx tsx prisma/demo-seed.ts",
     "db:migrate": "npx prisma migrate deploy",
     "db:push": "npx prisma db push",
     "db:check-drift": "prisma migrate diff --from-migrations ./prisma/migrations --to-schema ./prisma/schema.prisma --exit-code"
