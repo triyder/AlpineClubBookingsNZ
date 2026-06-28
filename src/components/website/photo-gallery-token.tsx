@@ -126,7 +126,22 @@ export function PhotoGalleryToken({
 
     lightbox.init();
 
+    let autoOpenFrame: number | null = null;
+
+    if (variant === "slideshow" && galleryElement.querySelector("a")) {
+      autoOpenFrame = window.requestAnimationFrame(() => {
+        if (document.getElementById(galleryId) !== galleryElement) {
+          return;
+        }
+
+        lightbox.loadAndOpen(0, { gallery: galleryElement });
+      });
+    }
+
     return () => {
+      if (autoOpenFrame !== null) {
+        window.cancelAnimationFrame(autoOpenFrame);
+      }
       lightbox.destroy();
     };
   }, [galleryId, images, variant]);
