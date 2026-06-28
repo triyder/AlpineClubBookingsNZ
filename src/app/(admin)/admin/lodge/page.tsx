@@ -134,6 +134,14 @@ export default function AdminLodgePage() {
         </a>
       </div>
 
+      <p className="max-w-3xl text-sm text-slate-600">
+        This is the shared sign-in used on the physical lodge kiosk screen — it is
+        not a personal admin login. Guests and hut leaders use it on the lodge
+        device to check in and out and view lodge information. Set the email and
+        password below, then sign in once on the kiosk device with these details.
+        Use &ldquo;Preview Kiosk&rdquo; above to see exactly what it displays.
+      </p>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Lodge Account Settings</CardTitle>

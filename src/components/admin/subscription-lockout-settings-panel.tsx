@@ -238,11 +238,24 @@ export function SubscriptionLockoutSettingsPanel() {
             </span>
           </label>
 
-          <p className="text-xs text-muted-foreground">
-            The lockout has no effect while the Xero module is disabled, since a
-            paid status can only come from Xero. It also respects the per-age-tier
-            rule below.
-          </p>
+          {settings.enabled && !xeroConnected ? (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              <span className="font-medium">Heads up:</span> the lockout is on, but
+              Xero is not connected, so the system cannot read anyone&rsquo;s paid
+              status. While Xero is disconnected the lockout has no effect and all
+              members can book.{" "}
+              <Link href="/admin/xero/setup" className="font-medium underline">
+                Connect Xero
+              </Link>{" "}
+              to enforce it.
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              The lockout has no effect while Xero is disconnected, since a paid
+              status can only come from Xero. It also respects the per-age-tier rule
+              below.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -317,8 +330,10 @@ export function SubscriptionLockoutSettingsPanel() {
         <CardContent className="space-y-5">
           {!xeroConnected && (
             <p className="text-sm text-muted-foreground">
-              Connect Xero to choose account and item codes from your chart of
-              accounts.
+              <Link href="/admin/xero/setup" className="font-medium underline">
+                Connect Xero
+              </Link>{" "}
+              to choose account and item codes from your chart of accounts.
             </p>
           )}
 
