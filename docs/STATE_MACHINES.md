@@ -187,6 +187,11 @@ admin approves -> approved allocation metadata set
 booking modified/cancelled/completed/deleted -> allocation reconciliation
 ```
 
+On the admin allocation board, dragging or menu-moving the first visible
+allocated night for a guest reassigns that guest's visible allocated nights to
+the target bed while preserving each date-only lodge night. Later-night moves
+remain single-night adjustments.
+
 To verify: approval status representation, conflict handling, per-night guest
 uniqueness, and module-disabled behavior.
 

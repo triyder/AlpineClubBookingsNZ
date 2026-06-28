@@ -8,7 +8,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { BoardCell } from "./board-cell";
+import {
+  BED_ALLOCATION_COLUMN_WIDTH_CLASS,
+  BED_ALLOCATION_COLUMN_WIDTH_REM,
+  BoardCell,
+} from "./board-cell";
 import {
   type BedOption,
   type DashboardAllocation,
@@ -44,15 +48,30 @@ export function RoomTable({
 
   return (
     <div className="overflow-x-auto rounded-md border">
-      <Table className="min-w-max">
+      <Table
+        className="table-fixed"
+        style={{
+          width: `${(nights.length + 1) * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
+        }}
+      >
+        <colgroup>
+          {Array.from({ length: nights.length + 1 }, (_, index) => (
+            <col key={index} className={BED_ALLOCATION_COLUMN_WIDTH_CLASS} />
+          ))}
+        </colgroup>
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky left-0 z-10 min-w-[140px] bg-background">
-              {room.name}
+            <TableHead
+              className={`${BED_ALLOCATION_COLUMN_WIDTH_CLASS} sticky left-0 z-10 bg-background`}
+            >
+              <span className="block truncate">{room.name}</span>
             </TableHead>
             {nights.map((night) => (
-              <TableHead key={night} className="min-w-[140px] text-center font-mono text-xs">
-                {night}
+              <TableHead
+                key={night}
+                className={`${BED_ALLOCATION_COLUMN_WIDTH_CLASS} text-center font-mono text-xs`}
+              >
+                <span className="block truncate">{night}</span>
               </TableHead>
             ))}
           </TableRow>
@@ -60,8 +79,10 @@ export function RoomTable({
         <TableBody>
           {activeBeds.map((bed) => (
             <TableRow key={bed.id}>
-              <TableCell className="sticky left-0 z-10 bg-background font-medium">
-                {bed.name}
+              <TableCell
+                className={`${BED_ALLOCATION_COLUMN_WIDTH_CLASS} sticky left-0 z-10 bg-background font-medium`}
+              >
+                <span className="block truncate">{bed.name}</span>
               </TableCell>
               {nights.map((night) => {
                 const allocation = allocationByBedAndDate.get(`${bed.id}:${night}`);

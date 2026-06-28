@@ -48,7 +48,7 @@ export function AllocationChip({
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        "flex items-start gap-1 rounded-md border bg-white p-1.5 text-xs shadow-sm",
+        "flex w-full max-w-full items-start gap-1 rounded-md border bg-white p-1.5 text-xs shadow-sm",
         isDragging && "opacity-50",
         pending && "opacity-60",
       )}

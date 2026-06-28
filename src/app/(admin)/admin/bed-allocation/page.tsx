@@ -37,6 +37,10 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  applyOptimisticAllocationBedMove,
+  planAllocationMove,
+} from "./_components/allocation-move";
 import { BucketBoard } from "./_components/bucket-board";
 import { RoomTable } from "./_components/room-table";
 import {
@@ -356,14 +360,26 @@ export default function AdminBedAllocationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromDate, toDate]);
 
-  async function withPending<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    setPendingKeys((prev) => new Set(prev).add(key));
+  async function withPending<T>(
+    keys: string | string[],
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    setPendingKeys((prev) => {
+      const next = new Set(prev);
+      for (const key of keyList) {
+        next.add(key);
+      }
+      return next;
+    });
     try {
       return await fn();
     } finally {
       setPendingKeys((prev) => {
         const next = new Set(prev);
-        next.delete(key);
+        for (const key of keyList) {
+          next.delete(key);
+        }
         return next;
       });
     }
@@ -545,17 +561,89 @@ export default function AdminBedAllocationPage() {
     allocation: DashboardAllocation,
     target: { bedId: string; roomId: string; stayDate: string },
   ) {
-    if (target.bedId === allocation.bedId && target.stayDate === allocation.stayDate) {
-      return;
-    }
-    if (!nights.includes(target.stayDate)) {
+    if (!payload) return;
+    const bed = bedById.get(target.bedId);
+    if (!bed) return;
+
+    const movePlan = planAllocationMove({
+      allocation,
+      target,
+      visibleAllocations: payload.allocations,
+      visibleNights: nights,
+    });
+
+    if (movePlan.type === "noop") {
       return;
     }
 
-    const bed = bedById.get(target.bedId);
-    if (!bed || !payload) return;
+    if (movePlan.type === "blocked-date-shift") {
+      toast.info(
+        `First-night moves keep guest dates unchanged. Drop ${movePlan.firstStayDate} onto another bed in the same date column.`,
+      );
+      return;
+    }
 
     const snapshot = payload;
+
+    if (movePlan.type === "bulk") {
+      setPayload(
+        applyOptimisticAllocationBedMove({
+          payload,
+          allocationIds: movePlan.allocationIds,
+          bed,
+        }),
+      );
+
+      await withPending(
+        movePlan.allocationIds.map((id) => `allocation:${id}`),
+        async () => {
+          try {
+            const response = await fetch(
+              "/api/admin/bed-allocation/allocations/bulk",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  bookingGuestId: movePlan.bookingGuestId,
+                  bedId: target.bedId,
+                  stayDates: movePlan.stayDates,
+                }),
+              },
+            );
+
+            if (!response.ok) {
+              setPayload(snapshot);
+              toast.error(
+                await readApiError(response, "Failed to move allocations"),
+              );
+              await loadDashboard();
+              return;
+            }
+
+            const data = (await response.json()) as {
+              conflicts: BulkAllocationConflict[];
+            };
+
+            if (data.conflicts.length > 0) {
+              toast.warning(
+                `${allocation.guestName}: that bed was just taken for ${data.conflicts
+                  .map((conflict) => conflict.stayDate)
+                  .join(", ")}, refreshing the board`,
+              );
+            } else {
+              toast.success("Visible guest nights moved");
+            }
+            await loadDashboard();
+          } catch {
+            setPayload(snapshot);
+            toast.error("Failed to move allocations");
+            await loadDashboard();
+          }
+        },
+      );
+      return;
+    }
+
     setPayload(applyOptimisticMove(payload, allocation.id, bed, target.stayDate));
 
     await withPending(`allocation:${allocation.id}`, async () => {
