@@ -64,29 +64,39 @@ cost views.
 ## Report Mapping Contract
 
 Treasurer-controlled P&L reporting groups are stored in
-`FinanceReportCategory` and `FinanceReportCategoryMapping`.
+`FinanceReportCategory` and `FinanceReportCategoryMapping`. Each group has a
+`kind` (`REVENUE`/`EXPENSE`), a `name`, an optional free-text `subtype`
+sub-heading, a `sortOrder`, and an `archived` flag. Each mapping pins one Xero
+account `accountCode` to the group.
 
-Default revenue groups:
+Default revenue groups (subtype in brackets):
 
-- Hut Fees
-- Subscriptions
-- Entrance Fees
-- Other Revenue
+- Hut Fees (Operating)
+- Subscriptions (Operating)
+- Entrance Fees (Operating)
+- Other Revenue (Other)
 
-Default expense groups:
+Default expense groups (subtype in brackets):
 
-- Accommodation Operations
-- Catering
-- Utilities
-- Maintenance
-- Insurance & Compliance
-- Admin & Software
-- Payment & Bank Fees
-- Other Expenses
+- Accommodation Operations (Operating)
+- Catering (Operating)
+- Utilities (Operating)
+- Maintenance (Operating)
+- Insurance & Compliance (Overheads)
+- Admin & Software (Overheads)
+- Payment & Bank Fees (Overheads)
+- Other Expenses (Other)
 
-Mappings match Xero account codes first. When an account code is unavailable,
-fallback matching uses P&L section and line labels. Unmapped revenue and expense
-lines remain included in dashboard totals under `Unmapped`.
+Mappings match Xero P&L lines **by account code only** (resolved through the
+stored Chart-of-Accounts snapshot, which maps Xero `AccountID` → code). If no
+Chart-of-Accounts snapshot exists yet, lines cannot be matched and appear under
+`Unmapped` until one is captured via Backfill. Unmapped revenue and expense
+lines remain included in dashboard totals under `Unmapped`. On the dashboard,
+groups render under their `subtype` sub-heading with a per-subtype sub-total.
+
+> Note: the legacy `FinanceReportCategoryMapping.sectionLabel` / `lineLabel`
+> fallback-label columns are retained in the schema but are no longer read or
+> written — text-label fallback matching has been removed.
 
 ## Snapshot Contract
 

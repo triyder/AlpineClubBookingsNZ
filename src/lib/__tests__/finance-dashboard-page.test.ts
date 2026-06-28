@@ -222,6 +222,7 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
       {
         id: "group-1",
         name: kind === "REVENUE" ? "Hut Fees" : "Insurance",
+        subtype: kind === "REVENUE" ? "Operating" : "Overheads",
         kind,
         sortOrder: 10,
         amountCents: kind === "REVENUE" ? 100_000 : 40_000,
@@ -342,6 +343,21 @@ describe("finance dashboard page model", () => {
     expect(model.cards.length).toBeGreaterThan(0);
     expect(model.exportSections[0].title).toBe("Dashboard selection");
     expect(model.sourceNotes.length).toBeGreaterThan(0);
+  });
+
+  it("groups mapped P&L categories under subtype sub-headings with sub-totals", async () => {
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue" },
+    });
+
+    const panel = model.statusPanels.find(
+      (statusPanel) => statusPanel.title === "Revenue groups"
+    );
+    expect(panel).toBeDefined();
+    const subheading = panel?.items.find((item) => item.emphasis);
+    expect(subheading).toMatchObject({ label: "Operating", value: "$1000.00" });
+    expect(panel?.items.some((item) => item.label === "Hut Fees")).toBe(true);
   });
 
   it("surfaces missing stored snapshot coverage as a compact warning", async () => {

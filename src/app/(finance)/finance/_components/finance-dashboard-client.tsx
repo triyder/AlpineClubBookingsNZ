@@ -424,13 +424,23 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {panel.items.map((item) => (
+                  {panel.items.map((item, itemIndex) => (
                     <div
-                      key={`${panel.title}:${item.label}`}
-                      className="flex items-center justify-between gap-4 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                      key={`${panel.title}:${itemIndex}:${item.label}`}
+                      className={
+                        item.emphasis
+                          ? "flex items-center justify-between gap-4 rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm"
+                          : "flex items-center justify-between gap-4 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                      }
                     >
                       <div>
-                        <p className="font-medium text-slate-900">
+                        <p
+                          className={
+                            item.emphasis
+                              ? "text-xs font-semibold uppercase tracking-[0.12em] text-slate-700"
+                              : "font-medium text-slate-900"
+                          }
+                        >
                           {item.label}
                         </p>
                         {item.detail ? (

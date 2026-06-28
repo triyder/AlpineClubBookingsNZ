@@ -22,6 +22,7 @@ import {
 } from "@/lib/finance-dashboard-ranges";
 import {
   buildFinanceMappedPnlSummary,
+  type FinanceMappedPnlCategorySummary,
 } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
 import type { FinanceAccessMember } from "@/lib/finance-auth";
@@ -83,6 +84,8 @@ export interface FinanceDashboardStatusPanel {
     label: string;
     value: string;
     detail?: string;
+    // Set on subtype sub-heading / sub-total rows so the renderer can emphasise them.
+    emphasis?: boolean;
   }>;
 }
 
@@ -485,6 +488,59 @@ function buildBookingStatusPanels(
   return panels;
 }
 
+// Group the mapped P&L categories under their subtype sub-headings, inserting an
+// emphasised sub-total row before each subtype's member groups. Groups without a
+// subtype (including the synthetic "Unmapped" group) render flat, after the
+// labelled subtypes.
+function buildGroupStatusItems(
+  groups: FinanceMappedPnlCategorySummary[]
+): FinanceDashboardStatusPanel["items"] {
+  const withSubtype = groups.filter((group) => group.subtype);
+  const withoutSubtype = groups.filter((group) => !group.subtype);
+
+  const subtypeOrder = new Map<string, number>();
+  for (const group of withSubtype) {
+    const subtype = group.subtype as string;
+    const current = subtypeOrder.get(subtype);
+    if (current === undefined || group.sortOrder < current) {
+      subtypeOrder.set(subtype, group.sortOrder);
+    }
+  }
+  const orderedSubtypes = Array.from(subtypeOrder.keys()).sort((left, right) => {
+    const byOrder = subtypeOrder.get(left)! - subtypeOrder.get(right)!;
+    return byOrder !== 0 ? byOrder : left.localeCompare(right);
+  });
+
+  const groupItem = (group: FinanceMappedPnlCategorySummary) => ({
+    label: group.name,
+    value: group.formattedAmount,
+    detail: `${group.lineCount} lines, ${group.formattedDelta} vs comparison`,
+  });
+
+  const items: FinanceDashboardStatusPanel["items"] = [];
+  for (const subtype of orderedSubtypes) {
+    const members = withSubtype
+      .filter((group) => group.subtype === subtype)
+      .sort(
+        (left, right) =>
+          left.sortOrder - right.sortOrder || left.name.localeCompare(right.name)
+      );
+    const subtotalCents = members.reduce(
+      (total, group) => total + group.amountCents,
+      0
+    );
+    items.push({
+      label: subtype,
+      value: formatCents(subtotalCents),
+      detail: `${members.length} group${members.length === 1 ? "" : "s"} subtotal`,
+      emphasis: true,
+    });
+    items.push(...members.map(groupItem));
+  }
+  items.push(...withoutSubtype.map(groupItem));
+  return items;
+}
+
 async function buildMappedPnlDashboard(input: {
   selection: FinanceDashboardSelection;
   kind: "REVENUE" | "EXPENSE";
@@ -559,12 +615,8 @@ async function buildMappedPnlDashboard(input: {
     {
       title: input.kind === "REVENUE" ? "Revenue groups" : "Expense groups",
       description:
-        "Mapped Treasurer-controlled groups, with Unmapped kept visible.",
-      items: summary.groups.slice(0, 8).map((group) => ({
-        label: group.name,
-        value: group.formattedAmount,
-        detail: `${group.lineCount} lines, ${group.formattedDelta} vs comparison`,
-      })),
+        "Mapped Treasurer-controlled groups under their subtype sub-headings, with Unmapped kept visible.",
+      items: buildGroupStatusItems(summary.groups),
     },
   ];
   const exportSections = [
@@ -572,6 +624,7 @@ async function buildMappedPnlDashboard(input: {
     {
       title: input.kind === "REVENUE" ? "Revenue groups" : "Expense groups",
       rows: summary.groups.map((group) => ({
+        Subtype: group.subtype ?? "",
         Group: group.name,
         Amount: group.formattedAmount,
         Comparison: group.formattedComparisonAmount,
@@ -629,7 +682,7 @@ async function buildMappedPnlDashboard(input: {
       {
         label: "Mappings",
         description:
-          "Treasurer-controlled setup mappings group P&L account codes or fallback section/line labels. Unmapped lines are included in totals.",
+          "Treasurer-controlled setup mappings group P&L lines by Xero account code under named subtypes. Unmapped lines are included in totals.",
       },
     ],
     exportSections,

@@ -57,7 +57,9 @@ or route users to the removed `/finance/*` report pages.
 - Xero-derived accounting datasets are persisted as `FinanceSnapshot` rows.
 - Daily sync is handled by the finance sync cron and durable service layer.
 - Treasurer-controlled report groups are stored in `FinanceReportCategory` and
-  `FinanceReportCategoryMapping`. Unmapped P&L lines remain included in totals
+  `FinanceReportCategoryMapping`. Each group carries an optional `subtype`
+  sub-heading and pins one or more Xero account codes; P&L lines are matched to
+  groups by account code only. Unmapped P&L lines remain included in totals
   under `Unmapped`.
 - Booking, occupancy, guest-night, and pricing-sensitivity reports use
   AlpineClubBookingsNZ booking/payment data directly.
