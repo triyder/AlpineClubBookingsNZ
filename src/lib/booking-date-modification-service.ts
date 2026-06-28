@@ -44,6 +44,7 @@ import {
 } from "@/lib/pricing";
 import {
   assertMembershipTypeBookingAllowed,
+  MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
 import { processWaitlistForDates } from "@/lib/waitlist";
@@ -295,7 +296,10 @@ export async function modifyBookingDates({
         seasons: seasonRateData,
         seasonYear,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof MembershipTypeBookingPolicyError) {
+        throw error;
+      }
       throw new ApiError(
         "No season rate found for the requested dates",
         400,

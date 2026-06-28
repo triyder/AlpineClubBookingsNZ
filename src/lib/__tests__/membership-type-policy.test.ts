@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "fs";
 import {
   MembershipTypeBookingPolicyError,
   getMembershipTypeBookingPolicyErrorBody,
@@ -10,6 +11,10 @@ import {
 vi.mock("@/lib/member-subscription-eligibility", () => ({
   requiresPaidSubscriptionForBooking: vi.fn(async () => true),
 }));
+
+function readRepoFile(path: string) {
+  return readFileSync(`${process.cwd()}/${path}`, "utf8");
+}
 
 type PolicyMember = {
   id: string;
@@ -253,5 +258,23 @@ describe("membership type booking and subscription policy", () => {
         ageTier: "ADULT",
       }),
     ).resolves.toBe(false);
+  });
+});
+
+describe("membership type booking policy route integration", () => {
+  it("preserves policy block errors through generic booking pricing failures", () => {
+    const sources = [
+      "src/lib/booking-modify.ts",
+      "src/lib/booking-date-modification-service.ts",
+      "src/app/api/bookings/[id]/guests/route.ts",
+    ];
+
+    for (const path of sources) {
+      const source = readRepoFile(path);
+
+      expect(source).toContain("MembershipTypeBookingPolicyError");
+      expect(source).toContain("error instanceof MembershipTypeBookingPolicyError");
+      expect(source).toContain("throw error;");
+    }
   });
 });

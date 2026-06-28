@@ -268,7 +268,9 @@ assignment are separate axes:
 - Admin member detail pages show access role separately from seasonal
   membership type. Changing the seasonal type requires a preview and admin
   reason; the preview counts future confirmed bookings, drafts, waitlist
-  records, and subscription history before the save is audited.
+  records, and subscription history before the save is audited. Production
+  preview tokens require `AUTH_SECRET` or `NEXTAUTH_SECRET`; setup readiness
+  blocks when neither secret is configured.
 - `/admin/membership-types` includes an idempotent roll-forward tool that copies
   missing assignments from one season to another while leaving existing target
   assignments unchanged and flagging missing or inactive-type exceptions.
@@ -296,8 +298,10 @@ blurb or role description, and an opaque assignment contact key only when the
 assignment is contactable. Member email addresses are never returned to the
 browser; `/api/contact` resolves contactable assignment keys server-side and
 falls back to the configured club contact address when no published,
-contactable assignment matches. Phone numbers come from the linked member
-profile and display only when the assignment's show-phone flag is enabled.
+contactable assignment matches. Committee-routed contact emails use an opaque
+committee-contact marker in EmailLog rows instead of persisting the private
+member recipient address. Phone numbers come from the linked member profile and
+display only when the assignment's show-phone flag is enabled.
 
 The legacy `CommitteeMember` table remains editable for historical/public
 migration reference, but it no longer powers `/api/committee` or committee

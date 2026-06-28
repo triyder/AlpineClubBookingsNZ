@@ -46,6 +46,7 @@ import {
 import {
   applyMembershipTypeRatePolicyToGuests,
   assertMembershipTypeBookingAllowed,
+  MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
 import {
@@ -1002,7 +1003,10 @@ export async function calculateModifiedPricing(
           seasons: seasonRateData,
           seasonYear,
         });
-  } catch {
+  } catch (error) {
+    if (error instanceof MembershipTypeBookingPolicyError) {
+      throw error;
+    }
     throw new ApiError("No season rate found for the requested dates", 400);
   }
 
