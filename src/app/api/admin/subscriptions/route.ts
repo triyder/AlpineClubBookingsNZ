@@ -10,7 +10,10 @@ import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
 } from "@/lib/xero";
-import { OPERATIONAL_ROLE_VALUES } from "@/lib/member-roles";
+import {
+  NON_MEMBER_ROLE_VALUES,
+  OPERATIONAL_ROLE_VALUES,
+} from "@/lib/member-roles";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 
 const subscriptionStatuses = [
@@ -194,7 +197,7 @@ export async function GET(request: NextRequest) {
     const notRequiredWhere: Prisma.MemberWhereInput = {
       ...memberWhere,
       OR: [
-        { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
+        { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
         {
           seasonalMembershipAssignments: {
             some: {

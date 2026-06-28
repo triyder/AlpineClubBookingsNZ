@@ -2,11 +2,15 @@ import type { Role } from "@prisma/client";
 import { getSeasonYear } from "@/lib/utils";
 
 // Roles whose accounts never owe a membership subscription. ADMIN and LODGE
-// accounts are operational, not memberships, so they default to NOT_REQUIRED
-// wherever they are created (seed, lodge auto-create, admin member creation).
+// accounts are operational, not memberships; NON_MEMBER and SCHOOL are
+// non-member booking-request records (canLogin: false). All default to
+// NOT_REQUIRED wherever they are created (seed, lodge auto-create, admin member
+// creation, booking-request approval).
 const SUBSCRIPTION_NOT_REQUIRED_ROLES: ReadonlySet<string> = new Set([
   "ADMIN",
   "LODGE",
+  "NON_MEMBER",
+  "SCHOOL",
 ]);
 
 export function roleNeverRequiresSubscription(

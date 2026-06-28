@@ -539,6 +539,8 @@ describe("approveBookingRequest", () => {
     const memberArgs = vi.mocked(prisma.member.create).mock.calls[0][0].data as Record<string, unknown>;
     expect(memberArgs.canLogin).toBe(false);
     expect(memberArgs.emailVerified).toBe(true);
+    // General booking-request contacts are non-members, not paying members.
+    expect(memberArgs.role).toBe("NON_MEMBER");
 
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<string, unknown>;
     expect(bookingArgs.memberId).toBe("member-1");

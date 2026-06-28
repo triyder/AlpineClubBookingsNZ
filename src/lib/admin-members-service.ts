@@ -32,6 +32,7 @@ import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
 import {
+  NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
   ROLE_VALUES,
   isRole,
@@ -244,7 +245,7 @@ export async function listAdminMembers(
       .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
-    { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
+    { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
     {
       seasonalMembershipAssignments: {
         some: {

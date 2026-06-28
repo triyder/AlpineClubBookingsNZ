@@ -8,6 +8,7 @@ import {
   financeAccessBadgeClass,
   financeAccessLongLabels as financeAccessLabels,
 } from "@/lib/admin-member-badges";
+import { ROLE_LABELS } from "@/lib/member-roles";
 import type { MemberDetail, MemberLifecycleActionRequest } from "../_types";
 
 interface MemberDetailHeaderProps {
@@ -67,7 +68,7 @@ export function MemberDetailHeader({
                   : ""
               }
             >
-              {member.role}
+              {ROLE_LABELS[member.role]}
             </Badge>
             <Badge
               variant="secondary"

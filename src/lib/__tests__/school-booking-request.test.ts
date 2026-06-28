@@ -352,6 +352,8 @@ describe("approveSchoolBookingRequest", () => {
     expect(schoolMemberArgs.firstName).toBe("New Plymouth Primary School");
     expect(schoolMemberArgs.email).toBe("office@school.test");
     expect(schoolMemberArgs.canLogin).toBe(false);
+    // Non-member category so the school contact is not counted as a paying member.
+    expect(schoolMemberArgs.role).toBe("SCHOOL");
 
     // Booking is CONFIRMED (capacity held) and pays on account via Xero invoice.
     const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
@@ -374,6 +376,8 @@ describe("approveSchoolBookingRequest", () => {
       unknown
     >;
     expect(teacherMemberArgs.canLogin).toBe(false);
+    // Teachers carry the same non-member SCHOOL role as the school contact.
+    expect(teacherMemberArgs.role).toBe("SCHOOL");
     expect(vi.mocked(prisma.hutLeaderAssignment.create)).toHaveBeenCalledTimes(1);
     expect(mockedSendPin).toHaveBeenCalledWith(
       expect.objectContaining({ email: "tana@school.test", pin: "246810" })

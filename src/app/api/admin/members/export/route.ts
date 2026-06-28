@@ -9,6 +9,7 @@ import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { createAuditLog } from "@/lib/audit";
 import {
+  NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
   isRole,
 } from "@/lib/member-roles";
@@ -79,7 +80,7 @@ export async function GET(req: NextRequest) {
       .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
-    { role: { in: [...OPERATIONAL_ROLE_VALUES] } },
+    { role: { in: [...OPERATIONAL_ROLE_VALUES, ...NON_MEMBER_ROLE_VALUES] } },
     {
       seasonalMembershipAssignments: {
         some: {

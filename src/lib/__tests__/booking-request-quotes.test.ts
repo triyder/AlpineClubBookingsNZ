@@ -109,6 +109,7 @@ import { prisma } from "@/lib/prisma";
 import {
   createBookingRequestQuote,
   getBookingRequestQuoteContext,
+  holdBookingRequestSlots,
   respondToBookingRequestQuote,
   sendBookingRequestQuote,
 } from "@/lib/booking-request-quotes";
@@ -559,5 +560,53 @@ describe("public quote response", () => {
         }),
       })
     );
+  });
+});
+
+describe("holdBookingRequestSlots owner role", () => {
+  beforeEach(() => {
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "owner-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+  });
+
+  it("creates a NON_MEMBER owner record for general booking requests", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+      }) as never
+    );
+
+    await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    const memberArgs = vi.mocked(prisma.member.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(memberArgs.role).toBe("NON_MEMBER");
+    expect(memberArgs.canLogin).toBe(false);
+  });
+
+  it("creates a SCHOOL owner record for school booking requests", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.SCHOOL,
+        schoolName: "New Plymouth Primary School",
+        priceCents: 12000,
+        quotes: [],
+      }) as never
+    );
+
+    await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    const memberArgs = vi.mocked(prisma.member.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(memberArgs.role).toBe("SCHOOL");
+    expect(memberArgs.firstName).toBe("New Plymouth Primary School");
   });
 });

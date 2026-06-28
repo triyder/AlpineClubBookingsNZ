@@ -22,6 +22,12 @@ enum Role {
   // every permission check.
   ASSOCIATE
   LIFE
+  // Non-member categories created by booking-request flows (school groups and
+  // general public requests). These carry NO access — they are NOT member-level
+  // and NOT operational — and are excluded from member rosters, nomination pools,
+  // and subscription obligations. The owning records are always canLogin: false.
+  NON_MEMBER
+  SCHOOL
 }
 
 enum FinanceAccessLevel {

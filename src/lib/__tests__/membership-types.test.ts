@@ -59,6 +59,8 @@ describe("seasonal membership type schema contract", () => {
       "LODGE",
       "ASSOCIATE",
       "LIFE",
+      "NON_MEMBER",
+      "SCHOOL",
     ]);
     expect(ROLE_VALUES).not.toContain("COMMITTEE");
   });

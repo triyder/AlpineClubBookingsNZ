@@ -942,6 +942,10 @@ export async function holdBookingRequestSlots(input: {
           : request.contactFirstName;
       const ownerLastName =
         request.type === BookingRequestType.SCHOOL ? "" : request.contactLastName;
+      // Held booking owners are non-login records, never paying members: school
+      // requests become SCHOOL, all other request types become NON_MEMBER.
+      const ownerRole =
+        request.type === BookingRequestType.SCHOOL ? "SCHOOL" : "NON_MEMBER";
 
       const member = await tx.member.create({
         data: {
@@ -950,7 +954,7 @@ export async function holdBookingRequestSlots(input: {
           emailVerified: true,
           firstName: ownerName.slice(0, 100),
           lastName: ownerLastName.slice(0, 100),
-          role: "MEMBER",
+          role: ownerRole,
           ageTier: AgeTier.ADULT,
           active: true,
           canLogin: false,

@@ -737,7 +737,7 @@ export async function approveBookingRequest(input: {
             emailVerified: true,
             firstName: request.contactFirstName,
             lastName: request.contactLastName,
-            role: "MEMBER",
+            role: "NON_MEMBER",
             ageTier: AgeTier.ADULT,
             active: true,
             canLogin: false,

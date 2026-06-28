@@ -6,7 +6,7 @@ import {
 } from "@/lib/member-roles";
 
 describe("access role options", () => {
-  it("offers only assignable access roles by default", () => {
+  it("offers assignable access roles plus the non-member categories by default", () => {
     expect(ASSIGNABLE_ACCESS_ROLE_VALUES).toEqual([
       "MEMBER",
       "ADMIN",
@@ -16,7 +16,23 @@ describe("access role options", () => {
       "MEMBER",
       "ADMIN",
       "LODGE",
+      "NON_MEMBER",
+      "SCHOOL",
     ]);
+  });
+
+  it("labels the non-member categories and flags them as non-member", () => {
+    const options = getAccessRoleOptions();
+    expect(options.find((option) => option.value === "NON_MEMBER")).toMatchObject({
+      label: "Non-Member",
+      nonMember: true,
+      legacyMembershipCategory: false,
+    });
+    expect(options.find((option) => option.value === "SCHOOL")).toMatchObject({
+      label: "School",
+      nonMember: true,
+      legacyMembershipCategory: false,
+    });
   });
 
   it("preserves legacy membership-category roles only for existing values", () => {
@@ -25,12 +41,16 @@ describe("access role options", () => {
       "ADMIN",
       "LODGE",
       "ASSOCIATE",
+      "NON_MEMBER",
+      "SCHOOL",
     ]);
     expect(getAccessRoleOptions("LIFE").map((option) => option.value)).toEqual([
       "MEMBER",
       "ADMIN",
       "LODGE",
       "LIFE",
+      "NON_MEMBER",
+      "SCHOOL",
     ]);
     expect(
       getAccessRoleOptions("LIFE").find((option) => option.value === "LIFE"),
@@ -47,6 +67,8 @@ describe("access role options", () => {
       "LODGE",
       "ASSOCIATE",
       "LIFE",
+      "NON_MEMBER",
+      "SCHOOL",
     ]);
     expect(ROLE_VALUES).not.toContain("COMMITTEE");
   });

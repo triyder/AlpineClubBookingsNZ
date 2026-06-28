@@ -65,6 +65,8 @@ export function MemberFilterToolbar({
             <SelectItem value="LODGE">Lodge</SelectItem>
             <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
             <SelectItem value="LIFE">Life Member</SelectItem>
+            <SelectItem value="NON_MEMBER">Non-Member</SelectItem>
+            <SelectItem value="SCHOOL">School</SelectItem>
           </SelectContent>
         </Select>
         <Select

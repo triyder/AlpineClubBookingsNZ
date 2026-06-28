@@ -238,6 +238,16 @@ Address autocomplete is an optional Addy-backed public proxy module. It defaults
 off, is gated by Admin Modules and `src/proxy.ts` before route handlers run, and
 never replaces manual address entry.
 
+Member roles (`Member.role`) split into three groups. `MEMBER`, `ASSOCIATE`, and
+`LIFE` are member-level roles with ordinary member access; `ADMIN` and `LODGE` are
+operational roles with elevated access. `NON_MEMBER` and `SCHOOL` are non-member
+categories created by the booking-request flows for non-login records (school
+contacts and teachers become `SCHOOL`; general public booking-request contacts
+become `NON_MEMBER`). The non-member roles grant no access, are excluded from
+member rosters and roster filters, and are exempt from membership subscriptions
+(`roleNeverRequiresSubscription` in `src/lib/member-subscription-defaults.ts`).
+The canonical role constants and helpers live in `src/lib/member-roles.ts`.
+
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, and subscription behavior for built-in and admin-defined
