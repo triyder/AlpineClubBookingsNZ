@@ -29,7 +29,7 @@ export function ConnectionStatusPanel({
         </CardTitle>
         <CardDescription>
           {status?.connected
-            ? "Xero is connected and ready for syncing."
+            ? "Xero is connected for operational syncs. Finance report scope readiness is verified by finance sync diagnostics; reconnect Xero if report syncs fail with missing-scope guidance."
             : "Connect your Xero organisation to enable accounting integration."}
         </CardDescription>
       </CardHeader>
