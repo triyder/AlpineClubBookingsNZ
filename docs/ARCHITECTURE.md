@@ -354,25 +354,30 @@ disable cron with `CRON_ENABLED=false`.
 | Job | Schedule | Purpose |
 | --- | --- | --- |
 | `confirm-pending` | Every 3 hours | Confirm pending bookings after hold deadlines |
+| `pre-arrival-reminders` | Every 3 hours | Send current directions and door-code reminders before check-in |
+| `purge-booking-requests` | Every 3 hours | Delete expired declined and never-verified public booking requests after the retention window |
+| `quote-expiry-reminders` | Every 3 hours | Remind public booking-request quote recipients before their quote link expires (sends a fresh working link) |
 | `payment-recovery` | Every 15 minutes | Cancel or refund superseded Stripe PaymentIntents |
-| `waitlist` | Every 30 minutes | Expire offers and advance waitlist |
+| `waitlist-processor` | Every 30 minutes | Expire offers and advance waitlist |
 | `email-retry` | Every 30 minutes | Retry failed email sends |
-| `xero-retry` | Every 15 minutes | Process queued Xero operations |
-| `xero-reconcile` | Every 15 minutes | Process inbound Xero events |
+| `xero-outbox` | Every 15 minutes | Process queued Xero outbox operations |
+| `xero-operation-replay` | Every 15 minutes | Replay queued Xero retries |
+| `xero-inbound-reconcile` | Every 15 minutes | Process inbound Xero events |
 | `complete-bookings` | Daily | Mark past bookings completed |
-| `xero-membership` | Daily | Sync membership invoice state |
+| `xero-membership-refresh` | Daily when enabled | Sync membership invoice state |
+| `xero-link-backfill` | Daily | Backfill canonical Xero object links into the ledger |
+| `xero-link-cleanup` | Daily | Clean stale canonical Xero object links |
+| `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
 | `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings |
+| `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |
 | `credit-reconciliation` | Daily | Reconcile account-credit ledger state and alert on refunded Stripe payments missing Xero credit notes |
 | `hut-leader-auto-assign` | Daily | Suggest hut leaders |
 | `age-up` | Daily | Process age-tier/member transitions |
 | `capacity-warnings` | Daily | Alert when lodge occupancy approaches limits |
 | `admin-digest` | Daily | Send admin summary email |
 | `nomination-reminders` | Daily | Renew expired unconfirmed nomination links weekly, up to four automatic reminders |
-| `pre-arrival-reminders` | Every 3 hours | Send current directions and door-code reminders before check-in |
-| `quote-expiry-reminders` | Every 3 hours | Remind public booking-request quote recipients before their quote link expires (sends a fresh working link) |
 | `checkin-reminders` | Daily | Send next-day check-in reminders |
-| `feedback-requests` | Daily | Send post-stay feedback requests |
 | `backup` | Configurable | Upload PostgreSQL dumps to S3 |
 
 ## Security and Privacy Boundaries

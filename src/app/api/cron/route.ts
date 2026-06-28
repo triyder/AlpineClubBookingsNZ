@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
-import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
-import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
-import { purgeExpiredBookingRequests } from "@/lib/booking-request";
 import { requireCronSecret } from "@/lib/cron-auth";
-import { recordCronJobRunSafe } from "@/lib/cron-job-run";
-import logger from "@/lib/logger";
+import {
+  GeneralCronCycleError,
+  runGeneralCronCycle,
+} from "@/lib/general-cron-runner";
 
 /**
  * Manual trigger for the pending booking confirmation cron job.
@@ -15,110 +13,34 @@ export async function POST(request: NextRequest) {
   const unauthorized = requireCronSecret(request);
   if (unauthorized) return unauthorized;
 
-  const confirmStartedAt = new Date();
-  let confirmResult: Awaited<ReturnType<typeof confirmPendingBookings>>;
   try {
-    confirmResult = await confirmPendingBookings();
-    await recordCronJobRunSafe({
-      jobName: "confirm-pending",
-      startedAt: confirmStartedAt,
-      status: "SUCCESS",
-      resultSummary: confirmResult,
+    const result = await runGeneralCronCycle();
+
+    return NextResponse.json({
+      success: true,
+      confirmed: result.confirmPending?.confirmedBookingIds ?? [],
+      bumped: result.confirmPending?.bumpedBookingIds ?? [],
+      partialBumped: result.confirmPending?.partialBumpedBookingIds ?? [],
+      failed: result.confirmPending?.failedBookingIds ?? [],
+      preArrivalReminders: result.preArrivalReminders,
+      bookingRequestPurge: result.bookingRequestPurge,
+      quoteExpiryReminders: result.quoteExpiryReminders,
     });
   } catch (err) {
-    logger.error({ err }, "Pending confirmation cron endpoint error");
-    await recordCronJobRunSafe({
-      jobName: "confirm-pending",
-      startedAt: confirmStartedAt,
-      status: "FAILURE",
-      error: err instanceof Error ? err.message : String(err),
-    });
+    if (err instanceof GeneralCronCycleError) {
+      return NextResponse.json(
+        {
+          error: "One or more cron jobs failed",
+          failedJobs: err.failures,
+          result: err.result,
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Failed to process pending bookings" },
+      { error: err instanceof Error ? err.message : String(err) },
       { status: 500 }
     );
   }
-
-  const reminderStartedAt = new Date();
-  let reminderResult: Awaited<ReturnType<typeof sendPreArrivalReminders>>;
-  try {
-    reminderResult = await sendPreArrivalReminders();
-    await recordCronJobRunSafe({
-      jobName: "pre-arrival-reminders",
-      startedAt: reminderStartedAt,
-      status: "SUCCESS",
-      resultSummary: reminderResult,
-    });
-  } catch (err) {
-    logger.error({ err }, "Pre-arrival reminder cron endpoint error");
-    await recordCronJobRunSafe({
-      jobName: "pre-arrival-reminders",
-      startedAt: reminderStartedAt,
-      status: "FAILURE",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return NextResponse.json(
-      { error: "Failed to process pre-arrival reminders" },
-      { status: 500 }
-    );
-  }
-
-  const purgeStartedAt = new Date();
-  let purgeResult: Awaited<ReturnType<typeof purgeExpiredBookingRequests>>;
-  try {
-    purgeResult = await purgeExpiredBookingRequests();
-    await recordCronJobRunSafe({
-      jobName: "purge-booking-requests",
-      startedAt: purgeStartedAt,
-      status: "SUCCESS",
-      resultSummary: purgeResult,
-    });
-  } catch (err) {
-    logger.error({ err }, "Booking request retention purge cron endpoint error");
-    await recordCronJobRunSafe({
-      jobName: "purge-booking-requests",
-      startedAt: purgeStartedAt,
-      status: "FAILURE",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return NextResponse.json(
-      { error: "Failed to purge expired booking requests" },
-      { status: 500 }
-    );
-  }
-
-  const quoteReminderStartedAt = new Date();
-  let quoteReminderResult: Awaited<ReturnType<typeof sendQuoteExpiryReminders>>;
-  try {
-    quoteReminderResult = await sendQuoteExpiryReminders();
-    await recordCronJobRunSafe({
-      jobName: "quote-expiry-reminders",
-      startedAt: quoteReminderStartedAt,
-      status: "SUCCESS",
-      resultSummary: quoteReminderResult,
-    });
-  } catch (err) {
-    logger.error({ err }, "Quote expiry reminder cron endpoint error");
-    await recordCronJobRunSafe({
-      jobName: "quote-expiry-reminders",
-      startedAt: quoteReminderStartedAt,
-      status: "FAILURE",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return NextResponse.json(
-      { error: "Failed to process quote expiry reminders" },
-      { status: 500 }
-    );
-  }
-
-  return NextResponse.json({
-    success: true,
-    confirmed: confirmResult.confirmedBookingIds,
-    bumped: confirmResult.bumpedBookingIds,
-    partialBumped: confirmResult.partialBumpedBookingIds,
-    failed: confirmResult.failedBookingIds,
-    preArrivalReminders: reminderResult,
-    bookingRequestPurge: purgeResult,
-    quoteExpiryReminders: quoteReminderResult,
-  });
 }

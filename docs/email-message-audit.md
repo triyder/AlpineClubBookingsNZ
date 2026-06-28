@@ -614,7 +614,8 @@ View Booking: {{BASE_URL}}/bookings
 
 Triggers and frequency:
 
-- Cron job `pre-arrival-reminders`, run by `POST /api/cron` every 3 hours.
+- Cron job `pre-arrival-reminders`, run by the in-process cron leader and
+  `POST /api/cron` every 3 hours.
 - Sends once for confirmed or paid bookings checking in within the 3-day NZ date-only reminder window.
 - Claims each booking through `Booking.preArrivalReminderSentAt` before sending to prevent duplicate reminders.
 

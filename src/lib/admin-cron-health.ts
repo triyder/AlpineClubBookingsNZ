@@ -9,7 +9,6 @@ export const ADMIN_CRON_DEFAULT_TIMEZONE = APP_TIME_ZONE;
 
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;
-const FIVE_MINUTE_STALE_AFTER_MINUTES = 20;
 const FIFTEEN_MINUTE_STALE_AFTER_MINUTES = 60;
 const THIRTY_MINUTE_STALE_AFTER_MINUTES = 90;
 
@@ -190,12 +189,23 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        jobName: "purge-booking-requests",
+        label: "Booking request retention purge",
+        schedule: "0 */3 * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "payment-recovery",
         label: "Stripe payment recovery",
-        schedule: "*/5 * * * *",
+        schedule: "*/15 * * * *",
         timezone: nzTimezone,
-        expectedLocalTime: "Every 5 minutes in Pacific/Auckland",
-        staleAfterMinutes: FIVE_MINUTE_STALE_AFTER_MINUTES,
+        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
     ),

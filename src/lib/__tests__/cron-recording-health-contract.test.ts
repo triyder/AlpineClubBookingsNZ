@@ -19,14 +19,29 @@ import { getAdminCronJobDefinitions } from "@/lib/admin-cron-health";
 // matching health definition will fail here.
 
 function readInstrumentationRecordedJobNames(): string[] {
-  const source = fs.readFileSync(
-    path.join(process.cwd(), "src/instrumentation.node.ts"),
-    "utf8",
+  const sources = [
+    "src/instrumentation.node.ts",
+    "src/lib/general-cron-runner.ts",
+    "src/lib/xero-cron-runner.ts",
+    "src/lib/finance-sync-cron-config.ts",
+  ].map((filePath) =>
+    fs.readFileSync(path.join(process.cwd(), filePath), "utf8")
   );
 
   const names = new Set<string>();
-  for (const match of source.matchAll(/recordCronRun\(\s*"([a-z0-9-]+)"/g)) {
-    names.add(match[1]);
+  const patterns = [
+    /recordCronRun\(\s*"([a-z0-9-]+)"/g,
+    /jobName:\s*"([a-z0-9-]+)"/g,
+    /[A-Z_]+_JOB_NAME\s*=\s*"([a-z0-9-]+)"/g,
+    /^\s*(?:memberships|outbox|retries|inbound|backfill|"link-cleanup"|report):\s*"([a-z0-9-]+)"/gm,
+  ];
+
+  for (const source of sources) {
+    for (const pattern of patterns) {
+      for (const match of source.matchAll(pattern)) {
+        names.add(match[1]);
+      }
+    }
   }
 
   return [...names].sort();
@@ -41,7 +56,7 @@ describe("cron recording vs admin cron-health contract (issue #814)", () => {
   it("discovers the scheduled jobs that record CronJobRun outcomes", () => {
     // Safety net so a rename of the recordCronRun helper cannot silently make
     // the contract below pass against an empty set.
-    expect(recordedJobNames.length).toBeGreaterThanOrEqual(15);
+    expect(recordedJobNames.length).toBeGreaterThanOrEqual(20);
   });
 
   it("exposes every recorded scheduled job in admin cron-health", () => {
@@ -50,5 +65,20 @@ describe("cron recording vs admin cron-health contract (issue #814)", () => {
     );
 
     expect(missingFromHealth).toEqual([]);
+  });
+
+  it("has an in-process recording path for every enabled tracked admin health job", () => {
+    const enabledDefinitionNames = getAdminCronJobDefinitions({
+      CRON_ENABLED: "true",
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "true",
+    } as NodeJS.ProcessEnv)
+      .filter((definition) => definition.enabled && definition.recordsRuns)
+      .map((definition) => definition.jobName);
+    const recordedNames = new Set(recordedJobNames);
+    const missingRecordingPath = enabledDefinitionNames.filter(
+      (jobName) => !recordedNames.has(jobName)
+    );
+
+    expect(missingRecordingPath).toEqual([]);
   });
 });

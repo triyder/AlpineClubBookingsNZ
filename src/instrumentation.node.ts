@@ -3,11 +3,13 @@ import type { FeatureFlags } from "@/config/schema";
 
 const CRON_TIMEZONE = APP_TIME_ZONE;
 
-export function getOptionalCronRegistrationState(flags: FeatureFlags) {
+export function getOptionalCronRegistrationState(flags?: FeatureFlags) {
+  void flags;
+
   return {
-    financeDailySync: flags.financeDashboard,
-    waitlistProcessor: flags.waitlist,
-    xeroIntegration: flags.xeroIntegration,
+    financeDailySync: true,
+    waitlistProcessor: true,
+    xeroIntegration: true,
   };
 }
 
@@ -55,10 +57,7 @@ export async function register() {
     const { deleteDraftBookingDependents } = await import("./lib/draft-booking-cleanup");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
     const { isEffectiveModuleEnabled } = await import("./lib/admin-modules");
-    const { loadEffectiveModuleFlags } = await import("./lib/module-settings");
-    const optionalCron = getOptionalCronRegistrationState(
-      await loadEffectiveModuleFlags(),
-    );
+    const optionalCron = getOptionalCronRegistrationState();
 
     // Verify Prisma client is ready before starting cron jobs
     try {
@@ -70,9 +69,10 @@ export async function register() {
     }
 
     // Overlap guards: prevent concurrent execution of the same cron job
-    let isPendingCronRunning = false;
+    let isGeneralCronRunning = false;
     let isXeroCronRunning = false;
     let isXeroBackfillCronRunning = false;
+    let isXeroLinkCleanupCronRunning = false;
     let isXeroReportCronRunning = false;
     let isXeroReplayCronRunning = false;
     let isXeroInboundCronRunning = false;
@@ -106,35 +106,17 @@ export async function register() {
       }
     }
 
-    async function skipIfModuleDisabled(
-      moduleKey: "xeroIntegration" | "financeDashboard" | "waitlist",
-      jobName: string,
-      startedAt: Date,
-      checkInId?: string,
-      monitorSlug?: string
-    ) {
-      if (await isEffectiveModuleEnabled(moduleKey)) {
-        return false;
-      }
-
-      const reason = `${moduleKey} effective module state is disabled`;
-      logger.info({ job: jobName, moduleKey, reason }, "Cron job skipped");
-      await recordCronRun(jobName, startedAt, "SKIPPED", { reason, moduleKey });
-      if (checkInId && monitorSlug) {
-        Sentry.captureCheckIn({ checkInId, monitorSlug, status: "ok" });
-      }
-      return true;
-    }
-
-    // OBS-03: Cron job 1 - Pending booking confirmation (every 3 hours)
+    // OBS-03: General booking and public-request cron cycle (every 3 hours)
     cron.default.schedule("0 */3 * * *", async () => {
-      if (isPendingCronRunning) {
-        logger.info({ job: "confirm-pending" }, "Already running, skipping");
+      if (isGeneralCronRunning) {
+        logger.info({ job: "general-cron" }, "Already running, skipping");
         return;
       }
-      isPendingCronRunning = true;
-      const startedAt = new Date();
-      logger.info({ job: "confirm-pending" }, "Checking pending bookings for auto-confirmation");
+      isGeneralCronRunning = true;
+      logger.info(
+        { job: "general-cron" },
+        "Running booking and public-request cron cycle"
+      );
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "confirm-pending-bookings", status: "in_progress" },
@@ -142,30 +124,37 @@ export async function register() {
       );
 
       try {
-        const { confirmPendingBookings } = await import(
-          "./lib/cron-confirm-pending"
+        const { runGeneralCronCycle } = await import(
+          "./lib/general-cron-runner"
         );
-        const result = await confirmPendingBookings();
-        const summary = {
-          confirmed: result.confirmedBookingIds.length,
-          bumped: result.bumpedBookingIds.length,
-          failed: result.failedBookingIds.length,
-        };
-        logger.info({ job: "confirm-pending", ...summary }, "Pending booking confirmation complete");
-        await recordCronRun("confirm-pending", startedAt, "SUCCESS", summary);
+        const result = await runGeneralCronCycle();
+        logger.info(
+          {
+            job: "general-cron",
+            confirmed: result.confirmPending?.confirmedBookingIds.length ?? 0,
+            bumped: result.confirmPending?.bumpedBookingIds.length ?? 0,
+            failed: result.confirmPending?.failedBookingIds.length ?? 0,
+            preArrivalSent:
+              result.preArrivalReminders?.sentBookingIds.length ?? 0,
+            quotesReminded:
+              result.quoteExpiryReminders?.remindedCount ?? 0,
+          },
+          "Booking and public-request cron cycle complete"
+        );
         Sentry.captureCheckIn({ checkInId, monitorSlug: "confirm-pending-bookings", status: "ok" });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "confirm-pending" }, "Error in pending booking confirmation");
+        logger.error({ err, job: "general-cron" }, "Error in booking and public-request cron cycle");
         Sentry.captureException(err);
-        await recordCronRun("confirm-pending", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "confirm-pending-bookings", status: "error" });
       } finally {
-        isPendingCronRunning = false;
+        isGeneralCronRunning = false;
       }
     }, { timezone: CRON_TIMEZONE });
 
-    logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
+    logger.info(
+      { job: "general-cron" },
+      "Scheduled booking and public-request cron cycle (every 3 hours)"
+    );
 
     cron.default.schedule("*/15 * * * *", async () => {
       if (isPaymentRecoveryCronRunning) {
@@ -202,366 +191,287 @@ export async function register() {
     logger.info({ job: "payment-recovery" }, "Scheduled payment recovery (every 15 minutes)");
 
     if (optionalCron.xeroIntegration) {
-    // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)
-    if (isXeroDailyMembershipRefreshEnabled()) {
-      cron.default.schedule("0 2 * * *", async () => {
-        if (isXeroCronRunning) {
-          logger.info({ job: "xero-membership-refresh" }, "Already running, skipping");
-          return;
-        }
-        isXeroCronRunning = true;
-        const startedAt = new Date();
+      // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)
+      if (isXeroDailyMembershipRefreshEnabled()) {
+        cron.default.schedule("0 2 * * *", async () => {
+          if (isXeroCronRunning) {
+            logger.info({ job: "xero-membership-refresh" }, "Already running, skipping");
+            return;
+          }
+          isXeroCronRunning = true;
+          logger.info(
+            { job: "xero-membership-refresh" },
+            "Running daily Xero membership safety-net refresh"
+          );
+
+          const checkInId = Sentry.captureCheckIn(
+            { monitorSlug: "xero-membership-refresh", status: "in_progress" },
+            sentryCronMonitorConfig("0 2 * * *", { checkinMargin: 10, maxRuntime: 60 })
+          );
+
+          try {
+            const { runXeroCronTasks } = await import(
+              "./lib/xero-cron-runner"
+            );
+            const result = await runXeroCronTasks("memberships");
+            logger.info(
+              { job: "xero-membership-refresh", result: result.membershipRefresh },
+              "Xero membership safety-net refresh complete"
+            );
+            Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
+          } catch (err) {
+            logger.error(
+              { err, job: "xero-membership-refresh" },
+              "Error running Xero membership safety-net refresh"
+            );
+            Sentry.captureException(err);
+            Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
+          } finally {
+            isXeroCronRunning = false;
+          }
+        }, { timezone: CRON_TIMEZONE });
+
         logger.info(
           { job: "xero-membership-refresh" },
-          "Running daily Xero membership safety-net refresh"
+          "Scheduled Xero membership safety-net refresh (daily at 2 AM NZST)"
         );
+      } else {
+        logger.info(
+          { job: "xero-membership-refresh" },
+          "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
+        );
+      }
+
+      // Historical Xero link backfill (daily at 2:20 AM NZST)
+      cron.default.schedule("20 2 * * *", async () => {
+        if (isXeroBackfillCronRunning) {
+          logger.info({ job: "xero-link-backfill" }, "Already running, skipping");
+          return;
+        }
+        isXeroBackfillCronRunning = true;
+        logger.info({ job: "xero-link-backfill" }, "Backfilling canonical Xero links into the ledger");
 
         const checkInId = Sentry.captureCheckIn(
-          { monitorSlug: "xero-membership-refresh", status: "in_progress" },
-          sentryCronMonitorConfig("0 2 * * *", { checkinMargin: 10, maxRuntime: 60 })
+          { monitorSlug: "xero-link-backfill", status: "in_progress" },
+          sentryCronMonitorConfig("20 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
         );
 
         try {
-          if (
-            await skipIfModuleDisabled(
-              "xeroIntegration",
-              "xero-membership-refresh",
-              startedAt,
-              checkInId,
-              "xero-membership-refresh"
-            )
-          ) {
-            return;
-          }
-
-          const { isXeroConnected, refreshAllMembershipStatuses } = await import(
-            "./lib/xero"
+          const { runXeroCronTasks } = await import(
+            "./lib/xero-cron-runner"
           );
-          if (!(await isXeroConnected())) {
-            logger.info({ job: "xero-membership-refresh" }, "Xero not connected, skipping");
-            await recordCronRun("xero-membership-refresh", startedAt, "SKIPPED", { reason: "Xero not connected" });
-            Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
-            return;
-          }
-          const result = await refreshAllMembershipStatuses();
+          const result = await runXeroCronTasks("backfill", {
+            includeLinkCleanupForBackfill: false,
+          });
           logger.info(
-            { job: "xero-membership-refresh", ...result },
-            "Xero membership safety-net refresh complete"
+            { job: "xero-link-backfill", result: result.linkBackfill },
+            "Xero link backfill complete"
           );
-          await recordCronRun("xero-membership-refresh", startedAt, "SUCCESS", result as Record<string, unknown>);
-          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-backfill", status: "ok" });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logger.error(
-            { err, job: "xero-membership-refresh" },
-            "Error running Xero membership safety-net refresh"
-          );
+          logger.error({ err, job: "xero-link-backfill" }, "Error backfilling historical Xero links");
           Sentry.captureException(err);
-          await recordCronRun("xero-membership-refresh", startedAt, "FAILURE", undefined, message);
-          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-backfill", status: "error" });
         } finally {
-          isXeroCronRunning = false;
+          isXeroBackfillCronRunning = false;
+        }
+      }, { timezone: CRON_TIMEZONE });
+
+      logger.info({ job: "xero-link-backfill" }, "Scheduled Xero link backfill (daily at 2:20 AM NZST)");
+
+      // Stale canonical Xero link cleanup (daily at 2:25 AM NZST)
+      cron.default.schedule("25 2 * * *", async () => {
+        if (isXeroLinkCleanupCronRunning) {
+          logger.info({ job: "xero-link-cleanup" }, "Already running, skipping");
+          return;
+        }
+        isXeroLinkCleanupCronRunning = true;
+        logger.info({ job: "xero-link-cleanup" }, "Cleaning stale canonical Xero links");
+
+        const checkInId = Sentry.captureCheckIn(
+          { monitorSlug: "xero-link-cleanup", status: "in_progress" },
+          sentryCronMonitorConfig("25 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
+        );
+
+        try {
+          const { runXeroCronTasks } = await import(
+            "./lib/xero-cron-runner"
+          );
+          const result = await runXeroCronTasks("link-cleanup");
+          logger.info(
+            { job: "xero-link-cleanup", result: result.linkCleanup },
+            "Xero stale link cleanup complete"
+          );
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-cleanup", status: "ok" });
+        } catch (err) {
+          logger.error({ err, job: "xero-link-cleanup" }, "Error cleaning stale Xero links");
+          Sentry.captureException(err);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-cleanup", status: "error" });
+        } finally {
+          isXeroLinkCleanupCronRunning = false;
+        }
+      }, { timezone: CRON_TIMEZONE });
+
+      logger.info({ job: "xero-link-cleanup" }, "Scheduled Xero stale link cleanup (daily at 2:25 AM NZST)");
+
+      // Nightly Xero reconciliation report (daily at 2:35 AM NZST)
+      cron.default.schedule("35 2 * * *", async () => {
+        if (isXeroReportCronRunning) {
+          logger.info({ job: "xero-reconciliation-report" }, "Already running, skipping");
+          return;
+        }
+        isXeroReportCronRunning = true;
+        logger.info({ job: "xero-reconciliation-report" }, "Building nightly Xero reconciliation report");
+
+        const checkInId = Sentry.captureCheckIn(
+          { monitorSlug: "xero-reconciliation-report", status: "in_progress" },
+          sentryCronMonitorConfig("35 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
+        );
+
+        try {
+          const { runXeroCronTasks } = await import(
+            "./lib/xero-cron-runner"
+          );
+          const result = await runXeroCronTasks("report");
+          logger.info(
+            { job: "xero-reconciliation-report", result: result.reconciliationReport },
+            "Xero reconciliation report complete"
+          );
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-reconciliation-report", status: "ok" });
+        } catch (err) {
+          logger.error({ err, job: "xero-reconciliation-report" }, "Error building Xero reconciliation report");
+          Sentry.captureException(err);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-reconciliation-report", status: "error" });
+        } finally {
+          isXeroReportCronRunning = false;
         }
       }, { timezone: CRON_TIMEZONE });
 
       logger.info(
-        { job: "xero-membership-refresh" },
-        "Scheduled Xero membership safety-net refresh (daily at 2 AM NZST)"
-      );
-    } else {
-      logger.info(
-        { job: "xero-membership-refresh" },
-        "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
-      );
-    }
-
-    // Historical Xero link backfill (daily at 2:20 AM NZST)
-    cron.default.schedule("20 2 * * *", async () => {
-      if (isXeroBackfillCronRunning) {
-        logger.info({ job: "xero-link-backfill" }, "Already running, skipping");
-        return;
-      }
-      isXeroBackfillCronRunning = true;
-      const startedAt = new Date();
-      logger.info({ job: "xero-link-backfill" }, "Backfilling canonical Xero links into the ledger");
-
-      const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "xero-link-backfill", status: "in_progress" },
-        sentryCronMonitorConfig("20 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
+        { job: "xero-reconciliation-report" },
+        "Scheduled Xero reconciliation report (daily at 2:35 AM NZST)"
       );
 
-      try {
-        if (
-          await skipIfModuleDisabled(
-            "xeroIntegration",
-            "xero-link-backfill",
-            startedAt,
-            checkInId,
-            "xero-link-backfill"
-          )
-        ) {
+      // Xero outbox and replay workers (every 15 minutes)
+      cron.default.schedule("*/15 * * * *", async () => {
+        if (isXeroReplayCronRunning) {
+          logger.info({ job: "xero-operation-replay" }, "Already running, skipping");
           return;
         }
-
-        const { backfillHistoricalXeroObjectLinks } = await import(
-          "./lib/xero-hardening"
-        );
-        const result = await backfillHistoricalXeroObjectLinks();
-        logger.info({ job: "xero-link-backfill", ...result.totals }, "Xero link backfill complete");
-        await recordCronRun("xero-link-backfill", startedAt, "SUCCESS", {
-          completedAt: result.completedAt,
-          members: result.members,
-          paymentInvoices: result.paymentInvoices,
-          paymentRefundCreditNotes: result.paymentRefundCreditNotes,
-          subscriptionInvoices: result.subscriptionInvoices,
-          totals: result.totals,
-        });
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-backfill", status: "ok" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "xero-link-backfill" }, "Error backfilling historical Xero links");
-        Sentry.captureException(err);
-        await recordCronRun("xero-link-backfill", startedAt, "FAILURE", undefined, message);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-backfill", status: "error" });
-      } finally {
-        isXeroBackfillCronRunning = false;
-      }
-    }, { timezone: CRON_TIMEZONE });
-
-    logger.info({ job: "xero-link-backfill" }, "Scheduled Xero link backfill (daily at 2:20 AM NZST)");
-
-    // Nightly Xero reconciliation report (daily at 2:35 AM NZST)
-    cron.default.schedule("35 2 * * *", async () => {
-      if (isXeroReportCronRunning) {
-        logger.info({ job: "xero-reconciliation-report" }, "Already running, skipping");
-        return;
-      }
-      isXeroReportCronRunning = true;
-      const startedAt = new Date();
-      logger.info({ job: "xero-reconciliation-report" }, "Building nightly Xero reconciliation report");
-
-      const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "xero-reconciliation-report", status: "in_progress" },
-        sentryCronMonitorConfig("35 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
-      );
-
-      try {
-        if (
-          await skipIfModuleDisabled(
-            "xeroIntegration",
-            "xero-reconciliation-report",
-            startedAt,
-            checkInId,
-            "xero-reconciliation-report"
-          )
-        ) {
-          return;
-        }
-
-        const { sendXeroReconciliationReport } = await import(
-          "./lib/xero-hardening"
-        );
-        const result = await sendXeroReconciliationReport();
+        isXeroReplayCronRunning = true;
         logger.info(
-          {
-            job: "xero-reconciliation-report",
-            sent: result.sent,
-            issueCategories: result.report.summary.issueCategoryCount,
-            issueTotal: result.report.summary.issueTotalCount,
-          },
-          "Xero reconciliation report complete"
+          { job: "xero-operation-replay" },
+          "Processing queued Xero outbox operations and retries"
         );
-        await recordCronRun(
-          "xero-reconciliation-report",
-          startedAt,
-          "SUCCESS",
-          {
-            sent: result.sent,
-            summary: result.report.summary,
-          }
+
+        const checkInId = Sentry.captureCheckIn(
+          { monitorSlug: "xero-operation-replay", status: "in_progress" },
+          sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 10, maxRuntime: 30 })
         );
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-reconciliation-report", status: "ok" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "xero-reconciliation-report" }, "Error building Xero reconciliation report");
-        Sentry.captureException(err);
-        await recordCronRun("xero-reconciliation-report", startedAt, "FAILURE", undefined, message);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-reconciliation-report", status: "error" });
-      } finally {
-        isXeroReportCronRunning = false;
-      }
-    }, { timezone: CRON_TIMEZONE });
 
-    logger.info(
-      { job: "xero-reconciliation-report" },
-      "Scheduled Xero reconciliation report (daily at 2:35 AM NZST)"
-    );
+        try {
+          const { runXeroCronTaskList } = await import(
+            "./lib/xero-cron-runner"
+          );
+          const result = await runXeroCronTaskList(["outbox", "retries"], {
+            taskLabel: "xero-queue",
+          });
+          logger.info(
+            {
+              job: "xero-operation-replay",
+              queuedOutboxOperations: result.queuedOutboxOperations,
+              queuedRetries: result.queuedRetries,
+            },
+            "Queued Xero outbox and retry processing complete"
+          );
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
+        } catch (err) {
+          logger.error({ err, job: "xero-operation-replay" }, "Error processing queued Xero work");
+          Sentry.captureException(err);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "error" });
+        } finally {
+          isXeroReplayCronRunning = false;
+        }
+      }, { timezone: CRON_TIMEZONE });
 
-    // Xero replay worker (every 15 minutes)
-    cron.default.schedule("*/15 * * * *", async () => {
-      if (isXeroReplayCronRunning) {
-        logger.info({ job: "xero-operation-replay" }, "Already running, skipping");
-        return;
-      }
-      isXeroReplayCronRunning = true;
-      const startedAt = new Date();
       logger.info(
         { job: "xero-operation-replay" },
-        "Processing queued Xero outbox operations and retries"
+        "Scheduled queued Xero outbox and retry processing (every 15 minutes)"
       );
 
-      const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "xero-operation-replay", status: "in_progress" },
-        sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 10, maxRuntime: 30 })
-      );
-
-      try {
-        if (
-          await skipIfModuleDisabled(
-            "xeroIntegration",
-            "xero-operation-replay",
-            startedAt,
-            checkInId,
-            "xero-operation-replay"
-          )
-        ) {
+      // Xero inbound webhook reconciliation safety net (every 15 minutes)
+      cron.default.schedule("*/15 * * * *", async () => {
+        if (isXeroInboundCronRunning) {
+          logger.info({ job: "xero-inbound-reconcile" }, "Already running, skipping");
           return;
         }
-
-        const { isXeroConnected } = await import("./lib/xero");
-        const { processQueuedXeroOutboxOperations } = await import(
-          "./lib/xero-operation-outbox"
-        );
-        const { processQueuedXeroOperationRetries } = await import(
-          "./lib/xero-operation-queue"
-        );
-
-        if (!(await isXeroConnected())) {
-          logger.info({ job: "xero-operation-replay" }, "Xero not connected, skipping");
-          await recordCronRun("xero-operation-replay", startedAt, "SKIPPED", {
-            reason: "Xero not connected",
-          });
-          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
-          return;
-        }
-
-        const queuedOutboxOperations = await processQueuedXeroOutboxOperations();
-        const queuedRetries = await processQueuedXeroOperationRetries();
+        isXeroInboundCronRunning = true;
         logger.info(
-          { job: "xero-operation-replay", queuedOutboxOperations, queuedRetries },
-          "Queued Xero outbox and retry processing complete"
+          { job: "xero-inbound-reconcile" },
+          "Running Xero inbound reconciliation cycle"
         );
-        await recordCronRun(
-          "xero-operation-replay",
-          startedAt,
-          "SUCCESS",
-          { queuedOutboxOperations, queuedRetries }
+
+        const checkInId = Sentry.captureCheckIn(
+          { monitorSlug: "xero-inbound-reconcile", status: "in_progress" },
+          sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 10, maxRuntime: 30 })
         );
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "xero-operation-replay" }, "Error processing queued Xero retries");
-        Sentry.captureException(err);
-        await recordCronRun("xero-operation-replay", startedAt, "FAILURE", undefined, message);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "error" });
-      } finally {
-        isXeroReplayCronRunning = false;
-      }
-    }, { timezone: CRON_TIMEZONE });
 
-    logger.info(
-      { job: "xero-operation-replay" },
-      "Scheduled queued Xero retry processing (every 15 minutes)"
-    );
+        try {
+          const { runXeroCronTasks } = await import(
+            "./lib/xero-cron-runner"
+          );
+          const result = await runXeroCronTasks("inbound");
+          logger.info(
+            { job: "xero-inbound-reconcile", result: result.inboundReconciliation },
+            "Xero inbound reconciliation cycle complete"
+          );
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "ok" });
+        } catch (err) {
+          logger.error({ err, job: "xero-inbound-reconcile" }, "Error processing stored Xero inbound events");
+          Sentry.captureException(err);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "error" });
+        } finally {
+          isXeroInboundCronRunning = false;
+        }
+      }, { timezone: CRON_TIMEZONE });
 
-    // Xero inbound webhook reconciliation safety net (every 15 minutes)
-    cron.default.schedule("*/15 * * * *", async () => {
-      if (isXeroInboundCronRunning) {
-        logger.info({ job: "xero-inbound-reconcile" }, "Already running, skipping");
-        return;
-      }
-      isXeroInboundCronRunning = true;
-      const startedAt = new Date();
       logger.info(
         { job: "xero-inbound-reconcile" },
-        "Running Xero inbound reconciliation cycle"
-      );
-
-      const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "xero-inbound-reconcile", status: "in_progress" },
-        sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 10, maxRuntime: 30 })
-      );
-
-      try {
-        if (
-          await skipIfModuleDisabled(
-            "xeroIntegration",
-            "xero-inbound-reconcile",
-            startedAt,
-            checkInId,
-            "xero-inbound-reconcile"
-          )
-        ) {
-          return;
-        }
-
-        const { isXeroConnected } = await import("./lib/xero");
-        const { runXeroInboundReconciliationCycle } = await import(
-          "./lib/xero-inbound-reconciliation"
-        );
-
-        if (!(await isXeroConnected())) {
-          logger.info({ job: "xero-inbound-reconcile" }, "Xero not connected, skipping");
-          await recordCronRun("xero-inbound-reconcile", startedAt, "SKIPPED", {
-            reason: "Xero not connected",
-          });
-          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "ok" });
-          return;
-        }
-
-        const result = await runXeroInboundReconciliationCycle();
-        logger.info(
-          { job: "xero-inbound-reconcile", ...result },
-          "Xero inbound reconciliation cycle complete"
-        );
-        await recordCronRun(
-          "xero-inbound-reconcile",
-          startedAt,
-          "SUCCESS",
-          { ...result }
-        );
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "ok" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "xero-inbound-reconcile" }, "Error processing stored Xero inbound events");
-        Sentry.captureException(err);
-        await recordCronRun("xero-inbound-reconcile", startedAt, "FAILURE", undefined, message);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "error" });
-      } finally {
-        isXeroInboundCronRunning = false;
-      }
-    }, { timezone: CRON_TIMEZONE });
-
-    logger.info(
-      { job: "xero-inbound-reconcile" },
-      "Scheduled stored Xero inbound reconciliation (every 15 minutes)"
-    );
-    } else {
-      logger.info(
-        { moduleKey: "xeroIntegration" },
-        "Xero cron registration skipped because the module is off"
+        "Scheduled stored Xero inbound reconciliation (every 15 minutes)"
       );
     }
 
     if (optionalCron.financeDailySync) {
-      const { registerDailyFinanceSyncCron } = await import(
-        "./lib/finance-sync-cron"
+      const {
+        FINANCE_SYNC_CRON_JOB_NAME,
+        FINANCE_SYNC_CRON_SCHEDULE,
+        FINANCE_SYNC_CRON_TIMEZONE,
+      } = await import(
+        "./lib/finance-sync-cron-config"
       );
 
-      registerDailyFinanceSyncCron(cron.default, {
-        logger,
-        isModuleEnabled: () => isEffectiveModuleEnabled("financeDashboard"),
-      });
+      cron.default.schedule(
+        FINANCE_SYNC_CRON_SCHEDULE,
+        async () => {
+          const { runDailyFinanceSyncCron } = await import(
+            "./lib/finance-sync-cron"
+          );
+          await runDailyFinanceSyncCron({
+            logger,
+            isModuleEnabled: () => isEffectiveModuleEnabled("financeDashboard"),
+          });
+        },
+        { timezone: FINANCE_SYNC_CRON_TIMEZONE }
+      );
+
+      logger.info(
+        {
+          job: FINANCE_SYNC_CRON_JOB_NAME,
+          schedule: FINANCE_SYNC_CRON_SCHEDULE,
+          timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        },
+        "Scheduled daily finance sync"
+      );
     } else {
       logger.info(
         { moduleKey: "financeDashboard", job: "finance-sync" },

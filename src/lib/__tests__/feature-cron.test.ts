@@ -8,7 +8,7 @@ const allModulesOn = Object.fromEntries(
 ) as FeatureFlags;
 
 describe("feature-aware cron registration", () => {
-  it("skips optional cron groups when their module state is off", () => {
+  it("registers optional cron groups even when their module state is off", () => {
     const flags: FeatureFlags = {
       ...allModulesOn,
       financeDashboard: false,
@@ -17,9 +17,9 @@ describe("feature-aware cron registration", () => {
     };
 
     expect(getOptionalCronRegistrationState(flags)).toEqual({
-      financeDailySync: false,
-      waitlistProcessor: false,
-      xeroIntegration: false,
+      financeDailySync: true,
+      waitlistProcessor: true,
+      xeroIntegration: true,
     });
   });
 

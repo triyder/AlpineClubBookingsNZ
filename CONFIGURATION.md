@@ -320,9 +320,10 @@ cannot be read, optional modules fail closed.
 | Communications | on | Admin bulk email to members. Transactional notifications are unaffected. |
 | Ski-field conditions | on | Live mountain/road status panel, public API routes, and admin cache controls. |
 
-Cron-backed optional modules check effective module state before doing module
-work. If an Admin Modules setting is disabled, the cron runner records a clean
-skipped result rather than running the module task.
+Cron-backed optional module schedules are still registered when
+`CRON_ENABLED=true`; each run checks the effective module state before doing
+module work. If an Admin Modules setting is disabled, the cron runner records a
+clean skipped result rather than running the module task.
 
 ## Admin Module Activation
 

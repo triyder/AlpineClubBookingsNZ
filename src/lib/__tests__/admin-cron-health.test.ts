@@ -150,7 +150,28 @@ describe("admin cron health", () => {
     expect(draftCleanup?.note).toBeUndefined();
   });
 
-  it("tracks payment recovery every five minutes with a matching freshness threshold", () => {
+  it("tracks general cron cycle jobs with matching freshness thresholds", () => {
+    const definitions = getAdminCronJobDefinitions({
+      CRON_ENABLED: "true",
+    } as NodeJS.ProcessEnv);
+
+    for (const jobName of [
+      "confirm-pending",
+      "pre-arrival-reminders",
+      "purge-booking-requests",
+      "quote-expiry-reminders",
+    ]) {
+      expect(
+        definitions.find((definition) => definition.jobName === jobName)
+      ).toMatchObject({
+        schedule: "0 */3 * * *",
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: 390,
+      });
+    }
+  });
+
+  it("tracks payment recovery every fifteen minutes with a matching freshness threshold", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
     } as NodeJS.ProcessEnv);
@@ -159,9 +180,9 @@ describe("admin cron health", () => {
     );
 
     expect(paymentRecovery).toMatchObject({
-      schedule: "*/5 * * * *",
-      expectedLocalTime: "Every 5 minutes in Pacific/Auckland",
-      staleAfterMinutes: 20,
+      schedule: "*/15 * * * *",
+      expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+      staleAfterMinutes: 60,
     });
   });
 
