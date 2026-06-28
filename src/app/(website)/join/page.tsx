@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 import { CLUB_NAME } from "@/config/club-identity";
+import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
@@ -17,7 +19,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function JoinPage() {
   const page = await getSanitizedPageContentByPath("/join");
-  const contentHtml = page?.contentHtml ?? "";
+  const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
   const caption = page?.caption || "Join the Club";
   const title = page?.title || "Becoming a Member";
   const headerText =
@@ -40,11 +42,14 @@ export default async function JoinPage() {
       </section>
       <section className="bg-brand-snow py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          {contentHtml ? (
-            <div
-              className="space-y-4 text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4"
-              dangerouslySetInnerHTML={{ __html: contentHtml }}
-            />
+          {embeddedBody.length > 0 ? (
+            <div className="space-y-10 text-base leading-7 text-brand-deep/85 [&_a]:text-brand-charcoal [&_a]:underline [&_h1]:font-heading [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:font-heading [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:font-heading [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-6 [&_li]:list-disc [&_ol_li]:list-decimal [&_p]:mb-4">
+              <EmbeddedPageContentParts
+                parts={embeddedBody}
+                pageSlug="join"
+                keyPrefix="join"
+              />
+            </div>
           ) : (
             <div className="rounded-lg border border-brand-ridge/35 bg-brand-mist/35 p-6 text-brand-deep/75">
               No content has been published for this page yet.

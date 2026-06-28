@@ -1,38 +1,13 @@
 import type { Metadata } from "next";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
+import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 import { clubIdentity } from "@/config/club-identity";
 import { CLUB_NAME } from "@/config/club-identity";
+import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
 } from "@/lib/page-content-html";
-
-const JOIN_APPLY_EMBED_TOKEN_REGEX =
-  /\{\{\s*(join-apply-form|member-application-form)\s*\}\}/gi;
-
-function buildEmbeddedBody(contentHtml: string) {
-  const parts: Array<
-    { type: "html"; value: string } | { type: "member-application-form" }
-  > = [];
-  let lastIndex = 0;
-
-  for (const match of contentHtml.matchAll(JOIN_APPLY_EMBED_TOKEN_REGEX)) {
-    const startIndex = match.index ?? 0;
-    const before = contentHtml.slice(lastIndex, startIndex);
-    if (before.trim().length > 0) {
-      parts.push({ type: "html", value: before });
-    }
-    parts.push({ type: "member-application-form" });
-    lastIndex = startIndex + match[0].length;
-  }
-
-  const trailing = contentHtml.slice(lastIndex);
-  if (trailing.trim().length > 0) {
-    parts.push({ type: "html", value: trailing });
-  }
-
-  return parts;
-}
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await getSanitizedPageContentByPath("/join/apply");
@@ -47,7 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function JoinApplyPage() {
   const page = await getSanitizedPageContentByPath("/join/apply");
-  const embeddedBody = page ? buildEmbeddedBody(page.contentHtml) : [];
+  const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
 
   const caption = page?.caption ?? "Membership Application";
   const title = page?.title ?? "Apply for Membership";
@@ -71,24 +46,11 @@ export default async function JoinApplyPage() {
       </section>
 
       {embeddedBody.length > 0 ? (
-        embeddedBody.map((part, index) => {
-          if (part.type === "member-application-form") {
-            return (
-              <JoinApplyPageClient
-                key={`member-application-form-${index}`}
-                club={clubIdentity}
-                showHero={false}
-              />
-            );
-          }
-
-          return (
-            <div
-              key={`join-apply-html-${index}`}
-              dangerouslySetInnerHTML={{ __html: part.value }}
-            />
-          );
-        })
+        <EmbeddedPageContentParts
+          parts={embeddedBody}
+          pageSlug="join-apply"
+          keyPrefix="join-apply"
+        />
       ) : (
         <JoinApplyPageClient club={clubIdentity} showHero={false} />
       )}

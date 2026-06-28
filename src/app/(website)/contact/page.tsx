@@ -1,36 +1,12 @@
 import type { Metadata } from "next";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
+import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
+import { buildEmbeddedBody } from "@/lib/page-content-embeds";
 import {
   getSanitizedPageContentByPath,
   pageContentHtmlToPlainText,
 } from "@/lib/page-content-html";
-
-const CONTACT_EMBED_TOKEN_REGEX = /\{\{\s*(contact-form)\s*\}\}/gi;
-
-function buildEmbeddedBody(contentHtml: string) {
-  const parts: Array<
-    { type: "html"; value: string } | { type: "contact-form" }
-  > = [];
-  let lastIndex = 0;
-
-  for (const match of contentHtml.matchAll(CONTACT_EMBED_TOKEN_REGEX)) {
-    const startIndex = match.index ?? 0;
-    const before = contentHtml.slice(lastIndex, startIndex);
-    if (before.trim().length > 0) {
-      parts.push({ type: "html", value: before });
-    }
-    parts.push({ type: "contact-form" });
-    lastIndex = startIndex + match[0].length;
-  }
-
-  const trailing = contentHtml.slice(lastIndex);
-  if (trailing.trim().length > 0) {
-    parts.push({ type: "html", value: trailing });
-  }
-
-  return parts;
-}
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await getSanitizedPageContentByPath("/contact");
@@ -45,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function ContactPage() {
   const page = await getSanitizedPageContentByPath("/contact");
-  const embeddedBody = page ? buildEmbeddedBody(page.contentHtml) : [];
+  const embeddedBody = page ? await buildEmbeddedBody(page.contentHtml) : [];
 
   const caption = page?.caption ?? "Get in touch";
   const title = page?.title ?? "Contact Us";
@@ -69,24 +45,11 @@ export default async function ContactPage() {
       </section>
 
       {embeddedBody.length > 0 ? (
-        embeddedBody.map((part, index) => {
-          if (part.type === "contact-form") {
-            return (
-              <ContactPageClient
-                key={`contact-form-${index}`}
-                club={clubIdentity}
-                showHero={false}
-              />
-            );
-          }
-
-          return (
-            <div
-              key={`contact-html-${index}`}
-              dangerouslySetInnerHTML={{ __html: part.value }}
-            />
-          );
-        })
+        <EmbeddedPageContentParts
+          parts={embeddedBody}
+          pageSlug="contact"
+          keyPrefix="contact"
+        />
       ) : (
         <ContactPageClient club={clubIdentity} showHero={false} />
       )}

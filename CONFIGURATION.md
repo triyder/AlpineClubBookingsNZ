@@ -111,9 +111,10 @@ menu.
   slashes between segments (`trip-reports`, `trips/2026`). Application
   route names (`admin`, `api`, `book`, `dashboard`, `login`, and similar)
   are reserved and rejected in every segment position.
-- Page HTML supports embed tokens that render interactive sections:
-  `{{committee-members-cards}}`, `{{member-application-form}}`, and
-  `{{contact-form}}`.
+- Page HTML supports embed tokens that render interactive sections across
+  PageContent-backed public routes, including code-backed starter routes:
+  `{{committee-members-cards}}`, `{{member-application-form}}`,
+  `{{contact-form}}`, `{{photo-gallery}}`, and `{{photo-slideshow}}`.
 - Content and header HTML are sanitised on save and again on render. The
   allowlist lives in `src/lib/page-content-html.ts`.
 - The editor's image picker lists images deployed under `public/branding/`
