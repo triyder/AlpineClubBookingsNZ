@@ -102,6 +102,11 @@ menu.
 - The home route (`/`) renders the `home` page record. `/contact`, `/join`,
   and `/join/apply` are code-backed routes that render their matching
   record; all other records are served by the dynamic catch-all route.
+- Admin-created pages can be hidden from the public site with the
+  **Hide**/**Publish** toggle in Admin > Page Content (no permanent delete):
+  hidden pages drop out of the menu and return a 404 on the catch-all route.
+  System pages (`home`, `404`) and the built-in starter pages above cannot be
+  hidden, because code routes, the footer, and the sitemap link to them.
 - Slugs use lowercase letters, numbers, and hyphens, with optional forward
   slashes between segments (`trip-reports`, `trips/2026`). Application
   route names (`admin`, `api`, `book`, `dashboard`, `login`, and similar)

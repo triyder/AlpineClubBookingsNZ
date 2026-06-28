@@ -17,6 +17,8 @@ import {
   ArrowRight,
   CircleHelp,
   Edit3,
+  Eye,
+  EyeOff,
   FileText,
   Folder,
   ListOrdered,
@@ -54,7 +56,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { EditablePageRecord } from "@/lib/page-content";
-import { isSystemPageSlug, SYSTEM_PAGE_SLUGS } from "@/lib/page-content";
+import {
+  canUnpublishPage,
+  isSystemPageSlug,
+  SYSTEM_PAGE_SLUGS,
+} from "@/lib/page-content";
 
 function stripHtml(html: string): string {
   return html
@@ -1396,6 +1402,40 @@ export function PageContentPanel() {
     void loadPages();
   }, []);
 
+  async function togglePublished(page: EditablePageRecord) {
+    const nextPublished = !page.published;
+    try {
+      const response = await fetch("/api/admin/page-content", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: page.id, published: nextPublished }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to update page visibility");
+      }
+      setPages((current) =>
+        current.map((item) =>
+          item.id === page.id
+            ? { ...item, published: body.page?.published ?? nextPublished }
+            : item,
+        ),
+      );
+      toast.success(
+        nextPublished
+          ? `Published ${page.title}`
+          : `Hidden ${page.title} from the public site`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to update page visibility",
+      );
+    }
+  }
+
   function openEditor(page: EditablePageRecord) {
     setSelectedPageId(page.id);
     setDraftCaption(page.caption ?? "");
@@ -1731,6 +1771,9 @@ export function PageContentPanel() {
           const hasContent = textPreview.length > 0;
           const isSystem = isSystemPageSlug(page.slug);
           const hasMenuTitle = page.menuTitle.trim().length > 0;
+          // Only admin-created pages can be hidden; built-in/system pages stay
+          // published because code routes, the footer, and the sitemap link them.
+          const canHide = canUnpublishPage(page.slug);
 
           return (
             <Card key={page.slug}>
@@ -1757,6 +1800,14 @@ export function PageContentPanel() {
                         No menu
                       </Badge>
                     )}
+                    {!page.published && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-300 text-[10px] uppercase text-amber-700"
+                      >
+                        Hidden
+                      </Badge>
+                    )}
                     <Badge variant={hasContent ? "default" : "secondary"}>
                       {hasContent ? "Has content" : "Empty"}
                     </Badge>
@@ -1775,10 +1826,31 @@ export function PageContentPanel() {
                 <p className="text-xs text-slate-500">
                   Updated: {formatUpdatedAt(page.updatedAt)}
                 </p>
-                <Button type="button" onClick={() => openEditor(page)}>
-                  <Edit3 className="h-4 w-4" />
-                  Edit {page.title}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" onClick={() => openEditor(page)}>
+                    <Edit3 className="h-4 w-4" />
+                    Edit {page.title}
+                  </Button>
+                  {canHide && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => togglePublished(page)}
+                    >
+                      {page.published ? (
+                        <>
+                          <EyeOff className="h-4 w-4" />
+                          Hide
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="h-4 w-4" />
+                          Publish
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </CardContent>
             </Card>
           );

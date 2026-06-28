@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  canUnpublishPage,
+  isBuiltinPageSlug,
   isReservedPageSlug,
   isValidPageSlug,
   normalizePageSlug,
@@ -67,5 +69,34 @@ describe("toPagePath", () => {
   it("prefixes the slug with a slash", () => {
     expect(toPagePath("about")).toBe("/about");
     expect(toPagePath("join/apply")).toBe("/join/apply");
+  });
+});
+
+describe("isBuiltinPageSlug", () => {
+  it("recognises seeded, code-linked pages", () => {
+    expect(isBuiltinPageSlug("home")).toBe(true);
+    expect(isBuiltinPageSlug("about")).toBe(true);
+    expect(isBuiltinPageSlug("join/apply")).toBe(true);
+    expect(isBuiltinPageSlug("committee")).toBe(true);
+  });
+
+  it("does not match admin-created pages", () => {
+    expect(isBuiltinPageSlug("trip-reports")).toBe(false);
+    expect(isBuiltinPageSlug("2026-agm")).toBe(false);
+  });
+});
+
+describe("canUnpublishPage", () => {
+  it("allows hiding only admin-created pages", () => {
+    expect(canUnpublishPage("trip-reports")).toBe(true);
+    expect(canUnpublishPage("2026-agm")).toBe(true);
+  });
+
+  it("never allows hiding system or built-in pages", () => {
+    expect(canUnpublishPage("home")).toBe(false);
+    expect(canUnpublishPage("404")).toBe(false);
+    expect(canUnpublishPage("about")).toBe(false);
+    expect(canUnpublishPage("join/apply")).toBe(false);
+    expect(canUnpublishPage("contact")).toBe(false);
   });
 });
