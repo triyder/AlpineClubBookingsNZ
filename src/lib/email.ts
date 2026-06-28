@@ -2514,13 +2514,16 @@ export async function sendBookingRequestQuoteEmail(params: {
   options: Array<{ label: string; totalCents: number }>;
   message?: string | null;
   expiresAt: Date;
+  isReminder?: boolean;
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const respondUrl = `${baseUrl}/booking-requests/respond/${params.token}`;
 
   await sendEmail({
     to: params.email,
-    subject: `Your booking quote is ready — ${CLUB_NAME}`,
+    subject: params.isReminder
+      ? `Reminder: your booking quote expires soon — ${CLUB_NAME}`
+      : `Your booking quote is ready — ${CLUB_NAME}`,
     html: bookingRequestQuoteTemplate({
       firstName: params.firstName,
       respondUrl,
@@ -2531,6 +2534,7 @@ export async function sendBookingRequestQuoteEmail(params: {
       message: params.message,
       expiresAt: params.expiresAt,
       schoolName: params.schoolName,
+      isReminder: params.isReminder,
     }),
     templateName: "booking-request-quote",
     templateData: {

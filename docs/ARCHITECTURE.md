@@ -326,6 +326,7 @@ disable cron with `CRON_ENABLED=false`.
 | `admin-digest` | Daily | Send admin summary email |
 | `nomination-reminders` | Daily | Renew expired unconfirmed nomination links weekly, up to four automatic reminders |
 | `pre-arrival-reminders` | Every 3 hours | Send current directions and door-code reminders before check-in |
+| `quote-expiry-reminders` | Every 3 hours | Remind public booking-request quote recipients before their quote link expires (sends a fresh working link) |
 | `checkin-reminders` | Daily | Send next-day check-in reminders |
 | `feedback-requests` | Daily | Send post-stay feedback requests |
 | `backup` | Configurable | Upload PostgreSQL dumps to S3 |

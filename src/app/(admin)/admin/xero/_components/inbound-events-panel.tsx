@@ -204,6 +204,15 @@ export function InboundEventsPanel({
     >
       <div className="space-y-4">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <details className="rounded-md border bg-slate-50 p-3 text-xs text-slate-600">
+          <summary className="cursor-pointer font-medium text-slate-700">What do these statuses mean?</summary>
+          <ul className="mt-2 space-y-1">
+            <li><span className="font-medium">RECEIVED</span> — webhook stored, waiting to be processed. No action needed.</li>
+            <li><span className="font-medium">PROCESSING</span> — being reconciled now. If it stays here for a long time it is stuck; check System Health.</li>
+            <li><span className="font-medium">PROCESSED</span> — reconciled into the local records. No action needed.</li>
+            <li><span className="font-medium">FAILED</span> — could not be reconciled. Open the row for the error, then use Replay to try again once the cause is resolved.</li>
+          </ul>
+        </details>
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <FilterSelect label="Status" value={statusFilter} onValueChange={(value) => { setStatusFilter(value); resetPage() }} values={["all", "FAILED", "RECEIVED", "PROCESSING", "PROCESSED"]} />
           <FilterSelect label="Category" value={categoryFilter} onValueChange={(value) => { setCategoryFilter(value); resetPage() }} values={["all", "CONTACT", "INVOICE", "PAYMENT", "CREDIT_NOTE"]} />

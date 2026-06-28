@@ -47,9 +47,26 @@ export function ConnectionStatusPanel({
                 <span className="ml-1 text-muted-foreground">(auto-refreshes)</span>
               </div>
             ) : null}
-            <Button variant="destructive" size="sm" onClick={onDisconnect}>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Disconnect Xero?\n\nInvoicing, payment reconciliation, subscription (paid-status) detection, and finance syncs that rely on Xero will stop until you reconnect. Your data inside Xero is not changed.",
+                  )
+                ) {
+                  onDisconnect()
+                }
+              }}
+            >
               Disconnect Xero
             </Button>
+            <p className="text-xs text-muted-foreground">
+              Disconnecting stops invoicing, reconciliation, subscription detection,
+              and finance syncs until you reconnect. It does not change anything
+              inside Xero.
+            </p>
           </div>
         ) : (
           <Button onClick={onConnect}>Connect Xero</Button>

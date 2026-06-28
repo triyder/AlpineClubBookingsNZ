@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => ({
   mockApproveBookingRequest: vi.fn(),
   mockApproveSchoolBookingRequest: vi.fn(),
   mockSendQuoteEmail: vi.fn(),
+  mockGetSettings: vi.fn(),
 }));
 
 const mockApproveBookingRequest = mocks.mockApproveBookingRequest;
@@ -80,6 +81,8 @@ vi.mock("@/lib/booking-request", () => {
     },
     approveBookingRequest: (...args: unknown[]) =>
       mocks.mockApproveBookingRequest(...args),
+    getBookingRequestSettings: (...args: unknown[]) =>
+      mocks.mockGetSettings(...args),
   };
 });
 
@@ -140,6 +143,11 @@ function baseRequest(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.mockGetSettings.mockResolvedValue({
+    showPricingToNonMembers: false,
+    quoteResponseTtlDays: 14,
+    quoteReminderLeadDays: 3,
+  });
   vi.mocked(prisma.$transaction).mockImplementation(async (callback: never) =>
     (callback as (tx: typeof prisma) => Promise<unknown>)(prisma)
   );
@@ -360,6 +368,31 @@ describe("sendBookingRequestQuote", () => {
     const updateData = vi.mocked(prisma.bookingRequestQuote.update).mock.calls[0][0]
       .data as { status: BookingRequestQuoteStatus };
     expect(updateData.status).toBe(BookingRequestQuoteStatus.SENT);
+  });
+
+  it("applies the admin-configured response window and resets the reminder flag", async () => {
+    mockDraftQuoteForSend();
+    mockSendQuoteEmail.mockResolvedValue(undefined);
+    mocks.mockGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 7,
+      quoteReminderLeadDays: 2,
+    });
+
+    const before = Date.now();
+    const result = await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    const expiresMs = result.responseTokenExpiresAt.getTime() - before;
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    expect(expiresMs).toBeGreaterThan(sevenDaysMs - 60_000);
+    expect(expiresMs).toBeLessThan(sevenDaysMs + 60_000);
+
+    const updateData = vi.mocked(prisma.bookingRequestQuote.update).mock.calls[0][0]
+      .data as { reminderSentAt: Date | null };
+    expect(updateData.reminderSentAt).toBeNull();
   });
 });
 

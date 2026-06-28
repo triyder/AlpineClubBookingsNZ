@@ -15,8 +15,8 @@ export default function PublicBookingRequestsPage() {
           Public Booking Requests
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Control whether the public booking request form shows indicative
-          pricing to non-members.
+          Control indicative pricing on the public request form, how long a quote
+          link stays valid, and when requesters are reminded before it expires.
         </p>
       </div>
 

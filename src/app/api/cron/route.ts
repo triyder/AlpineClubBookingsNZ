@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
 import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
+import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
 import { purgeExpiredBookingRequests } from "@/lib/booking-request";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { recordCronJobRunSafe } from "@/lib/cron-job-run";
@@ -86,6 +87,30 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const quoteReminderStartedAt = new Date();
+  let quoteReminderResult: Awaited<ReturnType<typeof sendQuoteExpiryReminders>>;
+  try {
+    quoteReminderResult = await sendQuoteExpiryReminders();
+    await recordCronJobRunSafe({
+      jobName: "quote-expiry-reminders",
+      startedAt: quoteReminderStartedAt,
+      status: "SUCCESS",
+      resultSummary: quoteReminderResult,
+    });
+  } catch (err) {
+    logger.error({ err }, "Quote expiry reminder cron endpoint error");
+    await recordCronJobRunSafe({
+      jobName: "quote-expiry-reminders",
+      startedAt: quoteReminderStartedAt,
+      status: "FAILURE",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json(
+      { error: "Failed to process quote expiry reminders" },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     success: true,
     confirmed: confirmResult.confirmedBookingIds,
@@ -94,5 +119,6 @@ export async function POST(request: NextRequest) {
     failed: confirmResult.failedBookingIds,
     preArrivalReminders: reminderResult,
     bookingRequestPurge: purgeResult,
+    quoteExpiryReminders: quoteReminderResult,
   });
 }

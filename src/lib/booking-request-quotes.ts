@@ -17,6 +17,7 @@ import { logAudit } from "@/lib/audit";
 import {
   approveBookingRequest,
   BookingRequestError,
+  getBookingRequestSettings,
   linkedGuestMemberMap,
   parseBookingRequestGuests,
   splitPriceAcrossGuests,
@@ -481,9 +482,11 @@ export async function sendBookingRequestQuote(input: {
   }
 
   const options = parseBookingRequestQuoteOptions(quote.options);
+  const settings = await getBookingRequestSettings();
+  const ttlMs = settings.quoteResponseTtlDays * DAY_MS;
   const { token, tokenHash } = issueActionToken();
   const sentAt = new Date();
-  const expiresAt = new Date(sentAt.getTime() + BOOKING_REQUEST_QUOTE_RESPONSE_TTL_MS);
+  const expiresAt = new Date(sentAt.getTime() + ttlMs);
 
   const updated = await prisma.$transaction(async (tx) => {
     const saved = await tx.bookingRequestQuote.update({
@@ -493,6 +496,7 @@ export async function sendBookingRequestQuote(input: {
         responseTokenHash: tokenHash,
         responseTokenExpiresAt: expiresAt,
         sentAt,
+        reminderSentAt: null,
         createdByMemberId: quote.createdByMemberId ?? input.adminMemberId,
       },
     });

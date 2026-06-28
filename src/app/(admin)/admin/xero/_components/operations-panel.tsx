@@ -302,6 +302,17 @@ export function OperationsPanel({
     >
       <div className="space-y-4">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <details className="rounded-md border bg-slate-50 p-3 text-xs text-slate-600">
+          <summary className="cursor-pointer font-medium text-slate-700">What do these statuses mean?</summary>
+          <ul className="mt-2 space-y-1">
+            <li><span className="font-medium">PENDING</span> — queued, waiting for the next sync run. No action needed.</li>
+            <li><span className="font-medium">RUNNING</span> — being sent to Xero now. If it stays running for a long time it is stale — use &ldquo;Reset stale running&rdquo; above.</li>
+            <li><span className="font-medium">WAITING_PAYMENT</span> — paused until the related payment settles. No action needed.</li>
+            <li><span className="font-medium">SUCCEEDED</span> — completed in Xero. No action needed.</li>
+            <li><span className="font-medium">PARTIAL</span> — some steps succeeded; retry to finish the rest.</li>
+            <li><span className="font-medium">FAILED</span> — could not complete. Open the row for the error, fix the cause if needed, then Retry. Use &ldquo;Retry Active Failed&rdquo; to requeue all replayable failures.</li>
+          </ul>
+        </details>
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <FilterSelect label="Status" value={statusFilter} onValueChange={(value) => { setStatusFilter(value); resetPage() }} values={["all", "FAILED", "PENDING", "PARTIAL", "RUNNING", "WAITING_PAYMENT", "SUCCEEDED"]} />
           <FilterSelect label="Entity" value={entityFilter} onValueChange={(value) => { setEntityFilter(value); resetPage() }} values={["all", "CONTACT", "CONTACT_GROUP", "INVOICE", "PAYMENT", "CREDIT_NOTE", "ALLOCATION", "SUBSCRIPTION"]} />

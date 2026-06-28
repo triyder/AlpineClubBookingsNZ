@@ -127,11 +127,15 @@ export async function getBookingRequestSettings(db: Pick<typeof prisma, "booking
   });
   return {
     showPricingToNonMembers: record?.showPricingToNonMembers ?? false,
+    quoteResponseTtlDays: record?.quoteResponseTtlDays ?? 14,
+    quoteReminderLeadDays: record?.quoteReminderLeadDays ?? 3,
   };
 }
 
 export async function updateBookingRequestSettings(input: {
   showPricingToNonMembers: boolean;
+  quoteResponseTtlDays: number;
+  quoteReminderLeadDays: number;
   adminMemberId: string;
 }) {
   const settings = await prisma.bookingRequestSettings.upsert({
@@ -139,10 +143,14 @@ export async function updateBookingRequestSettings(input: {
     create: {
       id: "default",
       showPricingToNonMembers: input.showPricingToNonMembers,
+      quoteResponseTtlDays: input.quoteResponseTtlDays,
+      quoteReminderLeadDays: input.quoteReminderLeadDays,
       updatedByMemberId: input.adminMemberId,
     },
     update: {
       showPricingToNonMembers: input.showPricingToNonMembers,
+      quoteResponseTtlDays: input.quoteResponseTtlDays,
+      quoteReminderLeadDays: input.quoteReminderLeadDays,
       updatedByMemberId: input.adminMemberId,
     },
   });
@@ -155,11 +163,19 @@ export async function updateBookingRequestSettings(input: {
     entityId: "default",
     category: "admin",
     outcome: "success",
-    summary: "Booking request pricing visibility updated",
-    metadata: { showPricingToNonMembers: input.showPricingToNonMembers },
+    summary: "Booking request settings updated",
+    metadata: {
+      showPricingToNonMembers: input.showPricingToNonMembers,
+      quoteResponseTtlDays: input.quoteResponseTtlDays,
+      quoteReminderLeadDays: input.quoteReminderLeadDays,
+    },
   });
 
-  return { showPricingToNonMembers: settings.showPricingToNonMembers };
+  return {
+    showPricingToNonMembers: settings.showPricingToNonMembers,
+    quoteResponseTtlDays: settings.quoteResponseTtlDays,
+    quoteReminderLeadDays: settings.quoteReminderLeadDays,
+  };
 }
 
 // ---------------------------------------------------------------------------

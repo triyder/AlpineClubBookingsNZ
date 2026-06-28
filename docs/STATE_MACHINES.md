@@ -84,6 +84,12 @@ parent `BookingRequest` moves NEW -> VERIFIED -> QUOTED -> QUOTE_SENT and then P
 sends a quote, the email-delivery result is recorded so the team can tell whether the
 requester actually received the link.
 
+The response window (default 14 days) and a pre-expiry reminder lead time are
+admin-configurable under Booking Policies -> Public Booking Requests. The
+`quote-expiry-reminders` cron sends one reminder per quote inside the lead window,
+rotating the response token so the reminder email carries a fresh working link
+(set the reminder lead to 0 to disable reminders).
+
 ## Payment Lifecycle
 
 Known statuses: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `REFUNDED`,
