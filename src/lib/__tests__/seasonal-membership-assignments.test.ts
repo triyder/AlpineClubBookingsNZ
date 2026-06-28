@@ -275,6 +275,46 @@ describe("seasonal membership assignment preview and save", () => {
     expect(JSON.stringify(preview)).not.toContain("xero-invoice-id-not-returned");
   });
 
+  it("fails closed for preview tokens in production without an auth secret", async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalAuthSecret = process.env.AUTH_SECRET;
+    const originalNextAuthSecret = process.env.NEXTAUTH_SECRET;
+    delete process.env.AUTH_SECRET;
+    delete process.env.NEXTAUTH_SECRET;
+    process.env.NODE_ENV = "production";
+    const db = makePreviewDb();
+
+    try {
+      await expect(
+        getSeasonalMembershipChangePreview({
+          memberId: "member-1",
+          seasonYear: 2026,
+          membershipTypeId: "type-associate",
+          now: new Date("2026-07-01T00:00:00.000Z"),
+          db: db as never,
+        }),
+      ).rejects.toThrow(
+        "AUTH_SECRET or NEXTAUTH_SECRET is required for seasonal membership preview tokens",
+      );
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+      if (originalAuthSecret === undefined) {
+        delete process.env.AUTH_SECRET;
+      } else {
+        process.env.AUTH_SECRET = originalAuthSecret;
+      }
+      if (originalNextAuthSecret === undefined) {
+        delete process.env.NEXTAUTH_SECRET;
+      } else {
+        process.env.NEXTAUTH_SECRET = originalNextAuthSecret;
+      }
+    }
+  });
+
   it("requires an admin reason before saving", async () => {
     const db = makePreviewDb();
 

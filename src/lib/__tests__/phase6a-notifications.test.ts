@@ -129,6 +129,42 @@ describe("N-10: EmailLog tracking", () => {
     (process.env as Record<string, string>).NODE_ENV = origEnv;
   });
 
+  it("uses a redacted EmailLog recipient without changing SMTP delivery", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+
+    const { sendEmail } = await import("../email");
+
+    await sendEmail({
+      to: "private-committee@example.com",
+      subject: "Website Contact",
+      html: "<p>Contact message</p>",
+      templateName: "website-contact",
+      logRecipient: "committee-contact:assignment-1",
+    });
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        to: "committee-contact:assignment-1",
+        templateName: "website-contact",
+        htmlBody: null,
+      }),
+    });
+    expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "private-committee@example.com",
+      }),
+    );
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "committee-contact:assignment-1",
+      }),
+      "Email delivered",
+    );
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
+  });
+
   it("redacts sensitive email HTML from dev logs", async () => {
     const origEnv = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV = "development";

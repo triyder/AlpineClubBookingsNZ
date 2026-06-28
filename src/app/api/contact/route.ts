@@ -71,12 +71,14 @@ export async function POST(request: Request) {
 
     let toEmail = CONTACT_EMAIL;
     let recipientLabel = "";
+    let logRecipient = CONTACT_EMAIL;
 
     if (recipient) {
       const committeeAssignment = await resolveCommitteeRecipient(recipient);
 
       if (committeeAssignment?.member.email) {
         toEmail = committeeAssignment.member.email;
+        logRecipient = `committee-contact:${recipient}`;
         recipientLabel = buildRecipientLabel(
           committeeAssignment.committeeRole.name,
         );
@@ -112,6 +114,7 @@ export async function POST(request: Request) {
         email,
         message,
       },
+      logRecipient,
     });
 
     return NextResponse.json({ success: true });

@@ -139,4 +139,46 @@ describe("email header CRLF injection protections", () => {
     expect(mockTransporter.sendMail).not.toHaveBeenCalled();
     expect(mockPrisma.committeeAssignment.findFirst).not.toHaveBeenCalled();
   });
+
+  it("redacts committee recipient emails from contact EmailLog rows", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    mockPrisma.committeeAssignment.findFirst.mockResolvedValueOnce({
+      committeeRole: { name: "Secretary" },
+      member: { email: "secretary.private@example.com" },
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Jordan",
+          email: "jordan@example.com",
+          message: "Hello",
+          recipient: "assignment-1",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "secretary.private@example.com",
+      })
+    );
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        to: "committee-contact:assignment-1",
+        templateName: "website-contact",
+        htmlBody: null,
+      }),
+    });
+    expect(mockPrisma.emailLog.create).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          to: "secretary.private@example.com",
+        }),
+      })
+    );
+  });
 });

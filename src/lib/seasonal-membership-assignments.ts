@@ -249,11 +249,16 @@ function summarizeSubscriptionHistory(records: SubscriptionPreviewRecord[]) {
 }
 
 function getPreviewSecret() {
-  return (
-    process.env.AUTH_SECRET ??
-    process.env.NEXTAUTH_SECRET ??
-    "seasonal-membership-preview-local-secret"
-  );
+  const secret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+  if (secret) {
+    return secret;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "AUTH_SECRET or NEXTAUTH_SECRET is required for seasonal membership preview tokens",
+    );
+  }
+  return "seasonal-membership-preview-local-secret";
 }
 
 function previewTokenPayload(preview: Omit<SeasonalMembershipChangePreview, "previewToken">) {

@@ -334,7 +334,10 @@ export async function POST(
           seasons: seasonRateData,
           seasonYear,
         });
-      } catch {
+      } catch (error) {
+        if (error instanceof MembershipTypeBookingPolicyError) {
+          throw error;
+        }
         throw new ApiError(
           "No season rate found for the booking dates",
           400

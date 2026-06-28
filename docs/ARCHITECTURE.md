@@ -265,7 +265,9 @@ reads only active, published assignments with active roles, never selects member
 email, returns phone only when show-phone is enabled, and exposes contact keys
 only for contactable assignments. The contact form resolves those assignment
 keys server-side to the linked member email or falls back to the club contact
-address.
+address. When routed to a committee member, contact email delivery stores an
+opaque committee-contact marker in EmailLog instead of the private member
+recipient address.
 
 Membership cancellation is a member-initiated account lifecycle workflow.
 Requests can include the requester, dependants, non-login adults, and related

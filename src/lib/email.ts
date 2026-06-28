@@ -211,6 +211,7 @@ export async function sendEmail({
   templateName = "unknown",
   templateData,
   attachments,
+  logRecipient,
 }: {
   to: string;
   subject: string;
@@ -219,6 +220,7 @@ export async function sendEmail({
   templateName?: string;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
+  logRecipient?: string;
 }): Promise<EmailSendOutcome> {
   const prepared = await prepareEmailMessage({
     templateName,
@@ -230,21 +232,25 @@ export async function sendEmail({
     prepared.settings,
     EMAIL_FROM,
   );
-  const persistHtmlBody = shouldPersistEmailHtml(templateName);
   const plainTextBody = text || htmlToPlainText(prepared.html);
   const normalizedRecipient = normalizeEmailAddress(to);
+  const emailLogRecipient = logRecipient?.trim() || to;
+  const recipientRedactedInLogs = emailLogRecipient !== to;
+  const persistHtmlBody =
+    !recipientRedactedInLogs && shouldPersistEmailHtml(templateName);
   const sanitizedSubject = sanitizeEmailSubject(prepared.subject);
 
   assertNoCrlf(from, "from");
   assertNoCrlf(to, "to");
   assertNoCrlf(normalizedRecipient, "to");
+  assertNoCrlf(emailLogRecipient, "logRecipient");
 
   // Create EmailLog record (fire-and-forget logging won't break email delivery)
   let emailLogId: string | null = null;
   try {
     const log = await prisma.emailLog.create({
       data: {
-        to,
+        to: emailLogRecipient,
         subject: sanitizedSubject,
         templateName,
         htmlBody: persistHtmlBody ? prepared.html : null,
@@ -261,7 +267,7 @@ export async function sendEmail({
     normalizedRecipient,
   ).catch((err) => {
     logger.error(
-      { err, to: normalizedRecipient, templateName },
+      { err, to: emailLogRecipient, templateName },
       "Failed to check email suppression state",
     );
     return null;
@@ -280,7 +286,7 @@ export async function sendEmail({
         });
       } catch (err) {
         logger.error(
-          { err, to: normalizedRecipient },
+          { err, to: emailLogRecipient },
           "Failed to update suppressed email log",
         );
       }
@@ -288,7 +294,7 @@ export async function sendEmail({
 
     logger.warn(
       {
-        to: normalizedRecipient,
+        to: emailLogRecipient,
         templateName,
         emailSuppressionId: activeSuppression.id,
         reason: activeSuppression.reason,
@@ -305,7 +311,7 @@ export async function sendEmail({
 
   if (process.env.NODE_ENV === "development") {
     logger.info(
-      { to, subject: sanitizedSubject, templateName },
+      { to: emailLogRecipient, subject: sanitizedSubject, templateName },
       "Email sent (dev mode)",
     );
     if (persistHtmlBody) {
@@ -324,7 +330,10 @@ export async function sendEmail({
           data: { status: "SENT", sentAt: new Date() },
         });
       } catch (err) {
-        logger.error({ err, to, templateName }, "Failed to update EmailLog");
+        logger.error(
+          { err, to: emailLogRecipient, templateName },
+          "Failed to update EmailLog",
+        );
       }
     }
     return {
@@ -345,7 +354,10 @@ export async function sendEmail({
       attachments,
     });
 
-    logger.debug({ templateName, to, mode: modeLabel }, "Email delivered");
+    logger.debug(
+      { templateName, to: emailLogRecipient, mode: modeLabel },
+      "Email delivered",
+    );
 
     // Update EmailLog to SENT
     if (emailLogId) {
