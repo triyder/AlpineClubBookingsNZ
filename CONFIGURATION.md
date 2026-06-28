@@ -275,6 +275,27 @@ assignment are separate axes:
 - Committee assignment remains public/contact metadata and does not grant app
   access.
 
+## Committee Settings
+
+Committee settings are database-backed and managed from `/admin/committee`.
+`CommitteeRole` stores reusable master roles such as President, Secretary, or
+Booking Officer. `CommitteeAssignment` links a member to one of those roles and
+stores presentation controls: blurb, sort order, published, show-phone,
+contactable, and active/deactivated state. Multiple members can hold the same
+master role.
+
+Committee assignment is separate from `Member.role` and
+`SeasonalMembershipAssignment`; it never grants admin, lodge, booking, finance,
+or subscription privileges. Member detail pages show committee assignments in
+their own card alongside access role and seasonal membership type controls.
+
+The legacy `CommitteeMember` table remains the public committee/contact source
+until the public privacy rollout updates the public API/page. Seed and migration
+steps create master roles and hidden member-linked assignments where a legacy
+committee email exactly matches a member email, but they do not delete or blank
+existing public committee records. Assignment changes and master role changes
+are audited with before/after metadata.
+
 Booking and subscription enforcement is season-aware:
 
 - `MEMBER_RATE` keeps normal member pricing for linked member guests.

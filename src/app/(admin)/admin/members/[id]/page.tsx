@@ -41,6 +41,7 @@ import { MemberDependentsCard } from "./_components/member-dependents-card";
 import { MemberCreditCard } from "./_components/member-credit-card";
 import { MemberHistoryAccordion } from "./_components/member-history-accordion";
 import { MemberSeasonalMembershipCard } from "./_components/member-seasonal-membership-card";
+import { MemberCommitteeAssignmentsCard } from "./_components/member-committee-assignments-card";
 import { MemberEditDialog } from "./_components/member-edit-dialog";
 import { MemberXeroLinkDialog } from "./_components/member-xero-link-dialog";
 import { MemberXeroCreateDialog } from "./_components/member-xero-create-dialog";
@@ -1699,6 +1700,14 @@ export default function MemberDetailPage({
       />
 
       <MemberSeasonalMembershipCard
+        member={member}
+        onSaved={async () => {
+          setLoading(true);
+          await fetchMember();
+        }}
+      />
+
+      <MemberCommitteeAssignmentsCard
         member={member}
         onSaved={async () => {
           setLoading(true);

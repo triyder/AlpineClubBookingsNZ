@@ -77,7 +77,11 @@ fork for another organisation. See `NOTICE.md`.
    that member's admin detail page after previewing affected future bookings,
    drafts, waitlist records, and subscription history; existing future bookings
    are not automatically repriced by this change.
-7. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
+7. Use **Admin > Committee** to review seeded committee master roles and the
+   legacy public committee entries. Committee assignments are linked from member
+   admin detail pages and remain hidden/unpublished until an admin explicitly
+   enables their presentation flags.
+8. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 
 You can use the setup helpers for a guided path:

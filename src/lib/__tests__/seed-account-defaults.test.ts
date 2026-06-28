@@ -38,6 +38,7 @@ import {
   buildSeedAdminMemberData,
   buildSeedChoreTemplates,
   buildSeedCommitteePlaceholders,
+  buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
   SEED_PLACEHOLDER_PHONE,
   shouldSkipTokoroaThemeSeed,
@@ -176,6 +177,26 @@ describe("buildSeedCommitteePlaceholders", () => {
     placeholders.forEach((entry, index) => {
       expect(entry.id).toBe(`seed-committee-${entry.contactKey}`);
       expect(entry.sortOrder).toBe(index);
+    });
+  });
+});
+
+describe("buildSeedCommitteeRoles", () => {
+  const roles = buildSeedCommitteeRoles();
+
+  it("creates stable master role records from the generic committee positions", () => {
+    expect(roles.map((role) => role.key)).toEqual([
+      "president",
+      "vicePresident",
+      "secretary",
+      "treasurer",
+      "membership",
+      "bookings",
+      "custodian",
+    ]);
+    roles.forEach((role, index) => {
+      expect(role.id).toBe(`seed-committee-role-${role.key}`);
+      expect(role.sortOrder).toBe(index);
     });
   });
 });

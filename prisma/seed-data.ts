@@ -72,6 +72,14 @@ export interface SeedCommitteeMember {
   sortOrder: number;
 }
 
+export interface SeedCommitteeRole {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  sortOrder: number;
+}
+
 /**
  * Generic committee placeholders. Names and phone numbers are deliberately
  * fake; clubs replace them in Admin -> Committee after first login. Emails
@@ -143,6 +151,19 @@ export function buildSeedCommitteePlaceholders(params: {
     contactKey: entry.contactKey,
     description: entry.description,
     sortOrder,
+  }));
+}
+
+export function buildSeedCommitteeRoles(): SeedCommitteeRole[] {
+  return buildSeedCommitteePlaceholders({
+    domainEmail: () => "committee@example.invalid",
+    contactEmail: "committee@example.invalid",
+  }).map((entry) => ({
+    id: `seed-committee-role-${entry.contactKey}`,
+    key: entry.contactKey,
+    name: entry.role,
+    description: entry.description,
+    sortOrder: entry.sortOrder,
   }));
 }
 

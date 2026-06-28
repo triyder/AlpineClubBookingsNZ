@@ -459,6 +459,8 @@ model Member {
   inductionSignOffs                          MemberInductionSignOff[]                   @relation("InductionSignOffSigner")
   assignedInductionSigners                   MemberInductionAssignedSigner[]            @relation("AssignedInductionSigners")
   lockersAllocated                           Locker[]                                   @relation("LockerAllocatedMember")
+  committeeAssignments                       CommitteeAssignment[]                      @relation("CommitteeAssignmentMember")
+  committeeAssignmentsAssigned               CommitteeAssignment[]                      @relation("CommitteeAssignmentAssignedBy")
 
   @@index([email])
   @@index([xeroContactId])
@@ -2906,6 +2908,47 @@ model CommitteeMember {
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model CommitteeRole {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments CommitteeAssignment[]
+
+  @@index([isActive, sortOrder])
+  @@index([sortOrder])
+}
+
+model CommitteeAssignment {
+  id                 String   @id @default(cuid())
+  memberId           String
+  committeeRoleId    String
+  blurb              String?  @db.Text
+  sortOrder          Int      @default(0)
+  published          Boolean  @default(false)
+  showPhone          Boolean  @default(false)
+  contactable        Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  assignedByMemberId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  member        Member        @relation("CommitteeAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
+  committeeRole CommitteeRole @relation(fields: [committeeRoleId], references: [id], onDelete: Restrict)
+  assignedBy    Member?       @relation("CommitteeAssignmentAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([memberId, committeeRoleId])
+  @@index([committeeRoleId])
+  @@index([memberId])
+  @@index([isActive, published, sortOrder])
+  @@index([assignedByMemberId])
 }
 
 // ---------------------------------------------------------------------------

@@ -128,6 +128,19 @@ rewrite subscription/payment/Xero history, or call provider systems. The saved
 assignment is enforced the next time a booking is quoted, created, confirmed
 from draft, joined, or repriced by an allowed modification path.
 
+## Committee Assignment Lifecycle
+
+```text
+seed/migration creates committee master roles
+legacy public CommitteeMember rows remain public source
+admin creates or archives master role
+admin links member to role from member detail
+new assignment starts hidden/unpublished
+admin edits blurb/sort/published/show-phone/contactable flags
+audited assignment update or deactivate
+public privacy rollout switches source in a later issue
+```
+
 ## Refund And Credit Lifecycle
 
 Known credit types: `CANCELLATION_REFUND`,

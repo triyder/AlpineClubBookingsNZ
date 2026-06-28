@@ -1,0 +1,213 @@
+import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditRequestContext,
+} from "@/lib/audit";
+import {
+  committeeAssignmentSelect,
+  normalizeCommitteeText,
+  serializeCommitteeAssignment,
+} from "@/lib/committee";
+import { prisma } from "@/lib/prisma";
+import { requireAdmin } from "@/lib/session-guards";
+
+const paramsSchema = z.object({
+  id: z.string().min(1),
+});
+
+const patchSchema = z
+  .object({
+    blurb: z.string().trim().max(1000).nullable().optional(),
+    sortOrder: z.number().int().min(0).max(100000).optional(),
+    published: z.boolean().optional(),
+    showPhone: z.boolean().optional(),
+    contactable: z.boolean().optional(),
+    isActive: z.boolean().optional(),
+  })
+  .strict();
+
+function changedFields(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+) {
+  return Object.keys(after).filter((key) => before[key] !== after[key]);
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
+
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json(
+      { error: "Invalid route parameters", details: parsedParams.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = patchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  if (Object.keys(parsed.data).length === 0) {
+    return NextResponse.json(
+      { error: "At least one committee assignment field is required" },
+      { status: 400 },
+    );
+  }
+
+  const existing = await prisma.committeeAssignment.findUnique({
+    where: { id: parsedParams.data.id },
+    select: committeeAssignmentSelect,
+  });
+  if (!existing) {
+    return NextResponse.json(
+      { error: "Committee assignment not found" },
+      { status: 404 },
+    );
+  }
+
+  if (parsed.data.isActive && !existing.committeeRole.isActive) {
+    return NextResponse.json(
+      { error: "Archived committee roles cannot receive active assignments" },
+      { status: 409 },
+    );
+  }
+
+  const data: Prisma.CommitteeAssignmentUpdateInput = {
+    assignedBy: { connect: { id: session.user.id } },
+  };
+  if (parsed.data.blurb !== undefined) {
+    data.blurb = normalizeCommitteeText(parsed.data.blurb);
+  }
+  if (parsed.data.sortOrder !== undefined) {
+    data.sortOrder = parsed.data.sortOrder;
+  }
+  if (parsed.data.published !== undefined) {
+    data.published = parsed.data.published;
+  }
+  if (parsed.data.showPhone !== undefined) {
+    data.showPhone = parsed.data.showPhone;
+  }
+  if (parsed.data.contactable !== undefined) {
+    data.contactable = parsed.data.contactable;
+  }
+  if (parsed.data.isActive !== undefined) {
+    data.isActive = parsed.data.isActive;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const assignment = await tx.committeeAssignment.update({
+      where: { id: existing.id },
+      data,
+      select: committeeAssignmentSelect,
+    });
+
+    await tx.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: parsed.data.isActive === false
+          ? "COMMITTEE_ASSIGNMENT_DEACTIVATED"
+          : parsed.data.isActive === true && !existing.isActive
+            ? "COMMITTEE_ASSIGNMENT_REACTIVATED"
+            : "COMMITTEE_ASSIGNMENT_UPDATED",
+        actor: { memberId: session.user.id },
+        subject: { memberId: existing.memberId },
+        entity: { type: "CommitteeAssignment", id: existing.id },
+        category: "admin",
+        severity: "important",
+        outcome: "success",
+        summary: "Committee assignment updated",
+        metadata: {
+          changedFields: changedFields(existing, data as Record<string, unknown>),
+          previousCommitteeAssignment: serializeCommitteeAssignment(existing),
+          newCommitteeAssignment: serializeCommitteeAssignment(assignment),
+        },
+        request: getAuditRequestContext(request),
+      }),
+    );
+
+    return assignment;
+  });
+
+  return NextResponse.json({ assignment: serializeCommitteeAssignment(updated) });
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
+
+  const parsedParams = paramsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json(
+      { error: "Invalid route parameters", details: parsedParams.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const existing = await prisma.committeeAssignment.findUnique({
+    where: { id: parsedParams.data.id },
+    select: committeeAssignmentSelect,
+  });
+  if (!existing) {
+    return NextResponse.json(
+      { error: "Committee assignment not found" },
+      { status: 404 },
+    );
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const assignment = await tx.committeeAssignment.update({
+      where: { id: existing.id },
+      data: {
+        isActive: false,
+        published: false,
+        showPhone: false,
+        contactable: false,
+        assignedByMemberId: session.user.id,
+      },
+      select: committeeAssignmentSelect,
+    });
+
+    await tx.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: "COMMITTEE_ASSIGNMENT_DEACTIVATED",
+        actor: { memberId: session.user.id },
+        subject: { memberId: existing.memberId },
+        entity: { type: "CommitteeAssignment", id: existing.id },
+        category: "admin",
+        severity: "important",
+        outcome: "success",
+        summary: "Committee assignment deactivated",
+        metadata: {
+          previousCommitteeAssignment: serializeCommitteeAssignment(existing),
+          newCommitteeAssignment: serializeCommitteeAssignment(assignment),
+        },
+        request: getAuditRequestContext(request),
+      }),
+    );
+
+    return assignment;
+  });
+
+  return NextResponse.json({ assignment: serializeCommitteeAssignment(updated) });
+}

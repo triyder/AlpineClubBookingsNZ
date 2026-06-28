@@ -30,6 +30,10 @@ import {
   getAuditLogActorMemberId,
 } from "@/lib/audit-query";
 import {
+  committeeAssignmentSelect,
+  serializeCommitteeAssignment,
+} from "@/lib/committee";
+import {
   buildStructuredAuditLogCreateArgs,
   getAuditEmailDomain,
   getAuditRequestContext,
@@ -355,6 +359,10 @@ export async function getAdminMemberDetail(params: {
             },
           },
         },
+        committeeAssignments: {
+          orderBy: [{ sortOrder: "asc" }, { updatedAt: "desc" }],
+          select: committeeAssignmentSelect,
+        },
         dependents: {
           orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
           select: {
@@ -538,6 +546,9 @@ export async function getAdminMemberDetail(params: {
     seasonalMembershipAssignments: (
       member.seasonalMembershipAssignments ?? []
     ).map((assignment) => serializeSeasonalMembershipAssignment(assignment)),
+    committeeAssignments: (member.committeeAssignments ?? []).map((assignment) =>
+      serializeCommitteeAssignment(assignment),
+    ),
     bookings,
     promoCodes: assignedPromoCodes,
     auditLogs: auditLogsWithActors,

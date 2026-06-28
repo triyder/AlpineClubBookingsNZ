@@ -126,6 +126,49 @@ export interface SeasonalMembershipAssignmentSummary {
   membershipType: MembershipTypeSummary;
 }
 
+export interface CommitteeRoleSummary {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  assignmentCount: number;
+}
+
+export interface CommitteeAssignmentSummary {
+  id: string;
+  memberId: string;
+  committeeRoleId: string;
+  blurb: string | null;
+  sortOrder: number;
+  published: boolean;
+  showPhone: boolean;
+  contactable: boolean;
+  isActive: boolean;
+  assignedByMemberId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  committeeRole: CommitteeRoleSummary;
+  member: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+    role: string;
+    active: boolean;
+    displayName: string;
+  };
+  assignedBy: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    displayName: string;
+  } | null;
+}
+
 export interface MemberDetail {
   id: string;
   title: Title | null;
@@ -172,6 +215,7 @@ export interface MemberDetail {
   familyGroups: { id: string; name: string | null }[];
   currentSeasonYear: number;
   seasonalMembershipAssignments: SeasonalMembershipAssignmentSummary[];
+  committeeAssignments: CommitteeAssignmentSummary[];
   subscriptions: Array<{
     id: string;
     seasonYear: number;

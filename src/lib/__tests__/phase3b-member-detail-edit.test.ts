@@ -532,4 +532,70 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     const body = await res.json();
     expect(body.forcePasswordChange).toBe(true);
   });
+
+  it("GET returns committee assignments as a separate member detail axis", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      subscriptions: [],
+      familyGroupMemberships: [],
+      committeeAssignments: [
+        {
+          id: "assign1",
+          memberId: "m1",
+          committeeRoleId: "role1",
+          blurb: "Current president.",
+          sortOrder: 0,
+          published: false,
+          showPhone: false,
+          contactable: false,
+          isActive: true,
+          assignedByMemberId: "admin1",
+          createdAt: new Date("2026-01-01"),
+          updatedAt: new Date("2026-01-01"),
+          committeeRole: {
+            id: "role1",
+            key: "president",
+            name: "President",
+            description: "Chairs meetings.",
+            isActive: true,
+            sortOrder: 0,
+            createdAt: new Date("2026-01-01"),
+            updatedAt: new Date("2026-01-01"),
+            _count: { assignments: 1 },
+          },
+          member: {
+            id: "m1",
+            firstName: "Alice",
+            lastName: "Smith",
+            email: "alice@test.com",
+            phoneCountryCode: "64",
+            phoneAreaCode: "21",
+            phoneNumber: "123",
+            role: "MEMBER",
+            active: true,
+          },
+          assignedBy: null,
+        },
+      ],
+    } as any);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.booking.aggregate).mockResolvedValue({
+      _sum: { finalPriceCents: null }, _count: 0, _max: { checkOut: null },
+    } as any);
+
+    const req = new NextRequest("http://localhost/api/admin/members/m1");
+    const res = await getMemberDetail(req, {
+      params: Promise.resolve({ id: "m1" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.role).toBe("MEMBER");
+    expect(body.committeeAssignments[0]).toMatchObject({
+      committeeRole: { name: "President" },
+      published: false,
+      member: { displayName: "Alice Smith" },
+    });
+  });
 });

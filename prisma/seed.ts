@@ -28,6 +28,7 @@ import {
   buildSeedAdminMemberData,
   buildSeedChoreTemplates,
   buildSeedCommitteePlaceholders,
+  buildSeedCommitteeRoles,
   buildSeedLodgeMemberData,
   shouldSkipTokoroaThemeSeed,
 } from "./seed-data";
@@ -477,6 +478,22 @@ async function main() {
   } else {
     console.log("Committee members already present; skipping");
   }
+
+  const committeeRoles = buildSeedCommitteeRoles();
+  for (const role of committeeRoles) {
+    await prisma.committeeRole.upsert({
+      where: { key: role.key },
+      update: {},
+      create: {
+        id: role.id,
+        key: role.key,
+        name: role.name,
+        description: role.description,
+        sortOrder: role.sortOrder,
+      },
+    });
+  }
+  console.log(`Committee master roles seeded: ${committeeRoles.length} roles`);
 
   await seedClubTheme();
 

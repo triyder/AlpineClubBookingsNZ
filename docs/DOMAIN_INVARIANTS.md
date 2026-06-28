@@ -65,7 +65,10 @@ Access role, seasonal membership type, and committee assignment are separate
 axes. `Member.role` controls application access, `SeasonalMembershipAssignment`
 stores per-season membership policy, and committee assignment controls public
 committee/contact presentation only. Do not add committee positions to
-`Member.role`. Booking pricing, booking block checks, and effective
+`Member.role`. `CommitteeRole` master records and `CommitteeAssignment`
+member links can be active/inactive independently of access role and seasonal
+membership type, and newly linked assignments are hidden until explicitly
+published by an admin. Booking pricing, booking block checks, and effective
 subscription lockout may depend on the member's seasonal membership type for the
 booking season; application access and committee presentation must not.
 Seasonal membership type changes require a guarded admin preview and reasoned

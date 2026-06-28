@@ -258,7 +258,11 @@ booking lockout also resolve the seasonal type: `NOT_REQUIRED` is an effective
 status layered over the raw `MemberSubscription`/Xero history, which remains
 stored and visible for audit. Seasonal type changes do not automatically
 reprice existing future bookings. Committee assignments remain separate
-public/contact metadata.
+public/contact metadata. `CommitteeRole` stores reusable master positions and
+`CommitteeAssignment` links members to those positions with blurb, sort order,
+published, show-phone, contactable, and active flags. Existing `CommitteeMember`
+rows continue to power the public committee page and contact recipient list
+until the privacy follow-up switches the public source.
 
 Membership cancellation is a member-initiated account lifecycle workflow.
 Requests can include the requester, dependants, non-login adults, and related
