@@ -23,6 +23,7 @@ import {
   getLoginBadge,
 } from "@/lib/admin-member-badges"
 import { memberName } from "@/lib/member-serialization"
+import { ROLE_LABELS } from "@/lib/member-roles"
 import type { Member } from "../_types"
 import { subscriptionStatusConfig } from "../_utils"
 
@@ -200,7 +201,7 @@ export function MemberTable({
                     variant={member.role === "ADMIN" ? "default" : "secondary"}
                     className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}
                   >
-                    {member.role}
+                    {ROLE_LABELS[member.role]}
                   </Badge>
                 </TableCell>
                 <TableCell>
