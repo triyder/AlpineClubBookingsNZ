@@ -238,6 +238,16 @@ Address autocomplete is an optional Addy-backed public proxy module. It defaults
 off, is gated by Admin Modules and `src/proxy.ts` before route handlers run, and
 never replaces manual address entry.
 
+Seasonal membership types are policy records, not access roles. `MembershipType`
+stores the stable identifier, display text, active/archive state, sort order,
+booking behavior, and subscription behavior for built-in and admin-defined
+types. `SeasonalMembershipAssignment` records a member's type for a membership
+`seasonYear`. The initial backfill maps existing roles to current-season
+assignments, but current booking pricing, subscription lockout, Xero sync, and
+authorization still use their pre-existing role/subscription paths until the
+follow-up enforcement work is merged. Committee assignments remain separate
+public/contact metadata.
+
 Membership cancellation is a member-initiated account lifecycle workflow.
 Requests can include the requester, dependants, non-login adults, and related
 family adults. Login-capable adults receive their own confirmation link before

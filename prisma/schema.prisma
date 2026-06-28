@@ -99,6 +99,17 @@ enum SubscriptionStatus {
   OVERDUE
 }
 
+enum MembershipTypeBookingBehavior {
+  MEMBER_RATE
+  NON_MEMBER_RATE
+  BLOCK_BOOKING
+}
+
+enum MembershipTypeSubscriptionBehavior {
+  REQUIRED
+  NOT_REQUIRED
+}
+
 enum SeasonType {
   WINTER
   SUMMER
@@ -408,6 +419,8 @@ model Member {
   emailVerificationTokens                    EmailVerificationToken[]
   emailChangeTokens                          EmailChangeToken[]
   subscriptions                              MemberSubscription[]
+  seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
+  seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
   bookings                                   Booking[]
   guestAppearances                           BookingGuest[]
   bookingChangeRequestsRequested             BookingChangeRequest[]                     @relation("BookingChangeRequestsRequested")
@@ -579,6 +592,51 @@ model MemberSubscription {
   @@index([memberId])
   @@index([seasonYear])
   @@index([seasonYear, status])
+}
+
+// ---------------------------------------------------------------------------
+// Seasonal Membership Types
+// ---------------------------------------------------------------------------
+
+model MembershipType {
+  id                   String                             @id @default(cuid())
+  // Stable identifier used by seeds, migrations, and follow-up enforcement
+  // work. Display names can change without changing this key.
+  key                  String                             @unique
+  name                 String
+  description          String?                            @db.Text
+  isActive             Boolean                            @default(true)
+  isBuiltIn            Boolean                            @default(false)
+  bookingBehavior      MembershipTypeBookingBehavior      @default(MEMBER_RATE)
+  subscriptionBehavior MembershipTypeSubscriptionBehavior @default(REQUIRED)
+  sortOrder            Int                                @default(0)
+  createdAt            DateTime                           @default(now())
+  updatedAt            DateTime                           @updatedAt
+
+  assignments SeasonalMembershipAssignment[]
+
+  @@index([isActive, sortOrder])
+  @@index([sortOrder])
+}
+
+model SeasonalMembershipAssignment {
+  id                 String   @id @default(cuid())
+  memberId           String
+  seasonYear         Int
+  membershipTypeId   String
+  assignedByMemberId String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  member         Member         @relation("SeasonalMembershipAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
+  membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
+  assignedBy     Member?        @relation("SeasonalMembershipAssignmentAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([memberId, seasonYear])
+  @@index([seasonYear])
+  @@index([membershipTypeId])
+  @@index([seasonYear, membershipTypeId])
+  @@index([assignedByMemberId])
 }
 
 // ---------------------------------------------------------------------------

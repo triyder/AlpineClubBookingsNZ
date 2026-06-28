@@ -69,7 +69,11 @@ fork for another organisation. See `NOTICE.md`.
    allocation, Internet Banking payments, and address autocomplete default off
    until an admin enables them. General-purpose modules default on and can be
    disabled there.
-6. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
+6. Use **Admin > Membership Types** to review the seeded seasonal membership
+   types: Full, Associate, Reserve, and Life. These records store future
+   booking-rate and subscription policy without changing access roles or
+   current booking/subscription enforcement.
+7. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 
 You can use the setup helpers for a guided path:

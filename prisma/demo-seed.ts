@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membership-types";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
@@ -294,6 +295,12 @@ async function main() {
     },
   });
   console.log("Members seeded");
+
+  const membershipAssignmentBackfill =
+    await backfillCurrentSeasonMembershipAssignments(prisma, SEASON_YEAR);
+  console.log(
+    `Membership types seeded; demo assignments created: ${membershipAssignmentBackfill.createdCount}`,
+  );
 
   // -------------------------------------------------------------------------
   // Subscriptions — every SubscriptionStatus.

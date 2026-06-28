@@ -15,7 +15,10 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/dashboard",
 }));
 
-import { AdminSidebar } from "@/components/admin-sidebar";
+import {
+  AdminSidebar,
+  getVisibleAdminNavSections,
+} from "@/components/admin-sidebar";
 
 function mockJsonResponse(body: unknown) {
   return {
@@ -100,5 +103,20 @@ describe("AdminSidebar", () => {
       expect(financeToggle.getAttribute("aria-expanded")).toBe("true"),
     );
     expect(screen.getByRole("link", { name: "Payments" })).not.toBeNull();
+  });
+
+  it("shows membership type settings in setup and configuration", () => {
+    const section = getVisibleAdminNavSections(allOn).find(
+      (item) => item.label === "Setup & Configuration",
+    );
+
+    expect(section?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          href: "/admin/membership-types",
+          label: "Membership Types",
+        }),
+      ]),
+    );
   });
 });

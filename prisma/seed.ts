@@ -19,6 +19,9 @@ import {
 } from "../src/lib/club-theme-schema";
 import { DEFAULT_INDUCTION_TEMPLATE } from "../src/lib/induction-checklist-template";
 import { DEFAULT_FINANCE_REPORT_CATEGORIES } from "../src/lib/finance-report-mapping-defaults";
+import {
+  backfillCurrentSeasonMembershipAssignments,
+} from "../src/lib/membership-types";
 import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
@@ -355,6 +358,12 @@ async function main() {
     await ensureNotRequiredSubscriptionForRole(prisma, lodge);
     console.log(`Lodge account seeded: ${lodgeAccountEmail}`);
   }
+
+  const membershipAssignmentBackfill =
+    await backfillCurrentSeasonMembershipAssignments(prisma);
+  console.log(
+    `Membership types seeded; current-season assignments created: ${membershipAssignmentBackfill.createdCount}`,
+  );
 
   // Seed Winter 2026 season (June - September) with rates from club config.
   const winter2026 = await prisma.season.upsert({

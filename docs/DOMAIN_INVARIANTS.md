@@ -61,6 +61,13 @@ dependent changes must preserve financial history, booking and guest history,
 audit history, required family/dependent history, privacy preferences, and Xero
 contact/link history where required.
 
+Access role, seasonal membership type, and committee assignment are separate
+axes. `Member.role` controls application access, `SeasonalMembershipAssignment`
+stores per-season membership policy, and committee assignment controls public
+committee/contact presentation only. Do not add committee positions to
+`Member.role`, and do not make booking, subscription, or Xero behavior depend on
+membership type until the explicit enforcement issue changes those paths.
+
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do
 not remain permanently blocked by stale action links.

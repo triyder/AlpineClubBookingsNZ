@@ -47,6 +47,7 @@ import {
   Lock,
   Landmark,
   MessageSquareText,
+  BadgeCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -245,6 +246,11 @@ const navSections: NavSection[] = [
         href: "/admin/subscription-lockout",
         label: "Subscription Lockout",
         icon: Lock,
+      },
+      {
+        href: "/admin/membership-types",
+        label: "Membership Types",
+        icon: BadgeCheck,
       },
       { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },

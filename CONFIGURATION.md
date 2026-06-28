@@ -171,6 +171,12 @@ database never deletes, overwrites, or duplicates data. Committee entries and
 chore templates are seeded as generic placeholders only when their tables are
 empty; replace them through the admin screens after first login.
 
+The seed also creates built-in seasonal membership types: Full, Associate,
+Reserve, and Life. It backfills the current membership season from existing
+roles (`MEMBER`, `ADMIN`, and `LODGE` to Full, `ASSOCIATE` to Associate, and
+`LIFE` to Life) using create-if-missing assignments. Re-running the seed does
+not overwrite existing seasonal assignments.
+
 `npm run db:seed:demo` is separate from the first-run seed. It is intended only
 for disposable local demo databases, refuses to run unless `DATABASE_URL`
 points at `localhost`, `127.0.0.1`, or `::1`, and deletes demo plus
@@ -215,6 +221,28 @@ variables. `/admin/setup` exposes:
 
 These settings are audited when saved. They do not call Xero on save; future
 approval processing must keep Xero writes outside long database transactions.
+
+## Membership Type Settings
+
+Seasonal membership type settings are database-backed and managed from
+`/admin/membership-types`. Access role, seasonal membership type, and committee
+assignment are separate axes:
+
+- `Member.role` remains the access role (`MEMBER`, `ADMIN`, `LODGE`,
+  `ASSOCIATE`, `LIFE`) until a later contract removes legacy category values.
+- `MembershipType` stores admin-configurable seasonal booking behavior
+  (`MEMBER_RATE`, `NON_MEMBER_RATE`, `BLOCK_BOOKING`) and subscription behavior
+  (`REQUIRED`, `NOT_REQUIRED`).
+- `SeasonalMembershipAssignment` records one membership type per member per
+  membership `seasonYear`.
+- Committee assignment remains public/contact metadata and does not grant app
+  access.
+
+The foundation does not change booking pricing, booking access, subscription
+lockout, Xero sync, or role-based authorization. `ADMIN` and `LODGE` are
+backfilled to the Full membership type for future policy alignment, but their
+current operational `NOT_REQUIRED` subscription behavior still comes from
+`roleNeverRequiresSubscription()` until the enforcement issue changes it.
 
 ## Member Import And Addresses
 

@@ -182,6 +182,20 @@ To verify: duplicate applicant behavior, nomination expiry, setup invite
 creation, Xero entrance-fee invoice path, reminder renewal, admin refresh,
 nominator replacement, and email retry behavior.
 
+## Seasonal Membership Type Foundation
+
+```text
+built-in type seeded -> admin reviews policy -> type edited/reordered
+custom type created -> active -> archived -> reactivated
+member role backfill -> current-season assignment created if missing
+```
+
+The foundation stores type policy and assignments only. It does not transition
+booking, subscription, Xero, or access-control state. `ADMIN` and `LODGE`
+current-season assignments seed as Full, but their operational subscription
+exemption remains governed by the existing role-based helper until the
+enforcement state machine is added.
+
 ## Nomination Lifecycle
 
 ```text
