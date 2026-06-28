@@ -118,15 +118,37 @@ menu.
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
   `{{photo-slideshow:path}}`. The `dataHash` parameter is the Snow.nz widget
-  hash. Photo token `path` parameters load images from a committed
-  `public/images/` directory; without a path, photo tokens use inline images
-  already inserted in the page body. Photo tokens require double braces.
-  Legacy single-brace syntax remains accepted only for non-photo tokens.
+  hash. Photo token `path` parameters are normalised relative to
+  `public/images/` and load images from that shared image-manager storage tree:
+  a committed `public/images/` directory in a source checkout, or the mounted
+  `public/images` volume in containerised deployments. Without a path, photo
+  tokens use inline images already inserted in the page body. Photo tokens
+  require double braces. Legacy single-brace syntax remains accepted only for
+  non-photo tokens.
 - Content and header HTML are sanitised on save and again on render. The
   allowlist lives in `src/lib/page-content-html.ts`.
-- The editor's image picker lists images deployed under `public/branding/`
-  only. There is no upload from the admin UI; add images by committing
-  them to the repository.
+- The editor's image picker can insert images from three sources:
+  database-backed image-library uploads, deployed branding files under
+  `public/branding/`, and filesystem/image-manager files under the shared
+  `public/images` tree. The root picker view combines the latest database
+  uploads, branding images, and root-level filesystem images; choosing another
+  Images folder shows filesystem images from that folder only.
+- The picker Upload button stores one image at a time in the database-backed
+  image library. Those images are served publicly from `/api/images/[id]`; the
+  picker can delete those database records, while branding files are managed by
+  deployment/repository asset updates and filesystem images are managed through
+  Admin > Image Manager.
+- Database-backed image-library uploads accept PNG, JPEG, GIF, WebP, AVIF, and
+  SVG files up to 2MB. The server validates the stored content type from the
+  file bytes rather than trusting the browser-declared type or filename. SVG is
+  allowed only through the `/api/images/[id]` serving route, which adds
+  `Content-Security-Policy` and `X-Content-Type-Options: nosniff` response
+  headers.
+- Admin > Image Manager uploads filesystem images into the shared
+  `public/images` tree/volume and serves them from `/api/images/uploaded/...`.
+  Those uploads accept PNG, JPEG, GIF, WebP, and AVIF files up to 10MB. SVG is
+  intentionally rejected there because filesystem uploads are served as static
+  image assets without the database image route's restrictive CSP.
 
 ## Lodge Instructions
 
