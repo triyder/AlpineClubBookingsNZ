@@ -22,8 +22,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/page-content-html", () => ({
   getSanitizedPageContentByPath: mocks.getSanitizedPageContentByPath,
-  pageContentHtmlToPlainText: (html: string) =>
-    html.replace(/<[^>]*>/g, "").trim(),
+  pageContentHtmlToPlainText: () => "",
 }));
 
 vi.mock("@/lib/page-content-embeds", () => ({
