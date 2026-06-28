@@ -66,6 +66,20 @@ function createFinanceSyncContext() {
   };
 }
 
+function buildInsufficientScopeError() {
+  return {
+    response: {
+      statusCode: 401,
+      headers: {
+        "www-authenticate": "insufficient_scope",
+      },
+    },
+    body: {
+      Detail: "AuthorizationUnsuccessful",
+    },
+  };
+}
+
 function createReport(overrides?: {
   reportID?: string;
   reportName?: string;
@@ -1304,24 +1318,47 @@ describe("finance-sync-datasets", () => {
     });
   });
 
-  it("rewrites insufficient-scope report failures into reconnect guidance", async () => {
-    const context = createFinanceSyncContext();
-    context.xero.accountingApi.getReportBankSummary.mockRejectedValue({
-      response: {
-        statusCode: 401,
-        headers: {
-          "www-authenticate": "insufficient_scope",
+  it("rewrites insufficient-scope report failures with the granular required scope", async () => {
+    const cases = [
+      {
+        operation: "getReportProfitAndLoss",
+        requiredScope: "accounting.reports.profitandloss.read",
+        reject(context: ReturnType<typeof createFinanceSyncContext>) {
+          context.xero.accountingApi.getReportProfitAndLoss.mockRejectedValue(
+            buildInsufficientScopeError()
+          );
         },
+        sync: syncFinanceProfitAndLossMonthlySnapshot,
       },
-      body: {
-        Detail: "AuthorizationUnsuccessful",
+      {
+        operation: "getReportBalanceSheet",
+        requiredScope: "accounting.reports.balancesheet.read",
+        reject(context: ReturnType<typeof createFinanceSyncContext>) {
+          context.xero.accountingApi.getReportBalanceSheet.mockRejectedValue(
+            buildInsufficientScopeError()
+          );
+        },
+        sync: syncFinanceBalanceSheetSnapshot,
       },
-    });
+      {
+        operation: "getReportBankSummary",
+        requiredScope: "accounting.reports.banksummary.read",
+        reject(context: ReturnType<typeof createFinanceSyncContext>) {
+          context.xero.accountingApi.getReportBankSummary.mockRejectedValue(
+            buildInsufficientScopeError()
+          );
+        },
+        sync: syncFinanceBankBalancesSnapshot,
+      },
+    ];
 
-    await expect(
-      syncFinanceBankBalancesSnapshot(context as never)
-    ).rejects.toThrow(
-      "Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the Xero app and reconnect Xero from the admin panel."
-    );
+    for (const testCase of cases) {
+      const context = createFinanceSyncContext();
+      testCase.reject(context);
+
+      await expect(testCase.sync(context as never)).rejects.toThrow(
+        `Xero is missing a required OAuth scope for ${testCase.operation}. Add ${testCase.requiredScope} to the Xero app and reconnect Xero from the admin panel.`
+      );
+    }
   });
 });

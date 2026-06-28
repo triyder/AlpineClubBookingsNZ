@@ -8,6 +8,7 @@ import {
   type AdminModuleSettingsSnapshot,
 } from "./admin-modules";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
+import { XERO_REQUIRED_REPORT_OAUTH_SCOPES } from "@/lib/xero-config";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -911,7 +912,7 @@ function buildFinanceDashboardCheck(
       details: [
         formatModuleActivationDetail(db, moduleState.adminEnabled),
         `Effective state: ${enabled ? "enabled" : "disabled"}`,
-        "Finance reporting reads from the shared operational Xero connection (requires the accounting.reports.read scope).",
+        `Finance reporting reads from the shared operational Xero connection (requires ${XERO_REQUIRED_REPORT_OAUTH_SCOPES.join(", ")}).`,
         !db
           ? "Database connection state not checked."
           : operationalConnected

@@ -160,6 +160,12 @@ describe("setup-readiness", () => {
     expect(JSON.stringify(readiness)).not.toContain("sk_test_123");
     expect(JSON.stringify(readiness)).not.toContain("smtp-secret");
     expect(JSON.stringify(readiness)).not.toContain("xero-secret");
+
+    const report = renderSetupCheckReport(readiness);
+    expect(report).toContain("accounting.reports.profitandloss.read");
+    expect(report).toContain("accounting.reports.balancesheet.read");
+    expect(report).toContain("accounting.reports.banksummary.read");
+    expect(report).not.toContain("accounting.reports.read");
   });
 
   it("surfaces missing first-boot inputs as blocked checks", () => {

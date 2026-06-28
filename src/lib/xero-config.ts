@@ -3,6 +3,16 @@ function readEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
+export const XERO_REPORT_OAUTH_SCOPES = {
+  profitAndLoss: "accounting.reports.profitandloss.read",
+  balanceSheet: "accounting.reports.balancesheet.read",
+  bankSummary: "accounting.reports.banksummary.read",
+} as const;
+
+export const XERO_REQUIRED_REPORT_OAUTH_SCOPES = Object.values(
+  XERO_REPORT_OAUTH_SCOPES,
+);
+
 const OPERATIONAL_XERO_OAUTH_SCOPES = [
   "openid",
   "profile",
@@ -11,10 +21,10 @@ const OPERATIONAL_XERO_OAUTH_SCOPES = [
   "accounting.invoices",
   "accounting.payments",
   "accounting.settings.read",
-  // Required by the finance dashboard sync (profit & loss, balance sheet, bank
-  // summary reports). Existing tokens keep their old scopes until Xero is
-  // reconnected from the admin panel, so a one-time re-consent is needed.
-  "accounting.reports.read",
+  // Required by the finance dashboard sync. Existing tokens keep their old
+  // scopes until Xero is reconnected from the admin panel, so a one-time
+  // re-consent is needed when this list changes.
+  ...XERO_REQUIRED_REPORT_OAUTH_SCOPES,
   "offline_access",
 ] as const;
 

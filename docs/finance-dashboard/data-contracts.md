@@ -23,7 +23,7 @@ If any metric definition changes, update this file in the same PR.
 
 - The finance sync uses the single operational Xero connection that bookings, payments, and subscriptions use.
 - There is no separate finance Xero OAuth app, token store, or usage metering.
-- The finance sync needs the `accounting.reports.read` scope; after deploy, reconnect Xero once from `/admin/xero` so existing tokens gain it. See `finance-xero-config-contract.md`.
+- The finance sync needs the `accounting.reports.profitandloss.read`, `accounting.reports.balancesheet.read`, and `accounting.reports.banksummary.read` scopes; after deploy, update the Xero developer app allowed scopes, verify the redirect URI, and reconnect Xero once from `/admin/xero` so existing tokens are replaced with current-scope tokens. See `finance-xero-config-contract.md`.
 - The `/finance` dashboard must not perform live Xero reads during render.
 
 ## Dashboard Selector Contract

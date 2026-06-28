@@ -12,10 +12,10 @@ Finance reporting uses the single operational Xero connection that bookings, pay
 
 ## Config Changes
 
-The only finance-relevant config change is an added OAuth scope.
+The only finance-relevant config change is the report OAuth scope set.
 
-- `accounting.reports.read` was added to `OPERATIONAL_XERO_OAUTH_SCOPES` in `src/lib/xero-config.ts`. This scope is required by the profit-and-loss, balance-sheet, and bank-summary report fetchers.
-- After deploy, Xero must be reconnected once from `/admin/xero` so existing tokens gain this scope, and the Xero developer-portal app must allow it.
+- `accounting.reports.profitandloss.read`, `accounting.reports.balancesheet.read`, and `accounting.reports.banksummary.read` are included in `OPERATIONAL_XERO_OAUTH_SCOPES` in `src/lib/xero-config.ts`. These scopes are required by the profit-and-loss, balance-sheet, and bank-summary report fetchers.
+- After deploy, update the Xero developer app allowed scopes to include the exact app request, verify the redirect URI, then reconnect Xero once from `/admin/xero` so existing tokens are replaced with current-scope tokens.
 - Until reconnected, the report datasets return a clear "reconnect Xero" message (see `withFinanceReportScopeError` in `src/lib/finance-sync-xero-datasets.ts`).
 - The chart-of-accounts dataset only needs `accounting.settings.read`, which the operational connection already had, so it works without re-consent.
 

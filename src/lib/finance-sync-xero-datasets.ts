@@ -17,6 +17,7 @@ import {
   getXeroErrorStatusCode,
 } from "@/lib/xero-error-shape";
 import { callXeroApi } from "@/lib/xero";
+import { XERO_REPORT_OAUTH_SCOPES } from "@/lib/xero-config";
 
 export const FINANCE_SYNC_DATA_TIMEZONE = APP_TIME_ZONE;
 export const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY =
@@ -42,6 +43,11 @@ const FINANCE_AGED_INVOICE_STATUSES = [
   "SUBMITTED",
 ] as const;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const XERO_REPORT_SCOPE_BY_OPERATION = {
+  getReportProfitAndLoss: XERO_REPORT_OAUTH_SCOPES.profitAndLoss,
+  getReportBalanceSheet: XERO_REPORT_OAUTH_SCOPES.balanceSheet,
+  getReportBankSummary: XERO_REPORT_OAUTH_SCOPES.bankSummary,
+} as const;
 
 type FinanceOpenInvoiceType = "ACCREC" | "ACCPAY";
 type FinanceAgedSnapshotType = "AGED_RECEIVABLES" | "AGED_PAYABLES";
@@ -421,9 +427,10 @@ function getFinanceXeroScopeErrorMessage(
     return null;
   }
 
-  const requiredScope = operation.startsWith("getReport")
-    ? "accounting.reports.read"
-    : null;
+  const requiredScope =
+    XERO_REPORT_SCOPE_BY_OPERATION[
+      operation as keyof typeof XERO_REPORT_SCOPE_BY_OPERATION
+    ] ?? null;
 
   return requiredScope
     ? `Xero is missing a required OAuth scope for ${operation}. Add ${requiredScope} to the Xero app and reconnect Xero from the admin panel.`
@@ -1496,7 +1503,7 @@ export async function syncFinanceChartOfAccountsSnapshot(
   const window = getFinanceReportWindow(context.startedAt);
   // getAccounts only needs accounting.settings.read, which the operational Xero
   // connection already holds, so this dataset works even before the one-time
-  // accounting.reports.read re-consent that the report datasets require.
+  // granular report-scope re-consent that the report datasets require.
   const response = await callXeroApi(
     () => context.xero.accountingApi.getAccounts(context.xeroTenantId),
     {

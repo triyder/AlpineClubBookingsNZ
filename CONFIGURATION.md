@@ -283,11 +283,18 @@ database table as booleans only.
 
 The finance dashboard reads its revenue, cost, and balance figures from the
 single operational Xero connection configured above. There are no separate
-finance Xero credentials. The finance reports require the
-`accounting.reports.read` OAuth scope, which is included in the operational
-scope set, so reconnect Xero from `/admin/xero` after deploying so the scope is
-granted. Access is controlled per member by `financeAccessLevel`
-(`NONE`/`VIEWER`/`MANAGER`).
+finance Xero credentials. The finance report sync requires these granular Xero
+OAuth scopes:
+
+- `accounting.reports.profitandloss.read`
+- `accounting.reports.balancesheet.read`
+- `accounting.reports.banksummary.read`
+
+Before reconnecting, update the Xero developer app allowed scopes to include the
+exact app request, and verify that `XERO_REDIRECT_URI` matches the deployed
+`/api/admin/xero/callback` URL. Then reconnect Xero from `/admin/xero` so fresh
+tokens carry the current scope set. Access is controlled per member by
+`financeAccessLevel` (`NONE`/`VIEWER`/`MANAGER`).
 
 ## Email Delivery
 

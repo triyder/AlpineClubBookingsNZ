@@ -7,7 +7,7 @@ This initiative needs both automated and manual verification. Finance changes ar
 ### Unit Tests
 
 - finance access guard helpers
-- finance Xero config: single operational connection and accounting.reports.read re-consent
+- finance Xero config: single operational connection, granular report scopes, and re-consent
 - finance snapshot mapping and persistence
 - booking-to-finance metric adapters
 - status inclusion and exclusion rules for guest nights and forward pipeline

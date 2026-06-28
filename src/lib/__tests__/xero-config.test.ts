@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getOperationalXeroConfig } from "@/lib/xero-config";
+import {
+  XERO_REQUIRED_REPORT_OAUTH_SCOPES,
+  getOperationalXeroConfig,
+} from "@/lib/xero-config";
 
 const originalEnv = { ...process.env };
 
@@ -24,9 +27,36 @@ describe("xero-config", () => {
     });
   });
 
-  it("includes the reports scope so finance reports can be synced through the single connection", () => {
-    expect(getOperationalXeroConfig().scopes).toContain(
-      "accounting.reports.read"
+  it("includes only the granular report scopes finance sync uses", () => {
+    const scopes = getOperationalXeroConfig().scopes;
+
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        "openid",
+        "profile",
+        "email",
+        "accounting.contacts",
+        "accounting.invoices",
+        "accounting.payments",
+        "accounting.settings.read",
+        "offline_access",
+      ])
     );
+    expect(scopes).not.toContain("accounting.reports.read");
+    expect(scopes).toEqual(
+      expect.arrayContaining([...XERO_REQUIRED_REPORT_OAUTH_SCOPES])
+    );
+    for (const forbiddenScope of [
+      "accounting.attachments",
+      "accounting.budgets.read",
+      "accounting.journals.read",
+      "accounting.reports.payroll.read",
+      "assets",
+      "files",
+      "payroll.employees",
+      "projects",
+    ]) {
+      expect(scopes).not.toContain(forbiddenScope);
+    }
   });
 });

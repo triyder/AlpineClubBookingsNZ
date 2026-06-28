@@ -22,9 +22,12 @@ payments, and subscriptions already use. There are no finance-specific Xero env
 vars, token storage, callback routes, or usage metering. The connection is
 managed through admin setup tooling, not from `/finance`.
 
-The finance sync needs the `accounting.reports.read` scope. After deploy, Xero
-must be reconnected once from `/admin/xero` so existing tokens gain this scope.
-See `finance-xero-config-contract.md`.
+The finance sync needs the granular `accounting.reports.profitandloss.read`,
+`accounting.reports.balancesheet.read`, and
+`accounting.reports.banksummary.read` scopes. After deploy, update the Xero
+developer app allowed scopes, verify the redirect URI, then reconnect Xero once
+from `/admin/xero` so existing tokens are replaced with tokens carrying the
+current scope set. See `finance-xero-config-contract.md`.
 
 Normal finance report navigation reads stored snapshots or first-party
 AlpineClubBookingsNZ booking/payment data. It must not make live Xero calls on

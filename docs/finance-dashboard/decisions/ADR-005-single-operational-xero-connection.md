@@ -25,10 +25,13 @@ Run the finance dashboard off the single operational Xero connection.
 - The finance sync authenticates with `getAuthenticatedXeroClient`
   (`src/lib/xero-api-client.ts`), bound for finance use through
   `createFinanceXeroSyncConnection` (`src/lib/finance-sync-service.ts`).
-- `accounting.reports.read` was added to `OPERATIONAL_XERO_OAUTH_SCOPES`
-  (`src/lib/xero-config.ts`) for the profit-and-loss, balance-sheet, and
-  bank-summary report fetchers. The chart-of-accounts dataset reuses the
-  already-granted `accounting.settings.read` scope.
+- `accounting.reports.profitandloss.read`,
+  `accounting.reports.balancesheet.read`, and
+  `accounting.reports.banksummary.read` are included in
+  `OPERATIONAL_XERO_OAUTH_SCOPES` (`src/lib/xero-config.ts`) for the
+  profit-and-loss, balance-sheet, and bank-summary report fetchers. The
+  chart-of-accounts dataset reuses the already-granted
+  `accounting.settings.read` scope.
 - The separate finance Xero stack was deleted: the `finance-xero*` modules, the
   `/api/finance/xero/*` routes, the `FINANCE_XERO_*` environment variables, and
   the `FinanceXeroToken` / `FinanceXeroApiUsage*` tables (dropped by migration
@@ -51,9 +54,10 @@ Run the finance dashboard off the single operational Xero connection.
 - The finance dashboard now depends on the operational Xero connection being
   connected; if it is not connected (or is token-expired or rate-limited) the
   finance sync run fails durably.
-- A one-time re-consent is required after deploy: Xero must be reconnected once
-  from `/admin/xero` so existing tokens gain `accounting.reports.read`, and the
-  Xero developer-portal app must allow that scope.
+- A one-time re-consent is required after deploy: update the Xero developer app
+  allowed scopes, verify the redirect URI, then reconnect Xero once from
+  `/admin/xero` so existing tokens are replaced with tokens carrying the
+  current scope set.
 - The destructive table-drop migration must ship after the code that stops using
   the finance Xero tables (expand/contract; recorded in
   `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`).
