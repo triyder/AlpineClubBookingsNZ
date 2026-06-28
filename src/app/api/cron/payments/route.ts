@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { releaseExpiredInternetBankingHolds } from "@/lib/internet-banking-payment-cron";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
 import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { requireCronSecret } from "@/lib/cron-auth";
@@ -47,6 +48,21 @@ export async function POST(request: NextRequest) {
   const startedAt = new Date();
   try {
     const recovery = await processPaymentRecoveryOperations();
+    const internetBankingHoldRelease = await releaseExpiredInternetBankingHolds().catch(
+      (err) => {
+        logger.error(
+          { err, task },
+          "Failed to release expired Internet Banking payment holds",
+        );
+        return {
+          scanned: 0,
+          released: 0,
+          skipped: 0,
+          bookingIds: [] as string[],
+          paymentIds: [] as string[],
+        };
+      },
+    );
     const xeroOutboxReap = await reapStaleWaitingPaymentXeroOutboxOperations().catch(
       (err) => {
         logger.error(
@@ -60,13 +76,14 @@ export async function POST(request: NextRequest) {
       jobName: "payment-recovery",
       startedAt,
       status: "SUCCESS",
-      resultSummary: { ...recovery, xeroOutboxReap },
+      resultSummary: { ...recovery, internetBankingHoldRelease, xeroOutboxReap },
     });
 
     return NextResponse.json({
       message: "Payment recovery completed",
       task,
       recovery,
+      internetBankingHoldRelease,
       xeroOutboxReap,
     });
   } catch (error) {

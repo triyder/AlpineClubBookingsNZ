@@ -70,6 +70,10 @@ import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import {
+  checkInternetBankingLeadTime,
+  loadInternetBankingPaymentSettings,
+} from "@/lib/internet-banking-settings";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getSeasonYear } from "@/lib/utils";
@@ -625,6 +629,30 @@ export async function joinGroupBookingAsMember(
   const effectivePaymentMethod: BookingPaymentMethod = organiserSettled
     ? DEFAULT_BOOKING_PAYMENT_METHOD
     : input.paymentMethod ?? DEFAULT_BOOKING_PAYMENT_METHOD;
+  const internetBankingSettings =
+    effectivePaymentMethod === "internet_banking"
+      ? await loadInternetBankingPaymentSettings()
+      : undefined;
+  if (internetBankingSettings) {
+    const leadTime = checkInternetBankingLeadTime({
+      checkIn,
+      settings: internetBankingSettings,
+    });
+    if (!leadTime.allowed) {
+      throw new GroupBookingError(
+        leadTime.unavailableReason ??
+          "Internet Banking is not available for this check-in date.",
+        400,
+        {
+          code: "INTERNET_BANKING_CUTOFF",
+          details: {
+            minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+            checkIn: leadTime.checkIn,
+          },
+        },
+      );
+    }
+  }
 
   const outcome = await createConfirmedBooking({
     effectiveMemberId: sessionUserId,
@@ -652,6 +680,7 @@ export async function joinGroupBookingAsMember(
     // EACH_PAYS_OWN joiner can pay by card or Internet Banking; createConfirmedBooking
     // raises + emails the Xero invoice when internet_banking is chosen.
     paymentMethod: effectivePaymentMethod,
+    internetBankingSettings,
   });
 
   if (outcome.type === "capacityExceeded") {

@@ -20,7 +20,13 @@ function formatDollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-export function CancelBookingButton({ bookingId }: { bookingId: string }) {
+export function CancelBookingButton({
+  bookingId,
+  refundAppealDescription,
+}: {
+  bookingId: string;
+  refundAppealDescription?: string;
+}) {
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
   const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number } | null>(null);
@@ -214,6 +220,11 @@ export function CancelBookingButton({ bookingId }: { bookingId: string }) {
                   <span className="font-medium text-slate-700">{formatDollars(preview.keptAmountCents)}</span>
                 </div>
               )}
+              {refundAppealDescription ? (
+                <p className="pt-2 text-xs text-slate-500">
+                  {refundAppealDescription}
+                </p>
+              ) : null}
               {preview.changeFeeCents > 0 && (
                 <div className="flex justify-between">
                   <span className="text-slate-600">Change fees (non-refundable):</span>

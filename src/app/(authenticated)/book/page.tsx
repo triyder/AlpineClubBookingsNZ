@@ -117,6 +117,7 @@ interface SubscriptionStatus {
 }
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
+type BookingMessageMap = Record<string, string>;
 
 const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
   status: "UNKNOWN",
@@ -186,6 +187,9 @@ export default function BookPage() {
   const [useCredit, setUseCredit] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
+  const [internetBankingUnavailableReason, setInternetBankingUnavailableReason] = useState<string | null>(null);
+  const [internetBankingHoldSummary, setInternetBankingHoldSummary] = useState<string | null>(null);
+  const [bookingMessages, setBookingMessages] = useState<BookingMessageMap>({});
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
@@ -356,14 +360,41 @@ export default function BookPage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/payments/options")
+    const params = new URLSearchParams();
+    if (checkIn) {
+      params.set("checkIn", formatLocalDateOnly(checkIn));
+    }
+    const query = params.toString();
+    fetch(`/api/payments/options${query ? `?${query}` : ""}`)
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
+        const internetBanking = data?.methods?.internetBanking;
         setInternetBankingEnabled(
-          Boolean(data?.methods?.internetBanking?.enabled)
+          Boolean(internetBanking?.enabled)
+        );
+        setInternetBankingUnavailableReason(
+          typeof internetBanking?.unavailableReason === "string"
+            ? internetBanking.unavailableReason
+            : null,
+        );
+        setInternetBankingHoldSummary(
+          typeof internetBanking?.holdPolicy?.summary === "string"
+            ? internetBanking.holdPolicy.summary
+            : null,
         );
       })
-      .catch(() => setInternetBankingEnabled(false));
+      .catch(() => {
+        setInternetBankingEnabled(false);
+        setInternetBankingUnavailableReason(null);
+        setInternetBankingHoldSummary(null);
+      });
+  }, [checkIn]);
+
+  useEffect(() => {
+    fetch("/api/booking-messages")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setBookingMessages(data?.messages ?? {}))
+      .catch(() => setBookingMessages({}));
   }, []);
 
   useEffect(() => {
@@ -821,6 +852,16 @@ export default function BookPage() {
   const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
   const bookingDateStrings = getBookingDateStrings();
   const reviewGuestPayload = priceQuote ? buildGuestPayload() : guests;
+  const cardPaymentDescription =
+    bookingMessages["booking.payment.card.description"] ??
+    "Pay now and secure the booking immediately.";
+  const internetBankingPaymentDescription =
+    bookingMessages["booking.payment.internetBanking.description"] ??
+    "Receive a Xero invoice by email and make payment via internet banking. Once the payment is reconciled and sync'd back to the booking system, your booking will be confirmed. Until then your booking is not held and someone else could take your space by booking and paying with Card.";
+  const internetBankingUnavailableCopy =
+    internetBankingUnavailableReason ??
+    bookingMessages["booking.payment.internetBanking.unavailable"] ??
+    "Internet Banking is not available for this check-in date. Please pay by card to secure the booking immediately.";
 
   const subscriptionUnpaid =
     subscriptionStatus &&
@@ -1346,11 +1387,11 @@ export default function BookPage() {
                       <span>
                         <span className="block font-medium">Card</span>
                         <span className="block text-xs opacity-80">
-                          Pay now and secure the booking immediately.
+                          {cardPaymentDescription}
                         </span>
                       </span>
                     </button>
-                    {internetBankingEnabled && (
+                    {internetBankingEnabled ? (
                       <button
                         type="button"
                         onClick={() => setPaymentMethod("internet_banking")}
@@ -1364,11 +1405,22 @@ export default function BookPage() {
                         <span>
                           <span className="block font-medium">Internet Banking</span>
                           <span className="block text-xs opacity-80">
-                            Receive a Xero invoice by email.
+                            {internetBankingPaymentDescription}
+                            {internetBankingHoldSummary ? (
+                              <span className="mt-1 block">{internetBankingHoldSummary}</span>
+                            ) : null}
                           </span>
                         </span>
                       </button>
-                    )}
+                    ) : internetBankingUnavailableReason ? (
+                      <div className="flex min-h-20 items-start gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm text-slate-500">
+                        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          <span className="block font-medium">Internet Banking</span>
+                          <span className="block text-xs">{internetBankingUnavailableCopy}</span>
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               )}

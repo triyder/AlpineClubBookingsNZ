@@ -71,6 +71,7 @@ export function MemberGroupJoinPanel({
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("stripe");
   const [ibReference, setIbReference] = useState<string | null>(null);
+  const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +111,12 @@ export function MemberGroupJoinPanel({
 
   // Internet Banking is an optional module; only offer it when it's on.
   useEffect(() => {
-    fetch("/api/payments/options")
+    const params = new URLSearchParams();
+    if (summary?.checkIn) {
+      params.set("checkIn", summary.checkIn.slice(0, 10));
+    }
+    const query = params.toString();
+    fetch(`/api/payments/options${query ? `?${query}` : ""}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) =>
         setInternetBankingEnabled(
@@ -118,6 +124,13 @@ export function MemberGroupJoinPanel({
         )
       )
       .catch(() => setInternetBankingEnabled(false));
+  }, [summary?.checkIn]);
+
+  useEffect(() => {
+    fetch("/api/booking-messages")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setBookingMessages(data?.messages ?? {}))
+      .catch(() => setBookingMessages({}));
   }, []);
 
   function toggle(id: string) {
@@ -248,9 +261,10 @@ export function MemberGroupJoinPanel({
               {ibReference ? (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    We&apos;ve emailed you an invoice. Pay by internet banking using
-                    the reference below, and we&apos;ll confirm your beds once it
-                    arrives.
+                    {(
+                      bookingMessages["paymentLink.internetBanking.description"] ??
+                      "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled."
+                    ).replaceAll("{{paymentReference}}", ibReference)}
                   </p>
                   <div className="rounded-md border border-slate-200 p-3 text-sm">
                     <p className="font-medium text-slate-900">Payment reference</p>
@@ -336,7 +350,10 @@ export function MemberGroupJoinPanel({
                       <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
                         <span className="block font-medium">Card</span>
-                        <span className="block text-xs opacity-80">Pay now to secure your beds.</span>
+                        <span className="block text-xs opacity-80">
+                          {bookingMessages["booking.payment.card.description"] ??
+                            "Pay now and secure the booking immediately."}
+                        </span>
                       </span>
                     </button>
                     <button
@@ -351,7 +368,10 @@ export function MemberGroupJoinPanel({
                       <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
                       <span>
                         <span className="block font-medium">Internet Banking</span>
-                        <span className="block text-xs opacity-80">Receive a Xero invoice by email.</span>
+                        <span className="block text-xs opacity-80">
+                          {bookingMessages["booking.payment.internetBanking.description"] ??
+                            "Receive a Xero invoice by email."}
+                        </span>
                       </span>
                     </button>
                   </div>

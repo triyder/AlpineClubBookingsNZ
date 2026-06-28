@@ -5,7 +5,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Bell, Mail, Send, UserX } from "lucide-react";
+import { Bell, Mail, MessageSquareText, Send, UserX } from "lucide-react";
 
 const sections = [
   {
@@ -27,6 +27,13 @@ const sections = [
     description:
       "Edit shared email variables and message wording for audited templates.",
     icon: Mail,
+  },
+  {
+    href: "/admin/booking-messages",
+    title: "Booking Messages",
+    description:
+      "Edit member-facing booking, payment, cancellation, and group booking copy.",
+    icon: MessageSquareText,
   },
   {
     href: "/admin/membership-cancellation",

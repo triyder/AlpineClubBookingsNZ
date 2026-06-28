@@ -39,7 +39,9 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     flag: "xeroIntegration",
     prefixes: [
       "/admin/xero",
+      "/admin/internet-banking",
       "/api/admin/xero",
+      "/api/admin/internet-banking-settings",
       "/api/cron/xero",
       "/api/webhooks/xero",
     ],
@@ -53,6 +55,13 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
       "/admin/bed-allocation",
       "/admin/rooms-beds",
       "/api/admin/bed-allocation",
+    ],
+  },
+  {
+    flag: "internetBankingPayments",
+    prefixes: [
+      "/admin/internet-banking",
+      "/api/admin/internet-banking-settings",
     ],
   },
   {

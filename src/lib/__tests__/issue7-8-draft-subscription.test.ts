@@ -73,6 +73,9 @@ vi.mock("@/lib/prisma", () => ({
     groupDiscountSetting: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    internetBankingPaymentSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     $transaction: vi.fn(),
   },
 }));

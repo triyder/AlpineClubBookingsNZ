@@ -47,6 +47,10 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
+  checkInternetBankingLeadTime,
+  loadInternetBankingPaymentSettings,
+} from "@/lib/internet-banking-settings";
+import {
   buildGroupSettlementPaymentReference,
   type BookingPaymentMethod,
 } from "@/lib/booking-payment-methods";
@@ -104,6 +108,9 @@ async function requireOrganiserPaysGroup(rawCode: string, sessionUserId: string)
           paymentMode: true,
           organiserMember: {
             select: { id: true, email: true, firstName: true, lastName: true },
+          },
+          organiserBooking: {
+            select: { checkIn: true },
           },
           settlement: true,
         },
@@ -178,7 +185,12 @@ export async function createGroupSettlementIntent(
   // Internet Banking: raise one combined Xero invoice to the organiser instead
   // of charging a card. Reconciliation flips the children to PAID on payment.
   if (paymentMethod === "internet_banking") {
-    return createGroupSettlementInvoice(group.id, children, amountCents);
+    return createGroupSettlementInvoice(
+      group.id,
+      group.organiserBooking.checkIn,
+      children,
+      amountCents,
+    );
   }
 
   // Reuse an outstanding intent for the same total before creating a new one,
@@ -266,6 +278,7 @@ export async function createGroupSettlementIntent(
  */
 async function createGroupSettlementInvoice(
   groupBookingId: string,
+  checkIn: Date,
   children: SettleableChild[],
   amountCents: number
 ): Promise<GroupSettlementIntentResult> {
@@ -274,6 +287,25 @@ async function createGroupSettlementInvoice(
     throw new GroupBookingError(
       "Internet Banking payments are not available.",
       400
+    );
+  }
+  const internetBankingSettings = await loadInternetBankingPaymentSettings();
+  const leadTime = checkInternetBankingLeadTime({
+    checkIn,
+    settings: internetBankingSettings,
+  });
+  if (!leadTime.allowed) {
+    throw new GroupBookingError(
+      leadTime.unavailableReason ??
+        "Internet Banking is not available for this check-in date.",
+      400,
+      {
+        code: "INTERNET_BANKING_CUTOFF",
+        details: {
+          minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+          checkIn: leadTime.checkIn,
+        },
+      },
     );
   }
 

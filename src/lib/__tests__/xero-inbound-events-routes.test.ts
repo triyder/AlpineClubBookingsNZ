@@ -67,6 +67,8 @@ describe("Xero inbound event admin routes", () => {
 
   it("lists inbound events with filter support and replay metadata", async () => {
     const createdAt = new Date("2026-04-14T09:00:00Z");
+    const staleUpdatedAt = new Date(Date.now() - 30 * 60_000);
+    const freshUpdatedAt = new Date();
     mockPrisma.xeroInboundEvent.findMany.mockResolvedValue([
       {
         id: "evt_1",
@@ -84,6 +86,21 @@ describe("Xero inbound event admin routes", () => {
         updatedAt: createdAt,
       },
       {
+        id: "evt_stale",
+        source: "webhook",
+        eventCategory: "CONTACT",
+        eventType: "UPDATE",
+        resourceId: "contact_stale",
+        eventCreatedAt: staleUpdatedAt,
+        correlationKey: "corr_stale",
+        payload: { resourceId: "contact_stale" },
+        status: "PROCESSING",
+        errorMessage: null,
+        processedAt: null,
+        createdAt: staleUpdatedAt,
+        updatedAt: staleUpdatedAt,
+      },
+      {
         id: "evt_2",
         source: "webhook",
         eventCategory: "CONTACT",
@@ -96,10 +113,10 @@ describe("Xero inbound event admin routes", () => {
         errorMessage: null,
         processedAt: null,
         createdAt,
-        updatedAt: createdAt,
+        updatedAt: freshUpdatedAt,
       },
     ]);
-    mockPrisma.xeroInboundEvent.count.mockResolvedValue(2);
+    mockPrisma.xeroInboundEvent.count.mockResolvedValue(3);
 
     const response = await listInboundEvents(
       new NextRequest(
@@ -118,14 +135,19 @@ describe("Xero inbound event admin routes", () => {
     });
 
     const body = await response.json();
-    expect(body.data).toHaveLength(2);
-    expect(body.total).toBe(2);
+    expect(body.data).toHaveLength(3);
+    expect(body.total).toBe(3);
     expect(body.data[0]).toMatchObject({
       id: "evt_1",
       canReplay: true,
       xeroObjectUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv_1",
     });
     expect(body.data[1]).toMatchObject({
+      id: "evt_stale",
+      canReplay: true,
+      xeroObjectUrl: "https://go.xero.com/Contacts/View/contact_stale",
+    });
+    expect(body.data[2]).toMatchObject({
       id: "evt_2",
       canReplay: false,
       xeroObjectUrl: "https://go.xero.com/Contacts/View/contact_1",

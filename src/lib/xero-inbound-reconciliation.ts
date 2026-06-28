@@ -8,6 +8,7 @@ import {
   type XeroClient,
 } from "xero-node";
 import {
+  BookingEventType,
   BookingStatus,
   CreditType,
   PaymentSource,
@@ -17,9 +18,18 @@ import {
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
-import { sendBookingConfirmedEmail } from "@/lib/email";
+import {
+  sendAdminPaymentFailureAlert,
+  sendBookingCancelledEmail,
+  sendBookingConfirmedEmail,
+} from "@/lib/email";
 import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { recordBookingEvent } from "@/lib/booking-events";
+import { processWaitlistForDates } from "@/lib/waitlist";
 import { getSeasonYear } from "@/lib/utils";
+import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   callXeroApi,
@@ -1054,6 +1064,7 @@ async function syncInternetBankingPaymentsForPaidInvoice(
     matchedInternetBankingPayments: 0,
     paidInternetBankingPayments: 0,
     paidInternetBankingBookings: 0,
+    creditedInternetBankingBookings: 0,
     skippedAlreadyPaidBookings: 0,
   };
 
@@ -1084,7 +1095,7 @@ async function syncInternetBankingPaymentsForPaidInvoice(
       booking: {
         include: {
           member: true,
-          guests: true,
+          guests: { include: { nights: true } },
           promoRedemption: {
             include: {
               promoCode: true,
@@ -1098,126 +1109,306 @@ async function syncInternetBankingPaymentsForPaidInvoice(
   result.matchedInternetBankingPayments = payments.length;
 
   for (const payment of payments) {
-    const transactionUpdate = await prisma.paymentTransaction.updateMany({
-      where: {
-        paymentId: payment.id,
-        source: PaymentSource.INTERNET_BANKING,
-        kind: PaymentTransactionKind.PRIMARY,
-      },
-      data: {
-        status: PaymentStatus.SUCCEEDED,
-        xeroInvoiceId: invoiceId,
-        xeroInvoiceNumber: invoiceNumber,
-      },
+    const outcome = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+      const fresh = await tx.payment.findUnique({
+        where: { id: payment.id },
+        include: {
+          booking: {
+            include: {
+              member: true,
+              guests: { include: { nights: true } },
+              promoRedemption: { include: { promoCode: true } },
+            },
+          },
+        },
+      });
+
+      if (!fresh || fresh.source !== PaymentSource.INTERNET_BANKING) {
+        return { type: "missing" as const };
+      }
+
+      const transactionUpdate = await tx.paymentTransaction.updateMany({
+        where: {
+          paymentId: fresh.id,
+          source: PaymentSource.INTERNET_BANKING,
+          kind: PaymentTransactionKind.PRIMARY,
+        },
+        data: {
+          status: PaymentStatus.SUCCEEDED,
+          xeroInvoiceId: invoiceId,
+          xeroInvoiceNumber: invoiceNumber,
+        },
+      });
+
+      if (transactionUpdate.count === 0) {
+        await tx.paymentTransaction.create({
+          data: {
+            paymentId: fresh.id,
+            kind: PaymentTransactionKind.PRIMARY,
+            source: PaymentSource.INTERNET_BANKING,
+            stripePaymentIntentId: null,
+            xeroInvoiceId: invoiceId,
+            xeroInvoiceNumber: invoiceNumber,
+            reference: fresh.reference ?? undefined,
+            amountCents: fresh.amountCents,
+            status: PaymentStatus.SUCCEEDED,
+            reason: "xero_invoice_paid_reconciliation",
+          },
+        });
+      }
+
+      const paymentWasPending = fresh.status !== PaymentStatus.SUCCEEDED;
+      if (paymentWasPending || !fresh.xeroInvoiceId || fresh.xeroInvoiceNumber !== invoiceNumber) {
+        await tx.payment.update({
+          where: { id: fresh.id },
+          data: {
+            status: PaymentStatus.SUCCEEDED,
+            xeroInvoiceId: invoiceId,
+            xeroInvoiceNumber: invoiceNumber,
+          },
+        });
+      }
+
+      if (fresh.booking.status === BookingStatus.PAID) {
+        return {
+          type: "alreadyPaid" as const,
+          payment: fresh,
+          paymentWasPending,
+        };
+      }
+
+      if (fresh.booking.status === BookingStatus.CANCELLED) {
+        return {
+          type: "alreadyCancelled" as const,
+          payment: fresh,
+          paymentWasPending,
+        };
+      }
+
+      if (
+        fresh.booking.status === BookingStatus.PAYMENT_PENDING &&
+        !fresh.internetBankingHoldSlots
+      ) {
+        const capacity = await checkCapacityForGuestRanges(
+          fresh.booking.checkIn,
+          fresh.booking.checkOut,
+          fresh.booking.guests,
+          fresh.booking.id,
+          tx,
+        );
+
+        if (!capacity.available) {
+          await tx.booking.update({
+            where: { id: fresh.bookingId },
+            data: {
+              status: BookingStatus.CANCELLED,
+              draftExpiresAt: null,
+            },
+          });
+          await reconcileBedAllocationsForBooking({
+            bookingId: fresh.bookingId,
+            db: tx,
+          });
+
+          const creditDescription = `Internet Banking payment credit for booking ${fresh.bookingId.slice(0, 8)}`;
+          const existingCredit = await tx.memberCredit.findFirst({
+            where: {
+              memberId: fresh.booking.memberId,
+              sourceBookingId: fresh.bookingId,
+              amountCents: fresh.amountCents,
+              type: CreditType.CANCELLATION_REFUND,
+              description: creditDescription,
+            },
+            select: { id: true },
+          });
+          if (!existingCredit && fresh.amountCents > 0) {
+            await tx.memberCredit.create({
+              data: {
+                memberId: fresh.booking.memberId,
+                amountCents: fresh.amountCents,
+                type: CreditType.CANCELLATION_REFUND,
+                description: creditDescription,
+                sourceBookingId: fresh.bookingId,
+              },
+            });
+          }
+
+          return {
+            type: "capacityFailed" as const,
+            payment: fresh,
+            paymentWasPending,
+            credited: !existingCredit && fresh.amountCents > 0,
+          };
+        }
+      }
+
+      await tx.booking.update({
+        where: { id: fresh.bookingId },
+        data: {
+          status: BookingStatus.PAID,
+          draftExpiresAt: null,
+        },
+      });
+      await reconcileBedAllocationsForBooking({
+        bookingId: fresh.bookingId,
+        db: tx,
+      });
+
+      return {
+        type: "paid" as const,
+        payment: fresh,
+        paymentWasPending,
+      };
     });
 
-    if (transactionUpdate.count === 0) {
-      await prisma.paymentTransaction.create({
-        data: {
-          paymentId: payment.id,
-          kind: PaymentTransactionKind.PRIMARY,
-          source: PaymentSource.INTERNET_BANKING,
-          stripePaymentIntentId: null,
-          xeroInvoiceId: invoiceId,
-          xeroInvoiceNumber: invoiceNumber,
-          reference: payment.reference ?? undefined,
-          amountCents: payment.amountCents,
-          status: PaymentStatus.SUCCEEDED,
-          reason: "xero_invoice_paid_reconciliation",
-        },
-      });
+    if (outcome.type === "missing") {
+      continue;
     }
 
-    if (payment.status !== PaymentStatus.SUCCEEDED) {
-      await prisma.payment.update({
-        where: {
-          id: payment.id,
-        },
-        data: {
-          status: PaymentStatus.SUCCEEDED,
-          xeroInvoiceId: invoiceId,
-          xeroInvoiceNumber: invoiceNumber,
-        },
-      });
+    if (outcome.paymentWasPending) {
       result.paidInternetBankingPayments += 1;
-    } else if (!payment.xeroInvoiceId || payment.xeroInvoiceNumber !== invoiceNumber) {
-      await prisma.payment.update({
-        where: {
-          id: payment.id,
-        },
-        data: {
-          xeroInvoiceId: invoiceId,
-          xeroInvoiceNumber: invoiceNumber,
-        },
-      });
     }
 
-    if (payment.booking.status === BookingStatus.PAID) {
+    if (outcome.type === "alreadyPaid") {
       result.skippedAlreadyPaidBookings += 1;
       continue;
     }
 
-    await prisma.booking.update({
-      where: {
-        id: payment.bookingId,
-      },
-      data: {
-        status: BookingStatus.PAID,
-        draftExpiresAt: null,
-      },
-    });
+    if (outcome.type === "alreadyCancelled") {
+      continue;
+    }
+
+    if (outcome.type === "capacityFailed") {
+      result.creditedInternetBankingBookings += 1;
+
+      await recordBookingEvent({
+        bookingId: outcome.payment.bookingId,
+        type: BookingEventType.CANCELLED,
+        amountCents: outcome.payment.amountCents,
+        reason: "Internet Banking payment reconciled after capacity was no longer available.",
+      });
+      if (outcome.credited) {
+        await recordBookingEvent({
+          bookingId: outcome.payment.bookingId,
+          type: BookingEventType.CREDITED,
+          amountCents: outcome.payment.amountCents,
+          reason: "Paid Internet Banking amount held as account credit.",
+        });
+      }
+
+      enqueueXeroAccountCreditNoteOperation(outcome.payment.id, outcome.payment.amountCents)
+        .catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to queue Xero account credit note for late Internet Banking payment"
+          )
+        );
+      sendAdminPaymentFailureAlert({
+        memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+        checkIn: outcome.payment.booking.checkIn,
+        checkOut: outcome.payment.booking.checkOut,
+        amountCents: outcome.payment.amountCents,
+        errorMessage:
+          "Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.",
+        paymentIntentId: invoiceId,
+      }).catch((err) =>
+        logger.error(
+          { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+          "Failed to alert admins about late Internet Banking capacity failure"
+        )
+      );
+      sendBookingCancelledEmail(
+        outcome.payment.booking.member.email,
+        outcome.payment.booking.member.firstName,
+        outcome.payment.booking.checkIn,
+        outcome.payment.booking.checkOut,
+        outcome.payment.amountCents,
+        "credit",
+      ).catch((err) =>
+        logger.error(
+          { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+          "Failed to email member about late Internet Banking cancellation"
+        )
+      );
+      processWaitlistForDates({
+        checkIn: outcome.payment.booking.checkIn,
+        checkOut: outcome.payment.booking.checkOut,
+      }).catch((err) =>
+        logger.error(
+          { err, bookingId: outcome.payment.bookingId },
+          "Failed to process waitlist after late Internet Banking cancellation"
+        )
+      );
+      continue;
+    }
+
     result.paidInternetBankingBookings += 1;
 
     try {
       await createAuditLog({
         action: "booking.payment.confirmed",
-        targetId: payment.bookingId,
-        subjectMemberId: payment.booking.memberId,
+        targetId: outcome.payment.bookingId,
+        subjectMemberId: outcome.payment.booking.memberId,
         entityType: "Booking",
-        entityId: payment.bookingId,
+        entityId: outcome.payment.bookingId,
         category: "payment",
         outcome: "success",
         summary: "Internet Banking payment confirmed from Xero",
         details: JSON.stringify({
           source: "xero-inbound-invoice",
-          paymentId: payment.id,
+          paymentId: outcome.payment.id,
           xeroInvoiceId: invoiceId,
           xeroInvoiceNumber: invoiceNumber,
-          amountCents: payment.amountCents,
+          amountCents: outcome.payment.amountCents,
+          finalCapacityClaimed:
+            outcome.payment.booking.status === BookingStatus.PAYMENT_PENDING &&
+            !outcome.payment.internetBankingHoldSlots,
         }),
         metadata: {
           source: "xero-inbound-invoice",
-          paymentId: payment.id,
+          paymentId: outcome.payment.id,
           paymentSource: PaymentSource.INTERNET_BANKING,
           xeroInvoiceId: invoiceId,
           xeroInvoiceNumber: invoiceNumber,
-          amountCents: payment.amountCents,
+          amountCents: outcome.payment.amountCents,
+          finalCapacityClaimed:
+            outcome.payment.booking.status === BookingStatus.PAYMENT_PENDING &&
+            !outcome.payment.internetBankingHoldSlots,
         },
       });
     } catch (err) {
       logger.error(
-        { err, bookingId: payment.bookingId, paymentId: payment.id },
+        { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
         "Failed to audit Internet Banking payment reconciliation"
       );
     }
 
+    await recordBookingEvent({
+      bookingId: outcome.payment.bookingId,
+      type: BookingEventType.MEMBER_PAID,
+      amountCents: outcome.payment.amountCents,
+      reason: "Internet Banking payment reconciled from Xero.",
+    });
+
     sendBookingConfirmedEmail(
-      payment.booking.member.email,
-      payment.booking.member.firstName,
-      payment.booking.checkIn,
-      payment.booking.checkOut,
-      payment.booking.guests.length,
-      payment.booking.finalPriceCents,
-      payment.booking.promoRedemption?.promoCode
+      outcome.payment.booking.member.email,
+      outcome.payment.booking.member.firstName,
+      outcome.payment.booking.checkIn,
+      outcome.payment.booking.checkOut,
+      outcome.payment.booking.guests.length,
+      outcome.payment.booking.finalPriceCents,
+      outcome.payment.booking.promoRedemption?.promoCode
         ? {
-            discountCents: payment.booking.discountCents,
-            promoAdjustmentCents: payment.booking.promoAdjustmentCents,
-            promoCode: payment.booking.promoRedemption.promoCode.code,
+            discountCents: outcome.payment.booking.discountCents,
+            promoAdjustmentCents: outcome.payment.booking.promoAdjustmentCents,
+            promoCode: outcome.payment.booking.promoRedemption.promoCode.code,
           }
         : undefined
     ).catch((err) =>
       logger.error(
-        { err, bookingId: payment.bookingId, paymentId: payment.id },
+        { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
         "Failed to send booking confirmation email after Internet Banking reconciliation"
       )
     );

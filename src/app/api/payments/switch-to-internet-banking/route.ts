@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
+import {
+  buildInternetBankingHoldUntil,
+  checkInternetBankingLeadTime,
+  loadInternetBankingPaymentSettings,
+} from "@/lib/internet-banking-settings";
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import {
@@ -58,7 +65,10 @@ export async function POST(request: NextRequest) {
   const { bookingId } = parsed.data;
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { payment: true },
+    include: {
+      payment: true,
+      guests: { include: { nights: true } },
+    },
   });
 
   if (!booking) {
@@ -81,7 +91,28 @@ export async function POST(request: NextRequest) {
 
   // Already on Internet Banking → idempotent success.
   if (booking.payment?.source === PaymentSource.INTERNET_BANKING) {
-    return NextResponse.json({ reference });
+    return NextResponse.json({
+      reference,
+      holdBedSlots: booking.payment.internetBankingHoldSlots,
+      holdUntil: booking.payment.internetBankingHoldUntil,
+    });
+  }
+
+  const internetBankingSettings = await loadInternetBankingPaymentSettings();
+  const leadTime = checkInternetBankingLeadTime({
+    checkIn: booking.checkIn,
+    settings: internetBankingSettings,
+  });
+  if (!leadTime.allowed) {
+    return NextResponse.json(
+      {
+        error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
+        code: "INTERNET_BANKING_CUTOFF",
+        minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+        checkIn: leadTime.checkIn,
+      },
+      { status: 400 },
+    );
   }
 
   // Only an immediately-payable (charge-now) booking can switch; a saved-card
@@ -125,31 +156,80 @@ export async function POST(request: NextRequest) {
   }
 
   const amountCents = booking.finalPriceCents;
-  const payment = await prisma.payment.upsert({
-    where: { bookingId: booking.id },
-    create: {
-      bookingId: booking.id,
+  const holdBedSlots = internetBankingSettings.holdBedSlots;
+  const holdUntil = buildInternetBankingHoldUntil(internetBankingSettings);
+  const paymentResult = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+    if (holdBedSlots) {
+      const capacity = await checkCapacityForGuestRanges(
+        booking.checkIn,
+        booking.checkOut,
+        booking.guests,
+        booking.id,
+        tx,
+      );
+      if (!capacity.available) {
+        return { type: "capacityExceeded" as const };
+      }
+    }
+
+    const payment = await tx.payment.upsert({
+      where: { bookingId: booking.id },
+      create: {
+        bookingId: booking.id,
+        amountCents,
+        source: PaymentSource.INTERNET_BANKING,
+        reference,
+        status: PaymentStatus.PENDING,
+        internetBankingHoldSlots: holdBedSlots,
+        internetBankingHoldUntil: holdUntil,
+        internetBankingHoldReleasedAt: null,
+      },
+      update: {
+        amountCents,
+        source: PaymentSource.INTERNET_BANKING,
+        reference,
+        status: PaymentStatus.PENDING,
+        stripePaymentIntentId: null,
+        internetBankingHoldSlots: holdBedSlots,
+        internetBankingHoldUntil: holdUntil,
+        internetBankingHoldReleasedAt: null,
+      },
+    });
+
+    if (holdBedSlots) {
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: { status: BookingStatus.CONFIRMED },
+      });
+      await reconcileBedAllocationsForBooking({
+        bookingId: booking.id,
+        db: tx,
+      });
+    }
+
+    await recordInternetBankingPaymentTransaction({
+      paymentId: payment.id,
       amountCents,
-      source: PaymentSource.INTERNET_BANKING,
-      reference,
       status: PaymentStatus.PENDING,
-    },
-    update: {
-      amountCents,
-      source: PaymentSource.INTERNET_BANKING,
       reference,
-      status: PaymentStatus.PENDING,
-      stripePaymentIntentId: null,
-    },
+      reason: "internet_banking_switch_at_pay",
+      store: tx,
+    });
+
+    return { type: "updated" as const, payment };
   });
 
-  await recordInternetBankingPaymentTransaction({
-    paymentId: payment.id,
-    amountCents,
-    status: PaymentStatus.PENDING,
-    reference,
-    reason: "internet_banking_switch_at_pay",
-  });
+  if (paymentResult.type === "capacityExceeded") {
+    return NextResponse.json(
+      {
+        error: "The lodge is fully booked on some of your requested dates.",
+        code: "CAPACITY_EXCEEDED",
+      },
+      { status: 409 },
+    );
+  }
 
   try {
     const queued = await enqueueXeroBookingInvoiceOperation(booking.id, {
@@ -165,5 +245,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ reference });
+  return NextResponse.json({
+    reference,
+    holdBedSlots,
+    holdUntil,
+  });
 }

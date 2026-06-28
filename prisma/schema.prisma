@@ -1273,6 +1273,9 @@ model Payment {
   additionalPaymentStatus   String? // PENDING, SUCCEEDED, FAILED
   xeroRefundCreditNoteId    String? // Track Xero credit note to prevent duplicates
   creditAppliedCents        Int           @default(0) // Account credit applied to this booking
+  internetBankingHoldSlots  Boolean       @default(false)
+  internetBankingHoldUntil  DateTime?
+  internetBankingHoldReleasedAt DateTime?
   createdAt                 DateTime      @default(now())
   updatedAt                 DateTime      @updatedAt
 
@@ -1284,6 +1287,7 @@ model Payment {
 
   @@index([bookingId])
   @@index([source, status, createdAt])
+  @@index([source, status, internetBankingHoldUntil])
   @@index([stripePaymentIntentId])
   @@index([additionalPaymentIntentId])
   @@index([status, createdAt])
@@ -2140,6 +2144,29 @@ model EmailTemplateOverride {
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+model BookingMessageOverride {
+  id                String   @id @default(cuid())
+  messageKey        String   @unique
+  bodyText          String
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+model InternetBankingPaymentSettings {
+  id                       String   @id @default("default")
+  holdBedSlots             Boolean  @default(false)
+  holdDays                 Int      @default(3)
+  minimumDaysBeforeCheckIn Int      @default(0)
+  updatedByMemberId        String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   @@index([updatedByMemberId])
 }

@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
+import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
 import {
   endOfDateOnlyForTimeZone,
   startOfDateOnlyForTimeZone,
@@ -149,7 +150,7 @@ export async function GET(request: NextRequest) {
           event.eventCategory && event.resourceId
             ? buildXeroObjectUrl(event.eventCategory, event.resourceId)
             : null,
-        canReplay: event.status !== "PROCESSING",
+        canReplay: canReplayXeroInboundEvent(event),
       })),
       total,
       page,

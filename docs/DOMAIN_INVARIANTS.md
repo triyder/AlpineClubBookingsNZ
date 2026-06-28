@@ -31,6 +31,9 @@ Future reviews and issues should cite this file when proposing changes.
   webhooks, and durable PaymentRecoveryOperation rows.
 - Internet Banking bookings issue Xero-backed invoices and reconcile settlement
   through Xero invoice/payment state.
+- Internet Banking defaults are non-holding and no-cutoff. If bed holding is
+  enabled, the hold expiry is snapshotted on the Payment and must be released
+  idempotently by cron if unpaid.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
 - External provider side effects require clear retry and idempotency behavior.

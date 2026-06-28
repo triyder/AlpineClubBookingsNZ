@@ -44,6 +44,8 @@ import {
   UserPlus,
   Plug,
   Lock,
+  Landmark,
+  MessageSquareText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -115,6 +117,11 @@ const navSections: NavSection[] = [
     label: "Finance",
     items: [
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
+      {
+        href: "/admin/internet-banking",
+        label: "Internet Banking",
+        icon: Landmark,
+      },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
       { href: "/admin/xero", label: "Xero Sync", icon: RefreshCw },
     ],
@@ -205,6 +212,11 @@ const navSections: NavSection[] = [
         href: "/admin/notifications",
         label: "Notifications & Email",
         icon: Bell,
+      },
+      {
+        href: "/admin/booking-messages",
+        label: "Booking Messages",
+        icon: MessageSquareText,
       },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
       { href: "/admin/xero/setup", label: "Xero Setup", icon: Plug },

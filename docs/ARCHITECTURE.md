@@ -184,7 +184,11 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    write cannot race the re-check.
 8. Payment state records an explicit source. Stripe payments stay on Stripe
    PaymentIntent, refund, and recovery paths; Internet Banking payments issue a
-   Xero invoice and settle through inbound Xero reconciliation.
+   Xero invoice and settle through inbound Xero reconciliation. By default,
+   Internet Banking bookings do not hold capacity until reconciliation performs
+   the final capacity claim. Admin settings can opt into bed-slot holding for a
+   bounded number of days, in which case the booking is `CONFIRMED` while the
+   Xero invoice remains unpaid.
 9. Bed allocations reconcile when bookings are confirmed, modified, waitlist
    confirmed, force-confirmed, cancelled, completed, or deleted. Automatic
    allocation can fill missing guest nights from active room/bed inventory, and
@@ -269,6 +273,15 @@ OAuth token refresh uses a short database-backed lease on the operational
 token row so multiple app workers cannot use the same rotating refresh token.
 Internet Banking bookings use this boundary to issue invoice-backed payment
 instructions and reconcile settlement from inbound Xero invoice/payment state.
+Unheld Internet Banking reconciliation performs the final capacity claim before
+marking a booking paid. If the paid booking no longer fits, the payment is
+recorded as succeeded, the booking is cancelled, member account credit is
+created for the paid amount, Xero account-credit work is queued, admins are
+alerted, and waitlists are processed. Held Internet Banking bookings are
+released by the payment cron when their hold expiry passes unpaid; the release
+cancels the booking, fails the pending payment, queues invoice-clearing
+credit-note work, emails the member, records history/audit, and processes
+waitlists.
 
 ### Finance reporting
 

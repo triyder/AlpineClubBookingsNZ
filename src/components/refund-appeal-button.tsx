@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 interface RefundAppealButtonProps {
   bookingId: string
   maxRefundableCents: number
+  description?: string
 }
 
 interface RefundRequestData {
@@ -26,6 +27,7 @@ interface RefundRequestData {
 export function RefundAppealButton({
   bookingId,
   maxRefundableCents,
+  description = "If you believe you are entitled to a larger refund, you can submit an appeal for review.",
 }: RefundAppealButtonProps) {
   const [showForm, setShowForm] = useState(false)
   const [reason, setReason] = useState("")
@@ -135,7 +137,7 @@ export function RefundAppealButton({
         {!showForm && !hasPending && maxRefundableCents > 0 && (
           <div>
             <p className="text-sm text-muted-foreground mb-3">
-              If you believe you are entitled to a larger refund, you can submit an appeal for review.
+              {description}
             </p>
             <Button variant="outline" onClick={() => setShowForm(true)}>
               Request Refund Appeal

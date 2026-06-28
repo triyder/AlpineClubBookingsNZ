@@ -58,6 +58,9 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: mocks.settlementFindFirst,
       update: mocks.settlementUpdate,
     },
+    internetBankingPaymentSettings: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     $transaction: mocks.transaction,
   },
 }));
@@ -114,6 +117,7 @@ function organiserPaysGroup(overrides: Record<string, unknown> = {}) {
       firstName: "Olive",
       lastName: "Organiser",
     },
+    organiserBooking: { checkIn: new Date("2026-07-01") },
     settlement: null,
     ...overrides,
   };

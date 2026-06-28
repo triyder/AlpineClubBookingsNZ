@@ -110,6 +110,7 @@ export function OrganiserGroupBookingCard({
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
   const [settleMethod, setSettleMethod] = useState<SettlePaymentMethod>("stripe");
   const [settleReference, setSettleReference] = useState<string | null>(null);
+  const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
 
   // Internet Banking is an optional module; only offer it when it's on.
   useEffect(() => {
@@ -121,6 +122,13 @@ export function OrganiserGroupBookingCard({
         )
       )
       .catch(() => setInternetBankingEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/booking-messages")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setBookingMessages(data?.messages ?? {}))
+      .catch(() => setBookingMessages({}));
   }, []);
 
   const [shareUrl, setShareUrl] = useState("");
@@ -473,9 +481,10 @@ export function OrganiserGroupBookingCard({
                   </p>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  We&apos;ve emailed you a single invoice for the whole group. Pay it
-                  by internet banking using the reference below, and everyone&apos;s
-                  beds are confirmed once it arrives.
+                  {(
+                    bookingMessages["groupBooking.invoiceSent.description"] ??
+                    "The organiser invoice has been emailed. The group booking stays confirmed while Xero reconciles the payment."
+                  ).replaceAll("{{paymentReference}}", settleReference)}
                 </p>
                 <div className="rounded-md border border-slate-200 p-3 text-sm">
                   <p className="font-medium text-slate-900">Payment reference</p>
@@ -551,7 +560,8 @@ export function OrganiserGroupBookingCard({
                         <span>
                           <span className="block font-medium">Internet Banking</span>
                           <span className="block text-xs opacity-80">
-                            Receive one Xero invoice by email.
+                            {bookingMessages["groupBooking.internetBanking.description"] ??
+                              "Receive one Xero invoice by email for the organiser-settled group bookings."}
                           </span>
                         </span>
                       </button>

@@ -76,6 +76,10 @@ import {
   formatDateOnly,
   normalizeDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import {
+  buildInternetBankingHoldUntil,
+  type InternetBankingPaymentSettingsValues,
+} from "@/lib/internet-banking-settings";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 
 type BookingWithGuests = Booking & { guests: BookingGuest[] };
@@ -134,6 +138,7 @@ export interface ConfirmedBookingInput extends BaseInput {
   shouldBePending: boolean;
   holdDays: number;
   paymentMethod?: BookingPaymentMethod;
+  internetBankingSettings?: InternetBankingPaymentSettingsValues;
 }
 
 export type ConfirmedBookingOutcome =
@@ -845,6 +850,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     shouldBePending,
     holdDays,
     paymentMethod = DEFAULT_BOOKING_PAYMENT_METHOD,
+    internetBankingSettings,
     memberReviewJustification,
     parentBookingId,
     organiserSettled,
@@ -899,6 +905,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // until an admin approves.
   const internetBankingPaymentSelected =
     paymentMethod === "internet_banking" && !review.blockForReview;
+  const internetBankingHoldSlots =
+    internetBankingPaymentSelected && internetBankingSettings?.holdBedSlots === true;
+  const internetBankingHoldUntil = internetBankingHoldSlots
+    ? buildInternetBankingHoldUntil(internetBankingSettings)
+    : null;
   // Status of the primary booking. A split member booking is always charged up
   // front (a pure-member booking never holds as PENDING). The flagged path is
   // forced PENDING. Otherwise use the status the route computed for the party.
@@ -907,8 +918,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     : splitBooking
       ? BookingStatus.PAYMENT_PENDING
       : internetBankingPaymentSelected
-        ? BookingStatus.PAYMENT_PENDING
+        ? internetBankingHoldSlots
+          ? BookingStatus.CONFIRMED
+          : BookingStatus.PAYMENT_PENDING
         : status;
+  const creditApplicationStatus = internetBankingPaymentSelected
+    ? BookingStatus.PAYMENT_PENDING
+    : requestedStatus;
   const effectiveStatus = review.blockForReview
     ? BookingStatus.AWAITING_REVIEW
     : requestedStatus;
@@ -990,7 +1006,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // and the member completes payment.
       const creditBalance =
         (applyCreditCents ?? 0) > 0 &&
-        requestedStatus === BookingStatus.PAYMENT_PENDING &&
+        creditApplicationStatus === BookingStatus.PAYMENT_PENDING &&
         !review.blockForReview
           ? await getMemberCreditBalance(effectiveMemberId, tx)
           : 0;
@@ -998,7 +1014,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         requestedCreditCents: review.blockForReview ? 0 : (applyCreditCents ?? 0),
         creditBalanceCents: creditBalance,
         finalPriceCents,
-        status: requestedStatus,
+        status: creditApplicationStatus,
       });
 
       // AWAITING_REVIEW holds capacity, so capacity must be verified even
@@ -1081,7 +1097,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // (including the zero-dollar auto-PAID path) must wait for admin.
       if (
         effectivePriceCents === 0 &&
-        requestedStatus === BookingStatus.PAYMENT_PENDING &&
+        creditApplicationStatus === BookingStatus.PAYMENT_PENDING &&
         !review.blockForReview
       ) {
         const finalCapacityCheck = await checkCapacityForGuestRanges(
@@ -1128,6 +1144,9 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             source: PaymentSource.INTERNET_BANKING,
             reference,
             status: PaymentStatus.PENDING,
+            internetBankingHoldSlots,
+            internetBankingHoldUntil,
+            internetBankingHoldReleasedAt: null,
           },
         });
 

@@ -148,8 +148,10 @@ describe("MemberGroupJoinPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Internet Banking/ }));
     fireEvent.click(screen.getByRole("button", { name: /Join \(invoice by email\)/ }));
 
-    // Confirms in place with the BOOKING- reference, no redirect to pay.
-    expect(await screen.findByText(/BOOKING-B1/)).toBeDefined();
+    // Confirms in place with the BOOKING- reference, no redirect to pay. The
+    // reference now appears both in the explanatory sentence and the dedicated
+    // "Payment reference" box, so match the box's exact value to stay unique.
+    expect(await screen.findByText("BOOKING-B1")).toBeDefined();
     expect(pushMock).not.toHaveBeenCalledWith("/bookings/b1");
 
     // The join POST forwarded the internet_banking method.

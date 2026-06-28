@@ -91,6 +91,20 @@ Internet Banking payments also require operational Xero to be enabled,
 configured, and connected because invoice issuing and settlement reconciliation
 run through that integration.
 
+Internet Banking payment policy is configured at `/admin/internet-banking`.
+The default policy preserves the historical behavior: Internet Banking bookings
+do not hold beds and there is no minimum lead time before check-in. Admins can
+switch on bed-slot holding, set the hold duration, and set a minimum
+date-only lead time. When holding is enabled, the payment cron releases unpaid
+holds after expiry by cancelling the booking, marking the pending payment
+failed, and queueing Xero invoice-clearing credit-note work.
+
+Member-facing booking, payment-link, cancellation/refund appeal, and group
+booking payment copy is configured at `/admin/booking-messages` under
+Notifications & Email. These messages are plain text with audited changes and
+support the documented merge fields; audited email templates stay in the Email
+Messages editor.
+
 ## 4. Bring Up A Local Database
 
 For a Docker-backed local/staging-style setup:

@@ -21,6 +21,7 @@ import {
   STALE_RUNNING_XERO_OPERATION_MINUTES,
   countStaleProcessingXeroInboundEvents,
   countStaleRunningXeroOperations,
+  canReplayXeroInboundEvent,
   isStaleProcessingXeroInboundEvent,
   staleProcessingXeroInboundEventFilter,
   staleRunningXeroOperationFilter,
@@ -116,5 +117,23 @@ describe("stale PROCESSING Xero inbound event visibility (issue #819/#815)", () 
     // No claim timestamp -> never steal it.
     expect(isStaleProcessingXeroInboundEvent(null, now)).toBe(false);
     expect(isStaleProcessingXeroInboundEvent(undefined, now)).toBe(false);
+  });
+
+  it("allows replay for stale PROCESSING inbound events but not fresh claims", () => {
+    const now = new Date("2026-06-21T12:00:00.000Z");
+
+    expect(
+      canReplayXeroInboundEvent(
+        { status: "PROCESSING", updatedAt: new Date("2026-06-21T11:44:00.000Z") },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      canReplayXeroInboundEvent(
+        { status: "PROCESSING", updatedAt: new Date("2026-06-21T11:55:00.000Z") },
+        now,
+      ),
+    ).toBe(false);
+    expect(canReplayXeroInboundEvent({ status: "FAILED", updatedAt: null }, now)).toBe(true);
   });
 });

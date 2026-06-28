@@ -22,6 +22,13 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/admin/xero/records")).toEqual([
       "xeroIntegration",
     ]);
+    expect(getRequiredFeaturesForPath("/admin/internet-banking")).toEqual([
+      "xeroIntegration",
+      "internetBankingPayments",
+    ]);
+    expect(
+      getRequiredFeaturesForPath("/api/admin/internet-banking-settings")
+    ).toEqual(["xeroIntegration", "internetBankingPayments"]);
   });
 
   it("requires both kiosk and chores for lodge roster routes", () => {
@@ -96,6 +103,24 @@ describe("feature route map", () => {
         xeroIntegration: false,
       })
     ).toBe("xeroIntegration");
+    expect(
+      getDisabledFeatureForPath("/admin/internet-banking", {
+        ...allOn,
+        xeroIntegration: false,
+      })
+    ).toBe("xeroIntegration");
+    expect(
+      getDisabledFeatureForPath("/admin/internet-banking", {
+        ...allOn,
+        internetBankingPayments: false,
+      })
+    ).toBe("internetBankingPayments");
+    expect(
+      getDisabledFeatureForPath("/api/admin/internet-banking-settings", {
+        ...allOn,
+        internetBankingPayments: false,
+      })
+    ).toBe("internetBankingPayments");
   });
 
   it("uses the admin module toggle for effective state", () => {
@@ -128,5 +153,18 @@ describe("feature route map", () => {
       })
     ).toBe(false);
     expect(isFeatureHrefVisible("/admin/bookings", allOn)).toBe(true);
+    expect(
+      isFeatureHrefVisible("/admin/internet-banking", {
+        ...allOn,
+        xeroIntegration: false,
+      })
+    ).toBe(false);
+    expect(
+      isFeatureHrefVisible("/admin/internet-banking", {
+        ...allOn,
+        internetBankingPayments: false,
+      })
+    ).toBe(false);
+    expect(isFeatureHrefVisible("/admin/internet-banking", allOn)).toBe(true);
   });
 });

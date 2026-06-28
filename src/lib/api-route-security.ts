@@ -59,6 +59,11 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason: "Token-bearing email verification endpoint.",
   },
+  "src/app/api/booking-messages/route.ts": {
+    boundary: "public",
+    reason:
+      "Public read of admin-configured booking message display text (Internet Banking instructions and policy copy) shown on the booking flow; returns only template strings, no member data.",
+  },
   "src/app/api/booking-requests/quote/route.ts": {
     boundary: "public",
     reason:

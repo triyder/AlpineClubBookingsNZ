@@ -200,6 +200,7 @@ describe("CSP proxy", () => {
       "/api/admin/promo-codes/123",
       "/api/promo-codes/validate",
       "/api/admin/hut-leaders/123",
+      "/api/admin/internet-banking-settings",
       "/api/admin/communications/send",
       "/api/admin/mountain-conditions",
       "/api/skifield-whakapapa",

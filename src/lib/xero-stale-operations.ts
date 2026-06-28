@@ -93,3 +93,20 @@ export function isStaleProcessingXeroInboundEvent(
 
   return updatedAt.getTime() < threshold.getTime();
 }
+
+export function canReplayXeroInboundEvent(
+  event: { status: string; updatedAt?: Date | string | null },
+  now: Date = new Date(),
+): boolean {
+  if (event.status !== "PROCESSING") {
+    return true;
+  }
+
+  const updatedAt =
+    typeof event.updatedAt === "string" ? new Date(event.updatedAt) : event.updatedAt;
+  if (updatedAt instanceof Date && Number.isNaN(updatedAt.getTime())) {
+    return false;
+  }
+
+  return isStaleProcessingXeroInboundEvent(updatedAt, now);
+}

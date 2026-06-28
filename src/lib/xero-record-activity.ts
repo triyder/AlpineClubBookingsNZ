@@ -5,6 +5,7 @@ import { formatCents } from "@/lib/utils";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl, type XeroLocalModel } from "@/lib/xero-record-links";
+import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
 import type {
   XeroRecordActivityData,
   XeroRecordActivityOperation,
@@ -688,7 +689,7 @@ export async function getXeroRecordActivity(
       event.eventCategory && event.resourceId
         ? buildXeroObjectUrl(event.eventCategory, event.resourceId)
         : null,
-    canReplay: event.status !== "PROCESSING",
+    canReplay: canReplayXeroInboundEvent(event),
   }));
 
   return {

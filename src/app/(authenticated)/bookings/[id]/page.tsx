@@ -44,6 +44,8 @@ import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { isBookingBedAllocationLocked } from "@/lib/admin-bed-allocation";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
+import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
+import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
@@ -94,7 +96,7 @@ export default async function BookingDetailPage({
     include: {
       guests: { include: { nights: { select: { stayDate: true } } } },
       payment: true,
-      member: { select: { firstName: true } },
+      member: { select: { firstName: true, lastName: true } },
       requestedRoom: {
         select: { id: true, name: true, active: true },
       },
@@ -286,6 +288,7 @@ export default async function BookingDetailPage({
   const canCancel = canManageBooking && !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const modules = await loadEffectiveModuleFlags();
+  const bookingMessages = await loadPublicBookingMessages();
   const showRequestedRoom =
     !isDeleted && (modules.bedAllocation || Boolean(booking.requestedRoomId));
   // Issue #776: the booking owner may request a room until an admin confirms
@@ -481,6 +484,53 @@ export default async function BookingDetailPage({
   const amountDueAfterCreditCents = Math.max(
     booking.finalPriceCents - creditAppliedCents,
     0
+  );
+  const bookingMessageData = {
+    bookerFirstName: booking.member.firstName,
+    bookerFullName: `${booking.member.firstName} ${booking.member.lastName}`,
+    checkIn: booking.checkIn.toLocaleDateString("en-NZ", { dateStyle: "long" }),
+    checkOut: booking.checkOut.toLocaleDateString("en-NZ", { dateStyle: "long" }),
+    guestCount: booking.guests.length,
+    amountDue: formatCents(amountDueAfterCreditCents),
+    amountPaid: booking.payment ? formatCents(booking.payment.amountCents) : "",
+    refundAmount: cancellationSettlement
+      ? formatCents(cancellationSettlement.refundToOriginalMethodCents)
+      : "",
+    creditAmount: cancellationSettlement
+      ? formatCents(cancellationSettlement.accountCreditCents)
+      : "",
+    creditRestored: cancellationSettlement
+      ? formatCents(cancellationSettlement.restoredAppliedCreditCents)
+      : "",
+    retainedAmount: cancellationSettlement
+      ? formatCents(retainedAfterCancellationCents)
+      : "",
+    changeFee: booking.payment ? formatCents(booking.payment.changeFeeCents) : "",
+    paymentReference: internetBankingPayment?.reference ?? "",
+    xeroInvoiceNumber: internetBankingPayment?.xeroInvoiceNumber ?? "",
+    holdUntil: internetBankingPayment?.internetBankingHoldUntil
+      ? internetBankingPayment.internetBankingHoldUntil.toLocaleString("en-NZ", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "",
+    holdDays: "",
+    minimumDaysBeforeCheckIn: "",
+    bookingStatus: booking.status,
+  };
+  const renderBookingMessage = (key: keyof typeof bookingMessages) =>
+    renderBookingMessageTemplate(bookingMessages[key], bookingMessageData);
+  const paymentRequiredDescription = renderBookingMessage(
+    "booking.detail.paymentRequired.description",
+  );
+  const internetBankingPendingDescription = renderBookingMessage(
+    "booking.detail.internetBanking.pending",
+  );
+  const switchToInternetBankingDescription = renderBookingMessage(
+    "booking.detail.switchToInternetBanking",
+  );
+  const refundAppealDescription = renderBookingMessage(
+    "cancellation.refundAppeal.description",
   );
 
   // Group booking organiser card (#796+). Only the owner manages their group;
@@ -867,9 +917,7 @@ export default async function BookingDetailPage({
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-amber-950">
               <p>
-                Your Xero invoice will be emailed to you. This booking stays
-                Payment Pending until Xero reconciliation confirms the invoice
-                has been paid.
+                {internetBankingPendingDescription}
               </p>
               <div className="grid gap-2 sm:grid-cols-2">
                 <div>
@@ -929,7 +977,7 @@ export default async function BookingDetailPage({
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600 mb-4">
-              Payment is required to secure this booking. Availability may change until payment succeeds.
+              {paymentRequiredDescription}
             </p>
             {showCreditApplied && (
               <div className="mb-4 space-y-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
@@ -958,7 +1006,10 @@ export default async function BookingDetailPage({
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
             {canSwitchToInternetBanking && (
-              <SwitchToInternetBankingButton bookingId={booking.id} />
+              <SwitchToInternetBankingButton
+                bookingId={booking.id}
+                description={switchToInternetBankingDescription}
+              />
             )}
           </CardContent>
         </Card>
@@ -997,7 +1048,10 @@ export default async function BookingDetailPage({
         )}
 
       {canCancel && (
-        <CancelBookingButton bookingId={booking.id} />
+        <CancelBookingButton
+          bookingId={booking.id}
+          refundAppealDescription={refundAppealDescription}
+        />
       )}
 
       {canDeleteDraft ? (
@@ -1024,6 +1078,7 @@ export default async function BookingDetailPage({
           <RefundAppealButton
             bookingId={booking.id}
             maxRefundableCents={maxRefundableCents}
+            description={refundAppealDescription}
           />
         )}
 

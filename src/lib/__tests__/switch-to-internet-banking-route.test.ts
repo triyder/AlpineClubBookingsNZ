@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   loadEffectiveModuleFlags: vi.fn(),
   findUnique: vi.fn(),
   upsert: vi.fn(),
+  bookingUpdate: vi.fn(),
+  settingsFindUnique: vi.fn(),
+  transaction: vi.fn(),
+  txExecuteRaw: vi.fn(),
   recordInternetBankingPaymentTransaction: vi.fn(),
   cancelPaymentIntentIfCancellable: vi.fn(),
   enqueueXeroBookingInvoiceOperation: vi.fn(),
@@ -21,8 +25,10 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    booking: { findUnique: mocks.findUnique },
+    booking: { findUnique: mocks.findUnique, update: mocks.bookingUpdate },
     payment: { upsert: mocks.upsert },
+    internetBankingPaymentSettings: { findUnique: mocks.settingsFindUnique },
+    $transaction: mocks.transaction,
   },
 }));
 vi.mock("@/lib/payment-transactions", () => ({
@@ -96,6 +102,21 @@ beforeEach(() => {
   });
   mocks.findUnique.mockResolvedValue(stripeBooking());
   mocks.upsert.mockResolvedValue({ id: "payment-1" });
+  mocks.bookingUpdate.mockResolvedValue({});
+  // Settings singleton: null → defaults (holdBedSlots false, no lead-time gate),
+  // so the switch stays PAYMENT_PENDING without a capacity re-check.
+  mocks.settingsFindUnique.mockResolvedValue(null);
+  mocks.txExecuteRaw.mockResolvedValue(undefined);
+  // The route now finalises the payment switch inside a Prisma transaction; run
+  // the callback against a tx client that mirrors the production surface.
+  mocks.transaction.mockImplementation(
+    async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        $executeRaw: mocks.txExecuteRaw,
+        payment: { upsert: mocks.upsert },
+        booking: { update: mocks.bookingUpdate },
+      })
+  );
   mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(undefined);
   mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
     queueOperationId: "queue-1",
@@ -236,7 +257,13 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
   it("converts a Stripe booking to Internet Banking and raises the invoice", async () => {
     const res = await POST(postRequest());
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ reference: REFERENCE });
+    // Default settings hold no beds, so the response reports the reference plus
+    // the (empty) hold policy.
+    await expect(res.json()).resolves.toEqual({
+      reference: REFERENCE,
+      holdBedSlots: false,
+      holdUntil: null,
+    });
 
     // Voids the open Stripe intent.
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_123");

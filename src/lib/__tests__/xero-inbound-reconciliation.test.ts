@@ -25,9 +25,14 @@ const mocks = vi.hoisted(() => ({
   bookingUpdate: vi.fn(),
   bookingModificationFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
+  paymentFindUnique: vi.fn(),
   paymentUpdate: vi.fn(),
   paymentTransactionUpdateMany: vi.fn(),
   paymentTransactionCreate: vi.fn(),
+  memberCreditFindFirst: vi.fn(),
+  reconcileBedAllocations: vi.fn(),
+  recordBookingEvent: vi.fn(),
+  txExecuteRaw: vi.fn(),
   subscriptionFindMany: vi.fn(),
   groupSettlementFindFirst: vi.fn(),
   applyGroupSettlementFromInvoice: vi.fn(),
@@ -122,6 +127,24 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/group-settlement", () => ({
   applyGroupSettlementSucceededFromInvoice: mocks.applyGroupSettlementFromInvoice,
 }));
+
+vi.mock("@/lib/bed-allocation-lifecycle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/bed-allocation-lifecycle")>();
+
+  return {
+    ...actual,
+    reconcileBedAllocationsForBooking: mocks.reconcileBedAllocations,
+  };
+});
+
+vi.mock("@/lib/booking-events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/booking-events")>();
+
+  return {
+    ...actual,
+    recordBookingEvent: mocks.recordBookingEvent,
+  };
+});
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
@@ -219,11 +242,27 @@ describe("processStoredXeroInboundEvents", () => {
     });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
+        $executeRaw: mocks.txExecuteRaw,
         processedWebhookEvent: {
           deleteMany: mocks.processedDeleteMany,
         },
         xeroInboundEvent: {
           update: mocks.inboundUpdate,
+        },
+        payment: {
+          findUnique: mocks.paymentFindUnique,
+          update: mocks.paymentUpdate,
+        },
+        paymentTransaction: {
+          updateMany: mocks.paymentTransactionUpdateMany,
+          create: mocks.paymentTransactionCreate,
+        },
+        booking: {
+          update: mocks.bookingUpdate,
+        },
+        memberCredit: {
+          findFirst: mocks.memberCreditFindFirst,
+          create: mocks.memberCreditCreate,
         },
       })
     );
@@ -256,9 +295,14 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingModificationFindMany.mockResolvedValue([]);
     mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.paymentFindUnique.mockResolvedValue(null);
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
     mocks.paymentTransactionCreate.mockResolvedValue({});
+    mocks.memberCreditFindFirst.mockResolvedValue(null);
+    mocks.reconcileBedAllocations.mockResolvedValue(undefined);
+    mocks.recordBookingEvent.mockResolvedValue(undefined);
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
     mocks.subscriptionFindMany.mockResolvedValue([]);
   });
 
@@ -681,6 +725,38 @@ describe("processStoredXeroInboundEvents", () => {
           booking: { memberId: "mem_1" },
         },
       ]);
+    // The reconciliation now reloads the payment inside the finalization
+    // transaction via tx.payment.findUnique. internetBankingHoldSlots:true
+    // marks the booking as already holding its beds, so the paid path runs
+    // straight through without a capacity re-check.
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "pay_ib_1",
+      bookingId: "booking_ib_1",
+      amountCents: 12345,
+      status: "PENDING",
+      source: "INTERNET_BANKING",
+      reference: "BOOKING-ABC12345",
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      internetBankingHoldSlots: true,
+      booking: {
+        id: "booking_ib_1",
+        memberId: "mem_1",
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        status: "PAYMENT_PENDING",
+        finalPriceCents: 12345,
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        member: {
+          email: "member@example.com",
+          firstName: "Alice",
+          lastName: "Smith",
+        },
+        guests: [{ id: "guest_1" }],
+        promoRedemption: null,
+      },
+    });
     mocks.subscriptionFindMany.mockResolvedValue([]);
     const accountingApi = {
       getInvoice: vi.fn().mockResolvedValue({
@@ -2170,11 +2246,27 @@ describe("replayStoredXeroInboundEvent", () => {
     mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
+        $executeRaw: mocks.txExecuteRaw,
         processedWebhookEvent: {
           deleteMany: mocks.processedDeleteMany,
         },
         xeroInboundEvent: {
           update: mocks.inboundUpdate,
+        },
+        payment: {
+          findUnique: mocks.paymentFindUnique,
+          update: mocks.paymentUpdate,
+        },
+        paymentTransaction: {
+          updateMany: mocks.paymentTransactionUpdateMany,
+          create: mocks.paymentTransactionCreate,
+        },
+        booking: {
+          update: mocks.bookingUpdate,
+        },
+        memberCredit: {
+          findFirst: mocks.memberCreditFindFirst,
+          create: mocks.memberCreditCreate,
         },
       })
     );

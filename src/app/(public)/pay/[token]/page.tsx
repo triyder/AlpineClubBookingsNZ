@@ -96,6 +96,7 @@ export default function PayByLinkPage() {
     "idle"
   );
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -121,6 +122,13 @@ export default function PayByLinkPage() {
       cancelled = true;
     };
   }, [token]);
+
+  useEffect(() => {
+    fetch("/api/booking-messages")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setBookingMessages(data?.messages ?? {}))
+      .catch(() => setBookingMessages({}));
+  }, []);
 
   async function startCardPayment() {
     setIntentLoading(true);
@@ -300,7 +308,10 @@ export default function PayByLinkPage() {
               <div className="rounded-md border border-slate-200 p-3 text-sm">
                 <p className="font-medium text-slate-900">Or pay by internet banking</p>
                 <p className="mt-1 text-muted-foreground">
-                  Use the reference below when making a direct transfer.
+                  {(
+                    bookingMessages["paymentLink.internetBanking.description"] ??
+                    "Use reference {{paymentReference}} when making a direct transfer. The booking will be confirmed after the Xero invoice payment is reconciled."
+                  ).replaceAll("{{paymentReference}}", payable.internetBankingReference)}
                 </p>
                 <p className="mt-2 font-mono text-slate-900">{payable.internetBankingReference}</p>
               </div>

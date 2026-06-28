@@ -90,6 +90,7 @@ export const config = {
     "/api/admin/hut-leaders/:path*",
     "/api/admin/induction-templates/:path*",
     "/api/admin/inductions/:path*",
+    "/api/admin/internet-banking-settings",
     "/api/admin/lockers/:path*",
     "/api/admin/lodge/:path*",
     "/api/admin/members/:id/xero-link",

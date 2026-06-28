@@ -13,8 +13,10 @@ import { Button } from "@/components/ui/button";
  */
 export function SwitchToInternetBankingButton({
   bookingId,
+  description = "Prefer to pay by bank transfer? We'll email you a Xero invoice.",
 }: {
   bookingId: string;
+  description?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -47,7 +49,7 @@ export function SwitchToInternetBankingButton({
   return (
     <div className="mt-4 border-t pt-4">
       <p className="mb-2 text-sm text-muted-foreground">
-        Prefer to pay by bank transfer? We&apos;ll email you a Xero invoice.
+        {description}
       </p>
       <Button variant="outline" onClick={switchToInternetBanking} disabled={busy}>
         {busy ? "Switching..." : "Pay by internet banking instead"}

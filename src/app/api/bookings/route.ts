@@ -27,6 +27,11 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
+  checkInternetBankingLeadTime,
+  loadInternetBankingPaymentSettings,
+  type InternetBankingPaymentSettingsValues,
+} from "@/lib/internet-banking-settings";
+import {
   BOOKING_PAYMENT_METHOD_VALUES,
   DEFAULT_BOOKING_PAYMENT_METHOD,
 } from "@/lib/booking-payment-methods";
@@ -359,11 +364,29 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  let internetBankingSettings: InternetBankingPaymentSettingsValues | undefined;
   if (paymentMethod === "internet_banking") {
     const modules = await loadEffectiveModuleFlags();
     if (!modules.xeroIntegration || !modules.internetBankingPayments) {
       return NextResponse.json(
         { error: "Internet Banking payments are not available." },
+        { status: 400 }
+      );
+    }
+
+    internetBankingSettings = await loadInternetBankingPaymentSettings();
+    const leadTime = checkInternetBankingLeadTime({
+      checkIn,
+      settings: internetBankingSettings,
+    });
+    if (!leadTime.allowed) {
+      return NextResponse.json(
+        {
+          error: leadTime.unavailableReason ?? "Internet Banking is not available for this check-in date.",
+          code: "INTERNET_BANKING_CUTOFF",
+          minimumDaysBeforeCheckIn: leadTime.minimumDaysBeforeCheckIn,
+          checkIn: leadTime.checkIn,
+        },
         { status: 400 }
       );
     }
@@ -405,6 +428,7 @@ export async function POST(request: NextRequest) {
       shouldBePending,
       holdDays,
       paymentMethod,
+      internetBankingSettings,
       memberReviewJustification,
     });
 
