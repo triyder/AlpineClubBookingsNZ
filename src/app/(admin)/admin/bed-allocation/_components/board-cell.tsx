@@ -9,6 +9,10 @@ import {
   cellDroppableId,
 } from "./types";
 
+export const BED_ALLOCATION_COLUMN_WIDTH_REM = 11;
+export const BED_ALLOCATION_COLUMN_WIDTH_CLASS =
+  "w-[11rem] min-w-[11rem] max-w-[11rem]";
+
 interface BoardCellProps {
   bedId: string;
   roomId: string;
@@ -41,7 +45,8 @@ export function BoardCell({
     <td
       ref={setNodeRef}
       className={cn(
-        "min-w-[140px] border p-1 align-top",
+        BED_ALLOCATION_COLUMN_WIDTH_CLASS,
+        "overflow-hidden border p-1 align-top",
         isOver && "bg-blue-50 ring-2 ring-blue-300",
         highlighted && !isOver && "bg-amber-50",
       )}
