@@ -221,8 +221,10 @@ approval processing must keep Xero writes outside long database transactions.
 Admin member CSV import treats a member identity as the normalized email plus
 normalized first and last name. Rows are skipped as duplicates when that same
 identity already exists in the database or earlier in the same import, even
-when one of the rows has a blank date of birth. Different names may share an
-email address, including rows with the same or blank date of birth.
+when dates of birth differ or one row has a blank date of birth. Date of birth
+is not part of the duplicate key; a blank date of birth is unknown and cannot
+prove a distinct identity. Different names may share an email address,
+including rows with the same or blank date of birth.
 
 Only one login-enabled member can use an email address. If an existing member
 with `canLogin: true` already has the email, every new shared-email import is

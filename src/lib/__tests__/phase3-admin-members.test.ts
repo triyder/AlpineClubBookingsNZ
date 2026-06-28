@@ -850,7 +850,7 @@ describe("Phase 3: Admin Member Management", () => {
       ]);
     });
 
-    it("skips same-email same-name duplicates within the file even with blank DOB", async () => {
+    it("skips same-email same-name duplicates within the file even when DOB differs or is blank", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
       const createMember = vi.fn(async ({ data }: any) => ({
@@ -872,7 +872,18 @@ describe("Phase 3: Admin Member Management", () => {
         body: JSON.stringify({
           rows: [
             { firstName: "Alice", lastName: "A", email: "dup@test.com" },
-            { firstName: " Alice ", lastName: "A", email: "dup@test.com", dateOfBirth: "" },
+            {
+              firstName: "Alice",
+              lastName: "A",
+              email: "dup@test.com",
+              dateOfBirth: "2005-05-05",
+            },
+            {
+              firstName: " Alice ",
+              lastName: "A",
+              email: "dup@test.com",
+              dateOfBirth: "",
+            },
           ],
           sendInvites: false,
         }),
@@ -882,10 +893,15 @@ describe("Phase 3: Admin Member Management", () => {
       const body = await res.json();
       expect(res.status).toBe(200);
       expect(body.created).toBe(1);
-      expect(body.skipped).toBe(1);
+      expect(body.skipped).toBe(2);
       expect(body.skippedRows).toEqual([
         {
           row: 2,
+          email: "dup@test.com",
+          reason: "Duplicate member identity already appears earlier in this import",
+        },
+        {
+          row: 3,
           email: "dup@test.com",
           reason: "Duplicate member identity already appears earlier in this import",
         },

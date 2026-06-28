@@ -408,11 +408,12 @@ describe("member CSV import parser", () => {
     expect(preview.importRows).toHaveLength(3);
   });
 
-  it("flags duplicate same-email same-name identities in preview", () => {
+  it("flags duplicate same-email same-name identities in preview even when DOB differs or is blank", () => {
     const parsed = parseMemberImportCsv(
       [
         "First Name,Last Name,Email,DOB",
         "Alice,Smith,shared@example.com,1990-01-01",
+        "Alice,Smith,shared@example.com,2005-05-05",
         " Alice ,Smith,shared@example.com,",
       ].join("\n"),
     );
@@ -427,6 +428,9 @@ describe("member CSV import parser", () => {
 
     expect(preview.hasErrors).toBe(true);
     expect(preview.rows[1].errors).toEqual([
+      "Duplicate member identity in file (same email and name as line 2)",
+    ]);
+    expect(preview.rows[2].errors).toEqual([
       "Duplicate member identity in file (same email and name as line 2)",
     ]);
   });
