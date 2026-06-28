@@ -8,6 +8,7 @@ import {
   RotateCcw,
   Save,
   SearchX,
+  Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,24 +21,28 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { XeroAccountMultiSelect } from "@/components/admin/xero-account-multi-select";
+import type { XeroAccount } from "@/lib/xero-admin-cache";
 
 type CategoryKind = "REVENUE" | "EXPENSE";
 
 interface FinanceMapping {
   id?: string;
-  accountCode: string | null;
-  sectionLabel: string | null;
-  lineLabel: string | null;
+  accountCode: string;
 }
 
-interface FinanceCategory {
+interface ServerCategory {
   id?: string;
   kind: CategoryKind;
   name: string;
+  subtype: string | null;
   sortOrder: number;
   archived: boolean;
   mappings: FinanceMapping[];
+}
+
+interface EditorCategory extends ServerCategory {
+  key: string;
 }
 
 interface UnmappedLine {
@@ -50,12 +55,29 @@ interface UnmappedLine {
 }
 
 interface FinanceMappingsState {
-  categories: FinanceCategory[];
+  categories: ServerCategory[];
   unmappedLines: UnmappedLine[];
   snapshotCoverage: {
     latestProfitAndLossSnapshot: string | null;
     inspectedSnapshotCount: number;
   };
+}
+
+interface EditorState {
+  categories: EditorCategory[];
+  unmappedLines: UnmappedLine[];
+  snapshotCoverage: FinanceMappingsState["snapshotCoverage"];
+}
+
+const KIND_CLASS_FILTER: Record<CategoryKind, string> = {
+  REVENUE: "REVENUE",
+  EXPENSE: "EXPENSE",
+};
+
+let keyCounter = 0;
+function nextKey() {
+  keyCounter += 1;
+  return `new-${keyCounter}`;
 }
 
 function responseErrorMessage(body: unknown, fallback: string) {
@@ -70,64 +92,56 @@ function responseErrorMessage(body: unknown, fallback: string) {
   return fallback;
 }
 
-function accountCodeText(category: FinanceCategory) {
-  return category.mappings
-    .filter((mapping) => mapping.accountCode)
-    .map((mapping) => mapping.accountCode)
-    .join("\n");
-}
-
-function fallbackLineText(category: FinanceCategory) {
-  return category.mappings
-    .filter((mapping) => !mapping.accountCode && mapping.lineLabel)
-    .map((mapping) =>
-      mapping.sectionLabel
-        ? `${mapping.sectionLabel} :: ${mapping.lineLabel}`
-        : mapping.lineLabel,
-    )
-    .join("\n");
-}
-
-function parseLineMappings(value: string): FinanceMapping[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [section, ...rest] = line.split("::").map((part) => part.trim());
-      if (rest.length === 0) {
-        return {
-          accountCode: null,
-          sectionLabel: null,
-          lineLabel: section,
-        };
-      }
-      return {
-        accountCode: null,
-        sectionLabel: section,
-        lineLabel: rest.join(" :: "),
-      };
-    });
-}
-
-function parseAccountMappings(value: string): FinanceMapping[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((accountCode) => ({
-      accountCode,
-      sectionLabel: null,
-      lineLabel: null,
-    }));
-}
-
 function categoryTitle(kind: CategoryKind) {
   return kind === "REVENUE" ? "Revenue" : "Expenses";
 }
 
+function toEditorState(state: FinanceMappingsState): EditorState {
+  return {
+    categories: state.categories.map((category) => ({
+      ...category,
+      subtype: category.subtype ?? null,
+      mappings: category.mappings ?? [],
+      key: category.id ?? nextKey(),
+    })),
+    unmappedLines: state.unmappedLines,
+    snapshotCoverage: state.snapshotCoverage,
+  };
+}
+
+interface Section {
+  subtype: string | null;
+  items: EditorCategory[];
+}
+
+// Group a kind's categories into subtype sections, ordered by the first
+// (lowest sortOrder) appearance of each subtype. Categories with no subtype
+// fall into the "Ungrouped" section.
+function buildSections(categories: EditorCategory[]): Section[] {
+  const sorted = [...categories].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder || left.name.localeCompare(right.name),
+  );
+  const order: string[] = [];
+  const buckets = new Map<string, EditorCategory[]>();
+  for (const category of sorted) {
+    const subtype = category.subtype?.trim() ?? "";
+    if (!buckets.has(subtype)) {
+      buckets.set(subtype, []);
+      order.push(subtype);
+    }
+    buckets.get(subtype)!.push(category);
+  }
+  return order.map((subtype) => ({
+    subtype: subtype === "" ? null : subtype,
+    items: buckets.get(subtype)!,
+  }));
+}
+
 export function FinanceReportMappingsPanel() {
-  const [state, setState] = useState<FinanceMappingsState | null>(null);
+  const [state, setState] = useState<EditorState | null>(null);
+  const [accounts, setAccounts] = useState<XeroAccount[]>([]);
+  const [coaError, setCoaError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
@@ -141,13 +155,15 @@ export function FinanceReportMappingsPanel() {
       const response = await fetch("/api/admin/setup/finance-report-mappings", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as FinanceMappingsState | { error?: string };
+      const body = (await response.json()) as
+        | FinanceMappingsState
+        | { error?: string };
       if (!response.ok || !("categories" in body)) {
         throw new Error(
           responseErrorMessage(body, "Failed to load finance mappings"),
         );
       }
-      setState(body);
+      setState(toEditorState(body));
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -159,8 +175,34 @@ export function FinanceReportMappingsPanel() {
     }
   }
 
+  async function loadAccounts() {
+    setCoaError(null);
+    try {
+      const response = await fetch("/api/admin/xero/chart-of-accounts", {
+        credentials: "same-origin",
+      });
+      const body = (await response.json()) as
+        | { accounts?: XeroAccount[] }
+        | { error?: string };
+      if (!response.ok || !("accounts" in body) || !Array.isArray(body.accounts)) {
+        throw new Error(
+          responseErrorMessage(body, "Failed to load Xero chart of accounts"),
+        );
+      }
+      setAccounts(body.accounts);
+    } catch (accountsError) {
+      setAccounts([]);
+      setCoaError(
+        accountsError instanceof Error
+          ? accountsError.message
+          : "Failed to load Xero chart of accounts",
+      );
+    }
+  }
+
   useEffect(() => {
     void loadMappings();
+    void loadAccounts();
   }, []);
 
   const grouped = useMemo(() => {
@@ -168,45 +210,51 @@ export function FinanceReportMappingsPanel() {
     return {
       REVENUE: categories.filter((category) => category.kind === "REVENUE"),
       EXPENSE: categories.filter((category) => category.kind === "EXPENSE"),
-    } satisfies Record<CategoryKind, FinanceCategory[]>;
+    } satisfies Record<CategoryKind, EditorCategory[]>;
   }, [state]);
 
-  function updateCategory(
-    target: FinanceCategory,
-    patch: Partial<FinanceCategory>,
-  ) {
+  const subtypeSuggestions = useMemo(() => {
+    const byKind: Record<CategoryKind, Set<string>> = {
+      REVENUE: new Set(),
+      EXPENSE: new Set(),
+    };
+    for (const category of state?.categories ?? []) {
+      const subtype = category.subtype?.trim();
+      if (subtype) {
+        byKind[category.kind].add(subtype);
+      }
+    }
+    return {
+      REVENUE: Array.from(byKind.REVENUE).sort(),
+      EXPENSE: Array.from(byKind.EXPENSE).sort(),
+    };
+  }, [state]);
+
+  function updateCategory(key: string, patch: Partial<EditorCategory>) {
     setState((current) => {
       if (!current) return current;
       return {
         ...current,
         categories: current.categories.map((category) =>
-          category === target ||
-          (target.id && category.id === target.id) ||
-          (!target.id &&
-            !category.id &&
-            category.kind === target.kind &&
-            category.sortOrder === target.sortOrder)
-            ? { ...category, ...patch }
-            : category,
+          category.key === key ? { ...category, ...patch } : category,
         ),
       };
     });
   }
 
-  function updateCategoryMappings(
-    target: FinanceCategory,
-    accountCodes: string,
-    fallbackLines: string,
-  ) {
-    updateCategory(target, {
-      mappings: [
-        ...parseAccountMappings(accountCodes),
-        ...parseLineMappings(fallbackLines),
-      ],
+  function deleteCategory(key: string) {
+    setState((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        categories: current.categories.filter(
+          (category) => category.key !== key,
+        ),
+      };
     });
   }
 
-  function addCategory(kind: CategoryKind) {
+  function addCategory(kind: CategoryKind, subtype: string | null) {
     setState((current) => {
       if (!current) return current;
       const nextSort =
@@ -221,8 +269,10 @@ export function FinanceReportMappingsPanel() {
         categories: [
           ...current.categories,
           {
+            key: nextKey(),
             kind,
-            name: `${categoryTitle(kind)} Group`,
+            name: `New ${categoryTitle(kind)} group`,
+            subtype,
             sortOrder: nextSort,
             archived: false,
             mappings: [],
@@ -238,11 +288,24 @@ export function FinanceReportMappingsPanel() {
     setError(null);
     setMessage(null);
     try {
+      const payload = {
+        categories: state.categories.map((category) => ({
+          ...(category.id ? { id: category.id } : {}),
+          kind: category.kind,
+          name: category.name,
+          subtype: category.subtype?.trim() ? category.subtype.trim() : null,
+          sortOrder: category.sortOrder,
+          archived: category.archived,
+          mappings: category.mappings.map((mapping) => ({
+            accountCode: mapping.accountCode,
+          })),
+        })),
+      };
       const response = await fetch("/api/admin/setup/finance-report-mappings", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: state.categories }),
+        body: JSON.stringify(payload),
       });
       const body = (await response.json().catch(() => null)) as
         | FinanceMappingsState
@@ -260,7 +323,7 @@ export function FinanceReportMappingsPanel() {
           `${responseErrorMessage(body, "Failed to save finance mappings")}${detailText}`,
         );
       }
-      setState(body);
+      setState(toEditorState(body));
       setMessage("Finance report mappings saved.");
     } catch (saveError) {
       setError(
@@ -313,14 +376,19 @@ export function FinanceReportMappingsPanel() {
           <div>
             <CardTitle>Finance Report Mappings</CardTitle>
             <CardDescription>
-              Group Xero profit-and-loss account codes and fallback report lines for the finance dashboard.
+              Build the report groups that organise the finance dashboard. Each
+              group has a name, an optional subtype sub-heading, and the Xero
+              chart-of-accounts codes whose profit-and-loss lines roll up into it.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={loadMappings}
+              onClick={() => {
+                void loadMappings();
+                void loadAccounts();
+              }}
               disabled={loading}
             >
               <RotateCcw className="h-4 w-4" />
@@ -365,6 +433,13 @@ export function FinanceReportMappingsPanel() {
             {message}
           </div>
         ) : null}
+        {coaError ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Could not load the Xero chart of accounts ({coaError}). You can still
+            type account codes manually; reconnect Xero to pick from the live
+            account list.
+          </div>
+        ) : null}
 
         {loading && !state ? (
           <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -379,9 +454,10 @@ export function FinanceReportMappingsPanel() {
               Latest inspected P&L snapshot:{" "}
               {state.snapshotCoverage.latestProfitAndLossSnapshot ?? "none"} ·{" "}
               {state.snapshotCoverage.inspectedSnapshotCount} snapshots checked.
+              Lines are matched to groups by Xero account code only.
             </div>
 
-            <div className="grid gap-5 2xl:grid-cols-2">
+            <div className="space-y-6">
               {(["REVENUE", "EXPENSE"] as const).map((kind) => (
                 <section key={kind} className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
@@ -390,99 +466,141 @@ export function FinanceReportMappingsPanel() {
                         {categoryTitle(kind)}
                       </h3>
                       <p className="text-sm text-slate-600">
-                        Account-code mappings take priority over fallback labels.
+                        Groups are shown under their subtype sub-headings, the
+                        same way they appear on the finance dashboard.
                       </p>
                     </div>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => addCategory(kind)}
+                      onClick={() => addCategory(kind, null)}
                     >
                       <Plus className="h-4 w-4" />
-                      Add
+                      Add group
                     </Button>
                   </div>
 
-                  <div className="space-y-3">
-                    {grouped[kind].map((category) => (
-                      <div
-                        key={category.id ?? `${category.kind}:${category.sortOrder}`}
-                        className="rounded-md border border-slate-200 bg-white p-3"
-                      >
-                        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_7rem]">
-                          <div className="space-y-1.5">
-                            <Label>Name</Label>
-                            <Input
-                              value={category.name}
-                              onChange={(event) =>
-                                updateCategory(category, {
-                                  name: event.target.value,
-                                })
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Order</Label>
-                            <Input
-                              type="number"
-                              min={0}
-                              value={category.sortOrder}
-                              onChange={(event) =>
-                                updateCategory(category, {
-                                  sortOrder: Number(event.target.value),
-                                })
-                              }
-                            />
-                          </div>
-                          <label className="mt-7 flex items-center gap-2 text-sm text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={category.archived}
-                              onChange={(event) =>
-                                updateCategory(category, {
-                                  archived: event.target.checked,
-                                })
-                              }
-                            />
-                            Archived
-                          </label>
-                        </div>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
-                          <div className="space-y-1.5">
-                            <Label>Xero Account Codes</Label>
-                            <Textarea
-                              rows={4}
-                              value={accountCodeText(category)}
-                              onChange={(event) =>
-                                updateCategoryMappings(
-                                  category,
-                                  event.target.value,
-                                  fallbackLineText(category),
-                                )
-                              }
-                              placeholder="200&#10;203"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label>Fallback P&L Lines</Label>
-                            <Textarea
-                              rows={4}
-                              value={fallbackLineText(category)}
-                              onChange={(event) =>
-                                updateCategoryMappings(
-                                  category,
-                                  accountCodeText(category),
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="Income :: Hut Fees&#10;Insurance"
-                            />
-                          </div>
-                        </div>
+                  {buildSections(grouped[kind]).map((section) => (
+                    <div
+                      key={`${kind}:${section.subtype ?? "__ungrouped__"}`}
+                      className="space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-1">
+                        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                          {section.subtype ?? "Ungrouped"}
+                        </h4>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => addCategory(kind, section.subtype)}
+                        >
+                          <Plus className="h-4 w-4" />
+                          Add group here
+                        </Button>
                       </div>
+
+                      {section.items.map((category) => (
+                        <div
+                          key={category.key}
+                          className="rounded-md border border-slate-200 bg-white p-3"
+                        >
+                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_6rem_auto]">
+                            <div className="space-y-1.5">
+                              <Label>Name</Label>
+                              <Input
+                                value={category.name}
+                                onChange={(event) =>
+                                  updateCategory(category.key, {
+                                    name: event.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Subtype</Label>
+                              <Input
+                                list={`finance-subtypes-${kind}`}
+                                value={category.subtype ?? ""}
+                                placeholder="e.g. Operating"
+                                onChange={(event) =>
+                                  updateCategory(category.key, {
+                                    subtype: event.target.value
+                                      ? event.target.value
+                                      : null,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Order</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                value={category.sortOrder}
+                                onChange={(event) =>
+                                  updateCategory(category.key, {
+                                    sortOrder: Number(event.target.value),
+                                  })
+                                }
+                              />
+                            </div>
+                            <div className="flex items-end justify-end gap-3">
+                              <label className="flex items-center gap-2 text-sm text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={category.archived}
+                                  onChange={(event) =>
+                                    updateCategory(category.key, {
+                                      archived: event.target.checked,
+                                    })
+                                  }
+                                />
+                                Archived
+                              </label>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => deleteCategory(category.key)}
+                                aria-label="Delete group"
+                              >
+                                <Trash2 className="h-4 w-4 text-red-600" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 space-y-1.5">
+                            <Label>Xero accounts</Label>
+                            <XeroAccountMultiSelect
+                              accounts={accounts}
+                              selectedCodes={category.mappings.map(
+                                (mapping) => mapping.accountCode,
+                              )}
+                              classFilter={KIND_CLASS_FILTER[kind]}
+                              allowManualCodes={
+                                accounts.length === 0 || Boolean(coaError)
+                              }
+                              onChange={(codes) =>
+                                updateCategory(category.key, {
+                                  mappings: codes.map((accountCode) => ({
+                                    accountCode,
+                                  })),
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
+                  <datalist id={`finance-subtypes-${kind}`}>
+                    {subtypeSuggestions[kind].map((subtype) => (
+                      <option key={subtype} value={subtype} />
                     ))}
-                  </div>
+                  </datalist>
                 </section>
               ))}
             </div>
@@ -499,7 +617,8 @@ export function FinanceReportMappingsPanel() {
               </div>
               {state.unmappedLines.length === 0 ? (
                 <p className="text-sm text-slate-600">
-                  No unmapped revenue or expense lines were found in inspected snapshots.
+                  No unmapped revenue or expense lines were found in inspected
+                  snapshots.
                 </p>
               ) : (
                 <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -519,7 +638,7 @@ export function FinanceReportMappingsPanel() {
                       </p>
                       <p className="text-xs text-amber-900">
                         {line.sectionLabel}
-                        {line.accountCode ? ` · ${line.accountCode}` : ""} ·{" "}
+                        {line.accountCode ? ` · code ${line.accountCode}` : ""} ·{" "}
                         {line.periodsPresent} hits
                       </p>
                     </div>

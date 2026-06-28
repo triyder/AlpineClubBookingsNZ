@@ -14,27 +14,19 @@ import { requireAdmin } from "@/lib/session-guards";
 
 const mappingSchema = z.object({
   id: z.string().optional(),
-  accountCode: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
-  sectionLabel: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
-  lineLabel: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
+  accountCode: z.string().min(1, "Account code is required"),
 });
 
 const categorySchema = z.object({
   id: z.string().optional(),
   kind: z.enum(["REVENUE", "EXPENSE"]),
   name: z.string(),
+  subtype: z
+    .string()
+    .max(120)
+    .nullable()
+    .optional()
+    .transform((value) => value ?? null),
   sortOrder: z.number().int().nonnegative().optional(),
   archived: z.boolean().optional(),
   mappings: z.array(mappingSchema).optional(),

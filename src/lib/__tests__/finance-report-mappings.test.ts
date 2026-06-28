@@ -91,11 +91,16 @@ function chartSnapshot() {
     asOfDate: new Date("2026-04-30T00:00:00.000Z"),
     periodStart: null,
     periodEnd: null,
-    rowCount: 1,
+    rowCount: 4,
     currency: null,
     sourceUpdatedAt: null,
     payload: {
-      accounts: [{ accountId: "acct-hut", code: "200" }],
+      accounts: [
+        { accountId: "acct-hut", code: "200" },
+        { accountId: "acct-entrance", code: "210" },
+        { accountId: "acct-insurance", code: "400" },
+        { accountId: "acct-utilities", code: "410" },
+      ],
     },
     syncRunId: "run-1",
     createdAt: new Date("2026-04-30T00:00:00.000Z"),
@@ -103,34 +108,33 @@ function chartSnapshot() {
   };
 }
 
+// Mappings now match by Xero account code only; the rows still carry the
+// legacy sectionLabel/lineLabel columns to prove they are ignored.
 const categories = [
   {
     id: "cat-hut-fees",
     kind: "REVENUE",
     name: "Hut Fees",
+    subtype: "Operating",
     sortOrder: 10,
     archived: false,
     mappings: [
-      {
-        id: "map-hut",
-        accountCode: "200",
-        sectionLabel: null,
-        lineLabel: null,
-      },
+      { id: "map-hut", accountCode: "200", sectionLabel: null, lineLabel: null },
     ],
   },
   {
     id: "cat-entrance",
     kind: "REVENUE",
     name: "Entrance Fees",
+    subtype: "Operating",
     sortOrder: 20,
     archived: false,
     mappings: [
       {
         id: "map-entrance",
-        accountCode: null,
-        sectionLabel: "Income",
-        lineLabel: "Entrance Fees",
+        accountCode: "210",
+        sectionLabel: "ignored",
+        lineLabel: "ignored",
       },
     ],
   },
@@ -138,15 +142,11 @@ const categories = [
     id: "cat-insurance",
     kind: "EXPENSE",
     name: "Insurance & Compliance",
+    subtype: "Overheads",
     sortOrder: 50,
     archived: false,
     mappings: [
-      {
-        id: "map-insurance",
-        accountCode: null,
-        sectionLabel: "Expenses",
-        lineLabel: "Insurance",
-      },
+      { id: "map-insurance", accountCode: "400", sectionLabel: null, lineLabel: null },
     ],
   },
 ];
@@ -169,7 +169,7 @@ describe("finance report mappings", () => {
           sectionTitle: "Income",
           rows: [
             row("Hut Fees", "100.01", "acct-hut"),
-            row("Entrance Fees", "50.02"),
+            row("Entrance Fees", "50.02", "acct-entrance"),
             row("Unmapped Revenue", "5.03"),
             {
               rowType: "Section",
@@ -187,7 +187,7 @@ describe("finance report mappings", () => {
           sectionTitle: "Income",
           rows: [
             row("Hut Fees", "80.00", "acct-hut"),
-            row("Entrance Fees", "20.00"),
+            row("Entrance Fees", "20.00", "acct-entrance"),
             row("Unmapped Revenue", "2.00"),
           ],
         }),
@@ -195,7 +195,7 @@ describe("finance report mappings", () => {
     });
   });
 
-  it("aggregates mapped, unmapped, account-code, duplicate-label, and comparison totals in cents", async () => {
+  it("aggregates mapped, unmapped, account-code, subtype, and comparison totals in cents", async () => {
     const summary = await buildFinanceMappedPnlSummary({
       kind: "REVENUE",
       from: "2026-04-01",
@@ -213,6 +213,7 @@ describe("finance report mappings", () => {
       amountCents: 10_001,
       comparisonAmountCents: 8_000,
       formattedDelta: "+$20.01",
+      subtype: "Operating",
     });
     expect(hutFees?.lines[0]).toMatchObject({
       lineLabel: "Hut Fees",
@@ -222,6 +223,7 @@ describe("finance report mappings", () => {
     expect(summary.groups.find((group) => group.id === "cat-entrance")).toMatchObject({
       amountCents: 5_002,
       comparisonAmountCents: 2_000,
+      subtype: "Operating",
     });
 
     const unmapped = summary.groups.find(
@@ -232,11 +234,47 @@ describe("finance report mappings", () => {
       amountCents: 1_207,
       comparisonAmountCents: 200,
       lineCount: 2,
+      subtype: null,
     });
     expect(unmapped?.lines.map((line) => line.sectionLabel).sort()).toEqual([
       "Income",
       "Income / Other Income",
     ]);
+  });
+
+  it("leaves P&L lines without a resolvable account code Unmapped", async () => {
+    // Drop the chart-of-accounts snapshot so account IDs cannot resolve to codes.
+    mockListFinanceSnapshots.mockImplementation(async (input?: { snapshotType?: FinanceSnapshotType }) => {
+      if (input?.snapshotType === FinanceSnapshotType.CHART_OF_ACCOUNTS) {
+        return [];
+      }
+      return [
+        pnlSnapshot({
+          id: "april",
+          periodStart: "2026-04-01",
+          periodEnd: "2026-04-30",
+          periodLabel: "April 2026",
+          sectionTitle: "Income",
+          rows: [row("Hut Fees", "100.00", "acct-hut")],
+        }),
+      ];
+    });
+
+    const summary = await buildFinanceMappedPnlSummary({
+      kind: "REVENUE",
+      from: "2026-04-01",
+      to: "2026-04-30",
+      compareFrom: "2026-03-01",
+      compareTo: "2026-03-31",
+    });
+
+    expect(summary.groups.find((group) => group.id === "cat-hut-fees")).toBeUndefined();
+    expect(
+      summary.groups.find((group) => group.id === UNMAPPED_FINANCE_CATEGORY_ID)
+    ).toMatchObject({ amountCents: 10_000 });
+    expect(summary.warnings).toContain(
+      "No Chart-of-Accounts snapshot is available yet, so P&L lines cannot be matched to report groups and will appear as Unmapped. Run Backfill History to capture one."
+    );
   });
 
   it("filters expense totals by category and individual Xero line", async () => {
@@ -251,7 +289,10 @@ describe("finance report mappings", () => {
           periodEnd: "2026-04-30",
           periodLabel: "April 2026",
           sectionTitle: "Expenses",
-          rows: [row("Insurance", "12.34"), row("Utilities", "4.56")],
+          rows: [
+            row("Insurance", "12.34", "acct-insurance"),
+            row("Utilities", "4.56"),
+          ],
         }),
       ];
     });
@@ -283,14 +324,14 @@ describe("finance report mappings", () => {
     ]);
   });
 
-  it("validates duplicate category names and mapping ownership", () => {
+  it("validates duplicate category names and account-code mapping ownership", () => {
     expect(
       validateFinanceReportMappingsInput({
         categories: [
           {
             kind: "REVENUE",
             name: "Hut Fees",
-            mappings: [{ accountCode: "200", sectionLabel: null, lineLabel: null }],
+            mappings: [{ accountCode: "200" }],
           },
           {
             kind: "REVENUE",
@@ -300,13 +341,31 @@ describe("finance report mappings", () => {
           {
             kind: "REVENUE",
             name: "Other Revenue",
-            mappings: [{ accountCode: "200", sectionLabel: null, lineLabel: null }],
+            mappings: [{ accountCode: "200" }],
           },
         ],
       })
     ).toEqual([
       "Category Hut Fees is duplicated for REVENUE.",
       "Mapping account 200 is assigned to both REVENUE:Hut Fees and REVENUE:Other Revenue.",
+    ]);
+  });
+
+  it("rejects an over-long subtype and mappings with no account code", () => {
+    expect(
+      validateFinanceReportMappingsInput({
+        categories: [
+          {
+            kind: "REVENUE",
+            name: "Hut Fees",
+            subtype: "x".repeat(121),
+            mappings: [{ accountCode: "   " }],
+          },
+        ],
+      })
+    ).toEqual([
+      "Category Hut Fees subtype must be 120 characters or fewer.",
+      "Category Hut Fees has mappings without a Xero account code.",
     ]);
   });
 });

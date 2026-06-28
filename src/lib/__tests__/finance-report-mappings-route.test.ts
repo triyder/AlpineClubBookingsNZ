@@ -161,15 +161,10 @@ describe("admin finance report mappings route", () => {
           id: "cat-hut-fees",
           kind: "REVENUE",
           name: "Hut Fees",
+          subtype: null,
           sortOrder: 10,
           archived: false,
-          mappings: [
-            {
-              accountCode: "200",
-              sectionLabel: null,
-              lineLabel: null,
-            },
-          ],
+          mappings: [{ accountCode: "200" }],
         },
       ],
     });

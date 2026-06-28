@@ -1779,6 +1779,9 @@ model FinanceReportCategory {
   id        String                    @id @default(cuid())
   kind      FinanceReportCategoryKind
   name      String                    @db.VarChar(120)
+  // Optional free-text sub-heading used to group categories into labelled
+  // sub-sections (with sub-totals) in the finance dashboard.
+  subtype   String?                   @db.VarChar(120)
   sortOrder Int                       @default(0)
   archived  Boolean                   @default(false)
   createdAt DateTime                  @default(now())
@@ -1793,6 +1796,9 @@ model FinanceReportCategoryMapping {
   id           String                @id @default(cuid())
   categoryId   String
   accountCode  String?               @db.VarChar(40)
+  // Deprecated: fallback P&L text-label matching has been removed. Categories
+  // now match Xero P&L lines by accountCode only. These columns are retained to
+  // avoid a breaking migration and are no longer read or written by the app.
   sectionLabel String?               @db.VarChar(200)
   lineLabel    String?               @db.VarChar(200)
   createdAt    DateTime              @default(now())

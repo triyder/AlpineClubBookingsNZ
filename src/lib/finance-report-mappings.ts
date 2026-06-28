@@ -40,15 +40,14 @@ type FinanceSnapshotRecord = Awaited<
 
 export interface FinanceReportCategoryMappingDto {
   id?: string;
-  accountCode: string | null;
-  sectionLabel: string | null;
-  lineLabel: string | null;
+  accountCode: string;
 }
 
 export interface FinanceReportCategoryDto {
   id: string;
   kind: FinanceReportCategoryKindValue;
   name: string;
+  subtype: string | null;
   sortOrder: number;
   archived: boolean;
   mappings: FinanceReportCategoryMappingDto[];
@@ -58,6 +57,7 @@ export interface SaveFinanceReportCategoryInput {
   id?: string;
   kind: FinanceReportCategoryKindValue;
   name: string;
+  subtype?: string | null;
   sortOrder?: number;
   archived?: boolean;
   mappings?: FinanceReportCategoryMappingDto[];
@@ -102,6 +102,7 @@ export interface FinanceMappedPnlLineSummary {
 export interface FinanceMappedPnlCategorySummary {
   id: string;
   name: string;
+  subtype: string | null;
   kind: FinanceReportCategoryKindValue;
   sortOrder: number;
   amountCents: number;
@@ -174,12 +175,8 @@ interface CategorizedPnlLine extends PnlLine {
 }
 
 type ActiveCategory = FinanceReportCategoryDto & {
-  mappingKeys: NormalizedMappingKey[];
+  accountCodes: string[];
 };
-
-type NormalizedMappingKey =
-  | { type: "account"; accountCode: string }
-  | { type: "line"; sectionLabel: string | null; lineLabel: string };
 
 function normalizeText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
@@ -188,11 +185,6 @@ function normalizeText(value: string | null | undefined): string | null {
 
 function normalizeAccountCode(value: string | null | undefined): string | null {
   return normalizeText(value)?.toUpperCase() ?? null;
-}
-
-function normalizeComparable(value: string | null | undefined): string | null {
-  const trimmed = normalizeText(value);
-  return trimmed ? trimmed.toLowerCase().replace(/\s+/g, " ") : null;
 }
 
 function dateOnly(date: Date): string {
@@ -264,6 +256,7 @@ function toCategoryDto(category: {
   id: string;
   kind: FinanceReportCategoryKind;
   name: string;
+  subtype: string | null;
   sortOrder: number;
   archived: boolean;
   mappings: Array<{
@@ -277,14 +270,17 @@ function toCategoryDto(category: {
     id: category.id,
     kind: category.kind,
     name: category.name,
+    subtype: normalizeText(category.subtype),
     sortOrder: category.sortOrder,
     archived: category.archived,
-    mappings: category.mappings.map((mapping) => ({
-      id: mapping.id,
-      accountCode: mapping.accountCode,
-      sectionLabel: mapping.sectionLabel,
-      lineLabel: mapping.lineLabel,
-    })),
+    // Matching is account-code only; ignore any legacy fallback label rows
+    // that have no account code.
+    mappings: category.mappings
+      .filter((mapping) => normalizeAccountCode(mapping.accountCode))
+      .map((mapping) => ({
+        id: mapping.id,
+        accountCode: normalizeAccountCode(mapping.accountCode)!,
+      })),
   };
 }
 
@@ -296,37 +292,31 @@ export async function listFinanceReportCategories(): Promise<
   const categories = await prisma.financeReportCategory.findMany({
     include: {
       mappings: {
-        orderBy: [{ accountCode: "asc" }, { sectionLabel: "asc" }, { lineLabel: "asc" }],
+        orderBy: [{ accountCode: "asc" }],
       },
     },
-    orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
+    orderBy: [
+      { kind: "asc" },
+      { subtype: "asc" },
+      { sortOrder: "asc" },
+      { name: "asc" },
+    ],
   });
 
   return categories.map(toCategoryDto);
 }
 
-function buildNormalizedMappingKeys(
+function buildCategoryAccountCodes(
   category: FinanceReportCategoryDto
-): NormalizedMappingKey[] {
-  return category.mappings.flatMap((mapping): NormalizedMappingKey[] => {
+): string[] {
+  const codes = new Set<string>();
+  for (const mapping of category.mappings) {
     const accountCode = normalizeAccountCode(mapping.accountCode);
     if (accountCode) {
-      return [{ type: "account" as const, accountCode }];
+      codes.add(accountCode);
     }
-
-    const lineLabel = normalizeComparable(mapping.lineLabel);
-    if (!lineLabel) {
-      return [];
-    }
-
-    return [
-      {
-        type: "line" as const,
-        sectionLabel: normalizeComparable(mapping.sectionLabel),
-        lineLabel,
-      },
-    ];
-  });
+  }
+  return Array.from(codes);
 }
 
 function activeCategoriesForKind(
@@ -337,47 +327,31 @@ function activeCategoriesForKind(
     .filter((category) => category.kind === kind && !category.archived)
     .map((category) => ({
       ...category,
-      mappingKeys: buildNormalizedMappingKeys(category),
+      accountCodes: buildCategoryAccountCodes(category),
     }));
 }
 
 function mappingDuplicateKey(mapping: FinanceReportCategoryMappingDto) {
   const accountCode = normalizeAccountCode(mapping.accountCode);
-  if (accountCode) {
-    return `account:${accountCode}`;
-  }
-
-  const lineLabel = normalizeComparable(mapping.lineLabel);
-  if (!lineLabel) {
+  if (!accountCode) {
     return null;
   }
-
-  return `line:${normalizeComparable(mapping.sectionLabel) ?? "*"}:${lineLabel}`;
+  return `account:${accountCode}`;
 }
 
 function normalizeMappingsInput(
   mappings: FinanceReportCategoryMappingDto[] | undefined
 ) {
-  const normalized: Array<{
-    accountCode: string | null;
-    sectionLabel: string | null;
-    lineLabel: string | null;
-  }> = [];
+  const normalized: Array<{ accountCode: string }> = [];
+  const seen = new Set<string>();
 
   for (const mapping of mappings ?? []) {
     const accountCode = normalizeAccountCode(mapping.accountCode);
-    const sectionLabel = normalizeText(mapping.sectionLabel);
-    const lineLabel = normalizeText(mapping.lineLabel);
-
-    if (!accountCode && !lineLabel) {
+    if (!accountCode || seen.has(accountCode)) {
       continue;
     }
-
-    normalized.push({
-      accountCode,
-      sectionLabel,
-      lineLabel,
-    });
+    seen.add(accountCode);
+    normalized.push({ accountCode });
   }
 
   return normalized;
@@ -420,7 +394,18 @@ export function validateFinanceReportMappingsInput(
       errors.push(`Category ${name ?? index + 1} sort order must be a non-negative integer.`);
     }
 
-    for (const mapping of normalizeMappingsInput(category.mappings)) {
+    const subtype = normalizeText(category.subtype);
+    if (subtype && subtype.length > 120) {
+      errors.push(`Category ${name ?? index + 1} subtype must be 120 characters or fewer.`);
+    }
+
+    const rawMappingCount = (category.mappings ?? []).length;
+    const validMappings = normalizeMappingsInput(category.mappings);
+    if (rawMappingCount > 0 && validMappings.length === 0) {
+      errors.push(`Category ${name ?? index + 1} has mappings without a Xero account code.`);
+    }
+
+    for (const mapping of validMappings) {
       const key = mappingDuplicateKey(mapping);
       if (!key) {
         continue;
@@ -456,6 +441,7 @@ export async function saveFinanceReportMappings(input: SaveFinanceReportMappings
       const data = {
         kind: category.kind,
         name,
+        subtype: normalizeText(category.subtype),
         sortOrder: category.sortOrder ?? 0,
         archived: Boolean(category.archived),
       };
@@ -637,32 +623,12 @@ function matchCategory(
   categories: ActiveCategory[]
 ): ActiveCategory | null {
   const lineAccountCode = normalizeAccountCode(line.accountCode);
-  if (lineAccountCode) {
-    const accountMatch = categories.find((category) =>
-      category.mappingKeys.some(
-        (mapping) =>
-          mapping.type === "account" && mapping.accountCode === lineAccountCode
-      )
-    );
-    if (accountMatch) {
-      return accountMatch;
-    }
-  }
-
-  const lineSection = normalizeComparable(line.sectionLabel);
-  const lineLabel = normalizeComparable(line.lineLabel);
-  if (!lineLabel) {
+  if (!lineAccountCode) {
     return null;
   }
-
   return (
     categories.find((category) =>
-      category.mappingKeys.some((mapping) => {
-        if (mapping.type !== "line" || mapping.lineLabel !== lineLabel) {
-          return false;
-        }
-        return !mapping.sectionLabel || mapping.sectionLabel === lineSection;
-      })
+      category.accountCodes.includes(lineAccountCode)
     ) ?? null
   );
 }
@@ -776,7 +742,10 @@ function aggregateCategoryLines(
 }
 
 function buildCategorySummary(input: {
-  category: Pick<FinanceReportCategoryDto, "id" | "name" | "kind" | "sortOrder">;
+  category: Pick<
+    FinanceReportCategoryDto,
+    "id" | "name" | "subtype" | "kind" | "sortOrder"
+  >;
   selectedLines: CategorizedPnlLine[];
   comparisonLines: CategorizedPnlLine[];
 }): FinanceMappedPnlCategorySummary {
@@ -794,6 +763,7 @@ function buildCategorySummary(input: {
   return {
     id: input.category.id,
     name: input.category.name,
+    subtype: input.category.subtype ?? null,
     kind: input.category.kind,
     sortOrder: input.category.sortOrder,
     amountCents,
@@ -840,7 +810,7 @@ export async function buildFinanceMappedPnlSummary(
   }
   if (chart.accountCodeById.size === 0) {
     warnings.push(
-      "Chart-of-accounts snapshots are not available yet, so category matching is using fallback P&L labels only."
+      "No Chart-of-Accounts snapshot is available yet, so P&L lines cannot be matched to report groups and will appear as Unmapped. Run Backfill History to capture one."
     );
   }
 
@@ -902,6 +872,7 @@ export async function buildFinanceMappedPnlSummary(
     category: {
       id: UNMAPPED_FINANCE_CATEGORY_ID,
       name: "Unmapped",
+      subtype: null,
       kind: input.kind,
       sortOrder: 9999,
     },
