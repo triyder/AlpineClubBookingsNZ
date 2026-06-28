@@ -289,12 +289,22 @@ Committee assignment is separate from `Member.role` and
 or subscription privileges. Member detail pages show committee assignments in
 their own card alongside access role and seasonal membership type controls.
 
-The legacy `CommitteeMember` table remains the public committee/contact source
-until the public privacy rollout updates the public API/page. Seed and migration
-steps create master roles and hidden member-linked assignments where a legacy
-committee email exactly matches a member email, but they do not delete or blank
-existing public committee records. Assignment changes and master role changes
-are audited with before/after metadata.
+Public committee and contact-form recipient data is derived from published,
+active `CommitteeAssignment` rows whose master role is also active. The public
+API returns the linked member's display name, the role name, the assignment
+blurb or role description, and an opaque assignment contact key only when the
+assignment is contactable. Member email addresses are never returned to the
+browser; `/api/contact` resolves contactable assignment keys server-side and
+falls back to the configured club contact address when no published,
+contactable assignment matches. Phone numbers come from the linked member
+profile and display only when the assignment's show-phone flag is enabled.
+
+The legacy `CommitteeMember` table remains editable for historical/public
+migration reference, but it no longer powers `/api/committee` or committee
+recipient routing. Seed and migration steps create master roles and hidden
+member-linked assignments where a legacy committee email exactly matches a
+member email, but they do not delete or blank existing legacy rows. Assignment
+changes and master role changes are audited with before/after metadata.
 
 Booking and subscription enforcement is season-aware:
 

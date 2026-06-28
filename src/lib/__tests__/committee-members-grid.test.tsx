@@ -1,0 +1,59 @@
+// @vitest-environment jsdom
+
+import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
+
+describe("CommitteeMembersGrid", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        members: [
+          {
+            id: "assign-hidden-phone",
+            role: "President",
+            roleKey: "president",
+            name: "Alex Admin",
+            phone: null,
+            contactKey: null,
+            description: "Current president.",
+          },
+          {
+            id: "assign-contactable",
+            role: "Secretary",
+            roleKey: "secretary",
+            name: "Jamie Jones",
+            phone: "021 555 0100",
+            contactKey: "assign-contactable",
+            description: null,
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders optional phone and contact links without requiring public email", async () => {
+    render(<CommitteeMembersGrid />);
+
+    await waitFor(() => expect(screen.getByText("Alex Admin")).toBeTruthy());
+
+    expect(screen.getByText("Current president.")).toBeTruthy();
+    expect(screen.queryByText(/example\.org/i)).toBeNull();
+    expect(screen.getByText("021 555 0100")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: /021 555 0100/i })
+        .getAttribute("href"),
+    ).toBe("tel:0215550100");
+    expect(
+      screen
+        .getByRole("link", { name: /send a message/i })
+        .getAttribute("href"),
+    ).toBe("/contact?recipient=assign-contactable");
+  });
+});

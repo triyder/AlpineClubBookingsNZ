@@ -8,8 +8,9 @@ import { Card, CardContent } from "@/components/ui/card";
 type CommitteeMember = {
   id: string;
   role: string;
+  roleKey?: string;
   name: string;
-  phone: string;
+  phone: string | null;
   contactKey: string | null;
   description: string | null;
 };
@@ -78,16 +79,18 @@ export function CommitteeMembersGrid() {
               </p>
             ) : null}
             <div className="mt-4 flex flex-col gap-2">
-              <a
-                href={`tel:${member.phone.replace(/\s/g, "")}`}
-                className="inline-flex items-center gap-2 text-sm text-brand-deep/78 transition-colors hover:text-brand-charcoal"
-              >
-                <Phone className="h-4 w-4 text-brand-gold" />
-                {member.phone}
-              </a>
+              {member.phone ? (
+                <a
+                  href={`tel:${member.phone.replace(/\s/g, "")}`}
+                  className="inline-flex items-center gap-2 text-sm text-brand-deep/78 transition-colors hover:text-brand-charcoal"
+                >
+                  <Phone className="h-4 w-4 text-brand-gold" />
+                  {member.phone}
+                </a>
+              ) : null}
               {member.contactKey ? (
                 <Link
-                  href={`/contact?recipient=${member.contactKey}`}
+                  href={`/contact?recipient=${encodeURIComponent(member.contactKey)}`}
                   className="inline-flex items-center gap-2 text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4 transition-colors hover:text-brand-deep hover:decoration-brand-safety"
                 >
                   <Mail className="h-4 w-4 text-brand-gold" />

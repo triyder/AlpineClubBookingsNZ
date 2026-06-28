@@ -32,19 +32,27 @@ vi.mock("@/components/ui/select", () => ({
 const MEMBERS = [
   {
     id: "m1",
-    role: "President",
+    role: "Booking Officer",
+    roleKey: "booking-officer",
     name: "Ann Lee",
     phone: "021 000 001",
-    email: "president@example.org",
-    contactKey: "president",
+    contactKey: "assign-bookings",
   },
   {
     id: "m2",
     role: "Secretary",
+    roleKey: "secretary",
     name: "Bo Tan",
-    phone: "021 000 002",
-    email: "secretary@example.org",
-    contactKey: "secretary",
+    phone: null,
+    contactKey: "assign-secretary",
+  },
+  {
+    id: "m3",
+    role: "Treasurer",
+    roleKey: "treasurer",
+    name: "Cy Ng",
+    phone: null,
+    contactKey: null,
   },
 ];
 
@@ -72,9 +80,9 @@ describe("ContactPageClient recipient pre-selection", () => {
   });
 
   it("pre-selects the committee member named in ?recipient= once members load", async () => {
-    nav.search = "recipient=secretary";
+    nav.search = "recipient=assign-secretary";
     render(<ContactPageClient club={club} />);
-    await waitFor(() => expect(recipientValue()).toBe("secretary"));
+    await waitFor(() => expect(recipientValue()).toBe("assign-secretary"));
   });
 
   it("re-syncs the Send to value when ?recipient= changes on the same route", async () => {
@@ -82,16 +90,29 @@ describe("ContactPageClient recipient pre-selection", () => {
     const { rerender } = render(<ContactPageClient club={club} />);
     await waitFor(() => expect(recipientValue()).toBe("general"));
 
-    // A sidebar "Send a message" link navigates to ?recipient=president without
-    // remounting the form. The select must follow (this is the reported bug).
-    nav.search = "recipient=president";
+    // A sidebar "Send a message" link navigates to a published assignment key
+    // without remounting the form. The select must follow.
+    nav.search = "recipient=assign-bookings";
     rerender(<ContactPageClient club={club} />);
-    await waitFor(() => expect(recipientValue()).toBe("president"));
+    await waitFor(() => expect(recipientValue()).toBe("assign-bookings"));
   });
 
   it("falls back to General for an unknown recipient once members load", async () => {
     nav.search = "recipient=not-a-real-key";
     render(<ContactPageClient club={club} />);
     await waitFor(() => expect(recipientValue()).toBe("general"));
+  });
+
+  it("renders contactable assignments without email metadata or required phone fields", async () => {
+    render(<ContactPageClient club={club} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Secretary \u2014 Bo Tan")).toBeTruthy(),
+    );
+
+    expect(screen.queryByText("Treasurer \u2014 Cy Ng")).toBeNull();
+    expect(screen.queryByText(/example\.org/i)).toBeNull();
+    expect(screen.getByText("Booking Officer")).toBeTruthy();
+    expect(screen.getByText("021 000 001")).toBeTruthy();
   });
 });

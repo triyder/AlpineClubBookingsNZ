@@ -325,7 +325,7 @@ export default function PrivacyPage() {
                 <p className="text-brand-deep">{CLUB_NAME} Incorporated</p>
                 <p className="mt-2">
                   Please use our{" "}
-                  <Link href="/contact?recipient=secretary" className="website-link">
+                  <Link href="/contact" className="website-link">
                     contact form
                   </Link>
                   .

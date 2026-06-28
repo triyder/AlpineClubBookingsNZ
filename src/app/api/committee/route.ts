@@ -1,25 +1,30 @@
 import { NextResponse } from "next/server";
+import {
+  committeeAssignmentOrderBy,
+  publicCommitteeAssignmentSelect,
+  serializePublicCommitteeAssignment,
+} from "@/lib/committee";
 import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/committee
- * Public endpoint: returns active committee members ordered by sortOrder.
+ * Public endpoint: returns published committee assignments with server-curated
+ * contact metadata. Member email addresses are never selected or returned.
  */
 export async function GET() {
-  const members = await prisma.committeeMember.findMany({
-    where: { active: true },
-    orderBy: { sortOrder: "asc" },
-    take: 50,
-    select: {
-      id: true,
-      role: true,
-      name: true,
-      phone: true,
-      email: true,
-      contactKey: true,
-      description: true,
+  const assignments = await prisma.committeeAssignment.findMany({
+    where: {
+      isActive: true,
+      published: true,
+      committeeRole: { isActive: true },
+      member: { active: true },
     },
+    orderBy: committeeAssignmentOrderBy(),
+    take: 50,
+    select: publicCommitteeAssignmentSelect,
   });
+
+  const members = assignments.map(serializePublicCommitteeAssignment);
 
   return NextResponse.json({ members });
 }

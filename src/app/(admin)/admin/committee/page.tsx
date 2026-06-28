@@ -678,8 +678,8 @@ export default function CommitteePage() {
         <CardHeader>
           <CardTitle className="text-lg">Member-Linked Assignments</CardTitle>
           <p className="mt-1 text-sm text-slate-500">
-            Assign members from their member detail page. These records do not
-            replace the public committee source until the privacy follow-up.
+            Assign members from their member detail page. Published assignments
+            now power the public committee and contact-form recipient lists.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">

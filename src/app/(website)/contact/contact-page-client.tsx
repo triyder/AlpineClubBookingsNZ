@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { MapPin, Phone } from "lucide-react";
+import { Mail, MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { Input } from "@/components/ui/input";
@@ -20,9 +20,9 @@ import {
 interface CommitteeMember {
   id: string;
   role: string;
+  roleKey?: string;
   name: string;
-  phone: string;
-  email: string | null;
+  phone: string | null;
   contactKey: string | null;
 }
 
@@ -51,12 +51,15 @@ export function ContactPageClient({
     fetch("/api/committee")
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
-        setMembers(data.members);
+        const committeeMembers = Array.isArray(data?.members)
+          ? data.members
+          : [];
+        setMembers(committeeMembers);
         // Sync the dropdown to ?recipient= against loaded data. This effect
         // re-runs when initialRecipient changes, so same-route navigations
         // (e.g. a "Send a message" link to /contact?recipient=<key>) update
         // the selection rather than leaving it on its first-mount value.
-        const validKeys = data.members
+        const validKeys = committeeMembers
           .filter((m: CommitteeMember) => m.contactKey)
           .map((m: CommitteeMember) => m.contactKey);
         setRecipient(
@@ -80,8 +83,13 @@ export function ContactPageClient({
       })),
   ];
 
-  // Find the booking officer for the sidebar (or first member with contactKey "bookings")
-  const bookingOfficer = members.find((m) => m.contactKey === "bookings");
+  const bookingOfficer = members.find(
+    (m) =>
+      (m.roleKey === "bookings" ||
+        m.roleKey === "booking-officer" ||
+        /\bbooking/i.test(m.role)) &&
+      (m.phone || m.contactKey),
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -250,12 +258,23 @@ export function ContactPageClient({
                         <p className="text-sm text-brand-deep/75">
                           {bookingOfficer.name}
                         </p>
-                        <a
-                          href={`tel:${bookingOfficer.phone.replace(/\s/g, "")}`}
-                          className="website-link text-sm"
-                        >
-                          {bookingOfficer.phone}
-                        </a>
+                        {bookingOfficer.phone ? (
+                          <a
+                            href={`tel:${bookingOfficer.phone.replace(/\s/g, "")}`}
+                            className="website-link text-sm"
+                          >
+                            {bookingOfficer.phone}
+                          </a>
+                        ) : null}
+                        {bookingOfficer.contactKey ? (
+                          <a
+                            href={`/contact?recipient=${encodeURIComponent(bookingOfficer.contactKey)}`}
+                            className="website-link inline-flex items-center gap-1 text-sm"
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                            Send a message
+                          </a>
+                        ) : null}
                       </div>
                     </div>
                   )}

@@ -49,12 +49,39 @@ export const committeeAssignmentSelect = {
   },
 } satisfies Prisma.CommitteeAssignmentSelect;
 
+export const publicCommitteeAssignmentSelect = {
+  id: true,
+  blurb: true,
+  showPhone: true,
+  contactable: true,
+  committeeRole: {
+    select: {
+      key: true,
+      name: true,
+      description: true,
+    },
+  },
+  member: {
+    select: {
+      firstName: true,
+      lastName: true,
+      phoneCountryCode: true,
+      phoneAreaCode: true,
+      phoneNumber: true,
+    },
+  },
+} satisfies Prisma.CommitteeAssignmentSelect;
+
 type CommitteeRoleRow = Prisma.CommitteeRoleGetPayload<{
   select: typeof committeeRoleSelect;
 }>;
 
 type CommitteeAssignmentRow = Prisma.CommitteeAssignmentGetPayload<{
   select: typeof committeeAssignmentSelect;
+}>;
+
+type PublicCommitteeAssignmentRow = Prisma.CommitteeAssignmentGetPayload<{
+  select: typeof publicCommitteeAssignmentSelect;
 }>;
 
 export function committeeRoleOrderBy(): Prisma.CommitteeRoleOrderByWithRelationInput[] {
@@ -156,5 +183,25 @@ export function serializeCommitteeAssignment(assignment: CommitteeAssignmentRow)
           displayName: formatCommitteeMemberName(assignment.assignedBy),
         }
       : null,
+  };
+}
+
+export function serializePublicCommitteeAssignment(
+  assignment: PublicCommitteeAssignmentRow,
+) {
+  const phone = assignment.showPhone
+    ? formatCommitteeMemberPhone(assignment.member)
+    : null;
+
+  return {
+    id: assignment.id,
+    role: assignment.committeeRole.name,
+    roleKey: assignment.committeeRole.key,
+    name: formatCommitteeMemberName(assignment.member),
+    phone,
+    contactKey: assignment.contactable ? assignment.id : null,
+    description:
+      normalizeCommitteeText(assignment.blurb) ??
+      normalizeCommitteeText(assignment.committeeRole.description),
   };
 }

@@ -103,7 +103,8 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/committee/route.ts": {
     boundary: "public",
-    reason: "Public committee contact endpoint.",
+    reason:
+      "Public committee endpoint returning only published assignment presentation fields; member email stays server-only and phone is flag-controlled.",
   },
   "src/app/api/contact/route.ts": {
     boundary: "public",

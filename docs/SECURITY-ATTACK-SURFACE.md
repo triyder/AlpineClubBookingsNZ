@@ -45,9 +45,9 @@ under `Data touched` instead.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `src/proxy.ts` global proxy and module gates | No session auth. Applies CSP/security headers to page requests and selected API matcher paths; returns 404 for disabled module routes. | Anonymous and authenticated browser traffic. | Module settings via `loadEffectiveModuleFlags()`. | None. | CSP nonce, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, module route blocking. | No per-request audit. | API matcher is selective, not global for every API path. Keep route-level auth as the enforcement boundary. |
 | `/api/health`, `/api/health/ready` | Public. | Load balancers, operators, anonymous callers. | DB reachability, runtime version/uptime, config readiness. Public responses omit provider error detail. | DB query only. | No rate limit. No secrets in response. | Logger debug/error only. | Anonymous callers can observe availability. #615 can decide whether to add light rate limiting or cache headers. |
-| `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and active committee contact records. | None. | No rate limit. Committee query selects explicit public fields. | None beyond DB errors if thrown. | Public PII is intentional for committee contacts, but #615 should re-check whether phone/email exposure is acceptable for each club. |
+| `/api/age-tier-settings`, `/api/committee` | Public read endpoints. | Anonymous website users. | Public age-tier/rate settings and published committee assignment presentation fields. | None. | No rate limit. Committee query selects active, published assignment fields only; member email is not selected or returned, phone is returned only when show-phone is enabled, and contact keys are returned only for contactable assignments. | None beyond DB errors if thrown. | Public committee names and optional phone numbers are intentional once an admin publishes the assignment; email remains server-only. |
 | `/api/address-autocomplete/search`, `/api/address-autocomplete/details/[id]` | Public server-side proxy to Addy, gated by the `addressAutocomplete` Admin Module. | Anonymous website users. | Search terms, address suggestion ids, Addy result payloads. | Addy API via `src/lib/addy-api.ts`. | Module-route/proxy gate returns 404 while disabled, Zod query validation, `rateLimiters.addressAutocomplete` at 90/min/IP. Secrets stay server-side. | Minimal error responses, no audit. | Upstream-cost and enumeration surface remains public only when the module is enabled; manual address entry remains the fallback. |
-| `/api/contact` | Public contact form. | Anonymous website users. | Name, email, message, optional committee recipient key. | SMTP/SES through `sendEmail()`. | Zod validation, CRLF checks, HTML escaping, `rateLimiters.contact` at 10/hour/IP. | Email delivery logs through email layer; no audit log. | Spam and mailbox flooding are bounded but not CAPTCHA-backed. #615 should re-check current spam tolerance. |
+| `/api/contact` | Public contact form. | Anonymous website users. | Name, email, message, optional published committee assignment recipient key. | SMTP/SES through `sendEmail()`. | Zod validation, CRLF checks, HTML escaping, `rateLimiters.contact` at 10/hour/IP. Committee recipient keys resolve server-side only when the assignment is active, published, contactable, and linked to an active member. | Email delivery logs through email layer; no audit log. | Spam and mailbox flooding are bounded but not CAPTCHA-backed. Invalid or non-contactable recipient keys safely fall back to the configured club contact address. |
 | `/api/applications` | Public membership application submission. | Anonymous applicant. | Applicant PII, DOB, family member PII, nominator emails, application rows. | Email notifications through nomination/application service. | Zod validation, max family member count of 10, `rateLimiters.membershipApplication` at 3/hour/IP. | Logger on unexpected errors; application workflow records status in DB. | Public PII collection endpoint. #615 should review enumeration, attachment absence, response detail, and email storm controls. |
 | `/api/auth/register` | Public but disabled. | Anonymous caller. | None. | None. | Always returns `410 Gone`; self-service registration replaced by applications. | None. | Low risk. Keep in explicit public allowlist so a future implementation cannot appear silently. |
 | `/api/auth/[...nextauth]` | Public Auth.js credentials entrypoint. | Anonymous login attempts. | Member email, bcrypt password hash verification, session JWT, last login timestamp. | None. | `rateLimiters.login`, email verification gate, active-member gate, session invalidation after password changes, lodge extended session age. | Logger warns if last-login update fails. | Brute force is rate-limited in memory only. #615/#616 should revisit if deployment becomes multi-instance. |
@@ -217,7 +217,7 @@ Admin route subfamilies are:
 | --- | --- | --- | --- |
 | Password hashes and session security fields | `Member.passwordHash`, `forcePasswordChange`, `passwordChangedAt`, Auth.js JWT callbacks. | bcrypt, email verification before session, session invalidation on password change. | #615 for account-recovery behavior; #617 for lifecycle interactions. |
 | Action and verification tokens | Password reset, setup invite, verification, email change, nomination, chore, cancellation confirmation helpers. | Token helpers store hashes/expiry where implemented; some routes are session-bound in addition to token-bound. | #615 for token URL/log exposure and enumeration. |
-| Member PII | Member/profile/family/admin/application routes. | Session/admin guards, audit logs on sensitive changes, scoped selects in public committee route. | #613/#614 for route boundaries; #617 for integrity and lifecycle review. |
+| Member PII | Member/profile/family/admin/application routes. | Session/admin guards, audit logs on sensitive changes, scoped selects in public committee route that exclude email and gate phone by assignment flag. | #613/#614 for route boundaries; #617 for integrity and lifecycle review. |
 | Booking and payment records | Booking, payment, refund, admin booking/payment routes. | Session guards, service-level ownership, Stripe server-side calls, payment transaction records. | #617 for money-state invariants, idempotency, and integer cents. |
 | Stripe identifiers and client secrets | Payment routes and webhook/service layers. | Server-side Stripe secret, client secret returned only through authenticated payment routes. | #616/#617 for webhook idempotency and client-secret ownership. |
 | Operational Xero tokens and object links | `admin/xero/**`, Xero token store, outbox/inbound reconciliation. | Admin guard, encrypted token store, OAuth state cookie, feature gates. | #616 for OAuth/webhook/retry boundaries. |
@@ -369,7 +369,9 @@ Hardening applied in #615:
 - Addy autocomplete is module-gated, keeps session validation explicit, and caps
   returned search suggestions to the requested top 10. Malformed detail-session
   parameters fail locally before calling Addy.
-- Public committee reads are capped to 50 active records.
+- Public committee reads are capped to 50 active, published assignment records;
+  email is server-only, contact keys are returned only for contactable
+  assignments, and member phone is returned only when show-phone is enabled.
 - Log redaction covers token-bearing `/membership-cancellation/`, `/chores/`,
   `/nominations/`, `/pay/`, `/booking-requests/verify/`, and
   `/group-bookings/join/verify/` paths, including URL-encoded `callbackUrl`
@@ -569,8 +571,10 @@ Residual risks to keep visible:
   should broaden IDOR behavior coverage for booking and family-owned resources.
 - #615 - Anonymous public endpoints: first-pass hardening now covers token
   shape validation, malformed JSON behavior, Addy/committee response bounds, and
-  token-path log redaction. Remaining public-form policy tradeoffs are noted in
-  the accepted residual risk above.
+  token-path log redaction. Public committee/contact privacy now reads from
+  published member-linked assignments, keeps email server-only, and gates phone
+  by assignment flag. Remaining public-form policy tradeoffs are noted in the
+  accepted residual risk above.
 - #616 - External integrations: review Stripe, operational Xero, finance
   reporting through Xero, SES/SNS, Sentry, OAuth state handling, webhook
   signature/idempotency, token encryption, and provider callback logging.

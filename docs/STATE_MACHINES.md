@@ -132,13 +132,13 @@ from draft, joined, or repriced by an allowed modification path.
 
 ```text
 seed/migration creates committee master roles
-legacy public CommitteeMember rows remain public source
 admin creates or archives master role
 admin links member to role from member detail
 new assignment starts hidden/unpublished
 admin edits blurb/sort/published/show-phone/contactable flags
 audited assignment update or deactivate
-public privacy rollout switches source in a later issue
+published assignment appears on public committee surfaces
+contactable published assignment can receive server-routed contact form mail
 ```
 
 ## Refund And Credit Lifecycle

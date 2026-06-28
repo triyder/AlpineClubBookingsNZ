@@ -12,7 +12,7 @@ const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
     emailSuppression: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
-    committeeMember: {
+    committeeAssignment: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
   };
@@ -120,7 +120,7 @@ describe("email header CRLF injection protections", () => {
       },
     });
     expect(mockTransporter.sendMail).not.toHaveBeenCalled();
-    expect(mockPrisma.committeeMember.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.committeeAssignment.findFirst).not.toHaveBeenCalled();
   });
 
   it("returns 400 for malformed contact-form JSON", async () => {
@@ -137,6 +137,6 @@ describe("email header CRLF injection protections", () => {
       error: "Invalid JSON payload",
     });
     expect(mockTransporter.sendMail).not.toHaveBeenCalled();
-    expect(mockPrisma.committeeMember.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.committeeAssignment.findFirst).not.toHaveBeenCalled();
   });
 });

@@ -24,6 +24,28 @@ const contactSchema = z.object({
 const CONTACT_EMAIL =
   process.env.CONTACT_EMAIL || CLUB_CONTACT_EMAIL;
 
+async function resolveCommitteeRecipient(recipient: string) {
+  return prisma.committeeAssignment.findFirst({
+    where: {
+      id: recipient,
+      isActive: true,
+      published: true,
+      contactable: true,
+      committeeRole: { isActive: true },
+      member: { active: true },
+    },
+    select: {
+      committeeRole: { select: { name: true } },
+      member: { select: { email: true } },
+    },
+  });
+}
+
+function buildRecipientLabel(roleName: string) {
+  const normalized = roleName.replace(/[\r\n]+/g, " ").trim();
+  return normalized ? ` (to ${normalized})` : "";
+}
+
 export async function POST(request: Request) {
   const rateLimited = applyRateLimit(rateLimiters.contact, request);
   if (rateLimited) return rateLimited;
@@ -47,20 +69,18 @@ export async function POST(request: Request) {
 
     const { name, email, message, recipient } = result.data;
 
-    // Look up recipient email from committee members in the database
     let toEmail = CONTACT_EMAIL;
     let recipientLabel = "";
 
     if (recipient) {
-      const committeeMember = await prisma.committeeMember.findFirst({
-        where: { contactKey: recipient, active: true },
-        select: { email: true, role: true },
-      });
+      const committeeAssignment = await resolveCommitteeRecipient(recipient);
 
-      if (committeeMember?.email) {
-        toEmail = committeeMember.email;
+      if (committeeAssignment?.member.email) {
+        toEmail = committeeAssignment.member.email;
+        recipientLabel = buildRecipientLabel(
+          committeeAssignment.committeeRole.name,
+        );
       }
-      recipientLabel = ` (to ${recipient})`;
     }
 
     await sendEmail({
