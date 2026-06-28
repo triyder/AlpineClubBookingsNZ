@@ -2177,7 +2177,9 @@ Message: {{message}}
 Triggers and frequency:
 
 - `POST /api/contact`.
-- Sends to `CONTACT_EMAIL` or an active committee member matching `recipient`.
+- Sends to `CONTACT_EMAIL` or a published, active, contactable committee
+  assignment matching `recipient`; committee-routed app logs use an opaque
+  recipient marker instead of the private member email.
 - Actual rate limiter is 10 requests per hour. The route comment says 5 per hour, but the configured limiter is 10 per hour.
 - This message does not use the common branded layout.
 

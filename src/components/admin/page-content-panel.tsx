@@ -1707,8 +1707,9 @@ export function PageContentPanel() {
                 <b>contact-form</b>
               </i>
               <br />
-              This will display a contact us form where a user can sent a
-              message to the committee.
+              This will display a contact us form where a user can send a
+              message to the club or to a published contactable committee
+              assignment.
             </p>
             <p>
               <i>
