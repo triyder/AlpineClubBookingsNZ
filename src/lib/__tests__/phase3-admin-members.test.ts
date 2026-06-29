@@ -1547,6 +1547,124 @@ describe("Phase 3: Admin Member Management", () => {
       }));
     });
 
+    it("performs bulk access-role changes through MemberAccessRole rows", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          id: "m2",
+          firstName: "Bob",
+          lastName: "Smith",
+          email: "bob@test.com",
+          role: "USER",
+          financeAccessLevel: "NONE",
+          canLogin: true,
+        },
+      ] as any);
+      const tx = {
+        member: {
+          update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        memberAccessRole: {
+          createMany: vi.fn().mockResolvedValue({ count: 2 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) =>
+        fn(tx),
+      );
+
+      const req = new NextRequest("http://localhost/api/admin/members/bulk-update", {
+        method: "POST",
+        body: JSON.stringify({
+          ids: ["m2"],
+          action: "set-role",
+          accessRoles: ["USER", "FINANCE_USER", "FINANCE_ADMIN"],
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await bulkUpdate(req);
+
+      expect(res.status).toBe(200);
+      expect(tx.member.update).toHaveBeenCalledWith({
+        where: { id: "m2" },
+        data: {
+          role: "USER",
+          financeAccessLevel: "MANAGER",
+        },
+      });
+      expect(tx.memberAccessRole.deleteMany).toHaveBeenCalledWith({
+        where: { memberId: "m2" },
+      });
+      expect(tx.memberAccessRole.createMany).toHaveBeenCalledWith({
+        data: [
+          { memberId: "m2", role: "USER", assignedByMemberId: "admin1" },
+          {
+            memberId: "m2",
+            role: "FINANCE_ADMIN",
+            assignedByMemberId: "admin1",
+          },
+        ],
+        skipDuplicates: true,
+      });
+      expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+        action: "member.bulk-set-role",
+        details: expect.stringContaining("USER, FINANCE_USER, FINANCE_ADMIN"),
+      }));
+    });
+
+    it("clears bulk access-role rows for non-login records", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          id: "child-1",
+          firstName: "Child",
+          lastName: "Member",
+          email: "child@test.com",
+          role: "USER",
+          financeAccessLevel: "NONE",
+          canLogin: false,
+        },
+      ] as any);
+      const tx = {
+        member: {
+          update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        memberAccessRole: {
+          createMany: vi.fn().mockResolvedValue({ count: 0 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) =>
+        fn(tx),
+      );
+
+      const req = new NextRequest("http://localhost/api/admin/members/bulk-update", {
+        method: "POST",
+        body: JSON.stringify({
+          ids: ["child-1"],
+          action: "set-role",
+          accessRoles: ["USER", "FINANCE_ADMIN"],
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await bulkUpdate(req);
+
+      expect(res.status).toBe(200);
+      expect(tx.member.update).toHaveBeenCalledWith({
+        where: { id: "child-1" },
+        data: {
+          role: "USER",
+          financeAccessLevel: "NONE",
+        },
+      });
+      expect(tx.memberAccessRole.deleteMany).toHaveBeenCalledWith({
+        where: { memberId: "child-1" },
+      });
+      expect(tx.memberAccessRole.createMany).not.toHaveBeenCalled();
+    });
+
     it("requires role parameter for set-role action", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       const req = new NextRequest("http://localhost/api/admin/members/bulk-update", {
