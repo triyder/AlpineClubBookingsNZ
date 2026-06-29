@@ -218,6 +218,12 @@ Common booking states include:
 
 Waitlisted and offered bookings do not consume capacity until confirmed.
 Completed bookings continue to consume capacity for their remaining stay nights.
+Admins can soft-delete cancelled bookings to hide operational duplicates while
+preserving the booking row, audit snapshot, guests, events, and modification
+history. Soft-delete remains blocked when captured/refunded/credited payment,
+refund, member-credit, payment-recovery, or Xero history exists. Internal
+booking modifications do not block this cleanup when their net cent effect is
+zero and no external financial or Xero history exists.
 
 ## Admin and Lodge
 

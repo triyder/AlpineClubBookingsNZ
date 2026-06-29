@@ -55,6 +55,12 @@ admin review path -> REQUESTED -> APPROVED or REJECTED
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.
 
+Cancelled-booking soft-delete is an admin cleanup state, not hard erasure. It
+keeps the booking record and remains blocked by captured/refunded/credited
+payment, refund, member-credit, payment-recovery, or Xero history. Internal
+modification rows with positive and negative cent deltas may be soft-deleted
+when those deltas net to zero and no external financial history exists.
+
 ## Public Booking Request Quote Lifecycle
 
 A `BookingRequest` from the public form can be priced through one or more

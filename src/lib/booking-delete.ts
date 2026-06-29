@@ -416,14 +416,32 @@ async function getCancelledBookingDeleteBlockers(
   addBlocker(
     blockers,
     "financial_modification",
-    "Booking modification with financial effect exists",
-    booking.modifications.filter(
-      (modification) =>
-        modification.priceDiffCents !== 0 || modification.changeFeeCents !== 0
-    ).length
+    "Net booking modification financial effect exists",
+    getNetFinancialModificationEffectCents(booking.modifications) === 0
+      ? 0
+      : countFinancialModificationRows(booking.modifications)
   );
 
   return blockers;
+}
+
+function getNetFinancialModificationEffectCents(
+  modifications: BookingForDelete["modifications"]
+): number {
+  return modifications.reduce(
+    (total, modification) =>
+      total + modification.priceDiffCents + modification.changeFeeCents,
+    0
+  );
+}
+
+function countFinancialModificationRows(
+  modifications: BookingForDelete["modifications"]
+): number {
+  return modifications.filter(
+    (modification) =>
+      modification.priceDiffCents !== 0 || modification.changeFeeCents !== 0
+  ).length;
 }
 
 function addBlocker(

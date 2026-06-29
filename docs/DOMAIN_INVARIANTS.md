@@ -54,6 +54,11 @@ Booking changes must not orphan or desynchronize:
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
 
+Cancelled-booking soft-delete may hide an operational duplicate only when it
+preserves the booking row and no external money/Xero history needs to remain
+operator-visible by default. Balanced internal modification deltas that net to
+zero are not external financial history by themselves.
+
 ## Membership Lifecycle
 
 Membership application, nomination, cancellation, archive, delete, family, and
