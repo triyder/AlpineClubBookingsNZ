@@ -121,6 +121,7 @@ export interface SeasonalMembershipAssignmentSummary {
   memberId: string;
   seasonYear: number;
   membershipTypeId: string;
+  applyFrom: string | null;
   assignedByMemberId: string | null;
   createdAt: string;
   updatedAt: string;

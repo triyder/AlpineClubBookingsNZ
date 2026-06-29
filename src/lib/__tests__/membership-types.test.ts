@@ -8,6 +8,8 @@ import {
   defaultMembershipTypeKeyForRole,
   ensureBuiltInMembershipTypes,
   normalizeMembershipTypeKey,
+  normalizeMembershipTypeXeroRules,
+  validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { ROLE_VALUES } from "@/lib/member-roles";
 
@@ -60,6 +62,9 @@ describe("seasonal membership type schema contract", () => {
     expect(schema).toContain("model MembershipType");
     expect(schema).toContain("key                  String");
     expect(schema).toContain("model SeasonalMembershipAssignment");
+    expect(schema).toContain("applyFrom          DateTime? @db.Date");
+    expect(schema).toContain("model MembershipTypeAgeTier");
+    expect(schema).toContain("model XeroContactGroupRule");
     expect(schema).toContain("@@unique([memberId, seasonYear])");
     expect(ROLE_VALUES).toEqual([
       "USER",
@@ -180,5 +185,49 @@ describe("built-in membership type seed helpers", () => {
   it("derives stable custom keys without relying on display words for policy", () => {
     expect(normalizeMembershipTypeKey(" Social member ")).toBe("SOCIAL_MEMBER");
     expect(normalizeMembershipTypeKey("")).toBe("CUSTOM");
+  });
+
+  it("validates age-tier eligibility and Xero group rule conflicts", () => {
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: [],
+        xeroContactGroupRules: [],
+      }),
+    ).toBe("Select at least one allowed age tier.");
+
+    const duplicateRules = normalizeMembershipTypeXeroRules([
+      { ageTier: "ADULT", mode: "ACCEPTED", groupId: "group-life" },
+      { ageTier: "ADULT", mode: "ACCEPTED", groupId: "group-life" },
+    ]);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT"],
+        xeroContactGroupRules: duplicateRules,
+      }),
+    ).toBe("Duplicate Xero group rules are not allowed.");
+
+    const duplicateManagedScope = normalizeMembershipTypeXeroRules([
+      { ageTier: null, mode: "MANAGED", groupId: "group-full" },
+      { ageTier: null, mode: "MANAGED", groupId: "group-life" },
+    ]);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["ADULT"],
+        xeroContactGroupRules: duplicateManagedScope,
+      }),
+    ).toBe(
+      "Only one managed Xero group rule is allowed for each age-tier scope.",
+    );
+
+    const validRules = normalizeMembershipTypeXeroRules([
+      { ageTier: null, mode: "MANAGED", groupId: "group-members" },
+      { ageTier: "YOUTH", mode: "ACCEPTED", groupId: "group-youth" },
+    ]);
+    expect(
+      validateMembershipTypeRuleConfiguration({
+        allowedAgeTiers: ["YOUTH", "ADULT"],
+        xeroContactGroupRules: validRules,
+      }),
+    ).toBeNull();
   });
 });

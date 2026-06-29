@@ -65,6 +65,7 @@ function previousAssignment() {
     memberId: "member-1",
     seasonYear: 2026,
     membershipTypeId: "type-full",
+    applyFrom: new Date("2026-05-15T00:00:00.000Z"),
     assignedByMemberId: "admin-old",
     createdAt: new Date("2026-06-01T00:00:00.000Z"),
     updatedAt: new Date("2026-06-01T00:00:00.000Z"),
@@ -246,6 +247,7 @@ describe("seasonal membership assignment preview and save", () => {
       memberId: "member-1",
       seasonYear: 2026,
       membershipTypeId: "type-associate",
+      applyFrom: "2026-07-15",
       now: new Date("2026-07-01T00:00:00.000Z"),
       db: db as never,
     });
@@ -256,6 +258,7 @@ describe("seasonal membership assignment preview and save", () => {
     expect(preview).toMatchObject({
       memberId: "member-1",
       seasonYear: 2026,
+      applyFrom: "2026-07-15",
       resultingBookingBehavior: "NON_MEMBER_RATE",
       resultingSubscriptionBehavior: "REQUIRED",
       bookingBehaviorChanged: true,
@@ -355,6 +358,7 @@ describe("seasonal membership assignment preview and save", () => {
       memberId: "member-1",
       seasonYear: 2026,
       membershipTypeId: "type-associate",
+      applyFrom: "2026-07-15",
       now: new Date("2026-07-01T00:00:00.000Z"),
       db: db as never,
     });
@@ -365,6 +369,7 @@ describe("seasonal membership assignment preview and save", () => {
       memberId: "member-1",
       seasonYear: 2026,
       membershipTypeId: "type-associate",
+      applyFrom: "2026-07-15",
       adminMemberId: "admin-1",
       reason: "member changed category",
       previewToken: preview.previewToken,
@@ -380,6 +385,7 @@ describe("seasonal membership assignment preview and save", () => {
         },
         update: {
           membershipTypeId: "type-associate",
+          applyFrom: new Date("2026-07-15T00:00:00.000Z"),
           assignedByMemberId: "admin-1",
         },
       }),
@@ -395,6 +401,8 @@ describe("seasonal membership assignment preview and save", () => {
           metadata: expect.objectContaining({
             seasonYear: 2026,
             adminReason: "member changed category",
+            previousApplyFrom: "2026-05-15",
+            newApplyFrom: "2026-07-15",
             affectedCounts: {
               futureConfirmedBookings: 2,
               draftBookings: 1,
@@ -470,12 +478,14 @@ describe("seasonal membership assignment roll-forward", () => {
           memberId: "member-copy",
           seasonYear: 2027,
           membershipTypeId: "type-full",
+          applyFrom: null,
           assignedByMemberId: "admin-1",
         },
         {
           memberId: "member-inactive",
           seasonYear: 2027,
           membershipTypeId: "type-inactive",
+          applyFrom: null,
           assignedByMemberId: "admin-1",
         },
       ],

@@ -701,6 +701,7 @@ model SeasonalMembershipAssignment {
   memberId           String
   seasonYear         Int
   membershipTypeId   String
+  applyFrom          DateTime? @db.Date
   assignedByMemberId String?
   source             MembershipAssignmentSource @default(ADMIN)
   sourceDetail       String?

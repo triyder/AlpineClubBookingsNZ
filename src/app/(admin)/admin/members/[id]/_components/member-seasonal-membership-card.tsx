@@ -47,6 +47,7 @@ interface PreviewBookingSummary {
 
 interface SeasonalMembershipPreview {
   seasonYear: number;
+  applyFrom: string | null;
   previousAssignment: SeasonalMembershipAssignmentSummary | null;
   newMembershipType: MembershipTypeSummary;
   resultingBookingBehavior: BookingBehavior;
@@ -175,6 +176,7 @@ export function MemberSeasonalMembershipCard({
   const [typesLoading, setTypesLoading] = useState(true);
   const [seasonYear, setSeasonYear] = useState(effectiveCurrentSeasonYear);
   const [selectedMembershipTypeId, setSelectedMembershipTypeId] = useState("");
+  const [applyFrom, setApplyFrom] = useState("");
   const [preview, setPreview] = useState<SeasonalMembershipPreview | null>(null);
   const [reason, setReason] = useState("");
   const [previewing, setPreviewing] = useState(false);
@@ -195,7 +197,8 @@ export function MemberSeasonalMembershipCard({
   );
   const targetChanged =
     selectedMembershipTypeId.length > 0 &&
-    currentAssignment?.membershipTypeId !== selectedMembershipTypeId;
+    (currentAssignment?.membershipTypeId !== selectedMembershipTypeId ||
+      (currentAssignment?.applyFrom ?? "") !== applyFrom);
 
   async function loadMembershipTypes() {
     setTypesLoading(true);
@@ -230,6 +233,7 @@ export function MemberSeasonalMembershipCard({
 
   useEffect(() => {
     setSeasonYear(effectiveCurrentSeasonYear);
+    setApplyFrom("");
     setPreview(null);
     setReason("");
     setMessage("");
@@ -241,7 +245,13 @@ export function MemberSeasonalMembershipCard({
     setSelectedMembershipTypeId(
       currentAssignment?.membershipTypeId ?? activeFallback?.id ?? "",
     );
-  }, [currentAssignment?.membershipTypeId, membershipTypes, seasonYear]);
+    setApplyFrom(currentAssignment?.applyFrom ?? "");
+  }, [
+    currentAssignment?.applyFrom,
+    currentAssignment?.membershipTypeId,
+    membershipTypes,
+    seasonYear,
+  ]);
 
   useEffect(() => {
     setPreview(null);
@@ -268,6 +278,7 @@ export function MemberSeasonalMembershipCard({
           body: JSON.stringify({
             seasonYear,
             membershipTypeId: selectedMembershipTypeId,
+            applyFrom: applyFrom || null,
           }),
         },
       );
@@ -314,6 +325,7 @@ export function MemberSeasonalMembershipCard({
           body: JSON.stringify({
             seasonYear,
             membershipTypeId: selectedMembershipTypeId,
+            applyFrom: applyFrom || null,
             reason,
             previewToken: preview.previewToken,
           }),
@@ -360,7 +372,7 @@ export function MemberSeasonalMembershipCard({
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-[180px_minmax(0,1fr)_auto] lg:items-end">
+        <div className="grid gap-4 lg:grid-cols-[160px_minmax(0,1fr)_180px_auto] lg:items-end">
           <div className="space-y-2">
             <Label htmlFor="seasonal-membership-season">Season</Label>
             <Input
@@ -398,6 +410,16 @@ export function MemberSeasonalMembershipCard({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="seasonal-membership-apply-from">Apply from</Label>
+            <Input
+              id="seasonal-membership-apply-from"
+              type="date"
+              value={applyFrom}
+              onChange={(event) => setApplyFrom(event.target.value)}
+            />
           </div>
 
           <Button
@@ -438,6 +460,11 @@ export function MemberSeasonalMembershipCard({
                   )}`
                 : `No assignment for ${formatSeasonLabel(seasonYear)}`}
             </div>
+            {currentAssignment?.applyFrom && (
+              <div className="mt-1 text-xs text-slate-500">
+                Applies from {formatDate(currentAssignment.applyFrom)}
+              </div>
+            )}
           </div>
         </div>
 
@@ -502,6 +529,9 @@ export function MemberSeasonalMembershipCard({
             <div className="rounded-md border border-blue-200 bg-white p-3 text-sm">
               <div className="font-medium text-slate-900">
                 Subscription summary
+              </div>
+              <div className="mt-1 text-slate-600">
+                Applies from {preview.applyFrom ? formatDate(preview.applyFrom) : "season start"}
               </div>
               <div className="mt-1 text-slate-600">
                 {formatSeasonLabel(preview.currentSeasonSubscription.seasonYear)}

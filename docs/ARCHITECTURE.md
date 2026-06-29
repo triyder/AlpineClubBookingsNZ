@@ -262,25 +262,31 @@ booking behavior, subscription behavior, allowed age tiers, and optional Xero
 contact-group rules for built-in and admin-defined types. The built-ins are
 Full, Associate, Life, School, Non-Member, and Family; Associate is the single
 Associate/Reserve-style built-in and can be renamed by the club. Age tiers stay
-separate because the same tier can appear under several membership types.
+separate because the same tier can appear under several membership types. Age
+Tier Xero groups are for broad age cohorts, Membership Type Xero groups are for
+status or policy labels, and clubs can configure both when Xero needs both
+labels.
 `SeasonalMembershipAssignment` records a member's type for a membership
-`seasonYear` plus assignment source. The initial backfill maps existing legacy
-roles to current-season assignments. Admin changes to an individual member's
-seasonal type go through a preview that reports affected future confirmed
-bookings, draft bookings, waitlist records, current subscription state, and
-recent subscription history, then require an admin reason before the audited
-save. The membership-type settings page can roll assignments forward from one
-season to another idempotently, skipping existing target-season assignments and
-reporting missing or inactive-type exceptions. Booking pricing and booking
-gates resolve the member's effective seasonal type for the booking season:
+`seasonYear`, assignment source, and optional date-only `applyFrom` changeover.
+The initial backfill maps existing legacy roles to current-season assignments.
+Admin changes to an individual member's seasonal type go through a preview that
+reports affected future confirmed bookings, draft bookings, waitlist records,
+current subscription state, and recent subscription history, then require an
+admin reason before the audited save. The membership-type settings page can roll
+assignments forward from one season to another idempotently, skipping existing
+target-season assignments and reporting missing or inactive-type exceptions.
+The Admin > Members list shows the current seasonal Membership Type beside the
+Access column so operators can scan access and membership policy separately.
+Booking pricing and booking gates resolve the member's effective seasonal type
+for the booking season:
 `MEMBER_RATE` uses normal member rates, `NON_MEMBER_RATE` uses non-member
 nightly rates while preserving member identity, and `BLOCK_BOOKING` returns a
 structured policy error before the booking is created or repriced. Subscription
 displays and booking lockout also resolve the seasonal type: `NOT_REQUIRED` is
 an effective status layered over the raw `MemberSubscription`/Xero history,
 which remains stored and visible for audit. Seasonal type changes do not
-automatically reprice existing future bookings. Committee assignments remain separate
-public/contact metadata. `CommitteeRole` stores reusable master positions and
+automatically reprice existing future bookings. Committee assignments remain
+separate public/contact metadata. `CommitteeRole` stores reusable master positions and
 `CommitteeAssignment` links members to those positions with blurb, sort order,
 published, show-phone, contactable, and active flags. The public committee API
 reads only active, published assignments with active roles, never selects member

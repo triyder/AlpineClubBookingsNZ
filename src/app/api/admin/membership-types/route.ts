@@ -7,11 +7,17 @@ import {
 } from "@/lib/audit";
 import {
   MEMBERSHIP_TYPE_BOOKING_BEHAVIORS,
+  MEMBERSHIP_TYPE_AGE_TIERS,
   MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS,
+  MEMBERSHIP_TYPE_XERO_RULE_MODES,
   buildUniqueMembershipTypeKey,
   membershipTypeOrderBy,
+  normalizeMembershipTypeAgeTiers,
   normalizeMembershipTypeText,
+  normalizeMembershipTypeXeroRules,
+  replaceMembershipTypeRuleConfiguration,
   serializeMembershipType,
+  validateMembershipTypeRuleConfiguration,
 } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
@@ -47,6 +53,17 @@ const membershipTypeSelect = {
   _count: { select: { assignments: true } },
 } satisfies Prisma.MembershipTypeSelect;
 
+const xeroRuleSchema = z
+  .object({
+    ageTier: z.enum(MEMBERSHIP_TYPE_AGE_TIERS).nullable().optional(),
+    mode: z.enum(MEMBERSHIP_TYPE_XERO_RULE_MODES),
+    groupId: z.string().trim().min(1).max(200),
+    groupName: z.string().trim().max(200).nullable().optional(),
+    isActive: z.boolean().optional(),
+    sortOrder: z.number().int().min(0).max(100000).optional(),
+  })
+  .strict();
+
 const createSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -55,6 +72,8 @@ const createSchema = z
     subscriptionBehavior: z.enum(MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS),
     isActive: z.boolean().optional().default(true),
     sortOrder: z.number().int().min(0).max(100000).optional(),
+    allowedAgeTiers: z.array(z.enum(MEMBERSHIP_TYPE_AGE_TIERS)).optional(),
+    xeroContactGroupRules: z.array(xeroRuleSchema).optional(),
   })
   .strict();
 
@@ -116,10 +135,31 @@ export async function POST(request: Request) {
     subscriptionBehavior: parsed.data.subscriptionBehavior,
     sortOrder,
   };
+  const allowedAgeTiers = normalizeMembershipTypeAgeTiers(
+    parsed.data.allowedAgeTiers ?? MEMBERSHIP_TYPE_AGE_TIERS,
+  );
+  const xeroContactGroupRules = normalizeMembershipTypeXeroRules(
+    parsed.data.xeroContactGroupRules ?? [],
+  );
+  const configurationError = validateMembershipTypeRuleConfiguration({
+    allowedAgeTiers,
+    xeroContactGroupRules,
+  });
+  if (configurationError) {
+    return NextResponse.json({ error: configurationError }, { status: 400 });
+  }
 
   const created = await prisma.$transaction(async (tx) => {
     const membershipType = await tx.membershipType.create({
       data,
+      select: membershipTypeSelect,
+    });
+    await replaceMembershipTypeRuleConfiguration(tx, membershipType.id, {
+      allowedAgeTiers,
+      xeroContactGroupRules,
+    });
+    const membershipTypeWithRules = await tx.membershipType.findUniqueOrThrow({
+      where: { id: membershipType.id },
       select: membershipTypeSelect,
     });
 
@@ -132,12 +172,14 @@ export async function POST(request: Request) {
         severity: "important",
         outcome: "success",
         summary: "Membership type created",
-        metadata: { newMembershipType: serializeMembershipType(membershipType) },
+        metadata: {
+          newMembershipType: serializeMembershipType(membershipTypeWithRules),
+        },
         request: getAuditRequestContext(request),
       }),
     );
 
-    return membershipType;
+    return membershipTypeWithRules;
   });
 
   return NextResponse.json(

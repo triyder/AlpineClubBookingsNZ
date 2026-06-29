@@ -74,9 +74,12 @@ fork for another organisation. See `NOTICE.md`.
    the built-in Associate/Reserve-style type and can be renamed by the club.
    These records drive season-aware booking policy (`MEMBER_RATE`,
    `NON_MEMBER_RATE`, `BLOCK_BOOKING`) and subscription policy (`REQUIRED`,
-   `NOT_REQUIRED`) without granting app access. Admins assign a member's
-   seasonal type from that member's admin detail page after previewing affected
-   future bookings, drafts, waitlist records, and subscription history;
+   `NOT_REQUIRED`) without granting app access. Admins can also configure the
+   age tiers allowed for each type and optional membership-type Xero contact
+   group rules. Admins assign a member's seasonal type from that member's admin
+   detail page, with an optional date-only **apply from** changeover, after
+   previewing affected future bookings, drafts, waitlist records, and
+   subscription history;
    existing future bookings are not automatically repriced by this change.
 7. Use **Admin > Committee** to review seeded committee master roles and
    member-linked committee assignments. Assignments remain hidden/unpublished

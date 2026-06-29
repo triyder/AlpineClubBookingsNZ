@@ -21,6 +21,18 @@ export const MEMBERSHIP_TYPE_SUBSCRIPTION_BEHAVIORS = [
   "NOT_REQUIRED",
 ] as const satisfies readonly MembershipTypeSubscriptionBehavior[];
 
+export const MEMBERSHIP_TYPE_XERO_RULE_MODES = [
+  "MANAGED",
+  "ACCEPTED",
+] as const satisfies readonly XeroContactGroupRuleMode[];
+
+export const MEMBERSHIP_TYPE_AGE_TIERS = [
+  "INFANT",
+  "CHILD",
+  "YOUTH",
+  "ADULT",
+] as const satisfies readonly AgeTier[];
+
 export const BUILT_IN_MEMBERSHIP_TYPES = [
   {
     key: "FULL",
@@ -107,6 +119,120 @@ export const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
   NON_MEMBER: ["INFANT", "CHILD", "YOUTH", "ADULT"],
   FAMILY: ["INFANT", "CHILD", "YOUTH", "ADULT"],
 } as const satisfies Record<BuiltInMembershipTypeKey, readonly AgeTier[]>;
+
+export type MembershipTypeXeroRuleInput = {
+  ageTier?: AgeTier | null;
+  mode: XeroContactGroupRuleMode;
+  groupId: string;
+  groupName?: string | null;
+  isActive?: boolean;
+  sortOrder?: number | null;
+};
+
+export type NormalizedMembershipTypeXeroRule = {
+  ageTier: AgeTier | null;
+  mode: XeroContactGroupRuleMode;
+  groupId: string;
+  groupName: string | null;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+export function normalizeMembershipTypeAgeTiers(
+  ageTiers: readonly AgeTier[],
+): AgeTier[] {
+  const requested = new Set(ageTiers);
+  return MEMBERSHIP_TYPE_AGE_TIERS.filter((ageTier) => requested.has(ageTier));
+}
+
+export function normalizeMembershipTypeXeroRules(
+  rules: readonly MembershipTypeXeroRuleInput[],
+): NormalizedMembershipTypeXeroRule[] {
+  return rules.map((rule, index) => ({
+    ageTier: rule.ageTier ?? null,
+    mode: rule.mode,
+    groupId: rule.groupId.trim(),
+    groupName: normalizeMembershipTypeText(rule.groupName),
+    isActive: rule.isActive ?? true,
+    sortOrder: rule.sortOrder ?? index,
+  }));
+}
+
+export function validateMembershipTypeRuleConfiguration(params: {
+  allowedAgeTiers: readonly AgeTier[];
+  xeroContactGroupRules: readonly NormalizedMembershipTypeXeroRule[];
+}): string | null {
+  if (params.allowedAgeTiers.length === 0) {
+    return "Select at least one allowed age tier.";
+  }
+
+  const exactRules = new Set<string>();
+  const managedScopes = new Set<string>();
+  for (const rule of params.xeroContactGroupRules) {
+    if (!rule.groupId) {
+      return "Every Xero group rule needs a group.";
+    }
+
+    const scope = rule.ageTier ?? "ALL";
+    const exactKey = `${rule.mode}:${scope}:${rule.groupId}`;
+    if (exactRules.has(exactKey)) {
+      return "Duplicate Xero group rules are not allowed.";
+    }
+    exactRules.add(exactKey);
+
+    if (rule.mode === "MANAGED") {
+      if (managedScopes.has(scope)) {
+        return "Only one managed Xero group rule is allowed for each age-tier scope.";
+      }
+      managedScopes.add(scope);
+    }
+  }
+
+  return null;
+}
+
+export async function replaceMembershipTypeRuleConfiguration(
+  db: Pick<
+    Prisma.TransactionClient,
+    "membershipTypeAgeTier" | "xeroContactGroupRule"
+  >,
+  membershipTypeId: string,
+  config: {
+    allowedAgeTiers?: readonly AgeTier[];
+    xeroContactGroupRules?: readonly NormalizedMembershipTypeXeroRule[];
+  },
+): Promise<void> {
+  if (config.allowedAgeTiers !== undefined) {
+    await db.membershipTypeAgeTier.deleteMany({ where: { membershipTypeId } });
+    if (config.allowedAgeTiers.length > 0) {
+      await db.membershipTypeAgeTier.createMany({
+        data: config.allowedAgeTiers.map((ageTier) => ({
+          membershipTypeId,
+          ageTier,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  }
+
+  if (config.xeroContactGroupRules !== undefined) {
+    await db.xeroContactGroupRule.deleteMany({ where: { membershipTypeId } });
+    if (config.xeroContactGroupRules.length > 0) {
+      await db.xeroContactGroupRule.createMany({
+        data: config.xeroContactGroupRules.map((rule) => ({
+          membershipTypeId,
+          ageTier: rule.ageTier,
+          mode: rule.mode,
+          groupId: rule.groupId,
+          groupName: rule.groupName,
+          isActive: rule.isActive,
+          sortOrder: rule.sortOrder,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  }
+}
 
 type MembershipTypeWithAssignmentCount = {
   id: string;

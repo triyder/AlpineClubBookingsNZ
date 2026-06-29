@@ -45,6 +45,12 @@ export interface Member {
     | "NOT_REQUIRED"
     | null;
   subscriptionXeroInvoiceId: string | null;
+  currentMembershipType: {
+    id: string;
+    key: string;
+    name: string;
+    isActive: boolean;
+  } | null;
   createdAt: string;
   joinedDate: string | null;
   forcePasswordChange: boolean;

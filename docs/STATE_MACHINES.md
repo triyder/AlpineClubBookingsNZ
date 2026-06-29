@@ -234,6 +234,7 @@ nominator replacement, and email retry behavior.
 built-in type seeded -> admin reviews policy -> type edited/reordered
 custom type created -> active -> archived -> reactivated
 member role backfill -> current-season assignment created if missing
+type assignment preview -> apply-from date/reason saved -> audited assignment update
 booking quote/create/modify -> resolve season assignment/default -> member rate, non-member rate, or block
 subscription display/gate -> resolve season assignment/default -> required or not required
 ```
@@ -244,7 +245,10 @@ stops owners or linked member guests with a structured policy error.
 identity. `NOT_REQUIRED` changes effective subscription lockout and display
 without deleting raw subscription, payment, or Xero invoice history. `ADMIN` and
 `LODGE` operational subscription exemptions remain governed by the role-based
-helper, separate from seasonal type policy.
+helper, separate from seasonal type policy. The optional assignment `applyFrom`
+date is date-only metadata for mid-season changeover reporting and audit; the
+guarded preview remains the required save path and existing future bookings are
+not automatically repriced by a type or apply-from change.
 
 ## Nomination Lifecycle
 

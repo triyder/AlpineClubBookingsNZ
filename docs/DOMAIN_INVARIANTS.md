@@ -72,11 +72,14 @@ access (`USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`);
 `Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
 `SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
 be used for new membership-category semantics. `SeasonalMembershipAssignment`
-stores per-season membership policy, including the source of the assignment. Age
-tiers remain separate because the same tier can be Full, Life, Associate,
-Family, School, or another configured type. Committee assignment controls public
-committee/contact presentation only. Do not add committee positions to access
-roles or `Member.role`. `CommitteeRole` master records and
+stores per-season membership policy, including the source of the assignment and
+an optional date-only `applyFrom` changeover. Age tiers remain separate because
+the same tier can be Full, Life, Associate, Family, School, or another
+configured type. Age-tier Xero groups and membership-type Xero groups may both
+exist; duplicate exact rules and multiple managed rules for the same scope are
+not valid. Committee assignment controls public committee/contact presentation
+only. Do not add committee positions to access roles or `Member.role`.
+`CommitteeRole` master records and
 `CommitteeAssignment` member links can be active/inactive independently of
 access role and seasonal membership type, and newly linked assignments are
 hidden until explicitly published by an admin. Booking pricing, booking block

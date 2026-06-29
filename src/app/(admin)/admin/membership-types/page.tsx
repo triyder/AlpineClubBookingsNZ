@@ -11,6 +11,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,12 @@ interface MembershipType {
   }>;
 }
 
+interface XeroContactGroup {
+  id: string;
+  name: string;
+  contactCount: number;
+}
+
 interface MembershipTypesResponse {
   membershipTypes: MembershipType[];
 }
@@ -93,6 +100,18 @@ interface DraftMembershipType {
   isActive: boolean;
   bookingBehavior: BookingBehavior;
   subscriptionBehavior: SubscriptionBehavior;
+  allowedAgeTiers: AgeTier[];
+  xeroContactGroupRules: DraftXeroContactGroupRule[];
+}
+
+interface DraftXeroContactGroupRule {
+  draftId: string;
+  ageTier: AgeTier | null;
+  mode: XeroContactGroupRuleMode;
+  groupId: string;
+  groupName: string;
+  isActive: boolean;
+  sortOrder: number;
 }
 
 const bookingBehaviorLabels: Record<BookingBehavior, string> = {
@@ -106,13 +125,37 @@ const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
   NOT_REQUIRED: "Subscription not required",
 };
 
-const emptyDraft: DraftMembershipType = {
-  name: "",
-  description: "",
-  isActive: true,
-  bookingBehavior: "MEMBER_RATE",
-  subscriptionBehavior: "REQUIRED",
+const ageTierLabels: Record<AgeTier, string> = {
+  INFANT: "Infant",
+  CHILD: "Child",
+  YOUTH: "Youth",
+  ADULT: "Adult",
 };
+
+const xeroRuleModeLabels: Record<XeroContactGroupRuleMode, string> = {
+  MANAGED: "Managed",
+  ACCEPTED: "Accepted",
+};
+
+const ageTierOrder: AgeTier[] = ["INFANT", "CHILD", "YOUTH", "ADULT"];
+const allAgeTierValue = "__all__";
+const noXeroGroupValue = "__none__";
+
+function createEmptyDraft(): DraftMembershipType {
+  return {
+    name: "",
+    description: "",
+    isActive: true,
+    bookingBehavior: "MEMBER_RATE",
+    subscriptionBehavior: "REQUIRED",
+    allowedAgeTiers: [...ageTierOrder],
+    xeroContactGroupRules: [],
+  };
+}
+
+function nextDraftRuleId() {
+  return `draft-rule-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function responseErrorMessage(body: unknown, fallback: string) {
   if (
@@ -133,17 +176,73 @@ function draftFromType(type: MembershipType): DraftMembershipType {
     isActive: type.isActive,
     bookingBehavior: type.bookingBehavior,
     subscriptionBehavior: type.subscriptionBehavior,
+    allowedAgeTiers: [...type.allowedAgeTiers],
+    xeroContactGroupRules: type.xeroContactGroupRules.map((rule) => ({
+      draftId: rule.id,
+      ageTier: rule.ageTier,
+      mode: rule.mode,
+      groupId: rule.groupId,
+      groupName: rule.groupName ?? "",
+      isActive: rule.isActive,
+      sortOrder: rule.sortOrder,
+    })),
+  };
+}
+
+function comparableDraft(draft: DraftMembershipType) {
+  return {
+    ...draft,
+    description: draft.description.trim(),
+    allowedAgeTiers: ageTierOrder.filter((ageTier) =>
+      draft.allowedAgeTiers.includes(ageTier),
+    ),
+    xeroContactGroupRules: draft.xeroContactGroupRules.map((rule, index) => ({
+      ageTier: rule.ageTier,
+      mode: rule.mode,
+      groupId: rule.groupId.trim(),
+      groupName: rule.groupName.trim(),
+      isActive: rule.isActive,
+      sortOrder: rule.sortOrder ?? index,
+    })),
   };
 }
 
 function isDirty(type: MembershipType, draft: DraftMembershipType) {
-  return (
-    type.name !== draft.name ||
-    (type.description ?? "") !== draft.description ||
-    type.isActive !== draft.isActive ||
-    type.bookingBehavior !== draft.bookingBehavior ||
-    type.subscriptionBehavior !== draft.subscriptionBehavior
-  );
+  return JSON.stringify(comparableDraft(draftFromType(type))) !==
+    JSON.stringify(comparableDraft(draft));
+}
+
+function validateDraft(draft: DraftMembershipType): string | null {
+  if (draft.allowedAgeTiers.length === 0) {
+    return "Select at least one allowed age tier.";
+  }
+  if (
+    draft.xeroContactGroupRules.some((rule) => rule.groupId.trim().length === 0)
+  ) {
+    return "Every Xero group rule needs a group.";
+  }
+  return null;
+}
+
+function draftPayload(draft: DraftMembershipType) {
+  return {
+    name: draft.name,
+    description: draft.description,
+    isActive: draft.isActive,
+    bookingBehavior: draft.bookingBehavior,
+    subscriptionBehavior: draft.subscriptionBehavior,
+    allowedAgeTiers: ageTierOrder.filter((ageTier) =>
+      draft.allowedAgeTiers.includes(ageTier),
+    ),
+    xeroContactGroupRules: draft.xeroContactGroupRules.map((rule, index) => ({
+      ageTier: rule.ageTier,
+      mode: rule.mode,
+      groupId: rule.groupId,
+      groupName: rule.groupName || null,
+      isActive: rule.isActive,
+      sortOrder: index,
+    })),
+  };
 }
 
 function formatSeasonLabel(seasonYear: number) {
@@ -161,7 +260,12 @@ export default function AdminMembershipTypesPage() {
   const defaultSeasonYear = getSeasonYear(new Date());
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftMembershipType>>({});
-  const [newDraft, setNewDraft] = useState<DraftMembershipType>(emptyDraft);
+  const [newDraft, setNewDraft] = useState<DraftMembershipType>(
+    createEmptyDraft,
+  );
+  const [xeroGroups, setXeroGroups] = useState<XeroContactGroup[]>([]);
+  const [loadingXeroGroups, setLoadingXeroGroups] = useState(true);
+  const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -228,11 +332,142 @@ export default function AdminMembershipTypesPage() {
     void loadMembershipTypes();
   }, []);
 
+  async function loadXeroGroups(refreshFromXero = false) {
+    if (refreshFromXero) {
+      setRefreshingXeroGroups(true);
+    } else {
+      setLoadingXeroGroups(true);
+    }
+    setError("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/xero/contact-groups${refreshFromXero ? "?refresh=1" : ""}`,
+        { credentials: "same-origin" },
+      );
+      const body = (await response.json().catch(() => null)) as
+        | { groups?: XeroContactGroup[]; error?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to load Xero contact groups");
+      }
+      setXeroGroups(body?.groups ?? []);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load Xero contact groups",
+      );
+    } finally {
+      setLoadingXeroGroups(false);
+      setRefreshingXeroGroups(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadXeroGroups();
+  }, []);
+
   function updateDraft(id: string, patch: Partial<DraftMembershipType>) {
     setDrafts((current) => ({
       ...current,
       [id]: { ...current[id], ...patch },
     }));
+    setSavedMessage("");
+  }
+
+  function toggleNewDraftAgeTier(ageTier: AgeTier, checked: boolean) {
+    setNewDraft((current) => ({
+      ...current,
+      allowedAgeTiers: checked
+        ? ageTierOrder.filter((tier) =>
+            [...current.allowedAgeTiers, ageTier].includes(tier),
+          )
+        : current.allowedAgeTiers.filter((tier) => tier !== ageTier),
+    }));
+    setSavedMessage("");
+  }
+
+  function toggleDraftAgeTier(id: string, ageTier: AgeTier, checked: boolean) {
+    setDrafts((current) => {
+      const draft = current[id];
+      if (!draft) return current;
+      return {
+        ...current,
+        [id]: {
+          ...draft,
+          allowedAgeTiers: checked
+            ? ageTierOrder.filter((tier) =>
+                [...draft.allowedAgeTiers, ageTier].includes(tier),
+              )
+            : draft.allowedAgeTiers.filter((tier) => tier !== ageTier),
+        },
+      };
+    });
+    setSavedMessage("");
+  }
+
+  function addDraftXeroRule(id: string) {
+    setDrafts((current) => {
+      const draft = current[id];
+      if (!draft) return current;
+      return {
+        ...current,
+        [id]: {
+          ...draft,
+          xeroContactGroupRules: [
+            ...draft.xeroContactGroupRules,
+            {
+              draftId: nextDraftRuleId(),
+              ageTier: null,
+              mode: "MANAGED",
+              groupId: "",
+              groupName: "",
+              isActive: true,
+              sortOrder: draft.xeroContactGroupRules.length,
+            },
+          ],
+        },
+      };
+    });
+    setSavedMessage("");
+  }
+
+  function updateDraftXeroRule(
+    id: string,
+    draftRuleId: string,
+    patch: Partial<DraftXeroContactGroupRule>,
+  ) {
+    setDrafts((current) => {
+      const draft = current[id];
+      if (!draft) return current;
+      return {
+        ...current,
+        [id]: {
+          ...draft,
+          xeroContactGroupRules: draft.xeroContactGroupRules.map((rule) =>
+            rule.draftId === draftRuleId ? { ...rule, ...patch } : rule,
+          ),
+        },
+      };
+    });
+    setSavedMessage("");
+  }
+
+  function removeDraftXeroRule(id: string, draftRuleId: string) {
+    setDrafts((current) => {
+      const draft = current[id];
+      if (!draft) return current;
+      return {
+        ...current,
+        [id]: {
+          ...draft,
+          xeroContactGroupRules: draft.xeroContactGroupRules.filter(
+            (rule) => rule.draftId !== draftRuleId,
+          ),
+        },
+      };
+    });
     setSavedMessage("");
   }
 
@@ -242,11 +477,15 @@ export default function AdminMembershipTypesPage() {
     setSavedMessage("");
 
     try {
+      const validationError = validateDraft(newDraft);
+      if (validationError) {
+        throw new Error(validationError);
+      }
       const response = await fetch("/api/admin/membership-types", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newDraft),
+        body: JSON.stringify(draftPayload(newDraft)),
       });
       const body = (await response.json()) as
         | { membershipType: MembershipType }
@@ -261,7 +500,7 @@ export default function AdminMembershipTypesPage() {
         ...current,
         [body.membershipType.id]: draftFromType(body.membershipType),
       }));
-      setNewDraft(emptyDraft);
+      setNewDraft(createEmptyDraft());
       setSavedMessage("Membership type created.");
     } catch (createError) {
       setError(
@@ -286,11 +525,15 @@ export default function AdminMembershipTypesPage() {
     setSavedMessage("");
 
     try {
+      const validationError = validateDraft(draft);
+      if (validationError) {
+        throw new Error(validationError);
+      }
       const response = await fetch(`/api/admin/membership-types/${type.id}`, {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(draftPayload(draft)),
       });
       const body = (await response.json()) as
         | { membershipType: MembershipType }
@@ -458,15 +701,28 @@ export default function AdminMembershipTypesPage() {
           </p>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void loadMembershipTypes()}
-          disabled={loading || creating || reordering || savingId !== null}
-        >
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void loadXeroGroups(true)}
+            disabled={refreshingXeroGroups}
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${refreshingXeroGroups ? "animate-spin" : ""}`}
+            />
+            {refreshingXeroGroups ? "Refreshing Xero" : "Refresh Xero Groups"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void loadMembershipTypes()}
+            disabled={loading || creating || reordering || savingId !== null}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {(error || savedMessage) && (
@@ -727,6 +983,30 @@ export default function AdminMembershipTypesPage() {
             Add
           </Button>
         </div>
+        <div className="mt-4 space-y-2">
+          <Label>Allowed age tiers</Label>
+          <div className="flex flex-wrap gap-2">
+            {ageTierOrder.map((ageTier) => {
+              const inputId = `new-membership-type-age-${ageTier}`;
+              return (
+                <label
+                  key={ageTier}
+                  htmlFor={inputId}
+                  className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-sm"
+                >
+                  <Checkbox
+                    id={inputId}
+                    checked={newDraft.allowedAgeTiers.includes(ageTier)}
+                    onCheckedChange={(checked) =>
+                      toggleNewDraftAgeTier(ageTier, checked === true)
+                    }
+                  />
+                  {ageTierLabels[ageTier]}
+                </label>
+              );
+            })}
+          </div>
+        </div>
       </section>
 
       <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
@@ -737,6 +1017,8 @@ export default function AdminMembershipTypesPage() {
               <TableHead className="min-w-[260px]">Description</TableHead>
               <TableHead className="min-w-[190px]">Booking</TableHead>
               <TableHead className="min-w-[210px]">Subscription</TableHead>
+              <TableHead className="min-w-[250px]">Age Tiers</TableHead>
+              <TableHead className="min-w-[560px]">Xero Groups</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Assignments</TableHead>
               <TableHead className="w-[180px]">Order</TableHead>
@@ -827,6 +1109,194 @@ export default function AdminMembershipTypesPage() {
                         )}
                       </SelectContent>
                     </Select>
+                  </TableCell>
+
+                  <TableCell className="align-top">
+                    <div className="grid grid-cols-2 gap-2">
+                      {ageTierOrder.map((ageTier) => {
+                        const inputId = `membership-type-${type.id}-age-${ageTier}`;
+                        return (
+                          <label
+                            key={ageTier}
+                            htmlFor={inputId}
+                            className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                          >
+                            <Checkbox
+                              id={inputId}
+                              checked={draft.allowedAgeTiers.includes(ageTier)}
+                              onCheckedChange={(checked) =>
+                                toggleDraftAgeTier(
+                                  type.id,
+                                  ageTier,
+                                  checked === true,
+                                )
+                              }
+                            />
+                            {ageTierLabels[ageTier]}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </TableCell>
+
+                  <TableCell className="align-top">
+                    <div className="space-y-2">
+                      {draft.xeroContactGroupRules.length === 0 ? (
+                        <p className="text-xs text-slate-500">
+                          No membership-type Xero rules.
+                        </p>
+                      ) : (
+                        draft.xeroContactGroupRules.map((rule) => {
+                          const selectedGroup = xeroGroups.find(
+                            (group) => group.id === rule.groupId,
+                          );
+                          const groupSelectId = `membership-type-${type.id}-xero-group-${rule.draftId}`;
+                          const modeSelectId = `membership-type-${type.id}-xero-mode-${rule.draftId}`;
+                          const ageSelectId = `membership-type-${type.id}-xero-age-${rule.draftId}`;
+                          const activeInputId = `membership-type-${type.id}-xero-active-${rule.draftId}`;
+
+                          return (
+                            <div
+                              key={rule.draftId}
+                              className="grid gap-2 rounded-md border border-slate-200 p-2 lg:grid-cols-[110px_120px_minmax(180px,1fr)_90px_36px]"
+                            >
+                              <div className="space-y-1">
+                                <Label htmlFor={modeSelectId}>Mode</Label>
+                                <Select
+                                  value={rule.mode}
+                                  onValueChange={(value) =>
+                                    updateDraftXeroRule(type.id, rule.draftId, {
+                                      mode: value as XeroContactGroupRuleMode,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger id={modeSelectId}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Object.entries(xeroRuleModeLabels).map(
+                                      ([value, label]) => (
+                                        <SelectItem key={value} value={value}>
+                                          {label}
+                                        </SelectItem>
+                                      ),
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label htmlFor={ageSelectId}>Age</Label>
+                                <Select
+                                  value={rule.ageTier ?? allAgeTierValue}
+                                  onValueChange={(value) =>
+                                    updateDraftXeroRule(type.id, rule.draftId, {
+                                      ageTier:
+                                        value === allAgeTierValue
+                                          ? null
+                                          : (value as AgeTier),
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger id={ageSelectId}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={allAgeTierValue}>
+                                      All ages
+                                    </SelectItem>
+                                    {ageTierOrder.map((ageTier) => (
+                                      <SelectItem key={ageTier} value={ageTier}>
+                                        {ageTierLabels[ageTier]}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label htmlFor={groupSelectId}>Group</Label>
+                                <Select
+                                  value={rule.groupId || noXeroGroupValue}
+                                  onValueChange={(value) => {
+                                    if (value === noXeroGroupValue) {
+                                      updateDraftXeroRule(
+                                        type.id,
+                                        rule.draftId,
+                                        { groupId: "", groupName: "" },
+                                      );
+                                      return;
+                                    }
+                                    const group = xeroGroups.find(
+                                      (candidate) => candidate.id === value,
+                                    );
+                                    updateDraftXeroRule(type.id, rule.draftId, {
+                                      groupId: value,
+                                      groupName: group?.name ?? rule.groupName,
+                                    });
+                                  }}
+                                  disabled={loadingXeroGroups}
+                                >
+                                  <SelectTrigger id={groupSelectId}>
+                                    <SelectValue placeholder="Select group" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value={noXeroGroupValue}>
+                                      Select group
+                                    </SelectItem>
+                                    {rule.groupId && !selectedGroup ? (
+                                      <SelectItem value={rule.groupId}>
+                                        {rule.groupName || rule.groupId}
+                                      </SelectItem>
+                                    ) : null}
+                                    {xeroGroups.map((group) => (
+                                      <SelectItem key={group.id} value={group.id}>
+                                        {group.name} ({group.contactCount})
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="flex items-end gap-2 pb-2">
+                                <Checkbox
+                                  id={activeInputId}
+                                  checked={rule.isActive}
+                                  onCheckedChange={(checked) =>
+                                    updateDraftXeroRule(type.id, rule.draftId, {
+                                      isActive: checked === true,
+                                    })
+                                  }
+                                />
+                                <Label htmlFor={activeInputId}>Active</Label>
+                              </div>
+
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                className="self-end"
+                                onClick={() =>
+                                  removeDraftXeroRule(type.id, rule.draftId)
+                                }
+                                aria-label="Remove Xero group rule"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          );
+                        })
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addDraftXeroRule(type.id)}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add Xero Rule
+                      </Button>
+                    </div>
                   </TableCell>
 
                   <TableCell className="align-top">

@@ -7,10 +7,15 @@ const mocks = vi.hoisted(() => ({
   membershipTypeUpsert: vi.fn(),
   membershipTypeFindMany: vi.fn(),
   membershipTypeFindUnique: vi.fn(),
+  membershipTypeFindUniqueOrThrow: vi.fn(),
   membershipTypeFindFirst: vi.fn(),
   membershipTypeCreate: vi.fn(),
   membershipTypeUpdate: vi.fn(),
   membershipTypeDelete: vi.fn(),
+  membershipTypeAgeTierDeleteMany: vi.fn(),
+  membershipTypeAgeTierCreateMany: vi.fn(),
+  xeroContactGroupRuleDeleteMany: vi.fn(),
+  xeroContactGroupRuleCreateMany: vi.fn(),
   auditLogCreate: vi.fn(),
   transaction: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
@@ -42,6 +47,7 @@ vi.mock("@/lib/prisma", () => ({
       upsert: mocks.membershipTypeUpsert,
       findMany: mocks.membershipTypeFindMany,
       findUnique: mocks.membershipTypeFindUnique,
+      findUniqueOrThrow: mocks.membershipTypeFindUniqueOrThrow,
       findFirst: mocks.membershipTypeFindFirst,
       create: mocks.membershipTypeCreate,
       update: mocks.membershipTypeUpdate,
@@ -49,6 +55,14 @@ vi.mock("@/lib/prisma", () => ({
     },
     auditLog: {
       create: mocks.auditLogCreate,
+    },
+    membershipTypeAgeTier: {
+      deleteMany: mocks.membershipTypeAgeTierDeleteMany,
+      createMany: mocks.membershipTypeAgeTierCreateMany,
+    },
+    xeroContactGroupRule: {
+      deleteMany: mocks.xeroContactGroupRuleDeleteMany,
+      createMany: mocks.xeroContactGroupRuleCreateMany,
     },
     member: {
       findMany: vi.fn(),
@@ -86,6 +100,13 @@ function membershipType(overrides: Record<string, unknown> = {}) {
     sortOrder: 0,
     createdAt: new Date("2026-06-28T00:00:00.000Z"),
     updatedAt: new Date("2026-06-28T00:00:00.000Z"),
+    allowedAgeTiers: [
+      { ageTier: "INFANT" },
+      { ageTier: "CHILD" },
+      { ageTier: "YOUTH" },
+      { ageTier: "ADULT" },
+    ],
+    xeroContactGroupRules: [],
     _count: { assignments: 2 },
     ...overrides,
   };
@@ -138,6 +159,31 @@ describe("Admin membership types API", () => {
       }),
     );
     mocks.membershipTypeDelete.mockResolvedValue({});
+    mocks.membershipTypeFindUniqueOrThrow.mockImplementation(async ({ where }) =>
+      membershipType({
+        id: where.id,
+        key: where.id === "type-custom" ? "SOCIAL_MEMBER" : "FULL",
+        name: where.id === "type-custom" ? "Social member" : "Full",
+        isBuiltIn: where.id !== "type-custom",
+        _count: { assignments: 0 },
+        allowedAgeTiers: [{ ageTier: "ADULT" }],
+        xeroContactGroupRules: [
+          {
+            id: "rule-managed-adult",
+            ageTier: "ADULT",
+            mode: "MANAGED",
+            groupId: "group-adult-social",
+            groupName: "Adult Social",
+            isActive: true,
+            sortOrder: 0,
+          },
+        ],
+      }),
+    );
+    mocks.membershipTypeAgeTierDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.membershipTypeAgeTierCreateMany.mockResolvedValue({ count: 1 });
+    mocks.xeroContactGroupRuleDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.xeroContactGroupRuleCreateMany.mockResolvedValue({ count: 1 });
     mocks.auditLogCreate.mockResolvedValue({});
     mocks.transaction.mockImplementation(async (callback) =>
       callback({
@@ -145,6 +191,15 @@ describe("Admin membership types API", () => {
           create: mocks.membershipTypeCreate,
           update: mocks.membershipTypeUpdate,
           delete: mocks.membershipTypeDelete,
+          findUniqueOrThrow: mocks.membershipTypeFindUniqueOrThrow,
+        },
+        membershipTypeAgeTier: {
+          deleteMany: mocks.membershipTypeAgeTierDeleteMany,
+          createMany: mocks.membershipTypeAgeTierCreateMany,
+        },
+        xeroContactGroupRule: {
+          deleteMany: mocks.xeroContactGroupRuleDeleteMany,
+          createMany: mocks.xeroContactGroupRuleCreateMany,
         },
         auditLog: {
           create: mocks.auditLogCreate,
@@ -171,10 +226,11 @@ describe("Admin membership types API", () => {
     expect(body.membershipTypes).toEqual([
       expect.objectContaining({
         id: "type-1",
-        key: "FULL",
-        assignmentCount: 2,
-      }),
-    ]);
+          key: "FULL",
+          assignmentCount: 2,
+          allowedAgeTiers: ["INFANT", "CHILD", "YOUTH", "ADULT"],
+        }),
+      ]);
   });
 
   it("rejects unknown fields so stable identifiers cannot be mutated", async () => {
@@ -198,6 +254,15 @@ describe("Admin membership types API", () => {
         description: "Social membership",
         bookingBehavior: "NON_MEMBER_RATE",
         subscriptionBehavior: "NOT_REQUIRED",
+        allowedAgeTiers: ["ADULT"],
+        xeroContactGroupRules: [
+          {
+            ageTier: "ADULT",
+            mode: "MANAGED",
+            groupId: "group-adult-social",
+            groupName: "Adult Social",
+          },
+        ],
       }),
     );
     const body = await response.json();
@@ -216,6 +281,24 @@ describe("Admin membership types API", () => {
         }),
       }),
     );
+    expect(mocks.membershipTypeAgeTierCreateMany).toHaveBeenCalledWith({
+      data: [{ membershipTypeId: "type-custom", ageTier: "ADULT" }],
+      skipDuplicates: true,
+    });
+    expect(mocks.xeroContactGroupRuleCreateMany).toHaveBeenCalledWith({
+      data: [
+        {
+          membershipTypeId: "type-custom",
+          ageTier: "ADULT",
+          mode: "MANAGED",
+          groupId: "group-adult-social",
+          groupName: "Adult Social",
+          isActive: true,
+          sortOrder: 0,
+        },
+      ],
+      skipDuplicates: true,
+    });
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -295,6 +378,99 @@ describe("Admin membership types API", () => {
     );
 
     expect(response.status).toBe(400);
+    expect(mocks.membershipTypeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("updates allowed age tiers and Xero group rules", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValueOnce(
+      membershipType({
+        id: "type-1",
+        allowedAgeTiers: [{ ageTier: "ADULT" }],
+        xeroContactGroupRules: [],
+      }),
+    );
+
+    const response = await updateMembershipType(
+      request(
+        "http://localhost/api/admin/membership-types/type-1",
+        {
+          allowedAgeTiers: ["YOUTH", "ADULT"],
+          xeroContactGroupRules: [
+            {
+              ageTier: null,
+              mode: "ACCEPTED",
+              groupId: "group-manual",
+              groupName: "Manual Members",
+              isActive: true,
+            },
+          ],
+        },
+        "PATCH",
+      ),
+      params("type-1"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeAgeTierDeleteMany).toHaveBeenCalledWith({
+      where: { membershipTypeId: "type-1" },
+    });
+    expect(mocks.membershipTypeAgeTierCreateMany).toHaveBeenCalledWith({
+      data: [
+        { membershipTypeId: "type-1", ageTier: "YOUTH" },
+        { membershipTypeId: "type-1", ageTier: "ADULT" },
+      ],
+      skipDuplicates: true,
+    });
+    expect(mocks.xeroContactGroupRuleDeleteMany).toHaveBeenCalledWith({
+      where: { membershipTypeId: "type-1" },
+    });
+    expect(mocks.xeroContactGroupRuleCreateMany).toHaveBeenCalledWith({
+      data: [
+        {
+          membershipTypeId: "type-1",
+          ageTier: null,
+          mode: "ACCEPTED",
+          groupId: "group-manual",
+          groupName: "Manual Members",
+          isActive: true,
+          sortOrder: 0,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it("rejects duplicate managed Xero rule scopes", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValueOnce(
+      membershipType({ id: "type-1" }),
+    );
+
+    const response = await updateMembershipType(
+      request(
+        "http://localhost/api/admin/membership-types/type-1",
+        {
+          allowedAgeTiers: ["ADULT"],
+          xeroContactGroupRules: [
+            {
+              ageTier: "ADULT",
+              mode: "MANAGED",
+              groupId: "group-a",
+            },
+            {
+              ageTier: "ADULT",
+              mode: "MANAGED",
+              groupId: "group-b",
+            },
+          ],
+        },
+        "PATCH",
+      ),
+      params("type-1"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toContain("Only one managed");
     expect(mocks.membershipTypeUpdate).not.toHaveBeenCalled();
   });
 

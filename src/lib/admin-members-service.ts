@@ -630,7 +630,13 @@ export async function listAdminMembers(
       where: { seasonYear: currentSeasonYear },
       select: {
         membershipType: {
-          select: { subscriptionBehavior: true },
+          select: {
+            id: true,
+            key: true,
+            name: true,
+            isActive: true,
+            subscriptionBehavior: true,
+          },
         },
       },
       take: 1,
@@ -693,10 +699,10 @@ export async function listAdminMembers(
       latestToken.expiresAt > now
         ? latestToken.expiresAt
         : null;
-    const membershipTypeNotRequired = (m.seasonalMembershipAssignments ?? []).some(
-      (assignment) =>
-        assignment.membershipType.subscriptionBehavior === "NOT_REQUIRED",
-    );
+    const currentSeasonAssignment = m.seasonalMembershipAssignments?.[0] ?? null;
+    const currentMembershipType = currentSeasonAssignment?.membershipType ?? null;
+    const membershipTypeNotRequired =
+      currentMembershipType?.subscriptionBehavior === "NOT_REQUIRED";
     const subscriptionNotRequired =
       roleNeverRequiresSubscription(m.role) ||
       notRequiredAgeTiers.has(m.ageTier) ||
@@ -711,6 +717,14 @@ export async function listAdminMembers(
           : (m.subscriptions[0]?.status ?? null),
       subscriptionXeroInvoiceId:
         m.subscriptions[0]?.xeroInvoiceId ?? null,
+      currentMembershipType: currentMembershipType
+        ? {
+            id: currentMembershipType.id,
+            key: currentMembershipType.key,
+            name: currentMembershipType.name,
+            isActive: currentMembershipType.isActive,
+          }
+        : null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,

@@ -73,14 +73,6 @@ export function MemberInfoCard({
               )}
             </dd>
           </div>
-          <div>
-            <dt className="text-slate-500">Life Member Date</dt>
-            <dd className="font-medium">
-              {member.lifeMemberDate
-                ? formatMemberDateNz(member.lifeMemberDate)
-                : "Not set"}
-            </dd>
-          </div>
           {showOccupation && (
             <div>
               <dt className="text-slate-500">Occupation</dt>

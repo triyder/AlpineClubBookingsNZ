@@ -7,7 +7,12 @@ import type {
   SubscriptionStatus,
 } from "@prisma/client";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import {
+  formatDateOnly,
+  getTodayDateOnly,
+  isDateOnlyString,
+  parseDateOnly,
+} from "@/lib/date-only";
 import {
   buildStructuredAuditLogCreateArgs,
   type StructuredAuditEvent,
@@ -76,6 +81,7 @@ type SeasonalAssignmentWithType = {
   memberId: string;
   seasonYear: number;
   membershipTypeId: string;
+  applyFrom: Date | null;
   assignedByMemberId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -119,6 +125,7 @@ export type SeasonalMembershipChangePreview = {
   memberId: string;
   seasonYear: number;
   generatedAt: string;
+  applyFrom: string | null;
   previousAssignment: SerializedSeasonalMembershipAssignment | null;
   newMembershipType: SerializedMembershipTypeSummary;
   resultingBookingBehavior: MembershipTypeBookingBehavior;
@@ -199,6 +206,9 @@ export function serializeSeasonalMembershipAssignment(
     memberId: assignment.memberId,
     seasonYear: assignment.seasonYear,
     membershipTypeId: assignment.membershipTypeId,
+    applyFrom: assignment.applyFrom
+      ? formatDateOnly(assignment.applyFrom)
+      : null,
     assignedByMemberId: assignment.assignedByMemberId,
     createdAt: assignment.createdAt.toISOString(),
     updatedAt: assignment.updatedAt.toISOString(),
@@ -261,11 +271,26 @@ function getPreviewSecret() {
   return "seasonal-membership-preview-local-secret";
 }
 
+function normalizeApplyFromInput(value: string | null | undefined):
+  | { ok: true; date: Date | null; serialized: string | null }
+  | { ok: false; error: string } {
+  if (value === undefined || value === null || value === "") {
+    return { ok: true, date: null, serialized: null };
+  }
+
+  if (!isDateOnlyString(value)) {
+    return { ok: false, error: "Invalid apply-from date" };
+  }
+
+  return { ok: true, date: parseDateOnly(value), serialized: value };
+}
+
 function previewTokenPayload(preview: Omit<SeasonalMembershipChangePreview, "previewToken">) {
   return {
     version: PREVIEW_TOKEN_VERSION,
     memberId: preview.memberId,
     seasonYear: preview.seasonYear,
+    applyFrom: preview.applyFrom,
     previousMembershipTypeId:
       preview.previousAssignment?.membershipTypeId ?? null,
     newMembershipTypeId: preview.newMembershipType.id,
@@ -313,11 +338,16 @@ export async function getSeasonalMembershipChangePreview(params: {
   memberId: string;
   seasonYear: number;
   membershipTypeId: string;
+  applyFrom?: string | null;
   now?: Date;
   db?: SeasonalMembershipReadClient;
 }): Promise<JsonRouteResult> {
   const db = params.db ?? prisma;
   const today = params.now ?? getTodayDateOnly();
+  const normalizedApplyFrom = normalizeApplyFromInput(params.applyFrom);
+  if (!normalizedApplyFrom.ok) {
+    return jsonResult({ error: normalizedApplyFrom.error }, { status: 400 });
+  }
 
   const [member, newMembershipType, previousAssignment] = await Promise.all([
     db.member.findUnique({
@@ -436,6 +466,7 @@ export async function getSeasonalMembershipChangePreview(params: {
     memberId: params.memberId,
     seasonYear: params.seasonYear,
     generatedAt: new Date().toISOString(),
+    applyFrom: normalizedApplyFrom.serialized,
     previousAssignment: previousAssignment
       ? serializeSeasonalMembershipAssignment(
           previousAssignment as SeasonalAssignmentWithType,
@@ -486,6 +517,7 @@ export async function saveSeasonalMembershipAssignment(params: {
   memberId: string;
   seasonYear: number;
   membershipTypeId: string;
+  applyFrom?: string | null;
   adminMemberId: string;
   reason: string;
   previewToken: string;
@@ -502,6 +534,7 @@ export async function saveSeasonalMembershipAssignment(params: {
     memberId: params.memberId,
     seasonYear: params.seasonYear,
     membershipTypeId: params.membershipTypeId,
+    applyFrom: params.applyFrom,
     db,
   });
   if (previewResult.init?.status && previewResult.init.status >= 400) {
@@ -526,7 +559,10 @@ export async function saveSeasonalMembershipAssignment(params: {
     );
   }
 
-  if (preview.previousAssignment?.membershipTypeId === params.membershipTypeId) {
+  if (
+    preview.previousAssignment?.membershipTypeId === params.membershipTypeId &&
+    (preview.previousAssignment.applyFrom ?? null) === preview.applyFrom
+  ) {
     return jsonResult({
       assignment: preview.previousAssignment,
       preview,
@@ -534,6 +570,9 @@ export async function saveSeasonalMembershipAssignment(params: {
     });
   }
 
+  const nextApplyFromDate = preview.applyFrom
+    ? parseDateOnly(preview.applyFrom)
+    : null;
   const assignment = await db.$transaction(async (tx) => {
     const saved = await tx.seasonalMembershipAssignment.upsert({
       where: {
@@ -544,12 +583,14 @@ export async function saveSeasonalMembershipAssignment(params: {
       },
       update: {
         membershipTypeId: params.membershipTypeId,
+        applyFrom: nextApplyFromDate,
         assignedByMemberId: params.adminMemberId,
       },
       create: {
         memberId: params.memberId,
         seasonYear: params.seasonYear,
         membershipTypeId: params.membershipTypeId,
+        applyFrom: nextApplyFromDate,
         assignedByMemberId: params.adminMemberId,
       },
       include: assignmentInclude,
@@ -570,6 +611,8 @@ export async function saveSeasonalMembershipAssignment(params: {
           adminReason: reason,
           previousMembershipType: preview.previousAssignment?.membershipType,
           newMembershipType: preview.newMembershipType,
+          previousApplyFrom: preview.previousAssignment?.applyFrom ?? null,
+          newApplyFrom: preview.applyFrom,
           affectedCounts: preview.affectedCounts,
           bookingBehaviorChanged: preview.bookingBehaviorChanged,
           subscriptionBehaviorChanged: preview.subscriptionBehaviorChanged,
@@ -686,6 +729,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
     memberId: assignment.memberId,
     seasonYear: params.toSeasonYear,
     membershipTypeId: assignment.membershipTypeId,
+    applyFrom: null,
     assignedByMemberId: params.adminMemberId,
   }));
 

@@ -276,16 +276,23 @@ Xero contact-group rules, and committee assignment are separate axes:
   contact-group rules.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
-  drive age-based rates and age-based default Xero grouping.
+  drive age-based rates and age-based default Xero grouping. Use Age Tier Xero
+  groups for broad age cohorts such as Adult or Youth, use Membership Type Xero
+  groups for status/policy groups such as Life or Associate, and use both when
+  Xero needs both labels.
 - `SeasonalMembershipAssignment` records one membership type per member per
   membership `seasonYear`, including the assignment source (`ADMIN`, `IMPORT`,
-  `FAMILY_SUBSCRIPTION`, `ROLL_FORWARD`, or `SYSTEM`).
+  `FAMILY_SUBSCRIPTION`, `ROLL_FORWARD`, or `SYSTEM`) and an optional
+  date-only `applyFrom` changeover for mid-season moves between membership
+  types.
 - Admin member detail pages show access roles separately from seasonal
-  membership type. Changing the seasonal type requires a preview and admin
-  reason; the preview counts future confirmed bookings, drafts, waitlist
-  records, and subscription history before the save is audited. Production
-  preview tokens require `AUTH_SECRET` or `NEXTAUTH_SECRET`; setup readiness
-  blocks when neither secret is configured.
+  membership type. The Admin > Members list also shows the current seasonal
+  Membership Type beside Access. Changing the seasonal type requires a preview
+  and admin reason; the preview counts future confirmed bookings, drafts,
+  waitlist records, and subscription history before the save is audited.
+  Existing future bookings are not automatically repriced by changing the type
+  or `applyFrom` date. Production preview tokens require `AUTH_SECRET` or
+  `NEXTAUTH_SECRET`; setup readiness blocks when neither secret is configured.
 - `/admin/membership-types` includes an idempotent roll-forward tool that copies
   missing assignments from one season to another while leaving existing target
   assignments unchanged and flagging missing or inactive-type exceptions.

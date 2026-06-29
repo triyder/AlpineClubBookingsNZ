@@ -119,6 +119,7 @@ export function MemberTable({
                 </span>
               </TableHead>
             ))}
+            <TableHead>Membership Type</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => onToggleSort("ageTier")}>
               <span className="inline-flex items-center">
                 Age Tier
@@ -131,7 +132,7 @@ export function MemberTable({
                 <SortIcon column="active" sortBy={sortBy} sortDir={sortDir} />
               </span>
             </TableHead>
-            <TableHead>Type</TableHead>
+            <TableHead>Login</TableHead>
             <TableHead>Family Group</TableHead>
             <TableHead>Subscription</TableHead>
             <TableHead>Xero</TableHead>
@@ -213,6 +214,21 @@ export function MemberTable({
                       <Badge variant="secondary">No Login</Badge>
                     )}
                   </div>
+                </TableCell>
+                <TableCell>
+                  {member.currentMembershipType ? (
+                    <Badge
+                      variant={
+                        member.currentMembershipType.isActive
+                          ? "secondary"
+                          : "outline"
+                      }
+                    >
+                      {member.currentMembershipType.name}
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-slate-400">-</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span className="text-sm text-slate-600">
