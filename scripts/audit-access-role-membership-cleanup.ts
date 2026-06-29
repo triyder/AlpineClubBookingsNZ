@@ -1,0 +1,1035 @@
+#!/usr/bin/env -S npx tsx
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
+
+const ACCESS_ROLE_CLEANUP_MIGRATION =
+  "20260629160000_access_roles_membership_type_cleanup";
+const USER_ROLE_RENAME_MIGRATION = "20260630120000_rename_member_role_to_user";
+const MIGRATIONS_DIR = path.join(process.cwd(), "prisma", "migrations");
+
+type GuardResult =
+  | { ok: true; databaseName: string; host: string }
+  | { ok: false; reason: string };
+
+export type AuditSnapshot = {
+  memberRoles: Record<string, number>;
+  financeAccessLevels: Record<string, number>;
+  accessRoles: Record<string, number>;
+  membershipTypes: Record<string, number>;
+  seasonalAssignments: Record<string, number>;
+  xeroRulesByMode: Record<string, number>;
+  xeroRulesByAgeTier: Record<string, number>;
+  familyGroupRoles: Record<string, number>;
+  metrics: Record<string, number>;
+};
+
+export type AuditCheck = {
+  label: string;
+  expected: number;
+  actual: number;
+  ok: boolean;
+};
+
+export type AuditEvaluation = {
+  checks: AuditCheck[];
+  warnings: string[];
+};
+
+type PsqlOptions = {
+  databaseUrl: string;
+  sql?: string;
+  file?: string;
+  capture?: boolean;
+};
+
+const LOCAL_DATABASE_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const DISPOSABLE_DATABASE_NAME_PATTERN =
+  /(audit|scratch|test|tmp|temp|disposable|rehearsal)/i;
+
+function asCount(value: number | undefined): number {
+  return value ?? 0;
+}
+
+function addCheck(
+  checks: AuditCheck[],
+  label: string,
+  expected: number,
+  actual: number,
+): void {
+  checks.push({
+    label,
+    expected,
+    actual,
+    ok: expected === actual,
+  });
+}
+
+export function checkDisposableLocalDatabaseUrl(
+  databaseUrl: string | undefined,
+): GuardResult {
+  if (!databaseUrl) {
+    return { ok: false, reason: "DATABASE_URL is required." };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    return { ok: false, reason: "DATABASE_URL is not a valid URL." };
+  }
+
+  if (!["postgres:", "postgresql:"].includes(parsed.protocol)) {
+    return {
+      ok: false,
+      reason: "DATABASE_URL must use the postgresql:// protocol.",
+    };
+  }
+
+  const host = parsed.hostname.replace(/^\[/, "").replace(/\]$/, "");
+  if (!LOCAL_DATABASE_HOSTS.has(host)) {
+    return {
+      ok: false,
+      reason: `Refusing to run against non-local database host ${host}.`,
+    };
+  }
+
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+  if (!databaseName) {
+    return { ok: false, reason: "DATABASE_URL must include a database name." };
+  }
+
+  if (databaseName === "postgres") {
+    return {
+      ok: false,
+      reason: "Refusing to reset the default postgres maintenance database.",
+    };
+  }
+
+  if (!DISPOSABLE_DATABASE_NAME_PATTERN.test(databaseName)) {
+    return {
+      ok: false,
+      reason:
+        "Database name must include audit, scratch, test, tmp, temp, disposable, or rehearsal.",
+    };
+  }
+
+  return { ok: true, databaseName, host };
+}
+
+export function parseKeyCountRows(stdout: string): Record<string, number> {
+  const rows: Record<string, number> = {};
+
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+
+    const [key, countText] = line.split("\t");
+    const count = Number.parseInt(countText ?? "", 10);
+
+    if (!key || !Number.isFinite(count)) {
+      throw new Error(`Unexpected psql count row: ${line}`);
+    }
+
+    rows[key] = count;
+  }
+
+  return rows;
+}
+
+export function evaluateAuditSnapshots(
+  before: AuditSnapshot,
+  after: AuditSnapshot,
+): AuditEvaluation {
+  const checks: AuditCheck[] = [];
+  const warnings: string[] = [];
+
+  const expectedUserMembers =
+    asCount(before.memberRoles.MEMBER) +
+    asCount(before.memberRoles.ASSOCIATE) +
+    asCount(before.memberRoles.LIFE);
+  addCheck(checks, "Member.role USER after cleanup", expectedUserMembers, asCount(after.memberRoles.USER));
+  addCheck(checks, "Legacy Member.role MEMBER removed", 0, asCount(after.memberRoles.MEMBER));
+  addCheck(checks, "Legacy Member.role ASSOCIATE removed", 0, asCount(after.memberRoles.ASSOCIATE));
+  addCheck(checks, "Legacy Member.role LIFE removed", 0, asCount(after.memberRoles.LIFE));
+
+  addCheck(checks, "AccessRole USER backfill", expectedUserMembers, asCount(after.accessRoles.USER));
+  addCheck(checks, "AccessRole ADMIN backfill", asCount(before.memberRoles.ADMIN), asCount(after.accessRoles.ADMIN));
+  addCheck(checks, "AccessRole LODGE backfill", asCount(before.memberRoles.LODGE), asCount(after.accessRoles.LODGE));
+  addCheck(
+    checks,
+    "AccessRole FINANCE_USER backfill",
+    asCount(before.financeAccessLevels.VIEWER),
+    asCount(after.accessRoles.FINANCE_USER),
+  );
+  addCheck(
+    checks,
+    "AccessRole FINANCE_ADMIN backfill",
+    asCount(before.financeAccessLevels.MANAGER),
+    asCount(after.accessRoles.FINANCE_ADMIN),
+  );
+  addCheck(
+    checks,
+    "AccessRole ORG school login backfill",
+    asCount(before.metrics.schoolLoginMembers),
+    asCount(after.accessRoles.ORG),
+  );
+
+  addCheck(checks, "SCHOOL MembershipType seeded", 1, asCount(after.membershipTypes.SCHOOL));
+  addCheck(checks, "NON_MEMBER MembershipType seeded", 1, asCount(after.membershipTypes.NON_MEMBER));
+  addCheck(checks, "FAMILY MembershipType seeded", 1, asCount(after.membershipTypes.FAMILY));
+  addCheck(checks, "RESERVE MembershipType removed", 0, asCount(after.membershipTypes.RESERVE));
+
+  const expectedAssociateAssignments =
+    asCount(before.seasonalAssignments.ASSOCIATE) +
+    asCount(before.seasonalAssignments.RESERVE);
+  addCheck(
+    checks,
+    "RESERVE assignments merged into ASSOCIATE",
+    expectedAssociateAssignments,
+    asCount(after.seasonalAssignments.ASSOCIATE),
+  );
+  addCheck(checks, "RESERVE assignments removed", 0, asCount(after.seasonalAssignments.RESERVE));
+  addCheck(
+    checks,
+    "RESERVE migrated sourceDetail rows",
+    asCount(before.seasonalAssignments.RESERVE),
+    asCount(after.metrics.reserveSourceDetailRows),
+  );
+
+  addCheck(
+    checks,
+    "SCHOOL current-season assignments moved from FULL",
+    asCount(before.metrics.schoolFullAssignments),
+    asCount(after.metrics.schoolSchoolAssignments),
+  );
+  addCheck(
+    checks,
+    "NON_MEMBER current-season assignments moved from FULL",
+    asCount(before.metrics.nonMemberFullAssignments),
+    asCount(after.metrics.nonMemberNonMemberAssignments),
+  );
+  addCheck(
+    checks,
+    "Legacy non-member sourceDetail rows",
+    asCount(before.metrics.schoolFullAssignments) +
+      asCount(before.metrics.nonMemberFullAssignments),
+    asCount(after.metrics.legacyNonMemberSourceDetailRows),
+  );
+
+  addCheck(
+    checks,
+    "MembershipType age-tier rows seeded",
+    17,
+    asCount(after.metrics.membershipTypeAgeTierRows),
+  );
+  addCheck(
+    checks,
+    "Managed Xero age-tier rules backfilled",
+    asCount(before.metrics.managedAgeTierSettings),
+    asCount(after.xeroRulesByMode.MANAGED),
+  );
+  addCheck(
+    checks,
+    "Accepted Xero age-tier rules backfilled",
+    asCount(before.metrics.acceptedAgeTierGroups),
+    asCount(after.xeroRulesByMode.ACCEPTED),
+  );
+  addCheck(
+    checks,
+    "Family-group join rows preserved",
+    asCount(before.metrics.familyGroupMemberRows),
+    asCount(after.metrics.familyGroupMemberRows),
+  );
+  addCheck(
+    checks,
+    "FamilyGroupMember group-local MEMBER labels preserved",
+    asCount(before.familyGroupRoles.MEMBER),
+    asCount(after.familyGroupRoles.MEMBER),
+  );
+
+  if (
+    asCount(before.seasonalAssignments.RESERVE) > 0 &&
+    asCount(before.seasonalAssignments.ASSOCIATE) > 0
+  ) {
+    warnings.push(
+      "Both RESERVE and ASSOCIATE had assignments before cleanup. Assignments are preserved, but the single ASSOCIATE built-in cannot retain two display labels; review operator-facing Reserve wording before production.",
+    );
+  }
+
+  return { checks, warnings };
+}
+
+function runPsql({ databaseUrl, sql, file, capture = false }: PsqlOptions): string {
+  const args = [
+    "--dbname",
+    databaseUrl,
+    "--no-psqlrc",
+    "--set",
+    "ON_ERROR_STOP=1",
+    "--quiet",
+  ];
+
+  if (capture) {
+    args.push("--tuples-only", "--no-align", "--field-separator", "\t");
+  }
+
+  if (sql) {
+    args.push("--command", sql);
+  }
+
+  if (file) {
+    args.push("--file", file);
+  }
+
+  const result = spawnSync("psql", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    throw new Error(
+      [
+        "psql command failed.",
+        result.stdout.trim(),
+        result.stderr.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  return result.stdout;
+}
+
+function queryCounts(databaseUrl: string, sql: string): Record<string, number> {
+  return parseKeyCountRows(runPsql({ databaseUrl, sql, capture: true }));
+}
+
+function queryNumber(databaseUrl: string, sql: string): number {
+  const output = runPsql({ databaseUrl, sql, capture: true }).trim();
+  return Number.parseInt(output || "0", 10);
+}
+
+function tableExists(databaseUrl: string, tableName: string): boolean {
+  const escapedTableName = tableName.replace(/'/g, "''");
+  return (
+    runPsql({
+      databaseUrl,
+      sql: `SELECT CASE WHEN to_regclass('"${escapedTableName}"') IS NULL THEN '0' ELSE '1' END;`,
+      capture: true,
+    }).trim() === "1"
+  );
+}
+
+function columnExists(databaseUrl: string, tableName: string, columnName: string): boolean {
+  const escapedTableName = tableName.replace(/'/g, "''");
+  const escapedColumnName = columnName.replace(/'/g, "''");
+  return (
+    runPsql({
+      databaseUrl,
+      sql: `
+        SELECT CASE WHEN EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = '${escapedTableName}'
+            AND column_name = '${escapedColumnName}'
+        ) THEN '1' ELSE '0' END;
+      `,
+      capture: true,
+    }).trim() === "1"
+  );
+}
+
+function listMigrationNames(): string[] {
+  return fs
+    .readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+}
+
+function applyMigration(databaseUrl: string, migrationName: string): void {
+  const migrationFile = path.join(MIGRATIONS_DIR, migrationName, "migration.sql");
+  if (!fs.existsSync(migrationFile)) {
+    throw new Error(`Migration file not found: ${migrationFile}`);
+  }
+
+  runPsql({ databaseUrl, file: migrationFile });
+}
+
+function resetPublicSchema(databaseUrl: string): void {
+  runPsql({
+    databaseUrl,
+    sql: `
+      DROP SCHEMA IF EXISTS public CASCADE;
+      CREATE SCHEMA public;
+      GRANT ALL ON SCHEMA public TO public;
+    `,
+  });
+}
+
+function buildRepresentativeSeedSql(): string {
+  return `
+    INSERT INTO "MembershipLockoutSettings" (
+      "id",
+      "enabled",
+      "financialYearEndMonthOverride",
+      "textFallbackEnabled",
+      "updatedAt"
+    ) VALUES (
+      'default',
+      true,
+      3,
+      true,
+      CURRENT_TIMESTAMP
+    )
+    ON CONFLICT ("id") DO UPDATE
+    SET
+      "financialYearEndMonthOverride" = 3,
+      "updatedAt" = CURRENT_TIMESTAMP;
+
+    INSERT INTO "AgeTierSetting" (
+      "id",
+      "tier",
+      "minAge",
+      "maxAge",
+      "label",
+      "subscriptionRequiredForBooking",
+      "familyGroupRequestCreateMemberAllowed",
+      "xeroContactGroupId",
+      "xeroContactGroupName",
+      "sortOrder",
+      "updatedAt"
+    ) VALUES
+      (
+        'audit-age-tier-infant',
+        'INFANT',
+        0,
+        4,
+        'Infant (under 5)',
+        false,
+        true,
+        NULL,
+        NULL,
+        0,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-age-tier-child',
+        'CHILD',
+        5,
+        9,
+        'Child (5-9)',
+        false,
+        true,
+        'xero-group-child-managed',
+        'Children Managed',
+        1,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-age-tier-youth',
+        'YOUTH',
+        10,
+        17,
+        'Youth (10-17)',
+        true,
+        false,
+        NULL,
+        NULL,
+        2,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-age-tier-adult',
+        'ADULT',
+        18,
+        NULL,
+        'Adult (18+)',
+        true,
+        false,
+        'xero-group-adult-managed',
+        'Adults Managed',
+        3,
+        CURRENT_TIMESTAMP
+      )
+    ON CONFLICT ("tier") DO UPDATE
+    SET
+      "minAge" = EXCLUDED."minAge",
+      "maxAge" = EXCLUDED."maxAge",
+      "label" = EXCLUDED."label",
+      "subscriptionRequiredForBooking" = EXCLUDED."subscriptionRequiredForBooking",
+      "familyGroupRequestCreateMemberAllowed" = EXCLUDED."familyGroupRequestCreateMemberAllowed",
+      "xeroContactGroupId" = EXCLUDED."xeroContactGroupId",
+      "xeroContactGroupName" = EXCLUDED."xeroContactGroupName",
+      "sortOrder" = EXCLUDED."sortOrder",
+      "updatedAt" = CURRENT_TIMESTAMP;
+
+    INSERT INTO "AgeTierXeroAcceptedContactGroup" (
+      "id",
+      "ageTierSettingId",
+      "groupId",
+      "groupName",
+      "updatedAt"
+    ) VALUES
+      (
+        'audit-age-tier-child-accepted',
+        'audit-age-tier-child',
+        'xero-group-child-accepted',
+        'Children Accepted',
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-age-tier-adult-accepted',
+        'audit-age-tier-adult',
+        'xero-group-adult-accepted',
+        'Adults Accepted',
+        CURRENT_TIMESTAMP
+      )
+    ON CONFLICT ("groupId") DO UPDATE
+    SET
+      "ageTierSettingId" = EXCLUDED."ageTierSettingId",
+      "groupName" = EXCLUDED."groupName",
+      "updatedAt" = CURRENT_TIMESTAMP;
+
+    INSERT INTO "Member" (
+      "id",
+      "email",
+      "passwordHash",
+      "firstName",
+      "lastName",
+      "role",
+      "financeAccessLevel",
+      "ageTier",
+      "active",
+      "canLogin",
+      "updatedAt"
+    ) VALUES
+      (
+        'audit-full-member',
+        'audit-full@example.test',
+        'audit-hash',
+        'Full',
+        'Member',
+        'MEMBER',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-family-child',
+        'audit-full@example.test',
+        'audit-hash',
+        'Family',
+        'Child',
+        'MEMBER',
+        'NONE',
+        'CHILD',
+        true,
+        false,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-associate-member',
+        'audit-associate@example.test',
+        'audit-hash',
+        'Associate',
+        'Member',
+        'ASSOCIATE',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-life-member',
+        'audit-life@example.test',
+        'audit-hash',
+        'Life',
+        'Member',
+        'LIFE',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-reserve-member',
+        'audit-reserve@example.test',
+        'audit-hash',
+        'Reserve',
+        'Member',
+        'MEMBER',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-admin-member',
+        'audit-admin@example.test',
+        'audit-hash',
+        'Admin',
+        'Member',
+        'ADMIN',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-lodge-member',
+        'audit-lodge@example.test',
+        'audit-hash',
+        'Lodge',
+        'Manager',
+        'LODGE',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-finance-viewer',
+        'audit-finance-viewer@example.test',
+        'audit-hash',
+        'Finance',
+        'Viewer',
+        'MEMBER',
+        'VIEWER',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-finance-manager',
+        'audit-finance-manager@example.test',
+        'audit-hash',
+        'Finance',
+        'Manager',
+        'MEMBER',
+        'MANAGER',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-school-login',
+        'audit-school-login@example.test',
+        'audit-hash',
+        'School',
+        'Login',
+        'SCHOOL',
+        'NONE',
+        'ADULT',
+        true,
+        true,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-school-contact',
+        'audit-school-contact@example.test',
+        'audit-hash',
+        'School',
+        'Contact',
+        'SCHOOL',
+        'NONE',
+        'ADULT',
+        true,
+        false,
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-non-member',
+        'audit-non-member@example.test',
+        'audit-hash',
+        'Non',
+        'Member',
+        'NON_MEMBER',
+        'NONE',
+        'ADULT',
+        true,
+        false,
+        CURRENT_TIMESTAMP
+      );
+
+    UPDATE "Member"
+    SET
+      "parentMemberId" = 'audit-full-member',
+      "updatedAt" = CURRENT_TIMESTAMP
+    WHERE "id" = 'audit-family-child';
+
+    INSERT INTO "FamilyGroup" ("id", "name", "updatedAt")
+    VALUES ('audit-family-group', 'Audit Family Group', CURRENT_TIMESTAMP)
+    ON CONFLICT ("id") DO NOTHING;
+
+    INSERT INTO "FamilyGroupMember" (
+      "id",
+      "familyGroupId",
+      "memberId",
+      "role",
+      "joinedAt"
+    ) VALUES
+      (
+        'audit-family-group-admin',
+        'audit-family-group',
+        'audit-full-member',
+        'ADMIN',
+        CURRENT_TIMESTAMP
+      ),
+      (
+        'audit-family-group-child',
+        'audit-family-group',
+        'audit-family-child',
+        'MEMBER',
+        CURRENT_TIMESTAMP
+      )
+    ON CONFLICT ("familyGroupId", "memberId") DO UPDATE
+    SET "role" = EXCLUDED."role";
+
+    WITH current_membership_season AS (
+      SELECT
+        CASE
+          WHEN EXTRACT(MONTH FROM CURRENT_DATE)::int >= ((3 % 12) + 1)
+            THEN EXTRACT(YEAR FROM CURRENT_DATE)::int
+          ELSE EXTRACT(YEAR FROM CURRENT_DATE)::int - 1
+        END AS season_year
+    ),
+    assignment_seed(member_id, type_key) AS (
+      VALUES
+        ('audit-full-member', 'FULL'),
+        ('audit-family-child', 'FULL'),
+        ('audit-associate-member', 'ASSOCIATE'),
+        ('audit-life-member', 'LIFE'),
+        ('audit-reserve-member', 'RESERVE'),
+        ('audit-admin-member', 'FULL'),
+        ('audit-lodge-member', 'FULL'),
+        ('audit-finance-viewer', 'FULL'),
+        ('audit-finance-manager', 'FULL'),
+        ('audit-school-login', 'FULL'),
+        ('audit-school-contact', 'FULL'),
+        ('audit-non-member', 'FULL')
+    )
+    INSERT INTO "SeasonalMembershipAssignment" (
+      "id",
+      "memberId",
+      "seasonYear",
+      "membershipTypeId",
+      "updatedAt"
+    )
+    SELECT
+      'audit-seasonal-membership-' || assignment_seed.member_id,
+      assignment_seed.member_id,
+      current_membership_season.season_year,
+      membership_type."id",
+      CURRENT_TIMESTAMP
+    FROM assignment_seed
+    CROSS JOIN current_membership_season
+    JOIN "MembershipType" membership_type ON membership_type."key" = assignment_seed.type_key
+    ON CONFLICT ("memberId", "seasonYear") DO UPDATE
+    SET
+      "membershipTypeId" = EXCLUDED."membershipTypeId",
+      "updatedAt" = CURRENT_TIMESTAMP;
+  `;
+}
+
+function seedRepresentativeData(databaseUrl: string): void {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "acb-access-role-audit-"));
+  const seedFile = path.join(tempDir, "representative-seed.sql");
+  fs.writeFileSync(seedFile, buildRepresentativeSeedSql(), "utf8");
+
+  try {
+    runPsql({ databaseUrl, file: seedFile });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function collectSnapshot(databaseUrl: string): AuditSnapshot {
+  const hasAccessRoles = tableExists(databaseUrl, "MemberAccessRole");
+  const hasXeroRules = tableExists(databaseUrl, "XeroContactGroupRule");
+  const hasMembershipTypeAgeTiers = tableExists(databaseUrl, "MembershipTypeAgeTier");
+  const hasSourceDetail = columnExists(
+    databaseUrl,
+    "SeasonalMembershipAssignment",
+    "sourceDetail",
+  );
+
+  return {
+    memberRoles: queryCounts(
+      databaseUrl,
+      'SELECT "role"::text, COUNT(*) FROM "Member" GROUP BY 1 ORDER BY 1;',
+    ),
+    financeAccessLevels: queryCounts(
+      databaseUrl,
+      'SELECT "financeAccessLevel"::text, COUNT(*) FROM "Member" GROUP BY 1 ORDER BY 1;',
+    ),
+    accessRoles: hasAccessRoles
+      ? queryCounts(
+          databaseUrl,
+          'SELECT "role"::text, COUNT(*) FROM "MemberAccessRole" GROUP BY 1 ORDER BY 1;',
+        )
+      : {},
+    membershipTypes: queryCounts(
+      databaseUrl,
+      'SELECT "key", COUNT(*) FROM "MembershipType" GROUP BY 1 ORDER BY 1;',
+    ),
+    seasonalAssignments: queryCounts(
+      databaseUrl,
+      `
+        SELECT membership_type."key", COUNT(*)
+        FROM "SeasonalMembershipAssignment" assignment
+        JOIN "MembershipType" membership_type ON membership_type."id" = assignment."membershipTypeId"
+        GROUP BY 1
+        ORDER BY 1;
+      `,
+    ),
+    xeroRulesByMode: hasXeroRules
+      ? queryCounts(
+          databaseUrl,
+          'SELECT "mode"::text, COUNT(*) FROM "XeroContactGroupRule" GROUP BY 1 ORDER BY 1;',
+        )
+      : {},
+    xeroRulesByAgeTier: hasXeroRules
+      ? queryCounts(
+          databaseUrl,
+          `
+            SELECT COALESCE("ageTier"::text, 'NO_AGE_TIER'), COUNT(*)
+            FROM "XeroContactGroupRule"
+            GROUP BY 1
+            ORDER BY 1;
+          `,
+        )
+      : {},
+    familyGroupRoles: queryCounts(
+      databaseUrl,
+      'SELECT "role", COUNT(*) FROM "FamilyGroupMember" GROUP BY 1 ORDER BY 1;',
+    ),
+    metrics: {
+      schoolLoginMembers: queryNumber(
+        databaseUrl,
+        `SELECT COUNT(*) FROM "Member" WHERE "role"::text = 'SCHOOL' AND "canLogin" = true;`,
+      ),
+      schoolFullAssignments: queryNumber(
+        databaseUrl,
+        `
+          SELECT COUNT(*)
+          FROM "SeasonalMembershipAssignment" assignment
+          JOIN "Member" member ON member."id" = assignment."memberId"
+          JOIN "MembershipType" membership_type ON membership_type."id" = assignment."membershipTypeId"
+          WHERE member."role"::text = 'SCHOOL'
+            AND membership_type."key" = 'FULL';
+        `,
+      ),
+      schoolSchoolAssignments: queryNumber(
+        databaseUrl,
+        `
+          SELECT COUNT(*)
+          FROM "SeasonalMembershipAssignment" assignment
+          JOIN "Member" member ON member."id" = assignment."memberId"
+          JOIN "MembershipType" membership_type ON membership_type."id" = assignment."membershipTypeId"
+          WHERE member."role"::text = 'SCHOOL'
+            AND membership_type."key" = 'SCHOOL';
+        `,
+      ),
+      nonMemberFullAssignments: queryNumber(
+        databaseUrl,
+        `
+          SELECT COUNT(*)
+          FROM "SeasonalMembershipAssignment" assignment
+          JOIN "Member" member ON member."id" = assignment."memberId"
+          JOIN "MembershipType" membership_type ON membership_type."id" = assignment."membershipTypeId"
+          WHERE member."role"::text = 'NON_MEMBER'
+            AND membership_type."key" = 'FULL';
+        `,
+      ),
+      nonMemberNonMemberAssignments: queryNumber(
+        databaseUrl,
+        `
+          SELECT COUNT(*)
+          FROM "SeasonalMembershipAssignment" assignment
+          JOIN "Member" member ON member."id" = assignment."memberId"
+          JOIN "MembershipType" membership_type ON membership_type."id" = assignment."membershipTypeId"
+          WHERE member."role"::text = 'NON_MEMBER'
+            AND membership_type."key" = 'NON_MEMBER';
+        `,
+      ),
+      managedAgeTierSettings: queryNumber(
+        databaseUrl,
+        'SELECT COUNT(*) FROM "AgeTierSetting" WHERE "xeroContactGroupId" IS NOT NULL;',
+      ),
+      acceptedAgeTierGroups: queryNumber(
+        databaseUrl,
+        'SELECT COUNT(*) FROM "AgeTierXeroAcceptedContactGroup";',
+      ),
+      membershipTypeAgeTierRows: hasMembershipTypeAgeTiers
+        ? queryNumber(databaseUrl, 'SELECT COUNT(*) FROM "MembershipTypeAgeTier";')
+        : 0,
+      familyGroupMemberRows: queryNumber(
+        databaseUrl,
+        'SELECT COUNT(*) FROM "FamilyGroupMember";',
+      ),
+      reserveSourceDetailRows: hasSourceDetail
+        ? queryNumber(
+            databaseUrl,
+            `
+              SELECT COUNT(*)
+              FROM "SeasonalMembershipAssignment"
+              WHERE "sourceDetail" = 'Migrated from RESERVE built-in membership type.';
+            `,
+          )
+        : 0,
+      legacyNonMemberSourceDetailRows: hasSourceDetail
+        ? queryNumber(
+            databaseUrl,
+            `
+              SELECT COUNT(*)
+              FROM "SeasonalMembershipAssignment"
+              WHERE "sourceDetail" = 'Migrated from legacy non-member Role category.';
+            `,
+          )
+        : 0,
+    },
+  };
+}
+
+function renderCountMap(label: string, rows: Record<string, number>): string[] {
+  const entries = Object.entries(rows);
+  if (entries.length === 0) {
+    return [`${label}: none`];
+  }
+
+  return [`${label}:`, ...entries.map(([key, count]) => `  ${key}: ${count}`)];
+}
+
+function renderAuditReport(
+  before: AuditSnapshot,
+  after: AuditSnapshot,
+  evaluation: AuditEvaluation,
+): string {
+  const failedChecks = evaluation.checks.filter((check) => !check.ok);
+
+  return [
+    "# Access-role membership cleanup migration audit",
+    "",
+    "## Before cleanup",
+    ...renderCountMap("Member.role", before.memberRoles),
+    ...renderCountMap("financeAccessLevel", before.financeAccessLevels),
+    ...renderCountMap("MembershipType", before.membershipTypes),
+    ...renderCountMap("SeasonalMembershipAssignment by type", before.seasonalAssignments),
+    ...renderCountMap("FamilyGroupMember.role", before.familyGroupRoles),
+    "",
+    "## After cleanup",
+    ...renderCountMap("Member.role", after.memberRoles),
+    ...renderCountMap("MemberAccessRole", after.accessRoles),
+    ...renderCountMap("MembershipType", after.membershipTypes),
+    ...renderCountMap("SeasonalMembershipAssignment by type", after.seasonalAssignments),
+    ...renderCountMap("XeroContactGroupRule by mode", after.xeroRulesByMode),
+    ...renderCountMap("XeroContactGroupRule by age tier", after.xeroRulesByAgeTier),
+    ...renderCountMap("FamilyGroupMember.role", after.familyGroupRoles),
+    "",
+    "## Checks",
+    ...evaluation.checks.map(
+      (check) =>
+        `${check.ok ? "PASS" : "FAIL"} ${check.label}: expected ${check.expected}, got ${check.actual}`,
+    ),
+    "",
+    "## Warnings",
+    ...(evaluation.warnings.length > 0
+      ? evaluation.warnings.map((warning) => `WARN ${warning}`)
+      : ["none"]),
+    "",
+    failedChecks.length === 0
+      ? "Result: PASS"
+      : `Result: FAIL (${failedChecks.length} failed checks)`,
+  ].join("\n");
+}
+
+function parseArgs(argv: string[]): { yes: boolean } {
+  return { yes: argv.includes("--yes") };
+}
+
+function main(): void {
+  const { yes } = parseArgs(process.argv.slice(2));
+  const databaseUrl = process.env.DATABASE_URL ?? "";
+  const guard = checkDisposableLocalDatabaseUrl(databaseUrl);
+
+  if (!guard.ok) {
+    throw new Error(guard.reason);
+  }
+
+  if (!yes && process.env.ACCESS_ROLE_AUDIT_CONFIRM !== "1") {
+    throw new Error(
+      "This resets the public schema. Re-run with --yes or ACCESS_ROLE_AUDIT_CONFIRM=1 after confirming the database is disposable.",
+    );
+  }
+
+  const migrationNames = listMigrationNames();
+  const preCleanupMigrations = migrationNames.filter(
+    (migrationName) => migrationName < ACCESS_ROLE_CLEANUP_MIGRATION,
+  );
+
+  if (!migrationNames.includes(ACCESS_ROLE_CLEANUP_MIGRATION)) {
+    throw new Error(`Missing required migration ${ACCESS_ROLE_CLEANUP_MIGRATION}.`);
+  }
+  if (!migrationNames.includes(USER_ROLE_RENAME_MIGRATION)) {
+    throw new Error(`Missing required migration ${USER_ROLE_RENAME_MIGRATION}.`);
+  }
+
+  console.log(
+    `Resetting local disposable database ${guard.databaseName} on ${guard.host}.`,
+  );
+  resetPublicSchema(databaseUrl);
+
+  console.log(`Applying ${preCleanupMigrations.length} pre-cleanup migrations.`);
+  for (const migrationName of preCleanupMigrations) {
+    applyMigration(databaseUrl, migrationName);
+  }
+
+  console.log("Seeding representative legacy membership data.");
+  seedRepresentativeData(databaseUrl);
+
+  const before = collectSnapshot(databaseUrl);
+
+  console.log(`Applying ${ACCESS_ROLE_CLEANUP_MIGRATION}.`);
+  applyMigration(databaseUrl, ACCESS_ROLE_CLEANUP_MIGRATION);
+  console.log(`Applying ${USER_ROLE_RENAME_MIGRATION}.`);
+  applyMigration(databaseUrl, USER_ROLE_RENAME_MIGRATION);
+
+  const after = collectSnapshot(databaseUrl);
+  const evaluation = evaluateAuditSnapshots(before, after);
+  const report = renderAuditReport(before, after, evaluation);
+
+  console.log("");
+  console.log(report);
+
+  if (evaluation.checks.some((check) => !check.ok)) {
+    process.exitCode = 1;
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
+}

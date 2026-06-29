@@ -33,6 +33,8 @@ AlpineClubBookingsNZ.
 - `DEPLOYMENT.md` is the bootstrap and blue/green deployment reference.
 - `BLUE_GREEN_MIGRATION_POLICY.md` defines how migrations must be structured
   for safe cutover.
+- `ACCESS_ROLE_MEMBERSHIP_CLEANUP_AUDIT.md` rehearses and audits the
+  access-role and membership-type cleanup migrations on disposable data.
 - `AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` covers audit-log retention and optional
   archival.
 - `HASHED_TOKEN_MIGRATION.md` documents the historical token hashing migration.

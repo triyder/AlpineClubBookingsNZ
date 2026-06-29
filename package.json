@@ -42,7 +42,8 @@
     "db:seed:demo": "npx tsx prisma/demo-seed.ts",
     "db:migrate": "npx prisma migrate deploy",
     "db:push": "npx prisma db push",
-    "db:check-drift": "prisma migrate diff --from-migrations ./prisma/migrations --to-schema ./prisma/schema.prisma --exit-code"
+    "db:check-drift": "prisma migrate diff --from-migrations ./prisma/migrations --to-schema ./prisma/schema.prisma --exit-code",
+    "db:audit-access-role-cleanup": "tsx scripts/audit-access-role-membership-cleanup.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
