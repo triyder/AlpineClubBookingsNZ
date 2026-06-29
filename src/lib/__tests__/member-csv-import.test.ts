@@ -96,7 +96,7 @@ describe("member CSV import parser", () => {
       firstName: "First12",
       lastName: "Last12",
       email: "member12@example.com",
-      role: "MEMBER",
+      role: "USER",
     });
   });
 
@@ -135,7 +135,27 @@ describe("member CSV import parser", () => {
     });
   });
 
-  it("normalizes Associate and Life member roles in CSV previews", () => {
+  it("maps legacy Member role imports to USER", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "First Name,Last Name,Email,Role",
+        "Alice,Member,alice@example.com,Member",
+      ].join("\n"),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+    );
+
+    expect(preview.hasErrors).toBe(false);
+    expect(preview.importRows.map((row) => row.role)).toEqual(["USER"]);
+  });
+
+  it("rejects membership type categories in the CSV role column", () => {
     const parsed = parseMemberImportCsv(
       [
         "First Name,Last Name,Email,Role",
@@ -152,10 +172,11 @@ describe("member CSV import parser", () => {
       inferMemberImportColumnMapping(parsed.data.headers),
     );
 
-    expect(preview.hasErrors).toBe(false);
-    expect(preview.importRows.map((row) => row.role)).toEqual([
-      "ASSOCIATE",
-      "LIFE",
+    expect(preview.hasErrors).toBe(true);
+    expect(preview.importRows).toEqual([]);
+    expect(preview.rows.map((row) => row.errors)).toEqual([
+      ["Role must be one of USER, ADMIN"],
+      ["Role must be one of USER, ADMIN"],
     ]);
   });
 

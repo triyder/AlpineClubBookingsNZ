@@ -49,9 +49,7 @@ export function legacyRoleToAccessRoles(
   canLogin?: boolean | null,
 ): AppAccessRole[] {
   switch (role) {
-    case "MEMBER":
-    case "ASSOCIATE":
-    case "LIFE":
+    case "USER":
       return ["USER"];
     case "ADMIN":
       return ["ADMIN"];
@@ -91,7 +89,7 @@ export function legacyRoleFromAccessRoles(
   if (roles.includes("ADMIN")) return "ADMIN";
   if (roles.includes("LODGE")) return "LODGE";
   if (roles.includes("ORG")) return "SCHOOL";
-  return "MEMBER";
+  return "USER";
 }
 
 export function dedupeAccessRoles(

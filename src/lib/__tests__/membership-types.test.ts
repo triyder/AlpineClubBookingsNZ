@@ -33,7 +33,7 @@ function makeDb() {
     },
     member: {
       findMany: vi.fn().mockResolvedValue([
-        { id: "member-1", role: "MEMBER" },
+        { id: "member-1", role: "USER" },
         { id: "admin-1", role: "ADMIN" },
         { id: "lodge-1", role: "LODGE" },
         { id: "associate-1", role: "ASSOCIATE" },
@@ -49,7 +49,7 @@ function makeDb() {
 }
 
 describe("seasonal membership type schema contract", () => {
-  it("adds durable membership type and seasonal assignment models without changing Role", () => {
+  it("keeps durable membership types separate from the access-role enum", () => {
     const schema = readRepoFile("prisma/schema.prisma");
 
     expect(schema).toContain("enum MembershipTypeBookingBehavior");
@@ -62,11 +62,9 @@ describe("seasonal membership type schema contract", () => {
     expect(schema).toContain("model SeasonalMembershipAssignment");
     expect(schema).toContain("@@unique([memberId, seasonYear])");
     expect(ROLE_VALUES).toEqual([
-      "MEMBER",
+      "USER",
       "ADMIN",
       "LODGE",
-      "ASSOCIATE",
-      "LIFE",
       "NON_MEMBER",
       "SCHOOL",
     ]);
@@ -167,6 +165,7 @@ describe("built-in membership type seed helpers", () => {
   });
 
   it("keeps role-to-type defaults separate from access role semantics", () => {
+    expect(defaultMembershipTypeKeyForRole("USER")).toBe("FULL");
     expect(defaultMembershipTypeKeyForRole("MEMBER")).toBe("FULL");
     expect(defaultMembershipTypeKeyForRole("ADMIN")).toBe("FULL");
     expect(defaultMembershipTypeKeyForRole("LODGE")).toBe("FULL");

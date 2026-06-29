@@ -926,23 +926,6 @@ export function MemberEditorDialog({
               values={form}
             />
 
-            {form.role === "LIFE" && (
-              <div className="space-y-2">
-                <Label htmlFor="lifeMemberDate">Life member from</Label>
-                <Input
-                  id="lifeMemberDate"
-                  type="date"
-                  value={form.lifeMemberDate}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      lifeMemberDate: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-            )}
-
             <div className="space-y-2">
               <Label htmlFor="comments">Comments</Label>
               <Textarea

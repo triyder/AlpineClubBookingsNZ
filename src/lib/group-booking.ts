@@ -1107,7 +1107,7 @@ export async function verifyAndCreateNonMemberJoin(
           emailVerified: true,
           firstName: join.contactFirstName!,
           lastName: join.contactLastName!,
-          role: "MEMBER",
+          role: "USER",
           ageTier: AgeTier.ADULT,
           active: true,
           canLogin: false,

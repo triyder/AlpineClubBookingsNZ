@@ -71,31 +71,31 @@ describe("#24: Kiosk Access Tiers", () => {
       expect(tier).toBe("lodge");
     });
 
-    it("returns 'hut-leader' for MEMBER with active assignment on date", async () => {
+    it("returns 'hut-leader' for USER with active assignment on date", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
       expect(tier).toBe("hut-leader");
     });
 
-    it("returns 'hut-leader' for ASSOCIATE and LIFE roles with active assignments", async () => {
+    it("does not grant hut-leader access to membership category strings", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
 
       await expect(
         getKioskAccessTier("associate-1", "ASSOCIATE", makeDate("2026-04-08")),
-      ).resolves.toBe("hut-leader");
+      ).resolves.toBe("none");
       await expect(
         getKioskAccessTier("life-1", "LIFE", makeDate("2026-04-08")),
-      ).resolves.toBe("hut-leader");
+      ).resolves.toBe("none");
     });
 
-    it("returns 'hut-leader' for MEMBER on day before assignment starts", async () => {
+    it("returns 'hut-leader' for USER on day before assignment starts", async () => {
       // Assignment starts 2026-04-09, checking access for 2026-04-08
       // startDate <= nextDay (2026-04-09) && endDate >= date (2026-04-08)
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
       expect(tier).toBe("hut-leader");
       // Verify the query used nextDay for startDate check
       expect(mockPrisma.hutLeaderAssignment.count).toHaveBeenCalledWith({
@@ -107,34 +107,34 @@ describe("#24: Kiosk Access Tiers", () => {
       });
     });
 
-    it("returns 'staying-guest' for MEMBER with visible booking covering date", async () => {
+    it("returns 'staying-guest' for USER with visible booking covering date", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
       expect(tier).toBe("staying-guest");
     });
 
-    it("returns 'staying-guest' for ASSOCIATE and LIFE roles with visible bookings", async () => {
+    it("does not grant staying-guest access to membership category strings", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
 
       await expect(
         getKioskAccessTier("associate-1", "ASSOCIATE", makeDate("2026-04-08")),
-      ).resolves.toBe("staying-guest");
+      ).resolves.toBe("none");
       await expect(
         getKioskAccessTier("life-1", "LIFE", makeDate("2026-04-08")),
-      ).resolves.toBe("staying-guest");
+      ).resolves.toBe("none");
     });
 
-    it("returns 'staying-guest' for MEMBER on day before check-in", async () => {
+    it("returns 'staying-guest' for USER on day before check-in", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       // Booking checkIn is 2026-04-09, querying for 2026-04-08
       // checkIn <= nextDay (2026-04-09) && checkOut >= date (2026-04-08)
       mockPrisma.booking.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
       expect(tier).toBe("staying-guest");
     });
 
@@ -142,7 +142,7 @@ describe("#24: Kiosk Access Tiers", () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
 
       expect(tier).toBe("staying-guest");
       expect(mockPrisma.booking.count).toHaveBeenCalledWith(
@@ -161,11 +161,11 @@ describe("#24: Kiosk Access Tiers", () => {
       );
     });
 
-    it("returns 'none' for MEMBER with no matching bookings or assignments", async () => {
+    it("returns 'none' for USER with no matching bookings or assignments", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(0);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
       expect(tier).toBe("none");
     });
 
@@ -174,7 +174,7 @@ describe("#24: Kiosk Access Tiers", () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
       mockPrisma.booking.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
-      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+      const tier = await getKioskAccessTier("user-1", "USER", makeDate("2026-04-08"));
       expect(tier).toBe("hut-leader");
       // booking.count should NOT be called since hut-leader was found first
       expect(mockPrisma.booking.count).not.toHaveBeenCalled();
@@ -204,7 +204,7 @@ describe("#24: Kiosk Access Tiers", () => {
         },
       ]);
       const { getKioskDateRange } = await import("@/lib/kiosk-access");
-      const range = await getKioskDateRange("user-1", "MEMBER");
+      const range = await getKioskDateRange("user-1", "USER");
       expect(range).toEqual({
         minDate: "2026-04-09", // day before check-in
         maxDate: "2026-04-13", // one night after the last stay night
@@ -215,7 +215,7 @@ describe("#24: Kiosk Access Tiers", () => {
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.booking.findMany.mockResolvedValue([]);
       const { getKioskDateRange } = await import("@/lib/kiosk-access");
-      const range = await getKioskDateRange("user-1", "MEMBER");
+      const range = await getKioskDateRange("user-1", "USER");
       expect(range).toBeNull();
     });
   });
@@ -251,7 +251,7 @@ describe("#24: Kiosk Access Tiers", () => {
       ]);
       mockPrisma.booking.findMany.mockResolvedValue([]);
       const { getKioskAccessInfo } = await import("@/lib/kiosk-access");
-      const info = await getKioskAccessInfo("user-1", "MEMBER", makeDate("2026-04-08"));
+      const info = await getKioskAccessInfo("user-1", "USER", makeDate("2026-04-08"));
       expect(info.tier).toBe("hut-leader");
       expect(info.canManageRoster).toBe(true);
       expect(info.canMarkAttendance).toBe(true);
@@ -270,7 +270,7 @@ describe("#24: Kiosk Access Tiers", () => {
         },
       ]);
       const { getKioskAccessInfo } = await import("@/lib/kiosk-access");
-      const info = await getKioskAccessInfo("user-1", "MEMBER", makeDate("2026-04-08"));
+      const info = await getKioskAccessInfo("user-1", "USER", makeDate("2026-04-08"));
       expect(info.tier).toBe("staying-guest");
       expect(info.canManageRoster).toBe(false);
       expect(info.canMarkAttendance).toBe(false);
@@ -316,9 +316,9 @@ describe("#24: Lodge Auth Tier-Based Restrictions", () => {
       expect(result.session).toBeTruthy();
     });
 
-    it("returns Forbidden for MEMBER with no access", async () => {
+    it("returns Forbidden for USER with no access", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(0);
@@ -337,9 +337,9 @@ describe("#24: Lodge Auth Tier-Based Restrictions", () => {
       expect(result.status).toBe(401);
     });
 
-    it("returns staying-guest tier for MEMBER with PAID booking", async () => {
+    it("returns staying-guest tier for USER with PAID booking", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(1);
@@ -395,7 +395,7 @@ describe("#31: Expected Arrival Time", () => {
   describe("PUT /api/bookings/[id]/arrival-time", () => {
     it("updates arrival time for booking owner", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -424,7 +424,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects invalid time format", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -447,7 +447,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects non-owner non-admin", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "other-1", role: "MEMBER" },
+        user: { id: "other-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -497,7 +497,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects update after check-in has passed", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -520,7 +520,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("returns 404 for non-existent booking", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue(null);
 
@@ -539,7 +539,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects cancelled bookings", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -562,7 +562,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects deactivated members before mutating the booking", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.member.findUnique.mockResolvedValueOnce({
         id: "member-1",
@@ -588,7 +588,7 @@ describe("#31: Expected Arrival Time", () => {
   describe("DELETE /api/bookings/[id]/arrival-time", () => {
     it("clears arrival time", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -615,7 +615,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects after check-in has passed", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -636,7 +636,7 @@ describe("#31: Expected Arrival Time", () => {
 
     it("rejects completed bookings", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
@@ -660,7 +660,7 @@ describe("#31: Expected Arrival Time", () => {
     it("accepts valid 30-minute increments", async () => {
       const validTimes = ["06:00", "06:30", "12:00", "14:30", "23:00"];
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
 
       for (const time of validTimes) {
@@ -691,7 +691,7 @@ describe("#31: Expected Arrival Time", () => {
     it("rejects invalid time formats", async () => {
       const invalidTimes = ["14:15", "14:45", "25:00", "abc", "1400"];
       mockAuth.mockResolvedValue({
-        user: { id: "member-1", role: "MEMBER" },
+        user: { id: "member-1", role: "USER" },
       });
 
       for (const time of invalidTimes) {

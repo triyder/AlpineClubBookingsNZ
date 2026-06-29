@@ -336,7 +336,7 @@ export async function POST(
             create: {
               familyGroupId,
               memberId: target.id,
-              role: "MEMBER",
+              role: "USER",
             },
             update: {},
           })

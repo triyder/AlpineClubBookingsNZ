@@ -87,7 +87,7 @@ export const createMemberSchema = z.object({
     .nullable(),
   role: z
     .enum(ROLE_VALUES)
-    .default("MEMBER"),
+    .default("USER"),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).default("NONE"),
   accessRoles: z.array(z.enum(ACCESS_ROLE_VALUES)).optional(),
   ageTier: ageTierEnum.optional(),
@@ -363,7 +363,7 @@ export async function listAdminMembers(
   if (isAccessRole(roleFilter)) {
     const legacyFallbackConditions: Record<string, unknown>[] = [];
     if (roleFilter === "USER") {
-      legacyFallbackConditions.push({ role: { in: ["MEMBER", "ASSOCIATE", "LIFE"] } });
+      legacyFallbackConditions.push({ role: "USER" });
     } else if (roleFilter === "ADMIN" || roleFilter === "LODGE") {
       legacyFallbackConditions.push({ role: roleFilter });
     } else if (roleFilter === "FINANCE_USER") {

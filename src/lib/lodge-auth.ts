@@ -22,7 +22,7 @@ export function getLodgeAuthActorMemberId(authResult: {
 
 /**
  * Shared auth check for lodge API endpoints.
- * Allows ADMIN, LODGE, MEMBER with kiosk access, or a valid hut leader PIN
+ * Allows ADMIN, LODGE, USER with kiosk access, or a valid hut leader PIN
  * session attached to an authenticated lodge/admin account.
  */
 export async function checkLodgeAuth(

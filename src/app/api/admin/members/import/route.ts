@@ -76,7 +76,7 @@ const importRowSchema = z
     ),
     lifeMemberDate: z.string().max(32).optional().nullable(),
     comments: nullableImportString(MEMBER_IMPORT_COMMENTS_MAX_LENGTH),
-    role: z.enum(MEMBER_IMPORT_ROLE_VALUES).optional().default("MEMBER"),
+    role: z.enum(MEMBER_IMPORT_ROLE_VALUES).optional().default("USER"),
     sourceLineNumber: z.number().int().positive().optional(),
     sourceColumnLabels: z.record(z.string(), z.string().max(128)).optional(),
   })
@@ -452,7 +452,7 @@ export async function POST(req: NextRequest) {
       lifeMemberDate,
       comments: row.comments?.trim() || null,
       ageTier,
-      role: (row.role || "MEMBER") as (typeof MEMBER_IMPORT_ROLE_VALUES)[number],
+      role: (row.role || "USER") as (typeof MEMBER_IMPORT_ROLE_VALUES)[number],
       canLogin,
       rowNote,
     });

@@ -403,7 +403,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
       ageTier: AgeTier;
       active: true;
       canLogin: false;
-      role: "MEMBER";
+      role: "USER";
       parentMemberId: string;
       inheritParentEmail: true;
       inheritEmailFromId: string;
@@ -503,7 +503,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
           ageTier: childRequestTier.requestedAgeTier,
           active: true,
           canLogin: false,
-          role: "MEMBER",
+          role: "USER",
           parentMemberId: request.requesterId,
           inheritParentEmail: true,
           inheritEmailFromId,

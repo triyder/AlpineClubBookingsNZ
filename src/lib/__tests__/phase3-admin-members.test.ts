@@ -134,7 +134,7 @@ import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
 const mockedAuth = vi.mocked(auth);
 const mockedSendMemberSetupInviteEmail = vi.mocked(sendMemberSetupInviteEmail);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
+const memberSession = { user: { id: "m1", role: "USER" } } as any;
 const adminAccessMember = {
   id: "session-member",
   role: "ADMIN",
@@ -145,7 +145,7 @@ const adminAccessMember = {
 };
 const userAccessMember = {
   id: "session-member",
-  role: "MEMBER",
+  role: "USER",
   financeAccessLevel: "NONE",
   accessRoles: [{ role: "USER" }],
   active: true,
@@ -474,12 +474,17 @@ describe("Phase 3: Admin Member Management", () => {
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
       mockSessionAndMemberListCounts(0);
 
-      await getMembers(new NextRequest("http://localhost/api/admin/members?q=alice&role=MEMBER&active=true"));
+      await getMembers(new NextRequest("http://localhost/api/admin/members?q=alice&role=USER&active=true"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       const andConditions = call.where?.AND as any[];
       expect(andConditions.length).toBe(3); // text search + role + active
       expect(andConditions).toEqual(expect.arrayContaining([
-        { role: "MEMBER" },
+        {
+          OR: [
+            { accessRoles: { some: { role: "USER" } } },
+            { role: "USER" },
+          ],
+        },
         { active: true },
       ]));
       expect(andConditions.some((c: any) => c.OR)).toBe(true);
@@ -1473,7 +1478,7 @@ describe("Phase 3: Admin Member Management", () => {
       mockedAuth.mockResolvedValue(adminSession);
       const req = new NextRequest("http://localhost/api/admin/members/bulk-update", {
         method: "POST",
-        body: JSON.stringify({ ids: ["admin1"], action: "set-role", role: "MEMBER" }),
+        body: JSON.stringify({ ids: ["admin1"], action: "set-role", role: "USER" }),
         headers: { "Content-Type": "application/json" },
       });
       const res = await bulkUpdate(req);

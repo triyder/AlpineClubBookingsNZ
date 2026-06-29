@@ -25,7 +25,7 @@ const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
 const mockedRequireActiveSessionUser = vi.mocked(requireActiveSessionUser);
 
-const session = { user: { id: "member-1", role: "MEMBER" } } as any;
+const session = { user: { id: "member-1", role: "USER" } } as any;
 
 const completeMember = {
   id: "member-1",
@@ -48,7 +48,7 @@ const completeMember = {
   postalRegion: "Waikato",
   postalPostalCode: "3420",
   postalCountry: "NZ",
-  role: "MEMBER",
+  role: "USER",
   ageTier: "ADULT",
   active: true,
   canLogin: true,
@@ -244,7 +244,7 @@ describe("member onboarding API", () => {
     expect(mockedPrisma.member.findUnique).not.toHaveBeenCalled();
   });
 
-  it("only gates MEMBER accounts before forced password change", () => {
+  it("only gates USER accounts before forced password change", () => {
     expect(
       shouldShowMemberOnboarding({
         ...completeMember,

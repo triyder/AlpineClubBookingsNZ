@@ -8,12 +8,12 @@ import {
 describe("access role options", () => {
   it("offers assignable access roles plus the non-member categories by default", () => {
     expect(ASSIGNABLE_ACCESS_ROLE_VALUES).toEqual([
-      "MEMBER",
+      "USER",
       "ADMIN",
       "LODGE",
     ]);
     expect(getAccessRoleOptions().map((option) => option.value)).toEqual([
-      "MEMBER",
+      "USER",
       "ADMIN",
       "LODGE",
       "NON_MEMBER",
@@ -35,38 +35,21 @@ describe("access role options", () => {
     });
   });
 
-  it("preserves legacy membership-category roles only for existing values", () => {
-    expect(getAccessRoleOptions("ASSOCIATE").map((option) => option.value)).toEqual([
-      "MEMBER",
+  it("does not expose membership type categories as access-role choices", () => {
+    expect(getAccessRoleOptions().map((option) => option.value)).toEqual([
+      "USER",
       "ADMIN",
       "LODGE",
-      "ASSOCIATE",
       "NON_MEMBER",
       "SCHOOL",
     ]);
-    expect(getAccessRoleOptions("LIFE").map((option) => option.value)).toEqual([
-      "MEMBER",
-      "ADMIN",
-      "LODGE",
-      "LIFE",
-      "NON_MEMBER",
-      "SCHOOL",
-    ]);
-    expect(
-      getAccessRoleOptions("LIFE").find((option) => option.value === "LIFE"),
-    ).toMatchObject({
-      label: "Life Member (legacy category)",
-      legacyMembershipCategory: true,
-    });
   });
 
   it("keeps the database role enum compatible without adding committee roles", () => {
     expect(ROLE_VALUES).toEqual([
-      "MEMBER",
+      "USER",
       "ADMIN",
       "LODGE",
-      "ASSOCIATE",
-      "LIFE",
       "NON_MEMBER",
       "SCHOOL",
     ]);

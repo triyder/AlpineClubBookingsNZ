@@ -92,7 +92,7 @@ export default async function AuthenticatedLayout({
   const user = {
     name: session.user.name ?? "Member",
     email: session.user.email ?? "",
-    role: (session.user as { role?: string }).role ?? "MEMBER",
+    role: (session.user as { role?: string }).role ?? "USER",
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,

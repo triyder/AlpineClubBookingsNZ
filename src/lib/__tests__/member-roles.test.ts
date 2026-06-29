@@ -42,11 +42,12 @@ function onboardingProfile(role: string): MemberOnboardingProfile {
 }
 
 describe("member role categories", () => {
-  it("treats MEMBER, ASSOCIATE, and LIFE as ordinary member-level roles", () => {
-    expect(MEMBER_LEVEL_ROLE_VALUES).toEqual(["MEMBER", "ASSOCIATE", "LIFE"]);
-    expect(isMemberLevelRole("MEMBER")).toBe(true);
-    expect(isMemberLevelRole("ASSOCIATE")).toBe(true);
-    expect(isMemberLevelRole("LIFE")).toBe(true);
+  it("treats USER as the ordinary member-facing access role", () => {
+    expect(MEMBER_LEVEL_ROLE_VALUES).toEqual(["USER"]);
+    expect(isMemberLevelRole("USER")).toBe(true);
+    expect(isMemberLevelRole("MEMBER")).toBe(false);
+    expect(isMemberLevelRole("ASSOCIATE")).toBe(false);
+    expect(isMemberLevelRole("LIFE")).toBe(false);
     expect(isMemberLevelRole("ADMIN")).toBe(false);
     expect(isMemberLevelRole("LODGE")).toBe(false);
   });
@@ -57,15 +58,15 @@ describe("member role categories", () => {
     expect(isOperationalRole("LODGE")).toBe(true);
     expect(roleNeverRequiresSubscription("ADMIN")).toBe(true);
     expect(roleNeverRequiresSubscription("LODGE")).toBe(true);
-    expect(roleNeverRequiresSubscription("MEMBER")).toBe(false);
+    expect(roleNeverRequiresSubscription("USER")).toBe(false);
     expect(roleNeverRequiresSubscription("ASSOCIATE")).toBe(false);
     expect(roleNeverRequiresSubscription("LIFE")).toBe(false);
   });
 
-  it("runs onboarding for Associate and Life members like ordinary members", () => {
-    expect(shouldShowMemberOnboarding(onboardingProfile("MEMBER"))).toBe(true);
-    expect(shouldShowMemberOnboarding(onboardingProfile("ASSOCIATE"))).toBe(true);
-    expect(shouldShowMemberOnboarding(onboardingProfile("LIFE"))).toBe(true);
+  it("runs onboarding for users but not membership type category strings", () => {
+    expect(shouldShowMemberOnboarding(onboardingProfile("USER"))).toBe(true);
+    expect(shouldShowMemberOnboarding(onboardingProfile("ASSOCIATE"))).toBe(false);
+    expect(shouldShowMemberOnboarding(onboardingProfile("LIFE"))).toBe(false);
     expect(shouldShowMemberOnboarding(onboardingProfile("ADMIN"))).toBe(false);
     expect(shouldShowMemberOnboarding(onboardingProfile("LODGE"))).toBe(false);
   });
@@ -76,7 +77,7 @@ describe("non-member booking-request roles", () => {
     expect(NON_MEMBER_ROLE_VALUES).toEqual(["NON_MEMBER", "SCHOOL"]);
     expect(isNonMemberRole("NON_MEMBER")).toBe(true);
     expect(isNonMemberRole("SCHOOL")).toBe(true);
-    expect(isNonMemberRole("MEMBER")).toBe(false);
+    expect(isNonMemberRole("USER")).toBe(false);
     expect(isNonMemberRole("ADMIN")).toBe(false);
     expect(isNonMemberRole(null)).toBe(false);
   });

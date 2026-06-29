@@ -769,9 +769,8 @@ function parseImportRoleValue(value: string): string | null {
     .toUpperCase()
     .replace(/[\s-]+/g, "_");
 
-  if (!normalized) return "MEMBER";
-  if (normalized === "ASSOCIATE_MEMBER") return "ASSOCIATE";
-  if (normalized === "LIFE_MEMBER") return "LIFE";
+  if (!normalized || normalized === "MEMBER") return "USER";
+  if (normalized === "USER_ACCOUNT") return "USER";
   return VALID_ROLES.has(normalized) ? normalized : null;
 }
 

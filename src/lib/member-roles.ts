@@ -1,11 +1,9 @@
 import type { Role } from "@prisma/client";
 
 export const ROLE_VALUES = [
-  "MEMBER",
+  "USER",
   "ADMIN",
   "LODGE",
-  "ASSOCIATE",
-  "LIFE",
   "NON_MEMBER",
   "SCHOOL",
 ] as const satisfies readonly Role[];
@@ -13,9 +11,7 @@ export const ROLE_VALUES = [
 export type AppRole = (typeof ROLE_VALUES)[number];
 
 export const MEMBER_LEVEL_ROLE_VALUES = [
-  "MEMBER",
-  "ASSOCIATE",
-  "LIFE",
+  "USER",
 ] as const satisfies readonly Role[];
 
 export type MemberLevelRole = (typeof MEMBER_LEVEL_ROLE_VALUES)[number];
@@ -35,29 +31,23 @@ export const NON_MEMBER_ROLE_VALUES = [
 ] as const satisfies readonly Role[];
 
 export const ASSIGNABLE_ACCESS_ROLE_VALUES = [
-  "MEMBER",
+  "USER",
   "ADMIN",
   "LODGE",
 ] as const satisfies readonly Role[];
 
 export const LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES = [
-  "ASSOCIATE",
-  "LIFE",
 ] as const satisfies readonly Role[];
 
 export const MEMBER_IMPORT_ROLE_VALUES = [
-  "MEMBER",
+  "USER",
   "ADMIN",
-  "ASSOCIATE",
-  "LIFE",
 ] as const satisfies readonly Role[];
 
 export const ROLE_LABELS: Record<AppRole, string> = {
-  MEMBER: "Member",
+  USER: "User",
   ADMIN: "Admin",
   LODGE: "Lodge",
-  ASSOCIATE: "Associate Member",
-  LIFE: "Life Member",
   NON_MEMBER: "Non-Member",
   SCHOOL: "School",
 };
@@ -96,7 +86,7 @@ export function isLegacyMembershipCategoryRole(
   );
 }
 
-export function getAccessRoleOptions(currentRole?: AppRole | null): Array<{
+export function getAccessRoleOptions(): Array<{
   value: AppRole;
   label: string;
   legacyMembershipCategory: boolean;
@@ -104,23 +94,13 @@ export function getAccessRoleOptions(currentRole?: AppRole | null): Array<{
 }> {
   const values: AppRole[] = [...ASSIGNABLE_ACCESS_ROLE_VALUES];
 
-  if (
-    currentRole &&
-    isLegacyMembershipCategoryRole(currentRole) &&
-    !values.includes(currentRole)
-  ) {
-    values.push(currentRole);
-  }
-
   // Always offer the non-member categories so an admin can classify a record
   // (e.g. a school-booking contact) as School / Non-Member. These grant no access.
   values.push(...NON_MEMBER_ROLE_VALUES);
 
   return values.map((value) => ({
     value,
-    label: isLegacyMembershipCategoryRole(value)
-      ? `${ROLE_LABELS[value]} (legacy category)`
-      : ROLE_LABELS[value],
+    label: ROLE_LABELS[value],
     legacyMembershipCategory: isLegacyMembershipCategoryRole(value),
     nonMember: isNonMemberRole(value),
   }));

@@ -85,13 +85,14 @@ import { PUT as updateMember, GET as getMemberDetail } from "@/app/api/admin/mem
 
 const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
+const memberSession = { user: { id: "m1", role: "USER" } } as any;
 
 const baseMember = {
   id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
   phoneCountryCode: null, phoneAreaCode: null, phoneNumber: "021-123", dateOfBirth: new Date("1990-01-15"),
-  role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
+  role: "USER", ageTier: "ADULT", active: true, forcePasswordChange: false,
   financeAccessLevel: "NONE",
+  accessRoles: [{ role: "USER" }],
   xeroContactId: null, joinedDate: null, createdAt: new Date("2025-01-01"),
   canLogin: true,
 };
@@ -228,7 +229,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     }));
   });
 
-  it("updates role from MEMBER to ADMIN", async () => {
+  it("updates role from USER to ADMIN", async () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
     vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, role: "ADMIN", xeroContactId: null } as any);
@@ -250,7 +251,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
           accessChanges: expect.arrayContaining([
             {
               field: "role",
-              before: "MEMBER",
+              before: "USER",
               after: "ADMIN",
             },
             {
@@ -512,7 +513,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, id: "admin1", role: "ADMIN" } as any);
 
-    const res = await updateMember(makePutRequest("admin1", { role: "MEMBER" }), { params: Promise.resolve({ id: "admin1" }) });
+    const res = await updateMember(makePutRequest("admin1", { role: "USER" }), { params: Promise.resolve({ id: "admin1" }) });
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: expect.stringMatching(/demote your own admin account/i),
@@ -625,7 +626,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.role).toBe("MEMBER");
+    expect(body.role).toBe("USER");
     expect(body.committeeAssignments[0]).toMatchObject({
       committeeRole: { name: "President" },
       published: false,

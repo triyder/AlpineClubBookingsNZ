@@ -151,7 +151,7 @@ export async function suggestFamilyGroups(): Promise<{
 
 /**
  * Create a family group from a suggestion.
- * Sets the first canLogin adult as ADMIN, rest as MEMBER.
+ * Sets the first canLogin adult as ADMIN, rest as USER.
  */
 export async function createFamilyGroupFromSuggestion(
   name: string,
@@ -184,7 +184,7 @@ export async function createFamilyGroupFromSuggestion(
       data: members.map((m) => ({
         familyGroupId: newGroup.id,
         memberId: m.id,
-        role: m.id === lead.id ? "ADMIN" : "MEMBER",
+        role: m.id === lead.id ? "ADMIN" : "USER",
       })),
       skipDuplicates: true,
     });

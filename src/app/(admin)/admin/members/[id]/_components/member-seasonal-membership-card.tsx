@@ -424,9 +424,6 @@ export function MemberSeasonalMembershipCard({
               <Badge variant={member.role === "ADMIN" ? "default" : "secondary"}>
                 {ROLE_LABELS[member.role]}
               </Badge>
-              {member.role === "ASSOCIATE" || member.role === "LIFE" ? (
-                <Badge variant="outline">Legacy category role</Badge>
-              ) : null}
             </div>
           </div>
 

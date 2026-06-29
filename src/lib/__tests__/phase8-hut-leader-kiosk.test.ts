@@ -107,7 +107,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "member-1",
       active: true,
-      role: "MEMBER",
+      role: "USER",
       email: "alice@example.com",
       firstName: "Alice",
     });
@@ -228,7 +228,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("redacts adult phone numbers from staying-guest lodge list responses", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER", email: "member@example.org" },
+      user: { id: "member-1", role: "USER", email: "member@example.org" },
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(1);
@@ -629,7 +629,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("rejects member sessions from PIN login", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER", email: "member@example.com" },
+      user: { id: "member-1", role: "USER", email: "member@example.com" },
     });
 
     const { POST } = await import("@/app/api/lodge/pin-login/route");

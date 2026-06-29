@@ -318,7 +318,7 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
                   row.values.lifeMemberDate ||
                   ""}
               </TableCell>
-              <TableCell>{row.values.role || "MEMBER"}</TableCell>
+              <TableCell>{row.values.role || "USER"}</TableCell>
               <TableCell className="text-red-700">
                 {row.errors.length > 0 ? row.errors.join(", ") : ""}
               </TableCell>

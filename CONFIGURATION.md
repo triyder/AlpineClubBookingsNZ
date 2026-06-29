@@ -204,11 +204,11 @@ empty; replace them through the admin screens after first login.
 The seed also creates built-in seasonal membership types: Full, Associate,
 Life, School, Non-Member, and Family. Associate is the built-in
 Associate/Reserve-style type and can be renamed by the club. It backfills the
-current membership season from existing legacy roles (`MEMBER`, `ADMIN`, and
-`LODGE` to Full, `ASSOCIATE` and legacy `RESERVE` to Associate, `LIFE` to Life,
-`SCHOOL` to School, and `NON_MEMBER` to Non-Member) using create-if-missing
-assignments. Re-running the seed does not overwrite existing seasonal
-assignments.
+current membership season from current and historical role values (`USER`,
+historical `MEMBER`, `ADMIN`, and `LODGE` to Full, historical `ASSOCIATE` and
+legacy `RESERVE` to Associate, historical `LIFE` to Life, `SCHOOL` to School,
+and `NON_MEMBER` to Non-Member) using create-if-missing assignments. Re-running
+the seed does not overwrite existing seasonal assignments.
 
 `npm run db:seed:demo` is separate from the first-run seed. It is intended only
 for disposable local demo databases, refuses to run unless `DATABASE_URL`
@@ -263,8 +263,11 @@ Xero contact-group rules, and committee assignment are separate axes:
 
 - `MemberAccessRole` is the normalized access source for login permissions:
   `USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
-  `Member.role` and `financeAccessLevel` remain compatibility fields while old
-  routes and tokens are drained.
+  `Member.role` remains a compatibility/classification field with only
+  `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
+  club-created categories live in `MembershipType`. `financeAccessLevel`
+  remains synchronized for older finance checks while old routes and tokens are
+  drained.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. Each type carries booking behavior

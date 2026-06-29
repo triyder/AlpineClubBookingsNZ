@@ -69,11 +69,12 @@ contact/link history where required.
 Access role, seasonal membership type, age tier, Xero contact-group rule, and
 committee assignment are separate axes. `MemberAccessRole` controls application
 access (`USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`);
-`Member.role` and `financeAccessLevel` are compatibility fields and must not be
-used for new category semantics. `SeasonalMembershipAssignment` stores
-per-season membership policy, including the source of the assignment. Age tiers
-remain separate because the same tier can be Full, Life, Associate, Family,
-School, or another configured type. Committee assignment controls public
+`Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
+`SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
+be used for new membership-category semantics. `SeasonalMembershipAssignment`
+stores per-season membership policy, including the source of the assignment. Age
+tiers remain separate because the same tier can be Full, Life, Associate,
+Family, School, or another configured type. Committee assignment controls public
 committee/contact presentation only. Do not add committee positions to access
 roles or `Member.role`. `CommitteeRole` master records and
 `CommitteeAssignment` member links can be active/inactive independently of

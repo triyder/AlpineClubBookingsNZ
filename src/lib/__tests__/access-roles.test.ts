@@ -10,7 +10,7 @@ describe("access role compatibility helpers", () => {
   it("maps legacy member and finance fields to additive access roles", () => {
     expect(
       resolveAccessRoles({
-        role: "ASSOCIATE",
+        role: "USER",
         financeAccessLevel: "MANAGER",
         canLogin: true,
       }),
@@ -30,7 +30,7 @@ describe("access role compatibility helpers", () => {
     );
 
     expect(roles).toEqual(["USER", "FINANCE_ADMIN"]);
-    expect(legacyRoleFromAccessRoles(roles)).toBe("MEMBER");
+    expect(legacyRoleFromAccessRoles(roles)).toBe("USER");
     expect(financeAccessLevelFromAccessRoles(roles)).toBe("MANAGER");
   });
 

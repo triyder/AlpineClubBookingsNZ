@@ -14,15 +14,10 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 enum Role {
-  MEMBER
+  USER
   ADMIN
   LODGE
-  // Legacy membership categories retained for compatibility. New category
-  // semantics belong to MembershipType; new permission semantics belong to
-  // MemberAccessRole.
-  ASSOCIATE
-  LIFE
-  // Legacy non-member categories created by booking-request flows. These carry
+  // Non-member categories created by booking-request flows. These carry
   // no access; login-capable organisation records use MemberAccessRole.ORG.
   NON_MEMBER
   SCHOOL
@@ -385,7 +380,7 @@ model Member {
   postalPostalCode   String?
   postalCountry      String?
 
-  role                                Role               @default(MEMBER)
+  role                                Role               @default(USER)
   financeAccessLevel                  FinanceAccessLevel @default(NONE)
   ageTier                             AgeTier            @default(ADULT)
   xeroContactId                       String?            @unique
@@ -396,8 +391,8 @@ model Member {
   detailsConfirmedByMemberId          String?
   onboardingConfirmedAt               DateTime?
   joinedDate                          DateTime? // Membership start date, sourced from Xero first invoice
-  // Date the member was granted life membership. Only meaningful when role is
-  // LIFE; surfaced in the editor when that membership category is selected.
+  // Historical life-membership date retained for existing records. Seasonal
+  // membership type changes are managed through SeasonalMembershipAssignment.
   lifeMemberDate                      DateTime?
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   cancelledAt                         DateTime?

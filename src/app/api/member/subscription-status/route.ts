@@ -59,7 +59,7 @@ export async function GET() {
   const effectiveStatus = subscriptionRequired ? status : "NOT_REQUIRED";
   const effectiveStatusReason = subscriptionRequired
     ? "REQUIRED"
-    : roleNeverRequiresSubscription(member?.role ?? "MEMBER")
+    : roleNeverRequiresSubscription(member?.role ?? "USER")
       ? "ROLE_NOT_REQUIRED"
       : membershipTypePolicy?.subscriptionBehavior === "NOT_REQUIRED"
         ? "MEMBERSHIP_TYPE_NOT_REQUIRED"

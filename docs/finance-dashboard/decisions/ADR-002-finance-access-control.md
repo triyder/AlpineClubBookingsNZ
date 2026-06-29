@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-`AlpineClubBookingsNZ` currently uses coarse roles such as `MEMBER`, `ADMIN`, and `LODGE`.
+`AlpineClubBookingsNZ` uses coarse app-access roles such as `USER`, `ADMIN`, and `LODGE`.
 
 The finance dashboard must be available to selected members and selected admins, without granting broad administrative power to all finance viewers.
 

@@ -78,7 +78,7 @@ const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "member-1", role: "MEMBER" } } as any;
+const memberSession = { user: { id: "member-1", role: "USER" } } as any;
 
 function completeMember(overrides: Record<string, unknown> = {}) {
   const id = String(overrides.id ?? "member-1");
@@ -90,7 +90,7 @@ function completeMember(overrides: Record<string, unknown> = {}) {
     xeroContactId: null,
     active: true,
     canLogin: true,
-    role: "MEMBER",
+    role: "USER",
     phoneCountryCode: "64",
     phoneAreaCode: "27",
     phoneNumber: "1234567",
@@ -552,7 +552,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
     email: "alice@test.com",
     active: true,
     canLogin: true,
-    role: "MEMBER",
+    role: "USER",
     ageTier: "ADULT",
     phoneCountryCode: "64",
     phoneAreaCode: "27",
@@ -578,7 +578,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
   };
 
   it("allows an adult in the same family group to confirm non-login member details", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "USER" } } as any);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
     mockedPrisma.member.findUnique
       .mockResolvedValueOnce(completeAdult as any)
@@ -661,7 +661,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
   // member who owns their own login, and a non-adult/non-login requester must
   // not be able to act at all. None of these may mutate the target member.
   it("rejects confirming details for a member outside the requester's family groups", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "USER" } } as any);
     mockedPrisma.member.findUnique
       .mockResolvedValueOnce(completeAdult as any)
       .mockResolvedValueOnce({
@@ -691,7 +691,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
   });
 
   it("rejects confirming details for a member who owns their own login", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "USER" } } as any);
     mockedPrisma.member.findUnique
       .mockResolvedValueOnce(completeAdult as any)
       .mockResolvedValueOnce({
@@ -721,7 +721,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
   });
 
   it("rejects a non-adult requester confirming another member's details", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "youth-1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "youth-1", role: "USER" } } as any);
     mockedPrisma.member.findUnique.mockResolvedValueOnce({
       ...completeAdult,
       id: "youth-1",
@@ -1274,7 +1274,7 @@ describe("Admin Family Group Join Requests", () => {
           lastName: "Smith",
           dateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
           ageTier: "CHILD",
-          role: "MEMBER",
+          role: "USER",
           active: true,
           canLogin: false,
           parentMemberId: "parent-1",

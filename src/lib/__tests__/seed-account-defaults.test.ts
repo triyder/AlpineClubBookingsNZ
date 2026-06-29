@@ -256,7 +256,7 @@ describe("ensureNotRequiredSubscriptionForRole", () => {
 
   it("does nothing for ordinary members", async () => {
     const db = makeDb();
-    await ensureNotRequiredSubscriptionForRole(db, { id: "m3", role: "MEMBER" }, 2026);
+    await ensureNotRequiredSubscriptionForRole(db, { id: "m3", role: "USER" }, 2026);
 
     expect(db.memberSubscription.upsert).not.toHaveBeenCalled();
   });
@@ -264,7 +264,7 @@ describe("ensureNotRequiredSubscriptionForRole", () => {
   it("classifies only ADMIN and LODGE as never owing a subscription", () => {
     expect(roleNeverRequiresSubscription("ADMIN")).toBe(true);
     expect(roleNeverRequiresSubscription("LODGE")).toBe(true);
-    expect(roleNeverRequiresSubscription("MEMBER")).toBe(false);
+    expect(roleNeverRequiresSubscription("USER")).toBe(false);
   });
 });
 

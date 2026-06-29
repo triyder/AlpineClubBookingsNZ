@@ -11,7 +11,7 @@ export const emptyForm: MemberForm = {
   phoneAreaCode: "",
   phoneNumber: "",
   dateOfBirth: "",
-  role: "MEMBER",
+  role: "USER",
   accessRoles: ["USER"],
   ageTier: "ADULT",
   financeAccessLevel: "NONE",
