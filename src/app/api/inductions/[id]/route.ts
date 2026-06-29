@@ -7,7 +7,7 @@ import {
   type SignerContext,
 } from "@/lib/induction";
 import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { requireActiveSession } from "@/lib/session-guards";
 
 export async function GET(
@@ -21,9 +21,9 @@ export async function GET(
   const memberId = guard.session.user.id;
   const ctx: SignerContext = {
     memberId,
-    isAdmin: guard.session.user.role === "ADMIN",
+    isAdmin: hasAdminAccess(guard.session.user),
     isHutLeader:
-      isMemberLevelRole(guard.session.user.role) &&
+      hasAccessRole(guard.session.user, "USER") &&
       (await hasActiveHutLeaderAssignment(memberId)),
   };
 

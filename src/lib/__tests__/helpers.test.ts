@@ -39,8 +39,10 @@ describe("test helpers", () => {
     });
 
     it("returns member and lodge sessions with the correct role", () => {
-      expect(memberSession().user.role).toBe("MEMBER");
+      expect(memberSession().user.role).toBe("USER");
+      expect(memberSession().user.accessRoles).toEqual([{ role: "USER" }]);
       expect(lodgeSession().user.role).toBe("LODGE");
+      expect(lodgeSession().user.accessRoles).toEqual([{ role: "LODGE" }]);
     });
 
     it("makeSession lets callers override individual fields", () => {

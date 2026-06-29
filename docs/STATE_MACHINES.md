@@ -244,8 +244,8 @@ stops owners or linked member guests with a structured policy error.
 `NON_MEMBER_RATE` uses non-member nightly rates while keeping the stored member
 identity. `NOT_REQUIRED` changes effective subscription lockout and display
 without deleting raw subscription, payment, or Xero invoice history. `ADMIN` and
-`LODGE` operational subscription exemptions remain governed by the role-based
-helper, separate from seasonal type policy. The optional assignment `applyFrom`
+`LODGE` operational subscription exemptions remain governed by access-role
+helpers, separate from seasonal type policy. The optional assignment `applyFrom`
 date is date-only metadata for mid-season changeover reporting and audit; the
 guarded preview remains the required save path and existing future bookings are
 not automatically repriced by a type or apply-from change.

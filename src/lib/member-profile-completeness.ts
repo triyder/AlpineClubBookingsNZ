@@ -3,7 +3,7 @@ import {
   STREET_ADDRESS_FIELDS,
   type MemberAddressField,
 } from "@/lib/member-address";
-import { isOperationalRole } from "@/lib/member-roles";
+import { hasAdminAccess, hasLodgeAccess } from "@/lib/access-roles";
 
 export type MemberProfileConfirmationMode = "self" | "delegated" | "not_allowed";
 
@@ -21,6 +21,7 @@ export interface MemberProfileCompletenessInput {
   active?: boolean | null;
   canLogin?: boolean | null;
   role?: string | null;
+  accessRoles?: ReadonlyArray<string | { role: string }> | null;
   firstName?: string | null;
   lastName?: string | null;
   phoneCountryCode?: string | null;
@@ -52,6 +53,7 @@ export interface SelfServiceProfilePayloadInput
     | "active"
     | "canLogin"
     | "role"
+    | "accessRoles"
     | "profileCompletedAt"
     | "detailsConfirmedAt"
     | "detailsConfirmedByMemberId"
@@ -187,7 +189,8 @@ export function evaluateMemberProfileCompleteness(
   member: MemberProfileCompletenessInput,
   options: MemberProfileCompletenessOptions = {}
 ): MemberProfileCompletenessResult {
-  const confirmationExemptRole = isOperationalRole(member.role);
+  const confirmationExemptRole =
+    hasAdminAccess(member) || hasLodgeAccess(member);
   const confirmationMode: MemberProfileConfirmationMode =
     member.active === false || confirmationExemptRole
       ? "not_allowed"

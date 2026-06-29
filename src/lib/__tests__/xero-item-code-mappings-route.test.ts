@@ -42,7 +42,7 @@ const mockPrisma = prisma as unknown as {
 const mockAuth = auth as ReturnType<typeof vi.fn>;
 
 function adminSession() {
-  return { user: { id: "admin-1", role: "ADMIN" } };
+  return { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 }
 
 function makePutRequest(body: unknown): NextRequest {

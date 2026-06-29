@@ -98,8 +98,12 @@ import { GET as getMembers } from "@/app/api/admin/members/route";
 import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
 import { formatMemberAuditLogSummary } from "@/app/(admin)/admin/members/[id]/page";
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
-const activeSessionMember = { active: true, forcePasswordChange: false };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const activeSessionMember = {
+  active: true,
+  forcePasswordChange: false,
+  accessRoles: [{ role: "ADMIN" }],
+};
 
 function makeMemberListRow(overrides: Record<string, unknown> = {}) {
   return {

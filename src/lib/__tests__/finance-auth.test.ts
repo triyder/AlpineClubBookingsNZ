@@ -40,16 +40,34 @@ describe("finance auth helpers", () => {
     });
   });
 
-  it("allows viewer access for VIEWER and MANAGER", () => {
-    expect(hasFinanceViewerAccess("VIEWER")).toBe(true);
-    expect(hasFinanceViewerAccess("MANAGER")).toBe(true);
-    expect(hasFinanceViewerAccess("NONE")).toBe(false);
+  it("allows viewer access from finance access role rows only", () => {
+    expect(
+      hasFinanceViewerAccess({ accessRoles: [{ role: "FINANCE_USER" }] }),
+    ).toBe(true);
+    expect(
+      hasFinanceViewerAccess({ accessRoles: [{ role: "FINANCE_ADMIN" }] }),
+    ).toBe(true);
+    expect(
+      hasFinanceViewerAccess({
+        financeAccessLevel: "MANAGER",
+        accessRoles: [],
+      }),
+    ).toBe(false);
   });
 
-  it("allows manager access only for MANAGER", () => {
-    expect(hasFinanceManagerAccess("MANAGER")).toBe(true);
-    expect(hasFinanceManagerAccess("VIEWER")).toBe(false);
-    expect(hasFinanceManagerAccess("NONE")).toBe(false);
+  it("allows manager access only from FINANCE_ADMIN rows", () => {
+    expect(
+      hasFinanceManagerAccess({ accessRoles: [{ role: "FINANCE_ADMIN" }] }),
+    ).toBe(true);
+    expect(
+      hasFinanceManagerAccess({ accessRoles: [{ role: "FINANCE_USER" }] }),
+    ).toBe(false);
+    expect(
+      hasFinanceManagerAccess({
+        financeAccessLevel: "MANAGER",
+        accessRoles: [],
+      }),
+    ).toBe(false);
   });
 
   it("allows finance access from access role rows", () => {
@@ -93,7 +111,6 @@ describe("finance auth helpers", () => {
       firstName: "Fin",
       lastName: "User",
       role: "ADMIN",
-      financeAccessLevel: "MANAGER",
       accessRoles: [{ role: "FINANCE_ADMIN" }],
       active: true,
       forcePasswordChange: false,
@@ -109,25 +126,23 @@ describe("finance auth helpers", () => {
         firstName: true,
         lastName: true,
         role: true,
-        financeAccessLevel: true,
         accessRoles: { select: { role: true } },
         active: true,
         forcePasswordChange: true,
       },
     });
-    expect(member?.financeAccessLevel).toBe("MANAGER");
     expect(member?.email).toBe("finance@example.com");
+    expect(member?.accessRoles).toEqual([{ role: "FINANCE_ADMIN" }]);
   });
 
   it("returns the active finance viewer member", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER" } });
+    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER", accessRoles: [{ role: "USER" }] } });
     mockFindUnique.mockResolvedValue({
       id: "viewer-1",
       email: "viewer@example.com",
       firstName: "View",
       lastName: "Only",
       role: "USER",
-      financeAccessLevel: "NONE",
       accessRoles: [{ role: "FINANCE_USER" }],
       active: true,
       forcePasswordChange: false,
@@ -135,14 +150,13 @@ describe("finance auth helpers", () => {
 
     await expect(requireFinanceViewer("/finance")).resolves.toMatchObject({
       id: "viewer-1",
-      financeAccessLevel: "NONE",
       accessRoles: [{ role: "FINANCE_USER" }],
     });
     expect(mockRedirect).not.toHaveBeenCalled();
   });
 
   it("redirects finance viewers away from manager-only actions", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER" } });
+    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER", accessRoles: [{ role: "USER" }] } });
     mockFindUnique.mockResolvedValue({
       id: "viewer-1",
       email: "viewer@example.com",
@@ -161,7 +175,7 @@ describe("finance auth helpers", () => {
   });
 
   it("redirects non-finance members away from finance booking source drill-downs", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "USER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "USER", accessRoles: [{ role: "USER" }] } });
     mockFindUnique.mockResolvedValue({
       id: "member-1",
       email: "member@example.com",

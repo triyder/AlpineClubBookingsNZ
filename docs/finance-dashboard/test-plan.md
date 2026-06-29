@@ -62,7 +62,7 @@ Every finance PR should include:
 
 ### Access And Xero Boundary
 
-- permissions and finance access control (financeAccessLevel) are implemented and tested
+- permissions and finance access control based on `MemberAccessRole` rows are implemented and tested
 
 ### Data Pipeline
 

@@ -79,7 +79,7 @@ describe("Admin Subscriptions API", () => {
   });
 
   it("returns 403 for non-admin users", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const req = new NextRequest("http://localhost/api/admin/subscriptions");
     const res = await getSubscriptions(req);
     expect(res.status).toBe(403);
@@ -88,7 +88,7 @@ describe("Admin Subscriptions API", () => {
   });
 
   it("returns subscriptions data and summary for admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const mockData = [
       {
@@ -132,7 +132,7 @@ describe("Admin Subscriptions API", () => {
   });
 
   it("filters by status", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([
       {
         id: "sub1",
@@ -179,7 +179,7 @@ describe("Admin Subscriptions API", () => {
   });
 
   it("applies pagination after sorting", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue(
       Array.from({ length: 25 }, (_, index) => ({
         id: `sub${index + 1}`,
@@ -209,7 +209,7 @@ describe("Admin Subscriptions API", () => {
   });
 
   it("filters by age tier and xero contact group", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockGetXeroContactIdsForGroup.mockResolvedValue(["xc-1", "xc-2"]);
     vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([]);
 
@@ -306,7 +306,7 @@ describe("Admin Payments API", () => {
     vi.mocked(prisma.xeroObjectLink.findMany).mockResolvedValue([] as any);
     mockRequireAdmin.mockResolvedValue({
       ok: true,
-      session: { user: { id: "a1", role: "ADMIN" } },
+      session: { user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
     });
   });
 
@@ -324,7 +324,7 @@ describe("Admin Payments API", () => {
   });
 
   it("returns 403 for non-admin users", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     mockRequireAdmin.mockResolvedValueOnce({
       ok: false,
       response: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
@@ -337,7 +337,7 @@ describe("Admin Payments API", () => {
   });
 
   it("returns payments data and summary for admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     vi.mocked(prisma.payment.findMany)
       .mockResolvedValueOnce([
@@ -364,7 +364,7 @@ describe("Admin Payments API", () => {
   });
 
   it("filters by status", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
     vi.mocked(prisma.payment.count).mockResolvedValue(0);
 
@@ -379,7 +379,7 @@ describe("Admin Payments API", () => {
   });
 
   it("filters by legacy last-updated date range aliases", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany)
       .mockResolvedValueOnce([
         makePaymentCandidate({
@@ -404,7 +404,7 @@ describe("Admin Payments API", () => {
   });
 
   it("applies member, check-in, amount, and sort filters", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
 
     const req = new NextRequest(
@@ -427,7 +427,7 @@ describe("Admin Payments API", () => {
   });
 
   it("filters by source and searches payment references", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
 
     const req = new NextRequest(
@@ -450,7 +450,7 @@ describe("Admin Payments API", () => {
   });
 
   it("lets exact amount take precedence over min and max", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
 
     const req = new NextRequest(
@@ -463,7 +463,7 @@ describe("Admin Payments API", () => {
   });
 
   it("rejects invalid amount ranges", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const req = new NextRequest("http://localhost/api/admin/payments?amountMin=75&amountMax=50");
     const res = await getPayments(req);
@@ -473,7 +473,7 @@ describe("Admin Payments API", () => {
   });
 
   it("filters payments by source and failed Xero activity", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany)
       .mockResolvedValueOnce([
         makePaymentCandidate({
@@ -528,7 +528,7 @@ describe("Admin Payments API", () => {
   });
 
   it("filters payments by settlement kind", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.payment.findMany)
       .mockResolvedValueOnce([
         makePaymentCandidate({
@@ -667,7 +667,7 @@ describe("Admin Audit Log API", () => {
   });
 
   it("returns 403 for non-admin users", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const req = new NextRequest("http://localhost/api/admin/audit-log");
     const res = await getAuditLog(req);
     expect(res.status).toBe(403);
@@ -682,7 +682,7 @@ describe("Admin Audit Log API", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const req = new NextRequest("http://localhost/api/admin/audit-log");
     const res = await getAuditLog(req);
@@ -692,7 +692,7 @@ describe("Admin Audit Log API", () => {
   });
 
   it("returns readable audit timeline data and filter facets for admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockAuditLogResponse([auditLog()], 1);
 
     const req = new NextRequest("http://localhost/api/admin/audit-log?page=1&pageSize=25");
@@ -725,7 +725,7 @@ describe("Admin Audit Log API", () => {
   });
 
   it("filters by event type alias and member scope", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockAuditLogResponse();
 
     const req = new NextRequest(
@@ -745,7 +745,7 @@ describe("Admin Audit Log API", () => {
   });
 
   it("filters by date range", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockAuditLogResponse();
 
     const req = new NextRequest("http://localhost/api/admin/audit-log?from=2026-04-01&to=2026-04-30");
@@ -760,7 +760,7 @@ describe("Admin Audit Log API", () => {
   });
 
   it("filters by category, outcome, severity, entity, and text search", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockAuditLogResponse();
 
     const req = new NextRequest(

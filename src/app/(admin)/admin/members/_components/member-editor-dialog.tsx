@@ -30,10 +30,10 @@ import {
   ACCESS_ROLE_DESCRIPTIONS,
   ACCESS_ROLE_LABELS,
   ACCESS_ROLE_VALUES,
+  accessRolesFromCompatibilityFields,
   financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
-  resolveAccessRoles,
   type AppAccessRole,
 } from "@/lib/access-roles";
 import {
@@ -79,7 +79,7 @@ function memberToForm(member: Member | null): MemberForm {
   if (!member) return emptyForm;
   const accessRoles = member.accessRoles?.length
     ? member.accessRoles
-    : resolveAccessRoles(member);
+    : accessRolesFromCompatibilityFields(member);
 
   return {
     title: member.title || "",

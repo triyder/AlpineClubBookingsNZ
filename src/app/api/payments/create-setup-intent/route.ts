@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { requiresSavedPaymentMethod } from "@/lib/booking-payment-flow";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify the requesting user owns this booking or is admin
-    if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+    if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

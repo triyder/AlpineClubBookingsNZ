@@ -1,8 +1,13 @@
 import { auth } from "./auth";
-import { getKioskAccessTier, type KioskTier } from "./kiosk-access";
+import {
+  getKioskAccessTier,
+  type KioskTier,
+} from "./kiosk-access";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "./date-only";
 import { getActiveLodgePinSessionForRequest } from "./lodge-pin-session";
 import { requireActiveSessionUser } from "./session-guards";
+import { hasLodgeAccess } from "@/lib/access-roles";
+import { prisma } from "@/lib/prisma";
 
 interface CheckLodgeAuthOptions {
   request?: Request;
@@ -61,10 +66,24 @@ export async function checkLodgeAuth(
     };
   }
 
-  if (
-    options.request &&
-    (session.user.role === "LODGE" || session.user.role === "ADMIN")
-  ) {
+  const member = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: {
+      id: true,
+      accessRoles: { select: { role: true } },
+    },
+  });
+
+  if (!member) {
+    return {
+      session: null,
+      tier: "none" as KioskTier,
+      error: "Forbidden" as const,
+      status: 403 as const,
+    };
+  }
+
+  if (options.request && hasLodgeAccess(member)) {
     const pinSession = await getActiveLodgePinSessionForRequest(
       options.request,
       date,
@@ -77,19 +96,16 @@ export async function checkLodgeAuth(
         tier: "hut-leader" as KioskTier,
         error: null,
         status: null,
+        member,
         pinSession,
       };
     }
   }
 
-  const tier = await getKioskAccessTier(
-    session.user.id,
-    session.user.role,
-    date
-  );
+  const tier = await getKioskAccessTier(member, date);
 
   if (tier !== "none") {
-    return { session, tier, error: null, status: null };
+    return { session, tier, error: null, status: null, member };
   }
 
   return {

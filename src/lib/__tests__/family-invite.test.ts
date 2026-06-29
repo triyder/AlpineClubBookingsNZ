@@ -36,8 +36,8 @@ import { GET as getInvitations, PUT as respondInvitation } from "@/app/api/membe
 
 const mockedAuth = vi.mocked(auth);
 
-const adultSession = { user: { id: "adult1", role: "MEMBER" } } as any;
-const inviteeSession = { user: { id: "adult2", role: "MEMBER" } } as any;
+const adultSession = { user: { id: "adult1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any;
+const inviteeSession = { user: { id: "adult2", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any;
 
 function makePostRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/members/family/invite", {

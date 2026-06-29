@@ -101,7 +101,7 @@ describe("#26: Admin Payments API includes booking ID and Xero invoice number", 
   });
 
   it("GET returns payment data with booking.id field", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.payment.findMany
       .mockResolvedValueOnce([
         {
@@ -172,7 +172,7 @@ describe("#26: Admin Payments API includes booking ID and Xero invoice number", 
   });
 
   it("returns 403 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "u1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
 
     const { GET } = await import("@/app/api/admin/payments/route");
     const { NextRequest } = await import("next/server");
@@ -289,7 +289,7 @@ describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
   });
 
   it("GET returns subscription data (Prisma includes xeroInvoiceNumber by default)", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockGetXeroContactGroupMemberships.mockResolvedValue({
       "xc-1": [{ id: "cg-1", name: "Adult Members" }],
     });

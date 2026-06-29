@@ -147,6 +147,7 @@ describe("evaluateMemberProfileCompleteness", () => {
         ...completeProfile,
         id: `${role.toLowerCase()}-1`,
         role,
+        accessRoles: [{ role }],
         canLogin: true,
         detailsConfirmedAt: null,
         detailsConfirmedByMemberId: null,

@@ -32,7 +32,7 @@ vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
   requireAdmin: vi.fn().mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin1", role: "ADMIN" } },
+    session: { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   }),
 }));
 vi.mock("@/lib/logger", () => ({
@@ -77,13 +77,14 @@ import { PUT as updateProfile } from "@/app/api/profile/route";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as register } from "@/app/api/auth/register/route";
 
-const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "USER" } } as any;
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const memberSession = { user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] } } as any;
 
 const baseMember = {
   id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
   phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "4224115",
   dateOfBirth: new Date("1990-01-15"), role: "USER", ageTier: "ADULT",
+  accessRoles: [{ role: "USER" }],
   active: true, forcePasswordChange: false, xeroContactId: null,
   joinedDate: null, createdAt: new Date("2025-01-01"), canLogin: true,
   profileCompletedAt: null,
@@ -518,12 +519,14 @@ describe("Profile API: structured phone and address fields", () => {
       ...baseMember,
       id: "admin1",
       role: "ADMIN",
+      accessRoles: [{ role: "ADMIN" }],
       profileCompletedAt: null,
     } as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
       ...baseMember,
       id: "admin1",
       role: "ADMIN",
+      accessRoles: [{ role: "ADMIN" }],
       firstName: "Admin",
       lastName: "User",
     } as any);

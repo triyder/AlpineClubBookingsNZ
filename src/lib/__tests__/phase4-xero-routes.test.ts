@@ -49,7 +49,7 @@ vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 describe("Phase 4 Xero admin routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin_1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin_1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
   });
 

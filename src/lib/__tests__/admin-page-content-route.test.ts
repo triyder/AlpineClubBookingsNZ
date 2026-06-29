@@ -60,7 +60,7 @@ function jsonRequest(method: "POST" | "PUT" | "PATCH", body: unknown) {
   });
 }
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 
 const baseCreateBody = {
   caption: "Trips",

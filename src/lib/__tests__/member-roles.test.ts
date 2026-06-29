@@ -11,11 +11,16 @@ import {
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
 
 function onboardingProfile(role: string): MemberOnboardingProfile {
+  const accessRoles = ["USER", "ADMIN", "LODGE"].includes(role)
+    ? [{ role }]
+    : [];
+
   return {
     id: `member-${role.toLowerCase()}`,
     active: true,
     canLogin: true,
     role,
+    accessRoles,
     forcePasswordChange: false,
     firstName: "Taylor",
     lastName: "Member",

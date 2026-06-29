@@ -381,7 +381,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
     });
     mockAuth.mockResolvedValue({
-      user: { id: "m1", role: "MEMBER", email: "alice@example.com" },
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }], email: "alice@example.com" },
     });
     mockCheckCapacity.mockResolvedValue({
       available: true,
@@ -503,7 +503,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       expect.anything(),
       "m1",
       {
-        actorRole: "MEMBER",
+        actorRole: "USER",
         onBehalfOfMemberId: null,
       }
     );

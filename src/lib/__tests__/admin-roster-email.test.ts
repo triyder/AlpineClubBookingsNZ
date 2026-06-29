@@ -65,7 +65,7 @@ vi.mock("@/lib/logger", () => ({
 describe("PUT /api/admin/roster/[date] email action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockCreateGuestChoreToken.mockResolvedValue("token-1");
     mockMemberCount.mockResolvedValue(1);
   });

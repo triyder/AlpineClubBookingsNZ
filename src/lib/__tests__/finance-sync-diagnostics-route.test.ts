@@ -29,7 +29,7 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
 import { GET as getFinanceSyncStatus } from "@/app/api/finance/sync/status/route";
 
 function managerSession() {
-  return { user: { id: "finance-manager-1", role: "USER" } };
+  return { user: { id: "finance-manager-1", role: "USER", accessRoles: [{ role: "USER" }] } };
 }
 
 function viewerMember() {

@@ -92,7 +92,7 @@ function makeResult(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.auth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+  mocks.auth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) => cb({}));
   mocks.memberFindUnique.mockResolvedValue({

@@ -46,7 +46,7 @@ import { GET as searchBookings } from "@/app/api/admin/bookings/search/route";
 describe("Admin booking search route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
     mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([]);

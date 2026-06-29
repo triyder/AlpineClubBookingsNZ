@@ -5,6 +5,11 @@ import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 import logger from "./logger";
 import type { AppRole } from "./member-roles";
+import {
+  hasAccessRole,
+  isAccessRole,
+  type AppAccessRole,
+} from "./access-roles";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
@@ -21,6 +26,7 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   forcePasswordChange: true,
   emailVerified: true,
   passwordChangedAt: true,
+  accessRoles: { select: { role: true } },
 } as const;
 
 async function loadSessionMemberSecurity(userId: string) {
@@ -37,6 +43,7 @@ declare module "next-auth" {
       email: string;
       name: string;
       role: AppRole;
+      accessRoles: AppAccessRole[];
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
       sessionInvalidated?: boolean;
@@ -132,15 +139,12 @@ export const authConfig = {
     async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
+        token.accessRoles = [];
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
         token.sessionIssuedAt = Date.now();
         token.sessionInvalidated = false;
-        // LODGE accounts get 30-day sessions for shared iPad kiosk
-        if (user.role === "LODGE") {
-          token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-        }
       }
 
       const sessionIssuedAt = getTokenSessionIssuedAtMs(token);
@@ -153,11 +157,16 @@ export const authConfig = {
 
         if (member) {
           token.role = member.role;
+          token.accessRoles = member.accessRoles.map(({ role }) => role);
           token.forcePasswordChange = member.forcePasswordChange;
           token.isEmailVerified = member.emailVerified;
           token.sessionInvalidated =
             member.passwordChangedAt instanceof Date &&
             member.passwordChangedAt.getTime() > sessionIssuedAt;
+          // Lodge access accounts get 30-day sessions for shared iPad kiosk.
+          if (user && hasAccessRole(member, "LODGE")) {
+            token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+          }
         }
       }
 
@@ -165,6 +174,12 @@ export const authConfig = {
     },
     async session({ session, token }) {
       session.user.role = token.role as AppRole;
+      session.user.accessRoles = Array.isArray(token.accessRoles)
+        ? token.accessRoles.filter(
+            (role): role is AppAccessRole =>
+              typeof role === "string" && isAccessRole(role),
+          )
+        : [];
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;

@@ -85,7 +85,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireAdmin.mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin1", role: "ADMIN" } },
+    session: { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   });
   mocks.getAuditRequestContext.mockReturnValue({});
   mocks.createStructuredAuditLog.mockResolvedValue(undefined);

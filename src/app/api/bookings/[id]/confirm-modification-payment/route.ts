@@ -14,6 +14,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -32,6 +33,7 @@ export async function POST(
   if (inactiveResponse) {
     return inactiveResponse;
   }
+  const isAdmin = hasAdminAccess(session.user);
 
   const { id: bookingId } = await params;
 
@@ -60,7 +62,7 @@ export async function POST(
 
     if (
       payment.booking.memberId !== session.user.id &&
-      session.user.role !== "ADMIN"
+      !isAdmin
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

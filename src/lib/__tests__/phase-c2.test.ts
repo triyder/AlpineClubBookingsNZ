@@ -135,7 +135,7 @@ describe("#28: Xero Search Contacts API", () => {
   });
 
   it("rejects non-admin users with 403", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { GET } = await import("@/app/api/admin/xero/search-contacts/route");
     const req = new NextRequest("http://localhost/api/admin/xero/search-contacts?q=test");
     const res = await GET(req);
@@ -143,7 +143,7 @@ describe("#28: Xero Search Contacts API", () => {
   });
 
   it("requires minimum 2-character search query", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     const { GET } = await import("@/app/api/admin/xero/search-contacts/route");
     const req = new NextRequest("http://localhost/api/admin/xero/search-contacts?q=a");
     const res = await GET(req);
@@ -151,7 +151,7 @@ describe("#28: Xero Search Contacts API", () => {
   });
 
   it("returns contacts with linked status", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       xero: {
         accountingApi: {
@@ -234,7 +234,7 @@ describe("Admin Xero contact member import API", () => {
   });
 
   it("creates and links a member from an unlinked Xero contact", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       xero: {
         accountingApi: {
@@ -307,7 +307,7 @@ describe("Admin Xero contact member import API", () => {
   });
 
   it("does not import when a local member already has that name", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       xero: {
         accountingApi: {
@@ -376,7 +376,7 @@ describe("#28: Xero Link API", () => {
   });
 
   it("rejects non-admin users with 403", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
     const req = makeRequest("/api/admin/members/m1/xero-link", {
       method: "POST",
@@ -388,7 +388,7 @@ describe("#28: Xero Link API", () => {
   });
 
   it("returns 404 when member not found", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue(null);
     const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
     const req = makeRequest("/api/admin/members/m1/xero-link", {
@@ -401,7 +401,7 @@ describe("#28: Xero Link API", () => {
   });
 
   it("returns 400 when xeroContactId is missing", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", firstName: "John", lastName: "Smith", xeroContactId: null });
     const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
     const req = makeRequest("/api/admin/members/m1/xero-link", {
@@ -414,7 +414,7 @@ describe("#28: Xero Link API", () => {
   });
 
   it("returns 409 when contact already linked to another member", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", firstName: "John", lastName: "Smith", xeroContactId: null });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       xero: { accountingApi: { getContact: vi.fn() } },
@@ -438,7 +438,7 @@ describe("#28: Xero Link API", () => {
   });
 
   it("links member to Xero contact successfully", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", firstName: "John", lastName: "Smith", xeroContactId: null });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       xero: { accountingApi: { getContact: vi.fn() } },
@@ -499,7 +499,7 @@ describe("#28: Xero Link API", () => {
   });
 
   it("returns a friendly 429 message when Xero daily limit is reached", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1",
       firstName: "John",
@@ -561,7 +561,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("rejects non-admin users with 403", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { POST } = await import("@/app/api/admin/members/[id]/xero-push/route");
     const req = makeRequest("/api/admin/members/m1/xero-push", { method: "POST" });
     const res = await POST(req as any, { params: Promise.resolve({ id: "m1" }) });
@@ -569,7 +569,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("returns 404 when member not found", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue(null);
     const { POST } = await import("@/app/api/admin/members/[id]/xero-push/route");
     const req = makeRequest("/api/admin/members/m1/xero-push", { method: "POST" });
@@ -578,7 +578,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("returns 409 when member already linked to Xero", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: "xc-existing",
     });
@@ -589,7 +589,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("creates a brand-new Xero contact and returns link", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
     });
@@ -619,7 +619,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("returns 422 when required Xero fields are missing", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
     });
@@ -637,7 +637,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("returns suggested contacts instead of creating when potential matches exist", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
     });
@@ -669,7 +669,7 @@ describe("#28: Xero Push API", () => {
   });
 
   it("can force-create a new contact and queue the entrance invoice explicitly", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
     });
@@ -721,7 +721,7 @@ describe("#29: Sync Contacts route returns syncReport", () => {
   });
 
   it("returns syncReport in response", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
 
     const mockSyncReport = {
       created: [],
@@ -750,7 +750,7 @@ describe("#29: Sync Contacts route returns syncReport", () => {
   });
 
   it("returns a 429 daily-limit message when Xero limit is reached", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     const err = new Error("Xero daily API limit reached. Retry after 123 seconds.");
     err.name = "XeroDailyLimitError";
     mockSyncContactsFromXero.mockRejectedValue(err);
@@ -771,7 +771,7 @@ describe("#27: Duplicate scan route surfaces Xero rate limits", () => {
   });
 
   it("returns a 429 daily-limit message for raw Xero SDK errors", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockFindDuplicateContacts.mockRejectedValue({
       response: {
         statusCode: 429,

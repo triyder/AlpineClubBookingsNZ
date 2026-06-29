@@ -9,13 +9,14 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
-import { hasFinanceViewerAccess } from "@/lib/finance-auth";
+import {
+  hasAccessRole,
+  hasFinanceViewerAccess,
+} from "@/lib/access-roles";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
-import { isMemberLevelRole } from "@/lib/member-roles";
-import { hasAccessRole } from "@/lib/access-roles";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
@@ -61,7 +62,7 @@ export default async function AuthenticatedLayout({
   }
 
   const isHutLeaderActive =
-    isMemberLevelRole(session.user.role) || hasAccessRole(member, "USER")
+    hasAccessRole(member, "USER")
       ? await hasActiveHutLeaderAssignment(session.user.id)
       : false;
 
@@ -73,7 +74,7 @@ export default async function AuthenticatedLayout({
 
   let isStayingGuest = false;
   if (
-    (isMemberLevelRole(session.user.role) || hasAccessRole(member, "USER")) &&
+    hasAccessRole(member, "USER") &&
     !isHutLeaderActive
   ) {
     const stayingBooking = await prisma.booking.findFirst({
@@ -92,7 +93,7 @@ export default async function AuthenticatedLayout({
   const user = {
     name: session.user.name ?? "Member",
     email: session.user.email ?? "",
-    role: (session.user as { role?: string }).role ?? "USER",
+    role: member.role,
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,

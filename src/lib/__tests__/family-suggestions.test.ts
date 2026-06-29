@@ -274,7 +274,7 @@ import { auth } from "../auth";
 
 describe("GET /api/admin/family-suggestions", () => {
   it("returns 403 for non-admin users", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER" } } as any);
+    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
 
     const { GET } = await import("../../app/api/admin/family-suggestions/route");
     const res = await GET();
@@ -284,7 +284,7 @@ describe("GET /api/admin/family-suggestions", () => {
 
 describe("POST /api/admin/family-suggestions", () => {
   it("returns 403 for non-admin users", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER" } } as any);
+    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
 
     const { POST } = await import("../../app/api/admin/family-suggestions/route");
     const req = new Request("http://localhost/api/admin/family-suggestions", {
@@ -297,7 +297,7 @@ describe("POST /api/admin/family-suggestions", () => {
   });
 
   it("validates input", async () => {
-    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "ADMIN" } } as any);
+    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
 
     const { POST } = await import("../../app/api/admin/family-suggestions/route");
     const req = new Request("http://localhost/api/admin/family-suggestions", {

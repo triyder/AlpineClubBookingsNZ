@@ -16,6 +16,7 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -104,7 +105,10 @@ export async function PUT(
   try {
     const result = await modifyBookingBatch({
       bookingId,
-      actor: { id: session.user.id, role: session.user.role },
+      actor: {
+        id: session.user.id,
+        role: authorizationRoleFromAccessRoles(session.user),
+      },
       input: parsed.data,
       ipAddress,
     });

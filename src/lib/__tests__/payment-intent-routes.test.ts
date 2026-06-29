@@ -98,7 +98,7 @@ const mockGetSetupIntent = getSetupIntent as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+  mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
   mocks.markBookingPaymentSucceeded.mockResolvedValue({
     outcome: "paid",
@@ -151,7 +151,7 @@ describe("payment intent routes", () => {
   });
 
   it("does not disclose an existing payment intent client secret to a non-owner", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-2", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-2", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.booking.findUnique.mockResolvedValue({
       id: "booking-1",
       memberId: "member-1",
@@ -269,7 +269,7 @@ describe("payment intent routes", () => {
   });
 
   it("does not disclose an existing setup intent client secret to a non-owner", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-2", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-2", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.booking.findUnique.mockResolvedValue({
       id: "booking-1",
       memberId: "member-1",

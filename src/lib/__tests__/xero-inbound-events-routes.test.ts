@@ -59,7 +59,7 @@ import { XeroInboundReplayError } from "@/lib/xero-inbound-reconciliation";
 describe("Xero inbound event admin routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockRequireActiveSessionUser.mockResolvedValue(null);
     mockPrisma.xeroInboundEvent.count.mockResolvedValue(0);
     mockPrisma.xeroObjectLink.findMany.mockResolvedValue([]);

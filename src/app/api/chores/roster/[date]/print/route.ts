@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges"
+import { hasAdminAccess } from "@/lib/access-roles"
 
 /**
  * GET /api/chores/roster/[date]/print
@@ -14,7 +15,7 @@ export async function GET(
   { params }: { params: Promise<{ date: string }> }
 ) {
   const session = await auth()
-  if (!session?.user || session.user.role !== "ADMIN") {
+  if (!session?.user || !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 })
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);

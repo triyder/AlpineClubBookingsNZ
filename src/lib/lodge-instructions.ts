@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { getTodayDateOnly } from "@/lib/date-only";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
+import { hasAdminAccess, type AccessRoleInput } from "@/lib/access-roles";
 
 // Canonical display order for the three keyed documents.
 export const LODGE_INSTRUCTION_KEYS = ["OPEN", "CLOSE", "DAY_TO_DAY"] as const;
@@ -66,9 +67,9 @@ export async function hasCurrentOrUpcomingHutLeaderAssignment(
  */
 export async function canReadLodgeInstructions(
   memberId: string,
-  role: string,
+  subject: AccessRoleInput,
 ): Promise<boolean> {
-  if (role === "ADMIN") {
+  if (hasAdminAccess(subject)) {
     return true;
   }
   return hasCurrentOrUpcomingHutLeaderAssignment(memberId);

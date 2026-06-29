@@ -52,6 +52,10 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
 import { getSeasonYear } from "@/lib/utils";
+import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+} from "@/lib/access-roles";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -124,6 +128,8 @@ export async function POST(
   if (inactiveResponse) {
     return inactiveResponse;
   }
+  const isAdmin = hasAdminAccess(session.user);
+  const actorRole = authorizationRoleFromAccessRoles(session.user);
 
   const { id: bookingId } = await params;
 
@@ -185,7 +191,7 @@ export async function POST(
 
       if (
         booking.memberId !== session.user.id &&
-        session.user.role !== "ADMIN"
+        !isAdmin
       ) {
         throw new ApiError("Forbidden", 403);
       }
@@ -199,7 +205,7 @@ export async function POST(
 
       const editPolicy = getBookingEditPolicy({
         status: booking.status,
-        role: session.user.role,
+        role: actorRole,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
       });
@@ -230,16 +236,15 @@ export async function POST(
           tx,
           booking.memberId,
           newGuests.map((guest) => guest.memberId),
-          { skipAuthorization: session.user.role === "ADMIN" }
+          { skipAuthorization: isAdmin }
         );
         await assertLinkedBookingMembersCanBeBooked(
           tx,
           linkedMembers,
           session.user.id,
           {
-            actorRole: session.user.role,
-            onBehalfOfMemberId:
-              session.user.role === "ADMIN" ? booking.memberId : null,
+            actorRole,
+            onBehalfOfMemberId: isAdmin ? booking.memberId : null,
           }
         );
         normalizedNewGuests = normalizeBookingGuestInputs(newGuests, linkedMembers);
@@ -263,7 +268,7 @@ export async function POST(
         seasonYear,
       });
 
-      if (session.user.role !== "ADMIN") {
+      if (!isAdmin) {
         const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
           bookingMemberId: booking.memberId,
           checkIn: booking.checkIn,

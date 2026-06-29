@@ -39,6 +39,7 @@ import {
 } from "@/lib/member-roles";
 import {
   ACCESS_ROLE_VALUES,
+  accessRolesFromCompatibilityFields,
   financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
@@ -206,7 +207,7 @@ function resolveWriteAccessRoles(input: {
     });
   }
 
-  return resolveAccessRoles({
+  return accessRolesFromCompatibilityFields({
     role: input.role,
     financeAccessLevel: input.financeAccessLevel,
     canLogin: input.canLogin,

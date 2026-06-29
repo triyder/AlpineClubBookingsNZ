@@ -81,6 +81,7 @@ function member(overrides: Record<string, unknown> = {}) {
     active: true,
     canLogin: true,
     role: "USER",
+    accessRoles: [{ role: "USER" }],
     cancelledAt: null,
     parentMemberId: null,
     secondaryParentId: null,
@@ -617,6 +618,7 @@ describe("membership cancellation request workflow", () => {
         active: true,
         canLogin: true,
         role: "USER",
+        accessRoles: [{ role: "USER" }],
         cancelledAt: null,
         archivedAt: null,
         ...overrides,
@@ -776,7 +778,7 @@ describe("membership cancellation request workflow", () => {
 
     it("rejects an admin request when the target is an admin role", async () => {
       mocks.memberFindUnique.mockResolvedValue(
-        targetMember({ role: "ADMIN" }),
+        targetMember({ role: "ADMIN", accessRoles: [{ role: "ADMIN" }] }),
       );
 
       await expect(

@@ -30,7 +30,7 @@ describe("POST /api/admin/chores", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockChoreCreate.mockResolvedValue({ id: "ct1" });
     const mod = await import("@/app/api/admin/chores/route");
     POST = mod.POST;

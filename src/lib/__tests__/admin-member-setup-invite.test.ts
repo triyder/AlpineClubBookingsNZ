@@ -51,7 +51,11 @@ describe("Admin Send Setup Invite API", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
     vi.clearAllMocks();
-    mockedFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false } as any);
+    mockedFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    } as any);
     mockedCreateToken.mockResolvedValue({
       id: "tok1",
       token: "uuid",
@@ -74,7 +78,7 @@ describe("Admin Send Setup Invite API", () => {
   });
 
   it("sends a setup invite email with a 7-day token window", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     ] as any);
@@ -113,7 +117,7 @@ describe("Admin Send Setup Invite API", () => {
   });
 
   it("sends setup invites to active login-enabled members even when they have a parent link", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     ] as any);
@@ -136,7 +140,7 @@ describe("Admin Send Setup Invite API", () => {
   });
 
   it("skips inactive and non-login members", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     ] as any);

@@ -21,7 +21,7 @@ vi.mock("@/lib/prisma", () => ({
 import { GET as getFinanceLegacyDashboardAuthRoute } from "@/app/api/finance/legacy-dashboard/auth/route";
 
 function viewerSession() {
-  return { user: { id: "finance-viewer-1", role: "MEMBER" } };
+  return { user: { id: "finance-viewer-1", role: "USER", accessRoles: [{ role: "USER" }] } };
 }
 
 function viewerMember() {
@@ -30,8 +30,9 @@ function viewerMember() {
     email: "viewer@example.com",
     firstName: "View",
     lastName: "Only",
-    role: "MEMBER",
-    financeAccessLevel: "VIEWER",
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "FINANCE_USER" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -49,7 +50,7 @@ describe("finance legacy dashboard auth route", () => {
     vi.unstubAllEnvs();
   });
 
-  it("returns 204 for finance viewers", async () => {
+  it("returns 204 for finance viewers with finance access role rows", async () => {
     const response = await getFinanceLegacyDashboardAuthRoute(
       new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
     );
@@ -73,7 +74,8 @@ describe("finance legacy dashboard auth route", () => {
   it("redirects members without finance access to the member dashboard", async () => {
     mockFindUnique.mockResolvedValue({
       ...viewerMember(),
-      financeAccessLevel: "NONE",
+      financeAccessLevel: "VIEWER",
+      accessRoles: [],
     });
 
     const response = await getFinanceLegacyDashboardAuthRoute(

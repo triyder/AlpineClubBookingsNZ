@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { htmlToPlainText } from "@/lib/email-text";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const notesSchema = z.object({
   notes: z
@@ -25,6 +26,7 @@ export async function PUT(
   if (inactiveResponse) {
     return inactiveResponse;
   }
+  const isAdmin = hasAdminAccess(session.user);
 
   const { id } = await params;
 
@@ -37,7 +39,7 @@ export async function PUT(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

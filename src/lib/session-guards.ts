@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { hasAdminAccess, type AppAccessRole } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 
 type SessionUser = {
   id: string;
   role: string;
+  accessRoles: AppAccessRole[];
   email?: string | null;
 };
 
@@ -61,8 +62,6 @@ export async function requireAdmin(
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
     select: {
-      role: true,
-      financeAccessLevel: true,
       active: true,
       forcePasswordChange: true,
       accessRoles: { select: { role: true } },
@@ -79,11 +78,7 @@ export async function requireAdmin(
     };
   }
 
-  const adminAccessInput = Array.isArray(member.accessRoles)
-    ? member
-    : { ...member, role: session.user.role };
-
-  if (!hasAdminAccess(adminAccessInput)) {
+  if (!hasAdminAccess(member)) {
     return {
       ok: false,
       response: options.forbiddenResponse?.() ?? forbiddenResponse(),

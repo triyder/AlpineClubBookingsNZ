@@ -6,7 +6,7 @@ import {
   listInductionsAwaitingSignOff,
   type SignerContext,
 } from "@/lib/induction";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { requireActiveSession } from "@/lib/session-guards";
 
 export async function GET() {
@@ -16,9 +16,9 @@ export async function GET() {
 
   const ctx: SignerContext = {
     memberId,
-    isAdmin: guard.session.user.role === "ADMIN",
+    isAdmin: hasAdminAccess(guard.session.user),
     isHutLeader:
-      isMemberLevelRole(guard.session.user.role) &&
+      hasAccessRole(guard.session.user, "USER") &&
       (await hasActiveHutLeaderAssignment(memberId)),
   };
 

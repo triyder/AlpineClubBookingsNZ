@@ -82,8 +82,8 @@ import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { hutLeaderAssignmentTemplate } from "@/lib/email-templates";
 
-const memberSession = { user: { id: "member-1", role: "MEMBER" } };
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
+const memberSession = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 
 const storedDocuments = [
   {
@@ -358,7 +358,7 @@ describe("GET /api/lodge/instructions (kiosk surface)", () => {
 
   it("returns documents for a hut leader PIN session", async () => {
     mocks.checkLodgeAuth.mockResolvedValue({
-      session: { user: { id: "lodge-1", role: "LODGE" } },
+      session: { user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } },
       tier: "hut-leader",
       error: null,
       status: null,
@@ -385,7 +385,7 @@ describe("GET /api/lodge/instructions (kiosk surface)", () => {
 
   it("denies the shared lodge account without a PIN session", async () => {
     mocks.checkLodgeAuth.mockResolvedValue({
-      session: { user: { id: "lodge-1", role: "LODGE" } },
+      session: { user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } },
       tier: "lodge",
       error: null,
       status: null,

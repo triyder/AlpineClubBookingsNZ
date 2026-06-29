@@ -263,11 +263,13 @@ Xero contact-group rules, and committee assignment are separate axes:
 
 - `MemberAccessRole` is the normalized access source for login permissions:
   `USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
+  Runtime authorization must read these rows only. `session.user.role` is kept
+  only for display and older serialized shapes.
   `Member.role` remains a compatibility/classification field with only
   `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
   club-created categories live in `MembershipType`. `financeAccessLevel`
-  remains synchronized for older finance checks while old routes and tokens are
-  drained.
+  remains synchronized for compatibility/export visibility, but does not grant
+  runtime finance access.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
   Non-Member, Family, or club-created types. Each type carries booking behavior
@@ -469,7 +471,8 @@ finance viewer APIs; `FINANCE_ADMIN` can also run manager-only finance actions
 such as manual sync and report mapping writes. `ADMIN` and `LODGE` do not grant
 finance access by themselves, but mixed-role accounts such as `LODGE` plus
 `FINANCE_USER` are valid. The legacy `financeAccessLevel` field is kept
-synchronized for compatibility.
+synchronized for compatibility only; finance page and API guards ignore it and
+read `MemberAccessRole` rows.
 
 ## Email Delivery
 

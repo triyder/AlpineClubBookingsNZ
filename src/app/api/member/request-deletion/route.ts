@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 import { checkRateLimit, rateLimiters, getClientIp } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const requestSchema = z.object({
   reason: z.string().max(500).optional(),
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Admins cannot self-delete
-  if (session.user.role === "ADMIN") {
+  if (hasAdminAccess(session.user)) {
     return NextResponse.json(
       { error: "Admin accounts cannot be self-deleted. Contact another admin." },
       { status: 403 }

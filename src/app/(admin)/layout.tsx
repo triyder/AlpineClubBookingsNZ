@@ -10,8 +10,10 @@ import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { hasFinanceViewerAccess } from "@/lib/finance-auth";
-import { hasAdminAccess } from "@/lib/access-roles";
+import {
+  hasAdminAccess,
+  hasFinanceViewerAccess,
+} from "@/lib/access-roles";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { isClubThemeComplete } from "@/lib/club-theme";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
@@ -52,7 +54,7 @@ export default async function AdminLayout({
   const user = {
     name: session.user.name ?? "Admin",
     email: session.user.email ?? "",
-    role: (session.user as { role?: string }).role ?? "ADMIN",
+    role: member.role,
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: false,
     isStayingGuest: false,

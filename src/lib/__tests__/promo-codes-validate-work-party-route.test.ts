@@ -28,7 +28,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({
-  auth: vi.fn(async () => ({ user: { id: "member-1", role: "MEMBER" } })),
+  auth: vi.fn(async () => ({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } })),
 }));
 
 vi.mock("@/lib/session-guards", () => ({

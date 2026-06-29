@@ -48,7 +48,7 @@ describe("GET /api/admin/member-applications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.memberApplicationFindMany.mockResolvedValue([]);

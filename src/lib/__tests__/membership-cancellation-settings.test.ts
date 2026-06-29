@@ -61,7 +61,7 @@ function request(body: unknown) {
 describe("membership cancellation settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.membershipCancellationSettingFindUnique.mockResolvedValue(null);
     mocks.membershipCancellationSettingUpsert.mockResolvedValue({});

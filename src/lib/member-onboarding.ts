@@ -3,7 +3,7 @@ import {
   type MemberProfileCompletenessInput,
 } from "@/lib/member-profile-completeness";
 import { buildParentLinks } from "@/lib/member-parent-links";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole } from "@/lib/access-roles";
 
 export const MEMBER_ONBOARDING_PROFILE_SELECT = {
   id: true,
@@ -27,6 +27,7 @@ export const MEMBER_ONBOARDING_PROFILE_SELECT = {
   postalPostalCode: true,
   postalCountry: true,
   role: true,
+  accessRoles: { select: { role: true } },
   ageTier: true,
   active: true,
   canLogin: true,
@@ -156,7 +157,7 @@ export function shouldShowMemberOnboarding(member: MemberOnboardingProfile) {
   if (
     member.active !== true ||
     member.canLogin !== true ||
-    !isMemberLevelRole(member.role) ||
+    !hasAccessRole(member, "USER") ||
     member.forcePasswordChange === true
   ) {
     return false;

@@ -125,7 +125,7 @@ vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
   requireAdmin: vi.fn().mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin-1", role: "ADMIN" } },
+    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   }),
 }));
 vi.mock("@/lib/prisma-errors", () => ({
@@ -149,8 +149,8 @@ import {
   NZ_COUNTRY_NAME,
 } from "@/lib/member-address";
 
-const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const memberSession = { user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any;
 
 const baseMember = {
   id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",

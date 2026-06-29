@@ -68,7 +68,7 @@ function hasLodgeGuard(contents: string, routePath: string) {
     /\bcheckLodgeAuth\s*\(/.test(contents) ||
     (routePath === "src/app/api/lodge/pin-login/route.ts" &&
       /\brequireActiveSessionUser\s*\(/.test(contents) &&
-      /session\.user\.role\s*(?:===|!==)\s*["']LODGE["']/.test(contents))
+      /\bhasLodgeAccess\s*\(\s*session\.user\s*\)/.test(contents))
   );
 }
 

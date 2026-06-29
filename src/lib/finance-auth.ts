@@ -1,7 +1,8 @@
-import type { FinanceAccessLevel, Role } from "@prisma/client";
+import type { Role } from "@prisma/client";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import {
+  hasLodgeAccess,
   hasFinanceManagerAccess as hasFinanceManagerRoleAccess,
   hasFinanceViewerAccess as hasFinanceViewerRoleAccess,
   type AccessRoleInput,
@@ -16,26 +17,17 @@ export type FinanceAccessMember = {
   firstName: string;
   lastName: string;
   role: Role;
-  financeAccessLevel: FinanceAccessLevel;
   accessRoles: Array<{ role: AppAccessRole }>;
   active: boolean;
   forcePasswordChange: boolean;
 };
 
-export function hasFinanceViewerAccess(
-  input: FinanceAccessLevel | AccessRoleInput,
-) {
-  return typeof input === "string"
-    ? hasFinanceViewerRoleAccess({ financeAccessLevel: input })
-    : hasFinanceViewerRoleAccess(input);
+export function hasFinanceViewerAccess(input: AccessRoleInput) {
+  return hasFinanceViewerRoleAccess(input);
 }
 
-export function hasFinanceManagerAccess(
-  input: FinanceAccessLevel | AccessRoleInput,
-) {
-  return typeof input === "string"
-    ? hasFinanceManagerRoleAccess({ financeAccessLevel: input })
-    : hasFinanceManagerRoleAccess(input);
+export function hasFinanceManagerAccess(input: AccessRoleInput) {
+  return hasFinanceManagerRoleAccess(input);
 }
 
 export async function loadFinanceAccessMember(
@@ -49,7 +41,6 @@ export async function loadFinanceAccessMember(
       firstName: true,
       lastName: true,
       role: true,
-      financeAccessLevel: true,
       accessRoles: { select: { role: true } },
       active: true,
       forcePasswordChange: true,
@@ -77,7 +68,7 @@ export async function requireFinanceViewer(
   }
 
   if (!hasFinanceViewerAccess(member)) {
-    if (session.user.role === "LODGE") {
+    if (hasLodgeAccess(member)) {
       redirect("/lodge/kiosk");
     }
     redirect("/dashboard");

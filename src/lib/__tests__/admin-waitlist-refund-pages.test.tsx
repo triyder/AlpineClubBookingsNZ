@@ -23,7 +23,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
-    data: { user: { id: "admin-2", role: "ADMIN" } },
+    data: { user: { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   }),
 }));
 

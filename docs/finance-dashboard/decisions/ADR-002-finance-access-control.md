@@ -29,7 +29,8 @@ finance sync or managing finance report mappings.
 `ADMIN` and `LODGE` do not grant finance access by themselves. Mixed-role
 accounts are allowed where intended: for example, `LODGE` plus `FINANCE_USER`
 keeps lodge access and grants finance viewer access. `Member.financeAccessLevel`
-is kept synchronized as a rollout compatibility field only.
+is kept synchronized as a rollout compatibility field only and is not a runtime
+authorization source.
 
 ## Consequences
 

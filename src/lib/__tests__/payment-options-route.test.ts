@@ -33,7 +33,7 @@ vi.mock("@/lib/internet-banking-settings", async () => {
 
 import { GET } from "@/app/api/payments/options/route";
 
-const session = { user: { id: "member-1", role: "MEMBER" } };
+const session = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 const defaultSettings = {
   holdBedSlots: false,
   holdDays: 3,

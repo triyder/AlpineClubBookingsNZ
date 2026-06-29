@@ -61,7 +61,7 @@ function request(url: string, body: Record<string, unknown>) {
 describe("admin promo code routes - fixed nightly price", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.prisma.$transaction.mockImplementation(async (callback: (tx: typeof mocks.tx) => unknown) => callback(mocks.tx));
   });

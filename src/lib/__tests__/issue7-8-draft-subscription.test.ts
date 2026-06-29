@@ -217,11 +217,11 @@ const mockPrisma = prisma as unknown as {
 const mockAuth = auth as ReturnType<typeof vi.fn>;
 
 function memberSession(id = "member-1") {
-  return { user: { id, role: "MEMBER" } };
+  return { user: { id, role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 }
 
 function adminSession(id = "admin-1") {
-  return { user: { id, role: "ADMIN" } };
+  return { user: { id, role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 }
 
 const checkInDate = "2026-12-01";

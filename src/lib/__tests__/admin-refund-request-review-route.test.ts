@@ -85,7 +85,7 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     vi.clearAllMocks();
 
     mocks.auth.mockResolvedValue({
-      user: { id: "admin_1", role: "ADMIN" },
+      user: { id: "admin_1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.processRefund.mockResolvedValue({ id: "re_1" });

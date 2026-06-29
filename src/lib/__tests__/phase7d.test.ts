@@ -59,7 +59,7 @@ vi.mock("@/lib/session-guards", () => ({
         response: Response.json({ error: "Unauthorized" }, { status: 401 }),
       };
     }
-    if (session.user.role !== "ADMIN") {
+    if (!session.user.accessRoles?.some(({ role }: { role: string }) => role === "ADMIN")) {
       return {
         ok: false,
         response: Response.json({ error: "Forbidden" }, { status: 403 }),
@@ -102,6 +102,7 @@ describe("F8: Hut Leader Role Assignment", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
     });
   });
 
@@ -155,7 +156,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("GET /api/admin/hut-leaders", () => {
     it("returns 403 for non-admin users", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "m1", role: "USER", email: "a@b.com" },
+        user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }], email: "a@b.com" },
       });
 
       const { GET } = await import(
@@ -167,7 +168,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("returns assignments for admin", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
@@ -197,7 +198,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("POST /api/admin/hut-leaders", () => {
     it("returns 403 for non-admin", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "m1", role: "USER", email: "a@b.com" },
+        user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }], email: "a@b.com" },
       });
 
       const { POST } = await import(
@@ -211,10 +212,15 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("creates assignment for valid input", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "USER" });
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
 
@@ -232,10 +238,15 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("rejects overlapping assignment (2+ days)", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "USER" });
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([{
         id: "existing",
         startDate: new Date("2026-07-08"),
@@ -258,10 +269,15 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("allows same-day boundary (1-day overlap for handover)", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "USER" });
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
       // 1-day overlap is allowed for handover
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
@@ -277,13 +293,14 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("rejects operational accounts for hut leader assignments", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.member.findUnique.mockResolvedValue({
         id: "lodge1",
         active: true,
         role: "LODGE",
+        accessRoles: [{ role: "LODGE" }],
       });
 
       const { POST } = await import(
@@ -297,7 +314,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("rejects when endDate before startDate", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       const { POST } = await import(
@@ -311,7 +328,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("returns 404 for inactive member", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.member.findUnique
@@ -335,7 +352,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("DELETE /api/admin/hut-leaders/[id]", () => {
     it("returns 403 for non-admin", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "m1", role: "USER", email: "a@b.com" },
+        user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }], email: "a@b.com" },
       });
 
       const { DELETE } = await import(
@@ -350,7 +367,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("deletes existing assignment", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({ id: "assign-1" });
@@ -368,7 +385,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("returns 404 for non-existent assignment", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue(null);
@@ -387,7 +404,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("PUT /api/admin/hut-leaders/[id]", () => {
     it("updates assignment dates", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
@@ -411,7 +428,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("rejects update that makes start > end", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
@@ -436,7 +453,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("GET /api/admin/hut-leaders/eligible-members", () => {
     it("returns 403 for non-admin", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "m1", role: "USER", email: "a@b.com" },
+        user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }], email: "a@b.com" },
       });
 
       const { GET } = await import(
@@ -449,7 +466,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("returns 400 when dates missing", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       const { GET } = await import(
@@ -462,7 +479,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("returns eligible adult members for date range", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.bookingGuest.findMany.mockResolvedValue([
@@ -488,7 +505,7 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("deduplicates members across bookings", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.bookingGuest.findMany.mockResolvedValue([
@@ -524,7 +541,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("PUT overlap validation", () => {
     it("rejects update that creates 2+ day overlap", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
       });
 
       mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
@@ -559,7 +576,13 @@ describe("F8: Hut Leader Role Assignment", () => {
   describe("Lodge auth with hut leader", () => {
     it("allows USER with active hut leader assignment", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "m1", role: "USER", email: "m@test.com" },
+        user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }], email: "m@test.com" },
+      });
+      mockPrisma.member.findUnique.mockReset();
+      mockPrisma.hutLeaderAssignment.count.mockReset();
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m1",
+        accessRoles: [{ role: "USER" }],
       });
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
 
@@ -570,7 +593,11 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("rejects USER without hut leader assignment", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "m2", role: "USER", email: "m2@test.com" },
+        user: { id: "m2", role: "USER", accessRoles: [{ role: "USER" }], email: "m2@test.com" },
+      });
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m2",
+        accessRoles: [{ role: "USER" }],
       });
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(0);
@@ -583,7 +610,11 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("allows LODGE role without hut leader check", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "lodge1", role: "LODGE", email: "lodge@tac.org.nz" },
+        user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }], email: "lodge@tac.org.nz" },
+      });
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "lodge1",
+        accessRoles: [{ role: "LODGE" }],
       });
 
       const { checkLodgeAuth } = await import("@/lib/lodge-auth");
@@ -594,7 +625,11 @@ describe("F8: Hut Leader Role Assignment", () => {
 
     it("allows ADMIN role without hut leader check", async () => {
       mockAuth.mockResolvedValue({
-        user: { id: "admin1", role: "ADMIN", email: "support@example.org" },
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "admin1",
+        accessRoles: [{ role: "ADMIN" }],
       });
 
       const { checkLodgeAuth } = await import("@/lib/lodge-auth");

@@ -78,7 +78,7 @@ function postRequest(path: string, body: unknown) {
 describe("admin email message APIs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.emailTemplateOverrideFindUnique.mockResolvedValue(null);
     mocks.emailTemplateOverrideUpsert.mockResolvedValue({
@@ -109,7 +109,7 @@ describe("admin email message APIs", () => {
   });
 
   it("blocks non-admin users", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
 
     const response = await putEmailTemplate(
       request("/api/admin/email-templates", {
@@ -124,7 +124,7 @@ describe("admin email message APIs", () => {
   });
 
   it("blocks non-admin users from updating email settings", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
 
     const response = await putEmailSettings(
       request("/api/admin/email-settings", { doorCode: "2468" }),

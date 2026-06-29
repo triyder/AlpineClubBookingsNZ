@@ -31,6 +31,10 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+} from "@/lib/access-roles";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -65,6 +69,8 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
+  const isAdmin = hasAdminAccess(session.user);
+  const actorRole = authorizationRoleFromAccessRoles(session.user);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -87,7 +93,7 @@ export async function POST(request: NextRequest) {
   }
 
   const isAdminOnBehalf =
-    session.user.role === "ADMIN" && Boolean(parsed.data.forMemberId);
+    isAdmin && Boolean(parsed.data.forMemberId);
   const effectiveMemberId = isAdminOnBehalf
     ? parsed.data.forMemberId!
     : session.user.id;
@@ -104,7 +110,7 @@ export async function POST(request: NextRequest) {
       linkedMembers,
       session.user.id,
       {
-        actorRole: session.user.role,
+        actorRole,
         onBehalfOfMemberId: isAdminOnBehalf ? effectiveMemberId : null,
       }
     );

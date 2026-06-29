@@ -249,12 +249,12 @@ axis: `USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
 `Member.role` remains a synchronized compatibility/classification field with
 `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
 club-created categories are membership types, not role enum values.
-`Member.financeAccessLevel` remains synchronized for older finance route guards
-and sessions while the app drains legacy assumptions. Non-login records simply
-have no access-role rows. The canonical access-role constants and compatibility
-helpers live in `src/lib/access-roles.ts`; compatibility role constants stay in
-`src/lib/member-roles.ts` for old imports and provider-created non-member
-records.
+`Member.financeAccessLevel` remains synchronized for compatibility visibility,
+but runtime finance guards ignore it. Non-login records simply have no
+access-role rows. The canonical access-role constants and compatibility helpers
+live in `src/lib/access-roles.ts`; compatibility role constants stay in
+`src/lib/member-roles.ts` for old imports, membership classification, and
+provider-created non-member records.
 
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,

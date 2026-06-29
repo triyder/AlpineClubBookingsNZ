@@ -5,6 +5,7 @@ import {
   hasFinanceViewerAccess,
   loadFinanceAccessMember,
 } from "@/lib/finance-auth";
+import { hasLodgeAccess } from "@/lib/access-roles";
 
 const LEGACY_DASHBOARD_CALLBACK_PATH = "/finance-legacy/";
 
@@ -24,10 +25,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (session.user.role === "LODGE") {
-    return NextResponse.redirect(buildAbsoluteUrl(request, "/lodge/kiosk"));
-  }
-
   const member = await loadFinanceAccessMember(session.user.id);
 
   if (!member || !member.active) {
@@ -44,6 +41,9 @@ export async function GET(request: NextRequest) {
   }
 
   if (!hasFinanceViewerAccess(member)) {
+    if (hasLodgeAccess(member)) {
+      return NextResponse.redirect(buildAbsoluteUrl(request, "/lodge/kiosk"));
+    }
     return NextResponse.redirect(buildAbsoluteUrl(request, "/dashboard"));
   }
 

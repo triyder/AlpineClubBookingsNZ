@@ -72,6 +72,7 @@ describe("auth session refresh", () => {
   it("refreshes a stale admin JWT role from the database", async () => {
     mockFindUnique.mockResolvedValue({
       role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
       forcePasswordChange: false,
       emailVerified: true,
       passwordChangedAt: null,
@@ -91,6 +92,7 @@ describe("auth session refresh", () => {
       where: { id: "member-1" },
       select: {
         role: true,
+        accessRoles: { select: { role: true } },
         forcePasswordChange: true,
         emailVerified: true,
         passwordChangedAt: true,
@@ -100,6 +102,7 @@ describe("auth session refresh", () => {
       expect.objectContaining({
         id: "member-1",
         role: "MEMBER",
+        accessRoles: ["USER"],
         forcePasswordChange: false,
         isEmailVerified: true,
         sessionInvalidated: false,
@@ -110,6 +113,7 @@ describe("auth session refresh", () => {
   it("marks the session invalid when the password changed after issuance", async () => {
     mockFindUnique.mockResolvedValue({
       role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
       forcePasswordChange: false,
       emailVerified: true,
       passwordChangedAt: new Date("2026-04-26T10:00:00.000Z"),
@@ -139,8 +143,9 @@ describe("auth session refresh", () => {
           id: "member-1",
           email: "admin@example.com",
           name: "Admin User",
-          role: "ADMIN",
-          forcePasswordChange: false,
+        role: "ADMIN",
+        accessRoles: ["ADMIN"],
+        forcePasswordChange: false,
           isEmailVerified: true,
           sessionInvalidated: false,
         },
@@ -148,6 +153,7 @@ describe("auth session refresh", () => {
       token: {
         id: "member-1",
         role: "MEMBER",
+        accessRoles: ["USER"],
         forcePasswordChange: true,
         isEmailVerified: true,
         sessionInvalidated: true,
@@ -159,6 +165,7 @@ describe("auth session refresh", () => {
       email: "admin@example.com",
       name: "Admin User",
       role: "MEMBER",
+      accessRoles: ["USER"],
       forcePasswordChange: true,
       isEmailVerified: true,
       sessionInvalidated: true,

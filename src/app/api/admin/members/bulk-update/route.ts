@@ -7,10 +7,10 @@ import logger from "@/lib/logger";
 import { ROLE_VALUES } from "@/lib/member-roles";
 import {
   ACCESS_ROLE_VALUES,
+  accessRolesFromCompatibilityFields,
   financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
-  resolveAccessRoles,
 } from "@/lib/access-roles";
 
 const bulkUpdateSchema = z.object({
@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
               ? normalizeAssignableAccessRoles(accessRoles, {
                   canLogin: member.canLogin,
                 })
-              : resolveAccessRoles({
+              : accessRolesFromCompatibilityFields({
                   role,
                   financeAccessLevel:
                     role === "LODGE" ? "NONE" : member.financeAccessLevel,

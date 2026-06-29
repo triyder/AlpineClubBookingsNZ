@@ -9,7 +9,7 @@ import {
   type SignerContext,
 } from "@/lib/induction";
 import logger from "@/lib/logger";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
 
@@ -57,9 +57,9 @@ export async function POST(
   const memberId = guard.session.user.id;
   const ctx: SignerContext = {
     memberId,
-    isAdmin: guard.session.user.role === "ADMIN",
+    isAdmin: hasAdminAccess(guard.session.user),
     isHutLeader:
-      isMemberLevelRole(guard.session.user.role) &&
+      hasAccessRole(guard.session.user, "USER") &&
       (await hasActiveHutLeaderAssignment(memberId)),
   };
 

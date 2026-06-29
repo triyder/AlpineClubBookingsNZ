@@ -37,7 +37,7 @@ vi.mock("@/lib/finance-booking-metrics", () => ({
 import { GET as getFinanceBookingMetricsRoute } from "@/app/api/finance/bookings/metrics/route";
 
 function viewerSession() {
-  return { user: { id: "finance-viewer-1", role: "USER" } };
+  return { user: { id: "finance-viewer-1", role: "USER", accessRoles: [{ role: "USER" }] } };
 }
 
 function viewerMember() {
@@ -237,7 +237,7 @@ describe("finance booking metrics route", () => {
   });
 
   it("rejects admins without explicit finance viewer access", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockFindUnique.mockResolvedValue(adminWithoutFinanceAccess());
 
     const response = await getFinanceBookingMetricsRoute(
@@ -254,7 +254,7 @@ describe("finance booking metrics route", () => {
   });
 
   it("allows mixed LODGE plus FINANCE_USER accounts to read metrics", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "finance-lodge-1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "finance-lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
     mockFindUnique.mockResolvedValue(mixedLodgeFinanceViewerMember());
 
     const response = await getFinanceBookingMetricsRoute(
@@ -271,7 +271,7 @@ describe("finance booking metrics route", () => {
   });
 
   it("rejects lodge-only accounts without finance access", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "lodge-only-1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge-only-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
     mockFindUnique.mockResolvedValue(lodgeOnlyMember());
 
     const response = await getFinanceBookingMetricsRoute(

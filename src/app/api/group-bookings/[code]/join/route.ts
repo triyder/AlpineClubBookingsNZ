@@ -28,6 +28,7 @@ import {
 } from "@/lib/booking-payment-methods";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import logger from "@/lib/logger";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 const joinSchema = z
   .object({
@@ -107,7 +108,7 @@ export async function POST(
         paymentMethod: parsed.data.paymentMethod,
       },
       session.user.id,
-      session.user.role
+      authorizationRoleFromAccessRoles(session.user)
     );
     return NextResponse.json(result, { status: 201 });
   } catch (err) {

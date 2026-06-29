@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import logger from "@/lib/logger";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const createSeasonSchema = z.object({
   name: z.string().min(1),
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  if (session.user.role !== "ADMIN") {
+  if (!hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -67,7 +67,7 @@ describe("requireAdmin", () => {
   });
 
   it("allows routes to preserve a legacy non-admin envelope", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockFindUnique.mockResolvedValue({
       active: true,
       forcePasswordChange: false,
@@ -89,7 +89,7 @@ describe("requireAdmin", () => {
   });
 
   it("returns the admin session after the active-session check passes", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockFindUnique.mockResolvedValue({
       active: true,
       forcePasswordChange: false,
@@ -107,7 +107,7 @@ describe("requireAdmin", () => {
   });
 
   it("rejects inactive admins through the active-session check", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockFindUnique.mockResolvedValue({
       active: false,
       forcePasswordChange: false,
@@ -128,7 +128,7 @@ describe("requireAdmin", () => {
   });
 
   it("rejects admins who must change their password", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockFindUnique.mockResolvedValue({
       active: true,
       forcePasswordChange: true,
@@ -170,7 +170,7 @@ describe("requireActiveSession", () => {
   });
 
   it("returns the session after active-account checks pass", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
 
     const result = await requireActiveSession();

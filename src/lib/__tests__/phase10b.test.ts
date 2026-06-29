@@ -107,7 +107,7 @@ describe("F-COMP-03: Personal Data Export", () => {
 
   it("returns export JSON with correct Content-Disposition header", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "m1", role: "MEMBER" },
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as any);
 
     mockedPrisma.member.findUnique.mockResolvedValue({
@@ -146,7 +146,7 @@ describe("F-COMP-03: Personal Data Export", () => {
 
   it("excludes passwordHash from export", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "m1", role: "MEMBER" },
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as any);
 
     mockedPrisma.member.findUnique.mockResolvedValue({
@@ -220,7 +220,7 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
 
   it("returns 403 for admin accounts", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "a1", role: "ADMIN" },
+      user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     } as any);
     const req = new NextRequest("http://localhost/api/member/request-deletion", {
       method: "POST",
@@ -235,7 +235,7 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
 
   it("creates a deletion request for a member", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "m1", role: "MEMBER" },
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as any);
     mockedPrisma.deletionRequest.findFirst.mockResolvedValue(null);
     mockedPrisma.deletionRequest.create.mockResolvedValue({
@@ -265,7 +265,7 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
 
   it("returns 409 if a pending request already exists", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "m1", role: "MEMBER" },
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as any);
     mockedPrisma.deletionRequest.findFirst.mockResolvedValue({
       id: "dr-existing",
@@ -290,6 +290,11 @@ describe("F-COMP-04: Admin - list deletion requests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedPrisma.member.count.mockResolvedValue(1);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    } as any);
   });
 
   it("returns 401 for unauthenticated", async () => {
@@ -300,14 +305,19 @@ describe("F-COMP-04: Admin - list deletion requests", () => {
   });
 
   it("returns 403 for non-admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    } as any);
     const req = new NextRequest("http://localhost/api/admin/deletion-requests");
     const res = await adminDeletionRequestsGet(req);
     expect(res.status).toBe(403);
   });
 
   it("returns deletion requests list for admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findMany.mockResolvedValue([
       {
         id: "dr1",
@@ -343,6 +353,11 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedPrisma.member.count.mockResolvedValue(1);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    } as any);
   });
 
   const makeRequest = (body: object) =>
@@ -361,20 +376,25 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("returns 403 for non-admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    } as any);
     const res = await adminDeletionActionPost(makeRequest({ action: "reject" }), { params });
     expect(res.status).toBe(403);
   });
 
   it("returns 404 for unknown request", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue(null);
     const res = await adminDeletionActionPost(makeRequest({ action: "reject" }), { params });
     expect(res.status).toBe(404);
   });
 
   it("returns 409 for already-reviewed request", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "APPROVED",
@@ -392,7 +412,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("rejects a deletion request and notifies member", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "PENDING",
@@ -425,7 +445,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("approves a deletion request, anonymises member, and cancels future bookings", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "PENDING",
@@ -506,7 +526,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("blocks approval while future PAID bookings remain active", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "PENDING",
@@ -540,7 +560,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
   });
 
   it("does not anonymise the member if future booking cancellation fails", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
       id: "dr1",
       status: "PENDING",

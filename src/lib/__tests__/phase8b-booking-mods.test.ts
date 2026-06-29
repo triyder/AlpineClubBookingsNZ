@@ -255,7 +255,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 400 if neither checkIn nor checkOut provided", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
       body: JSON.stringify({}),
@@ -265,7 +265,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 404 if booking not found", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     tx.booking.findUnique.mockResolvedValue(null);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -279,7 +279,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 403 for deactivated members before modifying dates", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     mockFindUnique.mockResolvedValueOnce({
       id: "m1",
       active: false,
@@ -296,7 +296,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 403 if not booking owner or admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "other", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "other", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -309,7 +309,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 400 for CANCELLED booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking({ status: "CANCELLED" }));
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -322,7 +322,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 400 if checkOut <= checkIn", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -335,7 +335,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 400 if capacity not available", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacity.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
@@ -351,7 +351,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("successfully modifies dates with price recalculation", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -383,7 +383,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("processes Stripe refund on price decrease for confirmed+paid booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -425,7 +425,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("calculates change fee when check-in moves to lenient tier", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -454,7 +454,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("admin can modify other members booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -481,7 +481,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("removes invalid promo and sets promoRemoved flag", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking({
       discountCents: 1000,
       finalPriceCents: 9000,
@@ -523,7 +523,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("cleans up out-of-range SUGGESTED chore assignments", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     tx.choreAssignment.findMany.mockResolvedValue([
@@ -559,7 +559,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("sends audit log and email after successful modification", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -589,7 +589,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
   });
 
   it("returns 400 for PENDING with non-members modified to check-in within 7 days auto-confirms", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking({
       status: "PENDING",
       hasNonMembers: true,
@@ -671,7 +671,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 400 for empty guests array", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
       method: "POST",
       body: JSON.stringify({ guests: [] }),
@@ -681,7 +681,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 400 when the add-guests request exceeds lodge capacity in one payload", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const guests = Array.from({ length: 30 }, (_, index) => ({
       firstName: `Guest${index}`,
       lastName: "Overflow",
@@ -703,7 +703,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 404 for nonexistent booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     tx.booking.findUnique.mockResolvedValue(null);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -717,7 +717,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 403 for non-owner non-admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "other", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "other", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -730,7 +730,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 400 for CANCELLED booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking({ status: "BUMPED" }));
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -743,7 +743,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns 400 if capacity not available", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
@@ -759,7 +759,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("returns the shared profile-required shape for incomplete linked member additions", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -851,7 +851,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("successfully adds guests and recalculates price", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -890,7 +890,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("checks guest-add capacity with existing stay ranges plus full-span new guests", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking({
       guests: [
         {
@@ -958,7 +958,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("forces typed guest additions to non-member pricing", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1007,7 +1007,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("no change fee when adding guests", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1029,7 +1029,7 @@ describe("POST /api/bookings/[id]/guests", () => {
   });
 
   it("sends audit log and email after adding guests", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1081,7 +1081,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("returns 404 for nonexistent booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     tx.booking.findUnique.mockResolvedValue(null);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1092,7 +1092,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("returns 403 for non-owner non-admin", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "other", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "other", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -1102,7 +1102,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("returns 400 for non-modifiable booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking({ status: "COMPLETED" }));
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -1112,7 +1112,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("returns 404 if guest not found on booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
 
@@ -1124,7 +1124,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("returns 400 when trying to remove last guest", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking({
       guests: [{ id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 10000 }],
     });
@@ -1139,7 +1139,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("successfully removes guest and recalculates price", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1187,7 +1187,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("warns about CONFIRMED/COMPLETED chore assignments", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     tx.choreAssignment.findMany.mockResolvedValue([
@@ -1211,7 +1211,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("no change fee when removing guests", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
@@ -1228,7 +1228,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("updates hasNonMembers when removing only non-member", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking({
       hasNonMembers: true,
       guests: [
@@ -1259,7 +1259,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   });
 
   it("sends audit log and email after removing guest", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));

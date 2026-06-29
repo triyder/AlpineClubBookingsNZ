@@ -42,7 +42,7 @@ describe("admin reports route", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-13T12:00:00Z"));
 
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockRequireActiveSessionUser.mockResolvedValue(null);
   });
 

@@ -80,7 +80,7 @@ describe("POST /api/admin/payments/[id]/generate-invoice", () => {
     vi.clearAllMocks();
 
     mocks.auth.mockResolvedValue({
-      user: { id: "admin_1", role: "ADMIN" },
+      user: { id: "admin_1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({

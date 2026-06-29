@@ -5,6 +5,7 @@ import { deleteBooking } from "@/lib/booking-delete";
 import logger from "@/lib/logger";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 const deleteBookingParamsSchema = z.object({
   id: z.string().min(1),
@@ -75,7 +76,7 @@ export async function DELETE(
       bookingId: parsedParams.data.id,
       actor: {
         memberId: session.user.id,
-        role: session.user.role,
+        role: authorizationRoleFromAccessRoles(session.user),
         ipAddress: getClientIp(request),
       },
       reason: parsedBody.data.reason,

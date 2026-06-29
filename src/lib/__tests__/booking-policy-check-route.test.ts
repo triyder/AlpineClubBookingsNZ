@@ -33,7 +33,7 @@ function request(url = "https://example.test/api/booking-policies/check?checkIn=
 describe("booking policy check route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
     mockValidateMinimumStay.mockResolvedValue({ valid: true, violations: [] });
   });

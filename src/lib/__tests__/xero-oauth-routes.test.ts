@@ -37,7 +37,7 @@ vi.mock("@/lib/logger", () => ({
 import { GET as connectXero } from "@/app/api/admin/xero/connect/route";
 import { GET as handleXeroConnectCallback } from "@/app/api/admin/xero/callback/route";
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as const;
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as const;
 
 describe("Xero OAuth admin routes", () => {
   beforeEach(() => {

@@ -58,7 +58,7 @@ function makeRequest(body: unknown) {
 
 const adminSession = {
   ok: true as const,
-  session: { user: { id: "admin1", role: "ADMIN" } },
+  session: { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
 };
 
 const params = Promise.resolve({ id: "b1" });

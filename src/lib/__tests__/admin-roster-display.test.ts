@@ -79,7 +79,7 @@ vi.mock("@/lib/logger", () => ({
 describe("GET /api/admin/roster/[date] age tier display", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockMemberCount.mockResolvedValue(1);
     mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({

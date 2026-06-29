@@ -253,6 +253,7 @@ describe("GET /api/admin/runtime-status", () => {
     vi.mocked(prisma.member.findUnique).mockResolvedValue({
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
     });
   });
 
@@ -267,7 +268,12 @@ describe("GET /api/admin/runtime-status", () => {
 
   it("requires an admin session", async () => {
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
+    } as any);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
     } as any);
 
     const { response, data } = await callRuntimeStatusEndpoint();
@@ -278,7 +284,7 @@ describe("GET /api/admin/runtime-status", () => {
 
   it("returns runtime status for admins", async () => {
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     } as any);
 
     const { response, data } = await callRuntimeStatusEndpoint({

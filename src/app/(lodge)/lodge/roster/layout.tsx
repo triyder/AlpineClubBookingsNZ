@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { hasAnyActiveLodgePinSession } from "@/lib/lodge-pin-session";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole, hasLodgeAccess } from "@/lib/access-roles";
 
 export default async function LodgeRosterLayout({
   children,
@@ -12,12 +12,12 @@ export default async function LodgeRosterLayout({
   const session = await auth();
 
   if (session?.user) {
-    if (session.user.role === "ADMIN" || session.user.role === "LODGE") {
+    if (hasLodgeAccess(session.user)) {
       return <>{children}</>;
     }
 
     if (
-      isMemberLevelRole(session.user.role) &&
+      hasAccessRole(session.user, "USER") &&
       (await hasActiveHutLeaderAssignment(session.user.id))
     ) {
       return <>{children}</>;

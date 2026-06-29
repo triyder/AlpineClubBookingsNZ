@@ -123,12 +123,12 @@ describe("booking change requests", () => {
     vi.setSystemTime(new Date("2026-05-24T00:00:00.000Z"));
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.requireAdmin.mockResolvedValue({
       ok: true,
-      session: { user: { id: "admin-1", role: "ADMIN" } },
+      session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
     });
     mocks.checkRateLimit.mockReturnValue({
       success: true,
@@ -326,7 +326,7 @@ describe("booking change requests", () => {
   });
 
   it("lists pending requests for admins", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.bookingChangeRequestFindMany.mockResolvedValue([{ id: "request-1" }]);
     mocks.bookingChangeRequestCount.mockResolvedValue(1);
 
@@ -347,7 +347,7 @@ describe("booking change requests", () => {
   });
 
   it("marks a requested change approved with audit context", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.bookingChangeRequestFindUnique
       .mockResolvedValueOnce({
         id: "request-1",
@@ -401,7 +401,7 @@ describe("booking change requests", () => {
   });
 
   it("approves and links the executed booking modification when its id is provided", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.bookingChangeRequestFindUnique
       .mockResolvedValueOnce({
         id: "request-1",
@@ -454,7 +454,7 @@ describe("booking change requests", () => {
   });
 
   it("rejects approval when the linked booking modification does not belong to the booking", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.bookingChangeRequestFindUnique.mockResolvedValueOnce({
       id: "request-1",
       status: "REQUESTED",
@@ -487,7 +487,7 @@ describe("booking change requests", () => {
   });
 
   it("rejects approval when the linked booking modification does not exist", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.bookingChangeRequestFindUnique.mockResolvedValueOnce({
       id: "request-1",
       status: "REQUESTED",
@@ -517,7 +517,7 @@ describe("booking change requests", () => {
   });
 
   it("rejects rejection that includes a linked modification id", async () => {
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
 
     const request = new NextRequest(
       "http://localhost/api/admin/booking-change-requests/request-1",

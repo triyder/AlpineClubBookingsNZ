@@ -40,7 +40,7 @@ type MockMember = {
   familyGroupMemberships: Array<{ familyGroupId: string }>;
 };
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/admin/members/parent-1/dependents/link", {

@@ -33,7 +33,7 @@ import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole } from "@/lib/access-roles";
 import {
   ACTIVE_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
@@ -68,7 +68,7 @@ export default async function DashboardPage() {
 
   // Check if member has an active hut leader assignment (day-before access)
   const isHutLeaderActive =
-    isMemberLevelRole(session.user.role)
+    hasAccessRole(session.user, "USER")
       ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
           if (dayBefore) return true;
           return isHutLeader(memberId, today);

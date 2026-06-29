@@ -20,10 +20,10 @@ Authentication and authorization currently use these mechanisms:
 
 | Mechanism | Current implementation | Main route families |
 | --- | --- | --- |
-| Auth.js session | `src/lib/auth.ts` exposes `auth()` backed by credentials login, JWT sessions, dynamic role refresh, email verification, and session invalidation on password change. | Member, admin, finance, lodge, booking, payment, profile routes. |
+| Auth.js session | `src/lib/auth.ts` exposes `auth()` backed by credentials login, JWT sessions, dynamic access-role refresh, email verification, and session invalidation on password change. | Member, admin, finance, lodge, booking, payment, profile routes. |
 | Active-account guard | `requireActiveSessionUser()` in `src/lib/session-guards.ts` checks `Member.active` and `forcePasswordChange`. | Most session-authenticated routes. |
-| Shared admin guard | `requireAdmin()` in `src/lib/session-guards.ts` combines Auth.js session, `role === "ADMIN"`, and active-account checks. | Some newer admin routes. |
-| Hand-rolled admin checks | Many admin routes still call `auth()` and check role inline, then call `requireActiveSessionUser()`. | Older admin routes. This is the main #613 migration target. |
+| Shared admin guard | `requireAdmin()` in `src/lib/session-guards.ts` combines Auth.js session, `ADMIN` access-role rows, and active-account checks. | Some newer admin routes. |
+| Hand-rolled admin checks | Many admin routes still call `auth()` and check admin access inline, then call `requireActiveSessionUser()`. | Older admin routes. This is the main #613 migration target. |
 | Finance API guard | `requireFinanceViewerApiAccess()` and `requireFinanceManagerApiAccess()` in `src/lib/finance-api-auth.ts`. | `/api/finance/**`. |
 | Lodge/kiosk guard | `checkLodgeAuth()` in `src/lib/lodge-auth.ts`, including active session and hut-leader PIN session support. | `/api/lodge/**` and lodge roster/guest routes. |
 | Cron/deploy secret | Repeated `x-cron-secret` comparison against `CRON_SECRET`, usually with `timingSafeEqual`. | `/api/cron/**`, `/api/deploy/runtime-status`. |
@@ -493,7 +493,7 @@ Verified controls already present and intentionally preserved:
   pages/APIs and `FINANCE_ADMIN` is required for manager-only sync and mapping
   routes. Xero connection state is managed through the shared operational admin
   Xero connection, with `financeAccessLevel` kept synchronized only for legacy
-  compatibility.
+  compatibility and ignored by runtime guards.
 - `LODGE` alone is rejected by finance guards; deliberate mixed-role accounts
   such as `LODGE` plus `FINANCE_USER` retain lodge access and gain finance
   viewer access.

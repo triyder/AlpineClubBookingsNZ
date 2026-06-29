@@ -18,7 +18,8 @@ roles, first-party booking data, and the single operational Xero connection.
 - Operational Xero setup remains an admin setup concern; `/finance` does not
   link to Xero connection management.
 - `Member.financeAccessLevel` remains synchronized as `NONE`, `VIEWER`, or
-  `MANAGER` only for legacy compatibility during the rollout.
+  `MANAGER` only for compatibility visibility. Finance authorization reads
+  `MemberAccessRole` rows only.
 
 ## Xero Connection
 

@@ -186,7 +186,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("rejects admin booking without forMemberId (must book on behalf)", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
 
     const req = makeRequest(baseBookingPayload);
     const res = await POST(req);
@@ -197,7 +197,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("rejects forMemberId from non-admin users", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true, emailVerified: true, xeroContactId: "xero1",
     });
@@ -210,7 +210,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("rejects admin booking for themselves", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true, emailVerified: true, xeroContactId: null,
     });
@@ -223,7 +223,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("rejects booking for inactive target member", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: false,
     });
@@ -236,7 +236,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("creates draft booking with correct memberId and createdById", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
     });
@@ -269,7 +269,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("logs audit for on-behalf draft booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
     });
@@ -301,7 +301,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("skips family group check for admin on-behalf", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
     });
@@ -330,7 +330,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("creates an on-behalf draft for a legacy target member with unconfirmed profile details", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
     });
@@ -360,7 +360,7 @@ describe("Admin Book on Behalf", () => {
   });
 
   it("creates an on-behalf waitlist booking for a legacy target member with unconfirmed profile details", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
     });
@@ -440,7 +440,7 @@ describe("Create booking guest normalization", () => {
   });
 
   it("forces manually typed guests to non-member pricing on create", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
       emailVerified: true,
@@ -478,7 +478,7 @@ describe("Create booking guest normalization", () => {
   });
 
   it("requires a member justification when a minor-only draft is created by a member", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       active: true,
       emailVerified: true,
@@ -533,7 +533,7 @@ describe("Quote API - forMemberId", () => {
   });
 
   it("uses target member credit balance when admin provides forMemberId", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     mockedGetCredit.mockResolvedValue(1500);
 
@@ -556,7 +556,7 @@ describe("Quote API - forMemberId", () => {
   });
 
   it("allows an admin on-behalf quote for a legacy target member with unconfirmed profile details", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
       legacyIncompleteTargetMember,
     ]);
@@ -584,7 +584,7 @@ describe("Quote API - forMemberId", () => {
   });
 
   it("uses session user credit balance when no forMemberId", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     mockedGetCredit.mockResolvedValue(0);
 
@@ -603,7 +603,7 @@ describe("Quote API - forMemberId", () => {
   });
 
   it("treats manually typed guests as non-members in quotes", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     mockedGetCredit.mockResolvedValue(0);
 
@@ -635,7 +635,7 @@ describe("Promo Validate API - forMemberId", () => {
   });
 
   it("checks usage caps against target member for admin on-behalf", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     (mockedPrisma.promoCode.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "pc1",
       code: "TEST10",
@@ -684,7 +684,7 @@ describe("Promo Validate API - forMemberId", () => {
   });
 
   it("returns signed promo adjustments and final price for fixed-nightly validation", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     (mockedPrisma.promoCode.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "pc-fixed",
       code: "SET30",

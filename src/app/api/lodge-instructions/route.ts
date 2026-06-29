@@ -20,7 +20,7 @@ export async function GET() {
 
   const allowed = await canReadLodgeInstructions(
     guard.session.user.id,
-    guard.session.user.role,
+    guard.session.user,
   );
 
   if (!allowed) {

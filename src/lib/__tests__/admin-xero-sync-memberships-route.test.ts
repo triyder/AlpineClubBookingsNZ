@@ -36,7 +36,7 @@ import { POST } from "@/app/api/admin/xero/sync-memberships/route";
 describe("POST /api/admin/xero/sync-memberships", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.refreshAllMembershipStatuses.mockResolvedValue({
       seasonYear: 2026,

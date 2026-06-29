@@ -46,7 +46,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     });
     mocks.refundRequestFindFirst.mockResolvedValue(null);
     mocks.refundRequestCreate.mockResolvedValue({ id: "rr-1" });

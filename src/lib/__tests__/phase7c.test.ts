@@ -72,10 +72,11 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
   });
@@ -175,7 +176,13 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   });
 
   it("rejects MEMBER role", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
 
     const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
     const req = makeRequest({
@@ -225,10 +232,11 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
   it("returns completedAt and completedVia in assignments", async () => {
@@ -321,10 +329,11 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
   it("sets arrivedAt when guest has not arrived", async () => {
@@ -429,7 +438,13 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   });
 
   it("rejects MEMBER role", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
 
     const { PUT } = await import(
       "@/app/api/lodge/guests/[date]/arrive/route"
@@ -452,10 +467,11 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
     mockPrisma.$transaction.mockImplementation(async (fn: any) =>
       fn({
         bookingGuest: {
@@ -590,10 +606,11 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
   it("returns arrivedAt and departedAt for each guest", async () => {
@@ -687,13 +704,20 @@ describe("F6: GET /api/lodge/roster/[date]/chores", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
   });
 
   it("returns active templates for admins and hut leaders", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
     mockPrisma.choreTemplate.findMany.mockResolvedValue([
       { id: "ct1", name: "Kitchen", active: true, sortOrder: 1 },
     ]);
@@ -715,7 +739,7 @@ describe("F6: GET /api/lodge/roster/[date]/chores", () => {
   });
 
   it("rejects lodge-only access for roster setup chores", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
 
     const { GET } = await import("@/app/api/lodge/roster/[date]/chores/route");
     const req = new Request("http://localhost/api/lodge/roster/2026-07-10/chores") as any;
@@ -737,11 +761,12 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     // Generate requires hut-leader or admin tier (LODGE can't generate)
-    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
   });
 
   it("generates allocations without saving to DB", async () => {
@@ -841,12 +866,13 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     mockPrisma.bookingGuest.findMany.mockResolvedValue([{ id: "g1", bookingId: "b1" }]);
     // Confirm requires hut-leader or admin tier (LODGE can't confirm)
-    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
   });
 
   it("saves allocations as CONFIRMED when no existing roster", async () => {
@@ -956,7 +982,13 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
   });
 
   it("rejects MEMBER role", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
 
     const { POST } = await import(
       "@/app/api/lodge/roster/[date]/confirm/route"
@@ -1016,10 +1048,11 @@ describe("F6: GET /api/lodge/roster/[date]/frequency-info", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "LODGE" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
   it("returns last rostered dates per chore template", async () => {

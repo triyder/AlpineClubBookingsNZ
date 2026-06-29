@@ -57,14 +57,14 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("returns 404 for non-existent booking", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue(null as never);
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(404);
   });
 
   it("returns 403 when non-owner non-admin tries to edit", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m2", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m2", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(403);
@@ -77,7 +77,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
         headers: { "Content-Type": "application/json" },
       })
     );
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
 
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(403);
@@ -85,21 +85,21 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("returns 400 for CANCELLED bookings", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CANCELLED" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(400);
   });
 
   it("returns 400 when notes exceed 500 chars", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "a".repeat(501) }), makeParams("b1"));
     expect(res.status).toBe(400);
   });
 
   it("strips HTML tags from notes", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     mockedBooking.update.mockResolvedValue({ id: "b1", notes: "hello world" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "<b>hello</b> <script>alert(1)</script>world" }), makeParams("b1"));
@@ -109,7 +109,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("does not decode entity-encoded script tags in notes", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     mockedBooking.update.mockResolvedValue({ id: "b1", notes: "Intro &lt;script&gt;alert(1)&lt;/script&gt; Outro" } as never);
 
@@ -129,7 +129,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("successfully updates notes for booking owner", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     mockedBooking.update.mockResolvedValue({ id: "b1", notes: "Test note" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "Test note" }), makeParams("b1"));
@@ -142,7 +142,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("allows admin to edit any booking notes", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "PENDING" } as never);
     mockedBooking.update.mockResolvedValue({ id: "b1", notes: "Admin note" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "Admin note" }), makeParams("b1"));
@@ -150,7 +150,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("sets notes to null when empty string provided", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     mockedBooking.update.mockResolvedValue({ id: "b1", notes: null } as never);
     const res = await putNotes(makeRequest("b1", { notes: "" }), makeParams("b1"));
@@ -163,7 +163,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("returns 400 for invalid JSON", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     const req = new NextRequest("http://localhost/api/bookings/b1/notes", {
       method: "PUT",

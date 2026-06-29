@@ -54,6 +54,7 @@ export type LinkedBookingMember = {
   postalPostalCode?: string | null;
   postalCountry?: string | null;
   role?: string | null;
+  accessRoles?: Array<{ role: string }>;
   profileCompletedAt?: Date | null;
   detailsConfirmedAt?: Date | null;
   detailsConfirmedByMemberId?: string | null;
@@ -181,6 +182,7 @@ export async function resolveLinkedBookingMembers(
       postalPostalCode: true,
       postalCountry: true,
       role: true,
+      accessRoles: { select: { role: true } },
       profileCompletedAt: true,
       detailsConfirmedAt: true,
       detailsConfirmedByMemberId: true,

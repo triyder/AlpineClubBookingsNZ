@@ -52,7 +52,7 @@ describe("lodge layout authentication", () => {
 
   it("renders lodge pages for an active authenticated user", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE" },
+      user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] },
     });
     mockFindUnique.mockResolvedValue({
       active: true,
@@ -69,7 +69,7 @@ describe("lodge layout authentication", () => {
 
   it("redirects inactive authenticated users back to login", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE" },
+      user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] },
     });
     mockFindUnique.mockResolvedValue({
       active: false,
@@ -85,7 +85,7 @@ describe("lodge layout authentication", () => {
 
   it("redirects authenticated users who must change their password", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE" },
+      user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }] },
     });
     mockFindUnique.mockResolvedValue({
       active: true,

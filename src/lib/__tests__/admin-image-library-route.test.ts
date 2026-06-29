@@ -37,8 +37,8 @@ vi.mock("@/lib/prisma", () => ({
 
 import { GET, POST } from "@/app/api/admin/image-library/route";
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
-const memberSession = { user: { id: "member-1", role: "MEMBER" } };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
+const memberSession = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 
 const PNG_BYTES = (() => {
   const buf = Buffer.alloc(33);

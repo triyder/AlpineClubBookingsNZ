@@ -9,6 +9,7 @@ import {
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 const modifyDatesSchema = z
   .object({
@@ -62,7 +63,10 @@ export async function PUT(
   try {
     const result = await modifyBookingDates({
       bookingId,
-      actor: { id: session.user.id, role: session.user.role },
+      actor: {
+        id: session.user.id,
+        role: authorizationRoleFromAccessRoles(session.user),
+      },
       input: parsed.data,
       ipAddress,
     });

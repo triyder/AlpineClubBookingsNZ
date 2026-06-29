@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 /**
  * Drop-in `requireAdmin` implementation for tests that mock
@@ -23,7 +24,7 @@ export async function evaluateRequireAdminMock() {
       response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
   }
-  if (session.user.role !== "ADMIN") {
+  if (!hasAdminAccess(session.user)) {
     return {
       ok: false as const,
       response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),

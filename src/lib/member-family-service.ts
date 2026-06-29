@@ -26,6 +26,7 @@ const FAMILY_MEMBER_PROFILE_SELECT = {
   active: true,
   canLogin: true,
   role: true,
+  accessRoles: { select: { role: true } },
   phoneCountryCode: true,
   phoneAreaCode: true,
   phoneNumber: true,
@@ -87,6 +88,7 @@ type FamilyMemberRecord = MemberProfileCompletenessInput & {
   active: boolean;
   canLogin: boolean;
   role: string;
+  accessRoles?: Array<{ role: string }>;
   inheritEmailFromId?: string | null;
   parent?: Parameters<typeof buildParentLinks>[0]["parent"];
   secondaryParent?: Parameters<typeof buildParentLinks>[0]["secondaryParent"];

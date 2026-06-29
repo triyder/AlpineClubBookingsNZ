@@ -38,12 +38,8 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (authResult.session?.user) {
-    const access = await getKioskAccessInfo(
-      authResult.session.user.id,
-      authResult.session.user.role,
-      date
-    );
+  if ("member" in authResult && authResult.member) {
+    const access = await getKioskAccessInfo(authResult.member, date);
 
     return NextResponse.json(access);
   }

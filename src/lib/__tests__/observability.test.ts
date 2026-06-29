@@ -574,7 +574,15 @@ describe("OBS-07: GET /api/admin/health", () => {
 
   function mockAdminSession() {
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "1", email: "admin@test.com", name: "Admin", role: "ADMIN", forcePasswordChange: false, isEmailVerified: true },
+      user: {
+        id: "1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        accessRoles: [{ role: "ADMIN" }],
+        forcePasswordChange: false,
+        isEmailVerified: true,
+      },
       expires: "",
     } as any);
   }
@@ -618,7 +626,15 @@ describe("OBS-07: GET /api/admin/health", () => {
 
   it("returns 403 for non-admin users", async () => {
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "1", email: "user@test.com", name: "Test", role: "MEMBER", forcePasswordChange: false, isEmailVerified: true },
+      user: {
+        id: "1",
+        email: "user@test.com",
+        name: "Test",
+        role: "MEMBER",
+        accessRoles: [{ role: "USER" }],
+        forcePasswordChange: false,
+        isEmailVerified: true,
+      },
       expires: "",
     } as any);
 
@@ -639,7 +655,15 @@ describe("OBS-07: GET /api/admin/health", () => {
 
   it("returns health data for admin users", async () => {
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "1", email: "admin@test.com", name: "Admin", role: "ADMIN", forcePasswordChange: false, isEmailVerified: true },
+      user: {
+        id: "1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        accessRoles: [{ role: "ADMIN" }],
+        forcePasswordChange: false,
+        isEmailVerified: true,
+      },
       expires: "",
     } as any);
 
@@ -768,7 +792,15 @@ describe("OBS-07: GET /api/admin/health", () => {
 
   it("groups cron runs by job name with max 5 per job", async () => {
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "1", email: "admin@test.com", name: "Admin", role: "ADMIN", forcePasswordChange: false, isEmailVerified: true },
+      user: {
+        id: "1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        accessRoles: [{ role: "ADMIN" }],
+        forcePasswordChange: false,
+        isEmailVerified: true,
+      },
       expires: "",
     } as any);
 

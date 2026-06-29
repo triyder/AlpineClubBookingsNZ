@@ -81,7 +81,7 @@ describe("issue reports API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as never);
     mockedMemberCount.mockResolvedValue(1 as never);
     mockedMemberFindUnique.mockResolvedValue({

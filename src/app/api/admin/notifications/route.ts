@@ -11,6 +11,7 @@ import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
   resolveAdminNotificationPreferences,
 } from "@/lib/admin-notification-preferences";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const preferenceUpdateSchema = z
   .object({
@@ -63,7 +64,7 @@ export async function PUT(request: Request) {
       id: true,
       firstName: true,
       lastName: true,
-      role: true,
+      accessRoles: { select: { role: true } },
       notificationPreference: {
         select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
       },
@@ -73,7 +74,7 @@ export async function PUT(request: Request) {
   if (!targetMember) {
     return NextResponse.json({ error: "Admin user not found" }, { status: 404 });
   }
-  if (targetMember.role !== "ADMIN") {
+  if (!hasAdminAccess(targetMember)) {
     return NextResponse.json(
       { error: "Notification preferences can only be managed for admin users" },
       { status: 400 }

@@ -25,7 +25,7 @@ const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
 const mockedRequireActiveSessionUser = vi.mocked(requireActiveSessionUser);
 
-const session = { user: { id: "member-1", role: "USER" } } as any;
+const session = { user: { id: "member-1", role: "USER", accessRoles: [{ role: "USER" }] } } as any;
 
 const completeMember = {
   id: "member-1",
@@ -49,6 +49,7 @@ const completeMember = {
   postalPostalCode: "3420",
   postalCountry: "NZ",
   role: "USER",
+  accessRoles: [{ role: "USER" }],
   ageTier: "ADULT",
   active: true,
   canLogin: true,
@@ -130,6 +131,7 @@ describe("member onboarding API", () => {
                   id: "admin-2",
                   firstName: "Admin",
                   role: "ADMIN",
+                  accessRoles: [{ role: "ADMIN" }],
                   detailsConfirmedAt: null,
                   detailsConfirmedByMemberId: null,
                   onboardingConfirmedAt: null,
@@ -142,6 +144,7 @@ describe("member onboarding API", () => {
                   id: "lodge-1",
                   firstName: "Lodge",
                   role: "LODGE",
+                  accessRoles: [{ role: "LODGE" }],
                   detailsConfirmedAt: null,
                   detailsConfirmedByMemberId: null,
                   onboardingConfirmedAt: null,
@@ -225,6 +228,7 @@ describe("member onboarding API", () => {
     mockedPrisma.member.findUnique.mockResolvedValue({
       ...completeMember,
       role: "ADMIN",
+      accessRoles: [{ role: "ADMIN" }],
     } as any);
 
     expect((await POST()).status).toBe(403);
@@ -249,6 +253,7 @@ describe("member onboarding API", () => {
       shouldShowMemberOnboarding({
         ...completeMember,
         role: "ADMIN",
+        accessRoles: [{ role: "ADMIN" }],
       })
     ).toBe(false);
 
@@ -256,6 +261,7 @@ describe("member onboarding API", () => {
       shouldShowMemberOnboarding({
         ...completeMember,
         role: "LODGE",
+        accessRoles: [{ role: "LODGE" }],
       })
     ).toBe(false);
 

@@ -52,7 +52,7 @@ describe("admin member credit routes", () => {
     vi.clearAllMocks();
 
     mocks.auth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.getClientIp.mockReturnValue("127.0.0.1");

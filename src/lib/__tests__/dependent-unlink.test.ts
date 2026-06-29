@@ -38,7 +38,7 @@ type MockMember = {
   canLogin: boolean;
 };
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 
 function makeRequest() {
   return new NextRequest("http://localhost/api/admin/members/parent-1/dependents/child-1", {

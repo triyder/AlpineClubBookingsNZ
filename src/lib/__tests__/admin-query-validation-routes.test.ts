@@ -209,7 +209,7 @@ function auditLogEntry(id: string) {
 describe("admin query validation and pagination", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.refundRequestFindMany.mockResolvedValue([]);
     mocks.refundRequestCount.mockResolvedValue(0);

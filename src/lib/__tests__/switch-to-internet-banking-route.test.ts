@@ -94,7 +94,7 @@ function stripeBooking(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+  mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.loadEffectiveModuleFlags.mockResolvedValue({
     xeroIntegration: true,
@@ -169,7 +169,7 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
 
   it("returns 403 when the caller is neither the owner nor an admin", async () => {
     mocks.auth.mockResolvedValueOnce({
-      user: { id: "someone-else", role: "MEMBER" },
+      user: { id: "someone-else", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     });
     const res = await POST(postRequest());
     expect(res.status).toBe(403);
@@ -177,7 +177,7 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
   });
 
   it("lets an admin switch on behalf of the booking owner", async () => {
-    mocks.auth.mockResolvedValueOnce({ user: { id: "admin-9", role: "ADMIN" } });
+    mocks.auth.mockResolvedValueOnce({ user: { id: "admin-9", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     const res = await POST(postRequest());
     expect(res.status).toBe(200);
     expect(mocks.upsert).toHaveBeenCalled();

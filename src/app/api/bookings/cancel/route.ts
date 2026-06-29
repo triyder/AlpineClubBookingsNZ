@@ -5,6 +5,7 @@ import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 /**
  * @deprecated Use POST /api/bookings/[id]/cancel instead.
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
     const result = await cancelBooking(
       parsed.data.bookingId,
       session.user.id,
-      session.user.role,
+      authorizationRoleFromAccessRoles(session.user),
       getClientIp(request)
     );
 

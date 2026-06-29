@@ -124,7 +124,7 @@ const mockedAuth = vi.mocked(auth);
 describe("P1.5: Admin bookings API VALID_STATUSES", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     vi.mocked(prisma.member.count).mockResolvedValue(1 as never);
     vi.mocked(prisma.booking.findMany).mockResolvedValue([] as never);
   });

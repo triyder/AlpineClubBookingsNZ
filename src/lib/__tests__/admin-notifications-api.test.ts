@@ -94,6 +94,7 @@ describe("Admin notifications API", () => {
         email: "member@example.com",
         role: "MEMBER",
       }),
+      accessRoles: [{ role: "USER" }],
       notificationPreference: null,
     } as never);
 
@@ -116,6 +117,7 @@ describe("Admin notifications API", () => {
         email: "jane@example.org",
         role: "ADMIN",
       }),
+      accessRoles: [{ role: "ADMIN" }],
       notificationPreference: null,
     } as never);
     vi.mocked(prisma.notificationPreference.upsert).mockResolvedValue({

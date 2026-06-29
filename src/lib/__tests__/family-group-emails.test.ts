@@ -154,7 +154,7 @@ beforeEach(() => {
 describe("POST /api/members/family/invite — email sending", () => {
   it("should send invitation email on successful invite", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "u1", role: "MEMBER", email: "inviter@test.com" },
+      user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }], email: "inviter@test.com" },
     } as any);
 
     vi.mocked(prisma.member.findUnique).mockResolvedValue({
@@ -205,7 +205,7 @@ describe("POST /api/members/family/invite — email sending", () => {
 describe("PUT /api/members/family/invitations — email on accept", () => {
   it("should send accepted email to inviter when invitation is accepted", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "u2", role: "MEMBER", email: "invitee@test.com" },
+      user: { id: "u2", role: "MEMBER", accessRoles: [{ role: "USER" }], email: "invitee@test.com" },
     } as any);
 
     vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue({
@@ -256,7 +256,7 @@ describe("PUT /api/members/family/invitations — email on accept", () => {
 describe("POST /api/members/family/request-child — email on submit", () => {
   it("should send submitted email to parent on successful child request", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "u1", role: "MEMBER", email: "parent@test.com" },
+      user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }], email: "parent@test.com" },
     } as any);
 
     vi.mocked(prisma.member.findUnique)

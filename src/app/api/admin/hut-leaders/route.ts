@@ -10,7 +10,7 @@ import {
   generateHutLeaderPin,
   hashHutLeaderPin,
 } from "@/lib/lodge-pin-session";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole } from "@/lib/access-roles";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -78,11 +78,11 @@ export async function POST(req: NextRequest) {
       active: true,
       email: true,
       firstName: true,
-      role: true,
+      accessRoles: { select: { role: true } },
     },
   });
 
-  if (!member || !member.active || !isMemberLevelRole(member.role)) {
+  if (!member || !member.active || !hasAccessRole(member, "USER")) {
     return NextResponse.json(
       { error: "Member not found or not eligible for hut leader assignment" },
       { status: 404 }

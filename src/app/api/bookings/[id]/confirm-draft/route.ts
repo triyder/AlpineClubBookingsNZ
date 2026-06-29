@@ -18,6 +18,7 @@ import {
   requiresPaidSubscriptionForMemberForBooking,
 } from "@/lib/membership-type-policy";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 export async function POST(
   request: NextRequest,
@@ -32,6 +33,7 @@ export async function POST(
   if (inactiveResponse) {
     return inactiveResponse;
   }
+  const isAdmin = hasAdminAccess(session.user);
 
   const { id } = await params;
 
@@ -44,7 +46,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -79,7 +81,7 @@ export async function POST(
   // Subscription check (non-admins only; bypassed when the Xero module is
   // effectively off, because subscriptions are invoiced through Xero)
   if (
-    session.user.role !== "ADMIN" &&
+    !isAdmin &&
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: booking.memberId,
       seasonYear,

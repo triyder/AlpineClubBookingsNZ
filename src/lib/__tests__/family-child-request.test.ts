@@ -33,7 +33,7 @@ import { POST as requestChild } from "@/app/api/members/family/request-child/rou
 
 const mockedAuth = vi.mocked(auth);
 
-const adultSession = { user: { id: "adult1", role: "MEMBER" } } as any;
+const adultSession = { user: { id: "adult1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any;
 
 function nextYearDateOnly() {
   return `${new Date().getUTCFullYear() + 1}-01-01`;

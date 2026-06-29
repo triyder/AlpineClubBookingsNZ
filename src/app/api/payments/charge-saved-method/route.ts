@@ -16,6 +16,7 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (!inactiveResponse) {
-        isAdmin = session.user.role === "ADMIN";
+        isAdmin = hasAdminAccess(session.user);
       }
     }
 

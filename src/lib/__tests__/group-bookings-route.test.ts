@@ -98,7 +98,7 @@ function postRequest(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.applyRateLimit.mockReturnValue(null);
-  mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+  mocks.auth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.loadEffectiveModuleFlags.mockResolvedValue({
     xeroIntegration: true,
@@ -302,7 +302,7 @@ describe("POST /api/group-bookings/[code]/join", () => {
     expect(mocks.joinGroupBookingAsMember).toHaveBeenCalledWith(
       { code: "ABCD2345", guests: validBody.guests, paymentMethod: "stripe" },
       "member-1",
-      "MEMBER"
+      "USER"
     );
   });
 
@@ -323,7 +323,7 @@ describe("POST /api/group-bookings/[code]/join", () => {
     expect(mocks.joinGroupBookingAsMember).toHaveBeenCalledWith(
       { code: "ABCD2345", guests: validBody.guests, paymentMethod: "internet_banking" },
       "member-1",
-      "MEMBER"
+      "USER"
     );
   });
 

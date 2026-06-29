@@ -84,8 +84,8 @@ import { auth } from "@/lib/auth";
 import { PUT as updateMember, GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
 
 const mockedAuth = vi.mocked(auth);
-const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "USER" } } as any;
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const memberSession = { user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] } } as any;
 
 const baseMember = {
   id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
@@ -128,7 +128,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     });
     mockRequireAdmin.mockResolvedValue({
       ok: true,
-      session: { user: { id: "admin1", role: "ADMIN" } },
+      session: { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
     });
   });
 

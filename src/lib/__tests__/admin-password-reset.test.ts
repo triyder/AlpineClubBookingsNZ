@@ -55,7 +55,11 @@ describe("Admin Send Password Reset API", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
     vi.clearAllMocks();
-    mockedFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false } as any);
+    mockedFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    } as any);
     mockedCreateToken.mockResolvedValue({ id: "tok1", token: "uuid", memberId: "m1", expiresAt: new Date(), used: false, createdAt: new Date() } as any);
     mockedDeleteTokens.mockResolvedValue({ count: 1 } as any);
   });
@@ -73,26 +77,31 @@ describe("Admin Send Password Reset API", () => {
   });
 
   it("returns 403 for non-admin users", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    mockedFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    } as any);
     const res = await POST(makeReq({ memberIds: ["m1"] }));
     expect(res.status).toBe(403);
   });
 
   it("returns 422 for empty memberIds array", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     const res = await POST(makeReq({ memberIds: [] }));
     expect(res.status).toBe(422);
   });
 
   it("returns 422 for more than 100 memberIds", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     const ids = Array.from({ length: 101 }, (_, i) => `m${i}`);
     const res = await POST(makeReq({ memberIds: ids }));
     expect(res.status).toBe(422);
   });
 
   it("returns 400 for invalid JSON", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     const req = new NextRequest("http://localhost/api/admin/members/send-password-reset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -103,7 +112,7 @@ describe("Admin Send Password Reset API", () => {
   });
 
   it("sends password reset email to a single member", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     ] as any);
@@ -150,7 +159,7 @@ describe("Admin Send Password Reset API", () => {
   it.each(ADMIN_PASSWORD_RESET_EXPIRY_OPTIONS.filter((option) => option.value !== "1h"))(
     "supports the $label admin reset window",
     async (option) => {
-      mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+      mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
       mockedFindMany.mockResolvedValue([
         { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
       ] as any);
@@ -177,7 +186,7 @@ describe("Admin Send Password Reset API", () => {
   );
 
   it("skips inactive and dependent members", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     // Only m1 is returned (active, primary) — m2 is filtered out by the query
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
@@ -202,7 +211,7 @@ describe("Admin Send Password Reset API", () => {
   });
 
   it("returns sent 0 when no members found", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedFindMany.mockResolvedValue([]);
 
     const res = await POST(makeReq({ memberIds: ["nonexistent"] }));
@@ -213,7 +222,7 @@ describe("Admin Send Password Reset API", () => {
   });
 
   it("handles token creation failure gracefully", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     ] as any);

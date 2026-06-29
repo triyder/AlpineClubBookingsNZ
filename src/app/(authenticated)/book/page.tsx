@@ -34,6 +34,7 @@ import {
   shouldShowInviteFamilyGroupMembersLink,
 } from "@/lib/family-booking";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 interface FamilyMember {
   id: string;
@@ -347,7 +348,7 @@ export default function BookPage() {
 
   // Redirect admins to the admin booking page — admins must book on behalf of members
   useEffect(() => {
-    if (session?.user?.role === "ADMIN") {
+    if (session?.user && hasAdminAccess(session.user)) {
       router.replace("/admin/book");
     }
   }, [session, router]);

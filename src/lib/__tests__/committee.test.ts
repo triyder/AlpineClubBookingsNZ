@@ -73,8 +73,8 @@ import { PATCH as updateAssignment, DELETE as deleteAssignment } from "@/app/api
 
 const mockedAuth = vi.mocked(auth);
 
-const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const memberSession = { user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any;
 
 const sampleMember = {
   id: "cm1",

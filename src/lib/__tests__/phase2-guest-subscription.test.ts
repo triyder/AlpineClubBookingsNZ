@@ -274,7 +274,7 @@ beforeEach(() => {
 
 describe("P2.3: Guest subscription check", () => {
   it("blocks booking when a member-guest has unpaid subscription", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([
       {
         memberId: "guest-member-1",
@@ -313,7 +313,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("allows booking when all member-guests have paid subscriptions", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     // findMany returns paid sub for guest-member-1
     mockPrisma.memberSubscription.findMany.mockResolvedValue([
       {
@@ -335,7 +335,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("allows child and infant member-guests without subscription invoice rows", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
     mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
       const ids = args?.where?.id?.in ?? [];
@@ -360,7 +360,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("uses the stored member age tier when deciding if a guest subscription is required", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
     mockPrisma.member.findMany.mockResolvedValue([
       { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
@@ -380,7 +380,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("admin-created bookings bypass guest subscription check", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     // No paid subs for guest
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
 
@@ -399,7 +399,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("non-member guests are not checked for subscriptions", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
 
     const req = makeRequest([
       { firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true },
@@ -413,7 +413,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("error message includes names of all unpaid members", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
     mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
       const ids = args?.where?.id?.in;
@@ -443,7 +443,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("blocks the modify quote flow from adding an unpaid member-guest later", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
     mockPrisma.member.findMany.mockResolvedValue([
       { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
@@ -473,7 +473,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("quotes per-guest stay range changes by guest-night ranges", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
     const { calculateBookingPrice } = await import("@/lib/pricing");
     const mockedRangeCapacity = vi.mocked(checkCapacityForGuestRanges);
@@ -586,7 +586,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("includes policy-adjusted card refund and account credit options for paid booking reductions", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { calculateBookingPrice } = await import("@/lib/pricing");
     const mockedPrice = vi.mocked(calculateBookingPrice);
 
@@ -660,7 +660,7 @@ describe("P2.3: Guest subscription check", () => {
   });
 
   it("blocks the modify quote flow from pricing incomplete linked member guests", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     mockPrisma.familyGroupMember.findMany.mockImplementation(async (args: { where?: { memberId?: string | { in?: string[] }; familyGroupId?: { in?: string[] } } }) => {
       if (args?.where?.memberId === "member-1") {
         return [{ familyGroupId: "family-1", memberId: "member-1" }];

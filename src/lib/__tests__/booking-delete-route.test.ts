@@ -43,7 +43,7 @@ describe("DELETE /api/bookings/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as any);
     mockedDeleteBooking.mockResolvedValue({
       status: 200,
@@ -66,7 +66,7 @@ describe("DELETE /api/bookings/[id]", () => {
       bookingId: "booking-1",
       actor: {
         memberId: "member-1",
-        role: "MEMBER",
+        role: "USER",
         ipAddress: "127.0.0.1",
       },
       reason: undefined,
@@ -105,7 +105,7 @@ describe("DELETE /api/bookings/[id]", () => {
 
   it("returns blocker details from unsafe cancelled delete attempts", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     } as any);
     mockedDeleteBooking.mockResolvedValueOnce({
       status: 409,

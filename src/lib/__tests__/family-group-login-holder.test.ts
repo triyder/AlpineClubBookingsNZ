@@ -42,7 +42,7 @@ import { auth } from "@/lib/auth";
 import { POST } from "@/app/api/admin/family-groups/[id]/login-holder/route";
 
 const mockedAuth = vi.mocked(auth);
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 const passwordDate = new Date("2026-05-01T00:00:00.000Z");
 
 function makeReq(body: unknown) {

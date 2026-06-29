@@ -133,8 +133,8 @@ import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
 
 const mockedAuth = vi.mocked(auth);
 const mockedSendMemberSetupInviteEmail = vi.mocked(sendMemberSetupInviteEmail);
-const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "m1", role: "USER" } } as any;
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+const memberSession = { user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] } } as any;
 const adminAccessMember = {
   id: "session-member",
   role: "ADMIN",

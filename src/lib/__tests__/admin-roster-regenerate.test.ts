@@ -76,7 +76,7 @@ vi.mock("@/lib/logger", () => ({
 describe("PUT /api/admin/roster/[date] regenerate action", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } })
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } })
 
     mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({

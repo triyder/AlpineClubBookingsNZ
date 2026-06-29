@@ -16,6 +16,7 @@ import {
 } from "@/lib/membership-type-policy";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
 import { enqueueBookingModificationRefundRecovery } from "@/lib/payment-recovery";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 export async function DELETE(
   request: NextRequest,
@@ -42,7 +43,7 @@ export async function DELETE(
         bookingId,
         guestId,
         actorMemberId: session.user.id,
-        actorRole: session.user.role,
+        actorRole: authorizationRoleFromAccessRoles(session.user),
       })
     );
 

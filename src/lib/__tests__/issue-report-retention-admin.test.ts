@@ -56,13 +56,13 @@ import {
 
 function adminSession() {
   mocks.auth.mockResolvedValue({
-    user: { id: "admin-1", role: "ADMIN" },
+    user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
   } as never);
 }
 
 function memberSession() {
   mocks.auth.mockResolvedValue({
-    user: { id: "member-1", role: "MEMBER" },
+    user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
   } as never);
 }
 

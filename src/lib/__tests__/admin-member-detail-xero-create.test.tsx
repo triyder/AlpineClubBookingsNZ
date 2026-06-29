@@ -10,7 +10,7 @@ const fetchMock = vi.fn();
 
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
-    data: { user: { id: "admin-1", role: "ADMIN" } },
+    data: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   }),
 }));
 

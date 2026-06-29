@@ -137,7 +137,7 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     vi.clearAllMocks();
     mocks.requireAdmin.mockResolvedValue({
       ok: true,
-      session: { user: { id: "admin-1", role: "ADMIN" } },
+      session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
     });
     mocks.transaction.mockImplementation(async (fn) => fn(mocks.tx));
     mocks.tx.booking.findUnique.mockResolvedValue(waitlistBooking());

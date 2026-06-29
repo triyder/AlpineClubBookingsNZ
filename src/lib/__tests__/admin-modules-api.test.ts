@@ -60,8 +60,8 @@ vi.mock("@/lib/logger", () => ({
 import { GET, PUT } from "@/app/api/admin/modules/route";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
-const memberSession = { user: { id: "member-1", role: "MEMBER" } };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
+const memberSession = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 
 const allEnabled: ModuleSettingsValues = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, true]),

@@ -41,7 +41,7 @@ vi.mock("@/lib/logger", () => ({
 import { POST as runFinanceSyncRoute } from "@/app/api/finance/sync/run/route";
 
 function managerSession() {
-  return { user: { id: "finance-manager-1", role: "USER" } };
+  return { user: { id: "finance-manager-1", role: "USER", accessRoles: [{ role: "USER" }] } };
 }
 
 function viewerMember() {

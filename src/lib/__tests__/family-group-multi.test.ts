@@ -94,7 +94,7 @@ const mockPrisma = prisma as unknown as {
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
 
-const adminSession = { user: { id: "admin1", role: "ADMIN" } };
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 
 function makeReq(body?: unknown, params?: Record<string, string>) {
   const url = "http://localhost/api/admin/family-groups" + (params?.id ? `/${params.id}` : "");

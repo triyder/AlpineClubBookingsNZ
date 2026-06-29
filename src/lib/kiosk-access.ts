@@ -4,7 +4,12 @@ import {
   formatDateOnly,
 } from "./date-only";
 import { LODGE_VISIBLE_BOOKING_STATUSES } from "./lodge-date-scoping";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import {
+  hasAccessRole,
+  hasAdminAccess,
+  hasLodgeAccess,
+  type AccessRoleInput,
+} from "@/lib/access-roles";
 
 export type KioskTier = "admin" | "hut-leader" | "lodge" | "staying-guest" | "none";
 
@@ -16,24 +21,27 @@ export interface KioskAccess {
   canCompleteChores: boolean;
 }
 
+export type KioskAccessSubject = AccessRoleInput & {
+  id: string;
+};
+
 /**
  * Returns the highest kiosk access tier for a user on a given date.
  */
 export async function getKioskAccessTier(
-  userId: string,
-  userRole: string,
+  user: KioskAccessSubject,
   date: Date
 ): Promise<KioskTier> {
-  if (userRole === "ADMIN") return "admin";
-  if (userRole === "LODGE") return "lodge";
+  if (hasAdminAccess(user)) return "admin";
+  if (hasLodgeAccess(user)) return "lodge";
 
-  if (isMemberLevelRole(userRole)) {
+  if (hasAccessRole(user, "USER")) {
     // Check hut leader assignment: (startDate - 1 day) <= date <= endDate
     const nextDay = addDaysDateOnly(date, 1);
 
     const hutLeaderCount = await prisma.hutLeaderAssignment.count({
       where: {
-        memberId: userId,
+        memberId: user.id,
         // startDate - 1 day <= date means startDate <= date + 1 day
         startDate: { lte: nextDay },
         endDate: { gte: date },
@@ -48,11 +56,11 @@ export async function getKioskAccessTier(
       where: {
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         OR: [
-          { memberId: userId },
+          { memberId: user.id },
           {
             guests: {
               some: {
-                memberId: userId,
+                memberId: user.id,
                 stayStart: { lte: nextDay },
                 stayEnd: { gte: date },
               },
@@ -76,11 +84,10 @@ export async function getKioskAccessTier(
  * Returns whether a user can access the kiosk for a given date.
  */
 export async function canAccessKiosk(
-  userId: string,
-  userRole: string,
+  user: KioskAccessSubject,
   date: Date
 ): Promise<boolean> {
-  const tier = await getKioskAccessTier(userId, userRole, date);
+  const tier = await getKioskAccessTier(user, date);
   return tier !== "none";
 }
 
@@ -89,18 +96,17 @@ export async function canAccessKiosk(
  * or null for unrestricted (ADMIN/LODGE).
  */
 export async function getKioskDateRange(
-  userId: string,
-  userRole: string,
+  user: KioskAccessSubject,
   date?: Date
 ): Promise<{ minDate: string; maxDate: string } | null> {
-  if (userRole === "ADMIN" || userRole === "LODGE") return null;
+  if (hasAdminAccess(user) || hasLodgeAccess(user)) return null;
 
   const nextDay = date ? addDaysDateOnly(date, 1) : null;
 
   // Gather all hut leader assignments
   const assignments = await prisma.hutLeaderAssignment.findMany({
     where: {
-      memberId: userId,
+      memberId: user.id,
       ...(date && nextDay
         ? {
             startDate: { lte: nextDay },
@@ -116,11 +122,11 @@ export async function getKioskDateRange(
     where: {
       status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
       OR: [
-        { memberId: userId },
+        { memberId: user.id },
         {
           guests: {
             some: {
-              memberId: userId,
+              memberId: user.id,
               ...(date && nextDay
                 ? {
                     stayStart: { lte: nextDay },
@@ -143,7 +149,7 @@ export async function getKioskDateRange(
       checkIn: true,
       checkOut: true,
       guests: {
-        where: { memberId: userId },
+        where: { memberId: user.id },
         select: {
           stayStart: true,
           stayEnd: true,
@@ -168,7 +174,7 @@ export async function getKioskDateRange(
 
   for (const b of bookings) {
     const guestRanges =
-      b.memberId === userId
+      b.memberId === user.id
         ? [{ stayStart: b.checkIn, stayEnd: b.checkOut }]
         : (b.guests ?? []);
 
@@ -194,12 +200,11 @@ export async function getKioskDateRange(
  * Build the full kiosk access response for an API endpoint.
  */
 export async function getKioskAccessInfo(
-  userId: string,
-  userRole: string,
+  user: KioskAccessSubject,
   date: Date
 ): Promise<KioskAccess> {
-  const tier = await getKioskAccessTier(userId, userRole, date);
-  const dateRange = await getKioskDateRange(userId, userRole, date);
+  const tier = await getKioskAccessTier(user, date);
+  const dateRange = await getKioskDateRange(user, date);
 
   return {
     tier,

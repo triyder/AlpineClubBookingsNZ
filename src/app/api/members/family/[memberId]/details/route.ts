@@ -42,6 +42,7 @@ const DELEGATED_MEMBER_SELECT = {
   active: true,
   canLogin: true,
   role: true,
+  accessRoles: { select: { role: true } },
   ageTier: true,
   xeroContactId: true,
   phoneCountryCode: true,

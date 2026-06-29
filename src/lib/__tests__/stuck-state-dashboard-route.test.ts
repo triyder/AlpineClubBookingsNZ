@@ -36,6 +36,7 @@ describe("GET /api/admin/stuck-states", () => {
       user: {
         id: "admin-1",
         role: "ADMIN",
+        accessRoles: [{ role: "ADMIN" }],
       },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
@@ -70,6 +71,7 @@ describe("GET /api/admin/stuck-states", () => {
       user: {
         id: "member-1",
         role: "MEMBER",
+        accessRoles: [{ role: "USER" }],
       },
     });
 

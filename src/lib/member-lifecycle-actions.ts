@@ -1,10 +1,10 @@
 import {
   MemberLifecycleAction,
   MemberLifecycleActionRequestStatus,
-  Role,
   SubscriptionStatus,
   type Prisma,
 } from "@prisma/client";
+import { hasAdminAccess } from "@/lib/access-roles";
 import { createAuditLog } from "@/lib/audit";
 import {
   sendAdminMemberArchiveRequestedAlert,
@@ -494,7 +494,7 @@ export async function getMemberDeleteEligibility({
     where: { id: memberId },
     select: {
       id: true,
-      role: true,
+      accessRoles: { select: { role: true } },
       parentMemberId: true,
       secondaryParentId: true,
       inheritEmailFromId: true,
@@ -521,7 +521,7 @@ export async function getMemberDeleteEligibility({
     });
   }
 
-  if (member.role === Role.ADMIN) {
+  if (hasAdminAccess(member)) {
     blockers.push({
       code: "admin_account",
       label: "Admin accounts cannot be hard deleted.",

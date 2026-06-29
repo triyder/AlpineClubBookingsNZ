@@ -25,7 +25,7 @@ import {
 } from "@/lib/audit";
 import { nameField } from "@/lib/zod-helpers";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole } from "@/lib/access-roles";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -77,6 +77,7 @@ const PROFILE_XERO_SYNC_SELECT = {
   id: true,
   canLogin: true,
   role: true,
+  accessRoles: { select: { role: true } },
   firstName: true,
   lastName: true,
   phoneCountryCode: true,
@@ -233,7 +234,7 @@ export async function PUT(req: NextRequest) {
     updateData.occupation = data.occupation?.trim() || null;
   }
 
-  if (existing.canLogin && isMemberLevelRole(existing.role)) {
+  if (existing.canLogin && hasAccessRole(existing, "USER")) {
     const profileCompleteness = evaluateSelfServiceProfilePayload({
       firstName: updateData.firstName as string | null | undefined,
       lastName: updateData.lastName as string | null | undefined,

@@ -58,6 +58,10 @@ import {
 } from "@/lib/booking-edit-guest-ranges";
 import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 import { getSeasonYear } from "@/lib/utils";
+import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+} from "@/lib/access-roles";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -187,6 +191,8 @@ export async function POST(
   if (inactiveResponse) {
     return inactiveResponse;
   }
+  const isAdmin = hasAdminAccess(session.user);
+  const actorRole = authorizationRoleFromAccessRoles(session.user);
 
   const { id: bookingId } = await params;
 
@@ -211,11 +217,11 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!canModifyBookingStatusForRole(booking.status, session.user.role)) {
+  if (!canModifyBookingStatusForRole(booking.status, actorRole)) {
     return NextResponse.json(
       { error: "This booking cannot be modified in its current status" },
       { status: 400 }
@@ -224,7 +230,7 @@ export async function POST(
 
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
-    role: session.user.role,
+    role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
@@ -276,16 +282,15 @@ export async function POST(
       prisma,
       booking.memberId,
       (addGuests ?? []).map((guest) => guest.memberId),
-      { skipAuthorization: session.user.role === "ADMIN" }
+      { skipAuthorization: isAdmin }
     );
     await assertLinkedBookingMembersCanBeBooked(
       prisma,
       linkedMembers,
       session.user.id,
       {
-        actorRole: session.user.role,
-        onBehalfOfMemberId:
-          session.user.role === "ADMIN" ? booking.memberId : null,
+        actorRole,
+        onBehalfOfMemberId: isAdmin ? booking.memberId : null,
       }
     );
     normalizedAddGuests = addGuests
@@ -406,7 +411,7 @@ export async function POST(
       );
     }
   } else if (
-    session.user.role !== "ADMIN" &&
+    !isAdmin &&
     normalizeDateOnlyForTimeZone(finalRequestedCheckIn) <= editPolicy.today
   ) {
     return NextResponse.json(
@@ -418,7 +423,7 @@ export async function POST(
   const newCheckIn = isInProgressEdit ? booking.checkIn : finalRequestedCheckIn;
   const newCheckOut = finalRequestedCheckOut;
   const skipBookingLifecycleRules =
-    session.user.role === "ADMIN" &&
+    isAdmin &&
     !usesActiveBookingEditLifecycle(booking.status);
 
   if (newCheckOut <= newCheckIn) {
@@ -544,7 +549,7 @@ export async function POST(
     throw error;
   }
 
-  if (session.user.role !== "ADMIN") {
+  if (!isAdmin) {
     const unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
       bookingMemberId: booking.memberId,
       checkIn: isInProgressEdit && editableFrom ? editableFrom : newCheckIn,
@@ -565,7 +570,7 @@ export async function POST(
 
   // Minimum stay policy validation (skip for admins)
   let minimumStayViolations: { policyName: string; triggerDay: string; minimumNights: number; actualNights: number }[] = [];
-  if (session.user.role !== "ADMIN" && !isInProgressEdit) {
+  if (!isAdmin && !isInProgressEdit) {
     const { validateMinimumStay } = await import("@/lib/booking-policies");
     const stayResult = await validateMinimumStay(newCheckIn, newCheckOut);
     minimumStayViolations = stayResult.violations;

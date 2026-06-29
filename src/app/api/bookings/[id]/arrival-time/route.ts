@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import { getTodayDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 // Matches HH:mm with 30-min increments (00 or 30)
 const arrivalTimeSchema = z.object({
@@ -42,7 +43,7 @@ export async function PUT(
   }
 
   // Only booking owner or admin can update
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -115,7 +116,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

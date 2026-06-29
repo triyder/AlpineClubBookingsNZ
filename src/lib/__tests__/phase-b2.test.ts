@@ -102,8 +102,20 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
   }
 
   it("allows 1-day overlap (handover scenario) — returns 201", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "USER" });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockPrisma.member.findUnique
+      .mockResolvedValueOnce({
+        id: "admin-1",
+        active: true,
+        forcePasswordChange: false,
+        accessRoles: [{ role: "ADMIN" }],
+      })
+      .mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
     // Existing: Apr 7-10, New: Apr 10-12 → 1 day overlap = OK
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
@@ -127,8 +139,20 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
   });
 
   it("rejects 2+ day overlap with clear error message — returns 409", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "USER" });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockPrisma.member.findUnique
+      .mockResolvedValueOnce({
+        id: "admin-1",
+        active: true,
+        forcePasswordChange: false,
+        accessRoles: [{ role: "ADMIN" }],
+      })
+      .mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
     // Existing: Apr 7-10, New: Apr 9-12 → 2 days overlap = rejected
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
@@ -155,8 +179,20 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
   });
 
   it("allows creation when no overlapping assignments exist", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true, role: "USER" });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockPrisma.member.findUnique
+      .mockResolvedValueOnce({
+        id: "admin-1",
+        active: true,
+        forcePasswordChange: false,
+        accessRoles: [{ role: "ADMIN" }],
+      })
+      .mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-1" });
 
@@ -172,7 +208,7 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
   });
 
   it("returns 403 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER" } });
+    mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER", accessRoles: [{ role: "USER" }] } });
 
     const { POST } = await import("@/app/api/admin/hut-leaders/route");
     const req = new Request("http://localhost/api/admin/hut-leaders", {
@@ -194,6 +230,12 @@ describe("#25: Eligible Members API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "admin-1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
   });
 
   function d(str: string) {
@@ -202,7 +244,7 @@ describe("#25: Eligible Members API", () => {
   }
 
   it("returns members with booking and suggested dates", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.bookingGuest.findMany.mockResolvedValue([
       {
         memberId: "m1",
@@ -232,7 +274,7 @@ describe("#25: Eligible Members API", () => {
   });
 
   it("uses earliest checkIn and latest checkOut for multiple bookings", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.bookingGuest.findMany.mockResolvedValue([
       {
         memberId: "m1",
@@ -265,7 +307,7 @@ describe("#25: Eligible Members API", () => {
   });
 
   it("filters out inactive members", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.bookingGuest.findMany.mockResolvedValue([
       {
         memberId: "m1",
@@ -287,7 +329,7 @@ describe("#25: Eligible Members API", () => {
   });
 
   it("returns 400 for missing date parameters", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
 
     const { GET } = await import("@/app/api/admin/hut-leaders/eligible-members/route");
     const { NextRequest } = await import("next/server");
@@ -298,7 +340,13 @@ describe("#25: Eligible Members API", () => {
   });
 
   it("returns 403 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER" } });
+    mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "u1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
 
     const { GET } = await import("@/app/api/admin/hut-leaders/eligible-members/route");
     const { NextRequest } = await import("next/server");
@@ -319,6 +367,12 @@ describe("#25: Auto-Assign Hut Leaders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "admin-1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
     vi.useFakeTimers();
     // Set to a time that resolves to the desired "today" in NZST after setHours(0,0,0,0)
     vi.setSystemTime(new Date("2026-04-08T06:00:00.000Z"));
@@ -411,6 +465,12 @@ describe("#25: Unassigned Dates API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "admin-1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-08T06:00:00.000Z"));
   });
@@ -424,7 +484,7 @@ describe("#25: Unassigned Dates API", () => {
   }
 
   it("returns dates with bookings but no hut leader assigned", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     // Booking covering a range within the 14-day lookahead
     const checkIn = localMidnight("2026-04-10");
@@ -450,7 +510,7 @@ describe("#25: Unassigned Dates API", () => {
   });
 
   it("returns empty when all dates are covered by assignments", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     // Assignment covers the entire 14-day window
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       { startDate: localMidnight("2026-04-01"), endDate: localMidnight("2026-04-30") },
@@ -461,23 +521,31 @@ describe("#25: Unassigned Dates API", () => {
 
     const { GET } = await import("@/app/api/admin/hut-leaders/unassigned-dates/route");
     const res = await GET();
+    expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.unassignedDates).toHaveLength(0);
   });
 
   it("returns empty when no bookings exist", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { GET } = await import("@/app/api/admin/hut-leaders/unassigned-dates/route");
     const res = await GET();
+    expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.unassignedDates).toHaveLength(0);
   });
 
   it("returns 403 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER" } });
+    mockAuth.mockResolvedValue({ user: { id: "u1", role: "USER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "u1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
 
     const { GET } = await import("@/app/api/admin/hut-leaders/unassigned-dates/route");
     const res = await GET();
@@ -485,7 +553,7 @@ describe("#25: Unassigned Dates API", () => {
   });
 
   it("includes correct guest count for each date", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     const checkIn = localMidnight("2026-04-10");
     const checkOut = localMidnight("2026-04-11");
@@ -495,6 +563,7 @@ describe("#25: Unassigned Dates API", () => {
 
     const { GET } = await import("@/app/api/admin/hut-leaders/unassigned-dates/route");
     const res = await GET();
+    expect(res.status).toBe(200);
     const body = await res.json();
     const relevant = body.unassignedDates.filter((d: any) => d.guestCount === 4);
     expect(relevant.length).toBeGreaterThan(0);

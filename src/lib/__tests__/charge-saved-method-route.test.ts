@@ -107,7 +107,7 @@ import { POST } from "@/app/api/payments/charge-saved-method/route";
 describe("POST /api/payments/charge-saved-method", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockBookingFindUnique.mockResolvedValue({
       id: "booking-1",
       memberId: "member-1",

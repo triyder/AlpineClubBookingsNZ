@@ -50,6 +50,10 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { OPENABLE_ORGANISER_STATUSES } from "@/lib/group-booking";
 import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+} from "@/lib/access-roles";
+import {
   OrganiserGroupBookingCard,
   type OrganiserGroupState,
 } from "@/components/group-booking/organiser-group-booking-card";
@@ -90,6 +94,8 @@ export default async function BookingDetailPage({
   const query = searchParams ? await searchParams : {};
   const session = await auth();
   if (!session) redirect("/login");
+  const isAdmin = hasAdminAccess(session.user);
+  const viewerAuthorizationRole = authorizationRoleFromAccessRoles(session.user);
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -205,13 +211,13 @@ export default async function BookingDetailPage({
   });
 
   if (!booking) notFound();
-  if (booking.deletedAt && session.user.role !== "ADMIN") notFound();
+  if (booking.deletedAt && !isAdmin) notFound();
   const isBookingOwner = booking.memberId === session.user.id;
   const isLinkedGuestViewer =
     !isBookingOwner &&
-    session.user.role !== "ADMIN" &&
+    !isAdmin &&
     booking.guests.some((guest) => guest.memberId === session.user.id);
-  const canManageBooking = isBookingOwner || session.user.role === "ADMIN";
+  const canManageBooking = isBookingOwner || isAdmin;
   if (!canManageBooking && !isLinkedGuestViewer) {
     redirect("/bookings");
   }
@@ -303,14 +309,14 @@ export default async function BookingDetailPage({
     booking.status !== "CANCELLED" && booking.status !== "COMPLETED";
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
-    role: session.user.role,
+    role: viewerAuthorizationRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
   const canModify = canManageBooking && !isDeleted && editPolicy.canModify;
   const canEditRequestedRoom = isDeleted
     ? false
-    : session.user.role === "ADMIN"
+    : isAdmin
       ? canModify
       : // Members (owners) may request a room before and after payment, until
         // the lodge confirms beds. Not tied to the paid/edit policy.
@@ -393,7 +399,7 @@ export default async function BookingDetailPage({
       nights: g.nights.map((n) => n.stayDate.toISOString().slice(0, 10)),
     })),
     bookingMemberId: booking.memberId,
-    viewerRole: session.user.role,
+    viewerRole: viewerAuthorizationRole,
     totalPriceCents: booking.totalPriceCents,
     discountCents: booking.discountCents,
     promoAdjustmentCents: booking.promoAdjustmentCents,
@@ -419,16 +425,16 @@ export default async function BookingDetailPage({
   };
   const backHref = resolveInternalReturnPath(
     query.returnTo,
-    session.user.role === "ADMIN" ? "/admin/bookings" : "/bookings"
+    isAdmin ? "/admin/bookings" : "/bookings"
   );
   const canDeleteDraft =
     !isDeleted &&
     isDraft &&
-    (session.user.role === "ADMIN" || booking.memberId === session.user.id);
+    (isAdmin || booking.memberId === session.user.id);
   const canSoftDeleteCancelled =
     !isDeleted &&
     booking.status === "CANCELLED" &&
-    session.user.role === "ADMIN";
+    isAdmin;
   const showMemberArrivalInstructions =
     !isDeleted &&
     (booking.memberId === session.user.id || isLinkedGuestViewer) &&
@@ -585,7 +591,7 @@ export default async function BookingDetailPage({
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
-          {!isDeleted && session.user.role === "ADMIN" ? (
+          {!isDeleted && isAdmin ? (
             <CopyBookingButton
               bookingId={booking.id}
               sourceCheckIn={editorData.checkIn}
@@ -785,7 +791,7 @@ export default async function BookingDetailPage({
             <CardTitle>Room Request</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {canEditRequestedRoom && session.user.role !== "ADMIN" ? (
+            {canEditRequestedRoom && !isAdmin ? (
               <p className="text-sm text-slate-600">
                 Let us know if you&apos;d prefer a particular room. This is a
                 request, not a guaranteed allocation. The lodge confirms beds
@@ -797,12 +803,12 @@ export default async function BookingDetailPage({
               initialRoom={booking.requestedRoom}
               canEdit={canEditRequestedRoom}
               endpoint={
-                session.user.role === "ADMIN"
+                isAdmin
                   ? undefined
                   : `/api/bookings/${booking.id}/requested-room`
               }
               lockedNote={
-                bedAllocationLocked && session.user.role !== "ADMIN"
+                bedAllocationLocked && !isAdmin
                   ? "Your beds have been allocated by the lodge and can no longer be changed here."
                   : undefined
               }
@@ -836,7 +842,7 @@ export default async function BookingDetailPage({
 
       {/* Admin: force-confirm non-member guests still on hold (issue #708) */}
       {!isDeleted &&
-        session.user.role === "ADMIN" &&
+        isAdmin &&
         booking.status === "PENDING" &&
         booking.hasNonMembers &&
         booking.nonMemberHoldUntil && (

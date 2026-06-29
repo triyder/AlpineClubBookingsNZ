@@ -225,7 +225,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
 
   function setupStandardMocks() {
     mockedAuth.mockResolvedValue({
-      user: { id: "m1", role: "MEMBER", isEmailVerified: true },
+      user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }], isEmailVerified: true },
     } as any);
 
     mockMemberFindUnique.mockResolvedValue({

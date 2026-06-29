@@ -39,8 +39,8 @@ vi.mock("@/lib/prisma", () => ({
 
 import { DELETE } from "@/app/api/admin/image-library/[id]/route";
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
-const memberSession = { user: { id: "member-1", role: "MEMBER" } };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
+const memberSession = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 
 function deleteRequest(id: string) {
   return new NextRequest(`http://localhost/api/admin/image-library/${id}`, {

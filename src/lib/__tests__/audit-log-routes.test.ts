@@ -88,7 +88,7 @@ describe("admin member audit log endpoint", () => {
 
   it("returns 403 for non-admin users", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as never);
 
     const req = new NextRequest(
@@ -103,7 +103,7 @@ describe("admin member audit log endpoint", () => {
 
   it("returns 404 for a missing target member", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     } as never);
     mockedPrisma.member.findUnique.mockResolvedValue(null);
 
@@ -119,7 +119,7 @@ describe("admin member audit log endpoint", () => {
 
   it("returns paginated audit rows with admin-only metadata and actor details", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     } as never);
     mockedPrisma.member.findUnique.mockResolvedValue({ id: "member-1" } as never);
     mockedPrisma.auditLog.findMany.mockResolvedValue([auditLog()] as never);
@@ -188,7 +188,7 @@ describe("member self audit log endpoint", () => {
 
   it("rejects admin-only category filters", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as never);
 
     const req = new NextRequest(
@@ -202,7 +202,7 @@ describe("member self audit log endpoint", () => {
 
   it("redacts admin-only metadata and admin actor details for member view", async () => {
     mockedAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as never);
     mockedPrisma.auditLog.findMany.mockResolvedValue([auditLog()] as never);
     mockedPrisma.auditLog.count.mockResolvedValue(1);

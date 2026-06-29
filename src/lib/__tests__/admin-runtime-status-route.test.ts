@@ -26,7 +26,11 @@ import { GET } from "@/app/api/admin/runtime-status/route";
 describe("admin runtime status route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
   });
 
   it("rejects unauthenticated callers", async () => {
@@ -39,7 +43,12 @@ describe("admin runtime status route", () => {
   });
 
   it("rejects non-admin callers", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
 
     const response = await GET();
 
@@ -51,8 +60,12 @@ describe("admin runtime status route", () => {
   });
 
   it("rejects inactive admin callers", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockFindUnique.mockResolvedValue({ active: false, forcePasswordChange: false });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockFindUnique.mockResolvedValue({
+      active: false,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
 
     const response = await GET();
 
@@ -63,8 +76,12 @@ describe("admin runtime status route", () => {
   });
 
   it("rejects admins who must change their password", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: true });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: true,
+      accessRoles: [{ role: "ADMIN" }],
+    });
 
     const response = await GET();
 
@@ -75,7 +92,7 @@ describe("admin runtime status route", () => {
   });
 
   it("returns runtime status for active admins", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
 
     const response = await GET();
 

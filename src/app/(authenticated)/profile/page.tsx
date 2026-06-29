@@ -33,6 +33,7 @@ import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -125,6 +126,7 @@ export default async function ProfilePage({
       postalPostalCode: true,
       postalCountry: true,
       role: true,
+      accessRoles: { select: { role: true } },
       ageTier: true,
       occupation: true,
       active: true,
@@ -154,6 +156,7 @@ export default async function ProfilePage({
   });
 
   if (!member) redirect("/login");
+  const isAdmin = hasAdminAccess(member);
 
   const currentSub = member.subscriptions.find(s => s.seasonYear === currentSeasonYear);
   const subscriptionRequired = await requiresPaidSubscriptionForMemberForBooking(prisma, {
@@ -237,7 +240,7 @@ export default async function ProfilePage({
               </CardDescription>
             </div>
             <div className="flex gap-2">
-              <Badge variant={member.role === "ADMIN" ? "default" : "secondary"}>
+              <Badge variant={isAdmin ? "default" : "secondary"}>
                 {member.role}
               </Badge>
               <Badge variant={member.active ? "default" : "destructive"}>
@@ -483,8 +486,8 @@ export default async function ProfilePage({
               Request permanent deletion of your account. An admin will review
               your request. This action is irreversible.
             </p>
-            {member.role !== "ADMIN" && <DeleteAccountButton />}
-            {member.role === "ADMIN" && (
+            {!isAdmin && <DeleteAccountButton />}
+            {isAdmin && (
               <p className="text-sm text-slate-500 italic">
                 Admin accounts cannot be self-deleted. Contact another admin.
               </p>

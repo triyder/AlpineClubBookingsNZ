@@ -102,7 +102,7 @@ import { POST as xeroLink } from "@/app/api/admin/members/[id]/xero-link/route";
 import { GET as searchXeroContacts } from "@/app/api/admin/xero/search-contacts/route";
 
 const mockedAuth = vi.mocked(auth);
-const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
+const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 
 function mockSessionAndMemberListCounts(total: number) {
   vi.mocked(prisma.member.count)
@@ -138,7 +138,7 @@ describe("Xero Member Management", () => {
 
   describe("POST /api/admin/members/[id]/xero-unlink", () => {
     it("returns 403 for non-admin", async () => {
-      mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+      mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
       const req = new NextRequest("http://localhost/api/admin/members/m1/xero-unlink", { method: "POST" });
       const res = await xeroUnlink(req, { params: Promise.resolve({ id: "m1" }) });
       expect(res.status).toBe(403);

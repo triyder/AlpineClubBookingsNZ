@@ -71,10 +71,14 @@ committee assignment are separate axes. `MemberAccessRole` controls application
 access (`USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`);
 `Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
 `SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
-be used for new membership-category semantics. `SeasonalMembershipAssignment`
-stores per-season membership policy, including the source of the assignment and
-an optional date-only `applyFrom` changeover. Age tiers remain separate because
-the same tier can be Full, Life, Associate, Family, School, or another
+be used as a runtime permission gate or for new membership-category semantics.
+Legacy membership lifecycle/classification code may read `Member.role` only to
+distinguish compatibility categories such as non-login/non-member records until
+that workflow is fully represented by seasonal membership type.
+`SeasonalMembershipAssignment` stores per-season membership policy, including
+the source of the assignment and an optional date-only `applyFrom` changeover.
+Age tiers remain separate because the same tier can be Full, Life, Associate,
+Family, School, or another
 configured type. Age-tier Xero groups and membership-type Xero groups may both
 exist; duplicate exact rules and multiple managed rules for the same scope are
 not valid. Committee assignment controls public committee/contact presentation

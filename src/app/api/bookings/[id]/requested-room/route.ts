@@ -6,6 +6,7 @@ import { z } from "zod";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { isBookingBedAllocationLocked } from "@/lib/admin-bed-allocation";
 import { logAudit } from "@/lib/audit";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const requestedRoomSchema = z.object({
   requestedRoomId: z.string().min(1),
@@ -22,7 +23,7 @@ const LOCKED_MESSAGE =
 async function resolveRequestableBooking(
   bookingId: string,
   memberId: string,
-  role: string
+  isAdmin: boolean
 ): Promise<
   | { error: NextResponse }
   | { booking: { memberId: string; status: string } }
@@ -38,7 +39,7 @@ async function resolveRequestableBooking(
 
   // Booking owner only — this is the member-facing route. Admins use the
   // dedicated admin route, which is not blocked by the allocation lock.
-  if (booking.memberId !== memberId && role !== "ADMIN") {
+  if (booking.memberId !== memberId && !isAdmin) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
 
@@ -94,7 +95,7 @@ export async function PUT(
   const resolved = await resolveRequestableBooking(
     id,
     session.user.id,
-    session.user.role
+    hasAdminAccess(session.user)
   );
   if ("error" in resolved) {
     return resolved.error;
@@ -166,7 +167,7 @@ export async function DELETE(
   const resolved = await resolveRequestableBooking(
     id,
     session.user.id,
-    session.user.role
+    hasAdminAccess(session.user)
   );
   if ("error" in resolved) {
     return resolved.error;

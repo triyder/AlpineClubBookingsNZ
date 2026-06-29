@@ -114,7 +114,7 @@ import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 describe("Xero operation admin retry routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.enqueueXeroSyncOperationRetry.mockResolvedValue({
       queueOperationId: "queue_1",

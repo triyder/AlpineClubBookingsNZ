@@ -7,7 +7,7 @@ import {
   getMemberOnboardingStatus,
 } from "@/lib/member-onboarding";
 import { getMissingMemberProfileFieldDetails } from "@/lib/member-profile-completeness";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole } from "@/lib/access-roles";
 
 export async function POST() {
   const session = await auth();
@@ -32,7 +32,7 @@ export async function POST() {
   if (
     !member.active ||
     !member.canLogin ||
-    !isMemberLevelRole(member.role)
+    !hasAccessRole(member, "USER")
   ) {
     return NextResponse.json(
       { error: "Onboarding confirmation is only available to active login-capable member accounts" },

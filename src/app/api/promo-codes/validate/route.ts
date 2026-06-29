@@ -18,6 +18,7 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
+import { hasAdminAccess } from "@/lib/access-roles";
 import {
   BookingGuestStayRangeValidationError,
   type NormalizedBookingGuestStayRange,
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     throw error;
   }
   // Use target member for admin on-behalf bookings
-  const effectiveMemberId = (parsed.data.forMemberId && session.user.role === "ADMIN")
+  const effectiveMemberId = (parsed.data.forMemberId && hasAdminAccess(session.user))
     ? parsed.data.forMemberId
     : session.user.id;
 

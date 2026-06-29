@@ -14,6 +14,7 @@ import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 export async function POST(request: NextRequest) {
   try {
@@ -57,7 +58,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify the requesting user owns this booking or is admin
-    if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+    if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

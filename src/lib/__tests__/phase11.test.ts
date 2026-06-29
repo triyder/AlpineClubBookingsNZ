@@ -82,7 +82,7 @@ const mockAuth = auth as ReturnType<typeof vi.fn>;
 const mockGetXeroClient = getAuthenticatedXeroClient as ReturnType<typeof vi.fn>;
 
 function adminSession() {
-  return { user: { id: "admin-1", role: "ADMIN" } };
+  return { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 }
 
 function makePutRequest(body: unknown): NextRequest {
@@ -114,7 +114,7 @@ describe("GET /api/admin/xero/account-mappings", () => {
   });
 
   it("returns 401 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const res = await getMappings();
     expect(res.status).toBe(401);
   });
@@ -178,7 +178,7 @@ describe("PUT /api/admin/xero/account-mappings", () => {
   });
 
   it("returns 401 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const req = makePutRequest({ hutFeesIncome: { code: "201" } });
     const res = await putMappings(req);
     expect(res.status).toBe(401);
@@ -267,7 +267,7 @@ describe("GET /api/admin/xero/chart-of-accounts", () => {
   });
 
   it("returns 401 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const res = await getChartOfAccounts();
     expect(res.status).toBe(401);
   });
@@ -402,7 +402,7 @@ describe("GET /api/admin/xero/items", () => {
   });
 
   it("returns 401 for non-admin", async () => {
-    mockAuth.mockResolvedValue({ user: { role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const res = await getXeroItems();
     expect(res.status).toBe(401);
   });

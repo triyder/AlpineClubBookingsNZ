@@ -23,6 +23,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { isXeroConnected } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 /**
  * Switch an existing card (Stripe) PAYMENT_PENDING booking to Internet Banking.
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !hasAdminAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (booking.organiserSettled) {

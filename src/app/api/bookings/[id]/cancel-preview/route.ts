@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import logger from "@/lib/logger";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -37,7 +38,7 @@ export async function GET(
 
     if (
       booking.memberId !== session.user.id &&
-      session.user.role !== "ADMIN"
+      !hasAdminAccess(session.user)
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

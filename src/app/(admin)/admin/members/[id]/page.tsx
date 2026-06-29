@@ -29,7 +29,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address";
-import { isMemberLevelRole } from "@/lib/member-roles";
+import { hasAccessRole } from "@/lib/access-roles";
 import { MemberDetailHeader } from "./_components/member-detail-header";
 import { MemberStatsCards } from "./_components/member-stats-cards";
 import { MemberInfoCard } from "./_components/member-info-card";
@@ -1631,7 +1631,7 @@ export default function MemberDetailPage({
   );
   const openCancellationRequest = member.openCancellationRequest;
   const canRequestCancellation = Boolean(
-    isMemberLevelRole(member.role) &&
+    hasAccessRole(member, "USER") &&
     member.active &&
     !member.cancelledAt &&
     !member.archivedAt &&

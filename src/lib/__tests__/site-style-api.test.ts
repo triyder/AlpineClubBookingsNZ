@@ -51,7 +51,7 @@ describe("site style admin API", () => {
     vi.clearAllMocks();
     mocks.requireAdmin.mockResolvedValue({
       ok: true,
-      session: { user: { id: "admin-1", role: "ADMIN" } },
+      session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
     });
     mocks.clubThemeFindUnique.mockResolvedValue(null);
     mocks.clubThemeUpsert.mockImplementation(({ create, update }) =>

@@ -52,7 +52,7 @@ describe("admin member application nomination action routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.refreshMemberApplicationNominations.mockResolvedValue({

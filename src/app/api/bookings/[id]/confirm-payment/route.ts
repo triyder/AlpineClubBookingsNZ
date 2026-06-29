@@ -10,6 +10,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -64,7 +65,7 @@ export async function POST(
 
     if (
       payment.booking.memberId !== session.user.id &&
-      session.user.role !== "ADMIN"
+      !hasAdminAccess(session.user)
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import logger from "@/lib/logger";
+import { hasAdminAccess } from "@/lib/access-roles";
 
 /**
  * GET /api/bookings/[id]/additional-payment-secret
@@ -37,7 +38,7 @@ export async function GET(
 
     if (
       payment.booking.memberId !== session.user.id &&
-      session.user.role !== "ADMIN"
+      !hasAdminAccess(session.user)
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

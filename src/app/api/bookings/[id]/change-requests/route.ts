@@ -13,6 +13,10 @@ import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { z } from "zod";
+import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+} from "@/lib/access-roles";
 
 const createChangeRequestSchema = z.object({
   checkIn: z.string().optional(),
@@ -156,6 +160,8 @@ export async function POST(
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
+  const isAdmin = hasAdminAccess(session.user);
+  const actorRole = authorizationRoleFromAccessRoles(session.user);
 
   const { id: bookingId } = await params;
   const booking = await prisma.booking.findUnique({
@@ -181,7 +187,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -258,7 +264,7 @@ export async function POST(
 
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
-    role: session.user.role,
+    role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
@@ -455,6 +461,7 @@ export async function GET(
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
+  const isAdmin = hasAdminAccess(session.user);
 
   const { id: bookingId } = await params;
   const booking = await prisma.booking.findUnique({
@@ -466,7 +473,7 @@ export async function GET(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+  if (booking.memberId !== session.user.id && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

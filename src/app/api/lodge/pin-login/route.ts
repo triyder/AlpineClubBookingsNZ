@@ -16,6 +16,7 @@ import {
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { hasLodgeAccess } from "@/lib/access-roles";
 
 const bodySchema = z.object({
   pin: z.string().regex(/^\d{6}$/),
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
     return inactiveResponse;
   }
 
-  if (session.user.role !== "ADMIN" && session.user.role !== "LODGE") {
+  if (!hasLodgeAccess(session.user)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

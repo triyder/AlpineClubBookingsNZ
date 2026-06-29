@@ -88,13 +88,13 @@ vi.mock("@/lib/email", () => ({
   sendMemberArchiveRejectedEmail: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/auth", () => ({
-  auth: vi.fn().mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } }),
+  auth: vi.fn().mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } }),
 }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
   requireAdmin: vi.fn().mockResolvedValue({
     ok: true,
-    session: { user: { id: "admin-1", role: "ADMIN" } },
+    session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   }),
 }));
 vi.mock("@/lib/xero", () => ({
@@ -159,6 +159,7 @@ const cleanMember = {
   postalPostalCode: null,
   postalCountry: null,
   role: "MEMBER",
+  accessRoles: [],
   financeAccessLevel: "NONE",
   ageTier: "ADULT",
   xeroContactId: "xero-contact-1",

@@ -49,7 +49,7 @@ describe("member notification preferences audit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth).mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as never);
     vi.mocked(prisma.notificationPreference.findUnique).mockResolvedValue({
       memberId: "member-1",

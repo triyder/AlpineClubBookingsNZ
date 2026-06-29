@@ -51,7 +51,7 @@ import {
   PUT,
 } from "@/app/api/admin/lockers/[id]/route";
 
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } };
+const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 
 function jsonRequest(method: "POST" | "PUT", body: unknown) {
   return new NextRequest("http://localhost/api/admin/lockers", {

@@ -142,7 +142,7 @@ import { POST as forceSync } from "@/app/api/admin/xero/force-sync/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 
 function adminSession() {
-  return { user: { id: "admin-1", role: "ADMIN" } };
+  return { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 }
 
 function makeJsonRequest(url: string, body: unknown): NextRequest {

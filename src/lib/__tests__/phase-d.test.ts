@@ -47,11 +47,18 @@ describe("#33: Admin Bookings Calendar API", () => {
       id: "session-member",
       active: true,
       forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
     });
   });
 
   it("rejects non-admin users with 403", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "USER" }],
+    });
     const { GET } = await import("@/app/api/admin/bookings/route");
     const req = new NextRequest("http://localhost/api/admin/bookings?calendarMonth=2026-04");
     const res = await GET(req);
@@ -59,7 +66,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("requires calendarMonth parameter", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     const { GET } = await import("@/app/api/admin/bookings/route");
     const req = new NextRequest("http://localhost/api/admin/bookings");
     const res = await GET(req);
@@ -69,7 +76,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("rejects invalid calendarMonth format", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     const { GET } = await import("@/app/api/admin/bookings/route");
     const req = new NextRequest("http://localhost/api/admin/bookings?calendarMonth=2026-4");
     const res = await GET(req);
@@ -77,7 +84,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("rejects calendarMonth values outside real month numbers", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     const { GET } = await import("@/app/api/admin/bookings/route");
     const req = new NextRequest("http://localhost/api/admin/bookings?calendarMonth=2026-13");
     const res = await GET(req);
@@ -85,7 +92,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("returns bookings overlapping the given month", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
         id: "b1",
@@ -126,7 +133,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("filters by status when provided", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { GET } = await import("@/app/api/admin/bookings/route");
@@ -140,7 +147,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("excludes DRAFT and CANCELLED by default", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { GET } = await import("@/app/api/admin/bookings/route");
@@ -154,7 +161,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("supports admin calendar deleted visibility filters", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { GET } = await import("@/app/api/admin/bookings/route");
@@ -169,7 +176,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("queries bookings overlapping month boundaries with an exclusive month end", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
     const { GET } = await import("@/app/api/admin/bookings/route");
@@ -182,7 +189,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("returns reduced available beds for completed-booking occupancy", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
         id: "b1",
@@ -231,7 +238,7 @@ describe("#33: Admin Bookings Calendar API", () => {
   });
 
   it("returns the maximum active guest count for the visible month", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
         id: "b1",

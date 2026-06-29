@@ -95,7 +95,7 @@ import AdminLayout from "@/app/(admin)/layout";
 describe("site style route-group gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.headers.mockResolvedValue(new Headers());
     mocks.getWebsiteThemeRenderState.mockResolvedValue({
       css: ":root{}",

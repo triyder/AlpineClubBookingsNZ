@@ -92,6 +92,10 @@ export function legacyRoleFromAccessRoles(
   return "USER";
 }
 
+export function authorizationRoleFromAccessRoles(input: AccessRoleInput): Role {
+  return legacyRoleFromAccessRoles(resolveAccessRoles(input));
+}
+
 export function dedupeAccessRoles(
   roles: ReadonlyArray<string | null | undefined>,
 ): AppAccessRole[] {
@@ -121,12 +125,15 @@ export function resolveAccessRoles(input: AccessRoleInput): AppAccessRole[] {
   const explicit = (input.accessRoles ?? [])
     .map((item) => (typeof item === "string" ? item : item.role))
     .filter(isAccessRole);
-  if (explicit.length > 0) {
-    return normalizeAssignableAccessRoles(explicit, {
-      canLogin: input.canLogin,
-    });
-  }
 
+  return normalizeAssignableAccessRoles(explicit, {
+    canLogin: input.canLogin,
+  });
+}
+
+export function accessRolesFromCompatibilityFields(
+  input: Pick<AccessRoleInput, "role" | "financeAccessLevel" | "canLogin">,
+): AppAccessRole[] {
   return normalizeAssignableAccessRoles([
     ...legacyRoleToAccessRoles(input.role, input.canLogin),
     ...financeAccessLevelToAccessRoles(input.financeAccessLevel),

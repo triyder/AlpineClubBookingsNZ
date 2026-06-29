@@ -42,7 +42,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.mockResolvedValue({
-      user: { id: "member-1", role: "MEMBER" },
+      user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     } as any);
     mockedCancelBooking.mockResolvedValue({
       status: 200,
@@ -144,7 +144,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
     expect(cancelBooking).toHaveBeenCalledWith(
       "booking-1",
       "member-1",
-      "MEMBER",
+      "USER",
       "127.0.0.1",
       "credit"
     );

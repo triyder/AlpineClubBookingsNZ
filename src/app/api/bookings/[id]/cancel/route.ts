@@ -5,6 +5,7 @@ import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 const cancelBookingParamsSchema = z.object({
   id: z.string().min(1),
@@ -61,7 +62,7 @@ export async function POST(
     const result = await cancelBooking(
       parsedParams.data.id,
       session.user.id,
-      session.user.role,
+      authorizationRoleFromAccessRoles(session.user),
       getClientIp(request),
       parsed.data.refundMethod
     );

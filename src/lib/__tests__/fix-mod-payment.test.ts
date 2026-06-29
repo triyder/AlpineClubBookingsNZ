@@ -210,7 +210,7 @@ const mockedGetPaymentIntent = vi.mocked(getPaymentIntent);
 const mockedConstructWebhookEvent = vi.mocked(constructWebhookEvent);
 
 function makeSession() {
-  return { user: { id: "m1", role: "MEMBER", email: "alice@test.com" } };
+  return { user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }], email: "alice@test.com" } };
 }
 
 function makeBooking(overrides: Record<string, unknown> = {}) {
@@ -1293,7 +1293,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
   });
 
   it("returns 403 for a different member trying to access", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "other-member", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({ user: { id: "other-member", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     mockPaymentFindUnique.mockResolvedValue({
       id: "p1",
       additionalPaymentIntentId: "pi_additional",
