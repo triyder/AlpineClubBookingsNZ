@@ -49,6 +49,25 @@ const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
 }));
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: vi.fn().mockResolvedValue(null),
+  requireAdmin: async () => {
+    const session = await mockAuth();
+    if (!session?.user?.id) {
+      return {
+        ok: false,
+        response: Response.json({ error: "Unauthorized" }, { status: 401 }),
+      };
+    }
+    if (session.user.role !== "ADMIN") {
+      return {
+        ok: false,
+        response: Response.json({ error: "Forbidden" }, { status: 403 }),
+      };
+    }
+    return { ok: true, session };
+  },
+}));
 
 // ---------------------------------------------------------------------------
 // Helpers

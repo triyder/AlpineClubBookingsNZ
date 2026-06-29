@@ -209,6 +209,24 @@ describe("Profile API: structured phone and address fields", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.member.count).mockResolvedValue(1);
+    vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return operation({
+        member: {
+          update: prisma.member.update,
+        },
+        memberAccessRole: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        auditLog: {
+          create: prisma.auditLog.create,
+        },
+      });
+    });
   });
 
   function makeProfilePut(body: Record<string, unknown>) {

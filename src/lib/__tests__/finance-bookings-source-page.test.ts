@@ -13,7 +13,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
+    (typeof input === "string" ? input : input.financeAccessLevel) === "MANAGER",
 }));
 
 import { buildFinanceBookingsSourcePageModel } from "@/lib/finance-bookings-source-page";

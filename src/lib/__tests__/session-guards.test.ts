@@ -68,6 +68,13 @@ describe("requireAdmin", () => {
 
   it("allows routes to preserve a legacy non-admin envelope", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      role: "MEMBER",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "USER" }],
+    });
 
     const result = await requireAdmin({
       forbiddenResponse: () =>
@@ -83,7 +90,13 @@ describe("requireAdmin", () => {
 
   it("returns the admin session after the active-session check passes", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      role: "ADMIN",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN" }],
+    });
 
     const result = await requireAdmin();
 
@@ -95,7 +108,13 @@ describe("requireAdmin", () => {
 
   it("rejects inactive admins through the active-session check", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockFindUnique.mockResolvedValue({ active: false, forcePasswordChange: false });
+    mockFindUnique.mockResolvedValue({
+      active: false,
+      forcePasswordChange: false,
+      role: "ADMIN",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN" }],
+    });
 
     const result = await requireAdmin();
 
@@ -110,7 +129,13 @@ describe("requireAdmin", () => {
 
   it("rejects admins who must change their password", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockFindUnique.mockResolvedValue({ active: true, forcePasswordChange: true });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: true,
+      role: "ADMIN",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN" }],
+    });
 
     const result = await requireAdmin();
 

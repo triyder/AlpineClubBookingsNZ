@@ -39,6 +39,7 @@ export function MemberDetailHeader({
   onOpenEditDialog,
 }: MemberDetailHeaderProps) {
   const router = useRouter();
+  const accessRoles = member.accessRoles ?? [];
   return (
     <div>
       <Button
@@ -56,8 +57,8 @@ export function MemberDetailHeader({
           </h1>
           <p className="mt-1 text-sm text-slate-500">{member.email}</p>
           <div className="flex flex-wrap gap-2 mt-2">
-            {member.accessRoles.length > 0 ? (
-              member.accessRoles.map((role) => (
+            {accessRoles.length > 0 ? (
+              accessRoles.map((role) => (
                 <Badge
                   key={role}
                   variant={role === "ADMIN" ? "default" : "secondary"}

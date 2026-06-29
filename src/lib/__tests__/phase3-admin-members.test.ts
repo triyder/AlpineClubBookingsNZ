@@ -135,6 +135,22 @@ const mockedAuth = vi.mocked(auth);
 const mockedSendMemberSetupInviteEmail = vi.mocked(sendMemberSetupInviteEmail);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
+const adminAccessMember = {
+  id: "session-member",
+  role: "ADMIN",
+  financeAccessLevel: "NONE",
+  accessRoles: [{ role: "ADMIN" }],
+  active: true,
+  forcePasswordChange: false,
+};
+const userAccessMember = {
+  id: "session-member",
+  role: "MEMBER",
+  financeAccessLevel: "NONE",
+  accessRoles: [{ role: "USER" }],
+  active: true,
+  forcePasswordChange: false,
+};
 
 function mockSessionAndMemberListCounts(total: number) {
   vi.mocked(prisma.member.count).mockResolvedValue(total);
@@ -146,11 +162,7 @@ describe("Phase 3: Admin Member Management", () => {
     mockIsXeroConnected.mockResolvedValue(false);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     vi.mocked(prisma.member.count).mockResolvedValue(1);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      id: "session-member",
-      active: true,
-      forcePasswordChange: false,
-    } as any);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(adminAccessMember as any);
     vi.mocked(prisma.memberLifecycleActionRequest.findMany).mockResolvedValue([] as any);
     vi.mocked(prisma.promoCodeAssignment.findMany).mockResolvedValue([] as any);
     delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
@@ -346,7 +358,16 @@ describe("Phase 3: Admin Member Management", () => {
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?role=ADMIN"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      expect(call.where?.AND).toEqual(expect.arrayContaining([{ role: "ADMIN" }]));
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          {
+            OR: [
+              { accessRoles: { some: { role: "ADMIN" } } },
+              { role: "ADMIN" },
+            ],
+          },
+        ]),
+      );
     });
 
     it("excludes operational and non-member roles from the unpaid subscription filter", async () => {
@@ -633,6 +654,7 @@ describe("Phase 3: Admin Member Management", () => {
   describe("A3 - CSV Export", () => {
     it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
+      vi.mocked(prisma.member.findUnique).mockResolvedValueOnce(userAccessMember as any);
       const res = await exportMembers(new NextRequest("http://localhost/api/admin/members/export"));
       expect(res.status).toBe(403);
     });
@@ -798,6 +820,7 @@ describe("Phase 3: Admin Member Management", () => {
   describe("A4 - CSV Import", () => {
     it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
+      vi.mocked(prisma.member.findUnique).mockResolvedValueOnce(userAccessMember as any);
       const req = new NextRequest("http://localhost/api/admin/members/import", {
         method: "POST",
         body: JSON.stringify({ rows: [], sendInvites: false }),
@@ -1494,7 +1517,16 @@ describe("Phase 3: Admin Member Management", () => {
         { id: "m2", firstName: "Bob", lastName: "Smith", email: "bob@test.com" },
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
-        const tx = { member: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) } };
+        const tx = {
+          member: {
+            update: vi.fn().mockResolvedValue({}),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          memberAccessRole: {
+            createMany: vi.fn().mockResolvedValue({ count: 1 }),
+            deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+        };
         return fn(tx);
       });
 
@@ -1528,11 +1560,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("returns 404 for non-existent member", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findUnique)
-        .mockResolvedValueOnce({
-          id: "session-member",
-          active: true,
-          forcePasswordChange: false,
-        } as any)
+        .mockResolvedValueOnce(adminAccessMember as any)
         .mockResolvedValueOnce(null);
       vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
       vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
@@ -1553,14 +1581,17 @@ describe("Phase 3: Admin Member Management", () => {
       mockGetXeroContactGroupMemberships.mockResolvedValue({
         xc1: [{ id: "cg-1", name: "Camp Families" }],
       });
-      vi.mocked(prisma.member.findUnique).mockResolvedValue({
-        id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
-        phone: "021-123", dateOfBirth: new Date("1990-01-15"),
-        role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
-        xeroContactId: "xc1", createdAt: new Date("2025-01-01"), canLogin: true,
-        subscriptions: [{ id: "s1", seasonYear: 2026, status: "PAID", xeroInvoiceId: null, paidAt: null }],
-        familyGroupMemberships: [],
-      } as any);
+      vi.mocked(prisma.member.findUnique)
+        .mockResolvedValueOnce(adminAccessMember as any)
+        .mockResolvedValue({
+          id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
+          phone: "021-123", dateOfBirth: new Date("1990-01-15"),
+          role: "MEMBER", financeAccessLevel: "NONE", accessRoles: [{ role: "USER" }],
+          ageTier: "ADULT", active: true, forcePasswordChange: false,
+          xeroContactId: "xc1", createdAt: new Date("2025-01-01"), canLogin: true,
+          subscriptions: [{ id: "s1", seasonYear: 2026, status: "PAID", xeroInvoiceId: null, paidAt: null }],
+          familyGroupMemberships: [],
+        } as any);
       vi.mocked(prisma.booking.findMany).mockResolvedValue([
         { id: "b1", checkIn: new Date("2026-04-10"), checkOut: new Date("2026-04-12"), status: "CONFIRMED", finalPriceCents: 9100, _count: { guests: 2 } },
       ] as any);
@@ -1597,14 +1628,17 @@ describe("Phase 3: Admin Member Management", () => {
 
     it("returns assigned promo-code support context on member detail", async () => {
       mockedAuth.mockResolvedValue(adminSession);
-      vi.mocked(prisma.member.findUnique).mockResolvedValue({
-        id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
-        role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
-        xeroContactId: null, createdAt: new Date("2025-01-01"), canLogin: true,
-        subscriptions: [],
-        familyGroupMemberships: [],
-        dependents: [],
-      } as any);
+      vi.mocked(prisma.member.findUnique)
+        .mockResolvedValueOnce(adminAccessMember as any)
+        .mockResolvedValue({
+          id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
+          role: "MEMBER", financeAccessLevel: "NONE", accessRoles: [{ role: "USER" }],
+          ageTier: "ADULT", active: true, forcePasswordChange: false,
+          xeroContactId: null, createdAt: new Date("2025-01-01"), canLogin: true,
+          subscriptions: [],
+          familyGroupMemberships: [],
+          dependents: [],
+        } as any);
       vi.mocked(prisma.booking.findMany).mockResolvedValue([] as any);
       vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as any);
       vi.mocked(prisma.booking.aggregate).mockResolvedValue({
@@ -1655,14 +1689,17 @@ describe("Phase 3: Admin Member Management", () => {
     it("returns member detail with the placeholder when cached Xero groups are not ready", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
-      vi.mocked(prisma.member.findUnique).mockResolvedValue({
-        id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
-        phone: "021-123", dateOfBirth: new Date("1990-01-15"),
-        role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
-        xeroContactId: "xc1", createdAt: new Date("2025-01-01"), canLogin: true,
-        subscriptions: [{ id: "s1", seasonYear: 2026, status: "PAID", xeroInvoiceId: null, paidAt: null }],
-        familyGroupMemberships: [],
-      } as any);
+      vi.mocked(prisma.member.findUnique)
+        .mockResolvedValueOnce(adminAccessMember as any)
+        .mockResolvedValue({
+          id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
+          phone: "021-123", dateOfBirth: new Date("1990-01-15"),
+          role: "MEMBER", financeAccessLevel: "NONE", accessRoles: [{ role: "USER" }],
+          ageTier: "ADULT", active: true, forcePasswordChange: false,
+          xeroContactId: "xc1", createdAt: new Date("2025-01-01"), canLogin: true,
+          subscriptions: [{ id: "s1", seasonYear: 2026, status: "PAID", xeroInvoiceId: null, paidAt: null }],
+          familyGroupMemberships: [],
+        } as any);
       vi.mocked(prisma.booking.findMany).mockResolvedValue([] as any);
       vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as any);
       vi.mocked(prisma.booking.aggregate).mockResolvedValue({
@@ -1687,6 +1724,7 @@ describe("Phase 3: Admin Member Management", () => {
   describe("Member Create", () => {
     it("returns 401 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
+      vi.mocked(prisma.member.findUnique).mockResolvedValueOnce(userAccessMember as any);
       const req = new NextRequest("http://localhost/api/admin/members", {
         method: "POST",
         body: JSON.stringify({ firstName: "Test", lastName: "User", email: "test@test.com" }),
@@ -1730,7 +1768,7 @@ describe("Phase 3: Admin Member Management", () => {
         const tx = {
           member: {
             count: vi.fn(),
-create: vi.fn().mockResolvedValue({
+            create: vi.fn().mockResolvedValue({
               id: "m2",
               firstName: "Shared",
               lastName: "Email",
@@ -1748,6 +1786,7 @@ create: vi.fn().mockResolvedValue({
               createdAt: new Date("2026-04-11"),
             }),
           },
+          memberAccessRole: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
           familyGroupMember: { createMany: vi.fn() },
         };
         return fn(tx);
@@ -1793,6 +1832,7 @@ create: vi.fn().mockResolvedValue({
               createdAt: new Date("2026-04-11"),
             }),
           },
+          memberAccessRole: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
           familyGroupMember: { createMany: vi.fn() },
         };
         return fn(tx);
@@ -1840,6 +1880,7 @@ create: vi.fn().mockResolvedValue({
               };
             }),
           },
+          memberAccessRole: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
           familyGroupMember: { createMany: vi.fn() },
         };
         return fn(tx);
@@ -1915,6 +1956,7 @@ create: vi.fn().mockResolvedValue({
               };
             }),
           },
+          memberAccessRole: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
           familyGroupMember: { createMany: vi.fn() },
         };
         return fn(tx);
@@ -1960,6 +2002,7 @@ create: vi.fn().mockResolvedValue({
               createdAt: new Date("2026-04-11"),
             }),
           },
+          memberAccessRole: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
           familyGroupMember: { createMany: vi.fn() },
         };
         return fn(tx);

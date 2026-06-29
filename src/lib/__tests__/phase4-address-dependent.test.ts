@@ -180,7 +180,13 @@ function mockDefaultTransaction() {
     return operation({
       member: {
         create: vi.fn().mockResolvedValue({ id: "dep1", firstName: "Child", lastName: "Smith" }),
+        update: prisma.member.update,
       },
+      memberAccessRole: {
+        createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      auditLog: { create: prisma.auditLog.create },
       familyGroupMember: { createMany: vi.fn() },
     });
   });

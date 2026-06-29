@@ -9,7 +9,8 @@ const {
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
+    (typeof input === "string" ? input : input.financeAccessLevel) === "MANAGER",
 }));
 
 vi.mock("@/lib/finance-sync-diagnostics", () => ({

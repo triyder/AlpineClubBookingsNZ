@@ -26,7 +26,8 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
+    (typeof input === "string" ? input : input.financeAccessLevel) === "MANAGER",
   loadFinanceAccessMember: mockLoadFinanceAccessMember,
 }));
 

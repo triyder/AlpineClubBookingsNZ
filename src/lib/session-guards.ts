@@ -79,7 +79,11 @@ export async function requireAdmin(
     };
   }
 
-  if (!hasAdminAccess(member)) {
+  const adminAccessInput = Array.isArray(member.accessRoles)
+    ? member
+    : { ...member, role: session.user.role };
+
+  if (!hasAdminAccess(adminAccessInput)) {
     return {
       ok: false,
       response: options.forbiddenResponse?.() ?? forbiddenResponse(),

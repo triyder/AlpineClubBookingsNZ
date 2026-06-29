@@ -51,6 +51,25 @@ const {
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/auth", () => ({ auth: () => mockAuth() }));
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: vi.fn().mockResolvedValue(null),
+  requireAdmin: async () => {
+    const session = await mockAuth();
+    if (!session?.user?.id) {
+      return {
+        ok: false,
+        response: Response.json({ error: "Unauthorized" }, { status: 401 }),
+      };
+    }
+    if (session.user.role !== "ADMIN") {
+      return {
+        ok: false,
+        response: Response.json({ error: "Forbidden" }, { status: 403 }),
+      };
+    }
+    return { ok: true, session };
+  },
+}));
 vi.mock("@/lib/email", () => ({
   sendHutLeaderAssignmentEmail: (args: unknown) =>
     mockSendHutLeaderAssignmentEmail(args),

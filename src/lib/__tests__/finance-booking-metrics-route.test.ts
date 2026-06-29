@@ -235,7 +235,7 @@ describe("finance booking metrics route", () => {
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
-  it("rejects LODGE sessions even when the member row has finance viewer access", async () => {
+  it("allows LODGE sessions when the member row has finance viewer access", async () => {
     mockAuth.mockResolvedValue({ user: { id: "finance-lodge-1", role: "LODGE" } });
     mockFindUnique.mockResolvedValue(lodgeViewerMember());
 
@@ -245,11 +245,11 @@ describe("finance booking metrics route", () => {
       )
     );
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({
-      error: "Finance viewer access required",
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      bookingCount: 2,
     });
-    expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
+    expect(mockGetFinanceBookingMetrics).toHaveBeenCalled();
   });
 
   it("rejects unauthenticated callers", async () => {

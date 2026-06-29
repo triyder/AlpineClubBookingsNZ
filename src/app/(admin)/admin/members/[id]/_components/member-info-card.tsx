@@ -21,6 +21,7 @@ export function MemberInfoCard({
   onEditFamilyGroup,
 }: MemberInfoCardProps) {
   const loginBadge = getLoginBadge(member.canLogin);
+  const accessRoles = member.accessRoles ?? [];
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   return (
     <Card>
@@ -95,8 +96,8 @@ export function MemberInfoCard({
           <div>
             <dt className="text-slate-500">Access Roles</dt>
             <dd className="flex flex-wrap gap-1 font-medium">
-              {member.accessRoles.length > 0 ? (
-                member.accessRoles.map((role) => (
+              {accessRoles.length > 0 ? (
+                accessRoles.map((role) => (
                   <Badge
                     key={role}
                     variant={role === "ADMIN" ? "default" : "secondary"}

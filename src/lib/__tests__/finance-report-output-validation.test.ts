@@ -20,7 +20,8 @@ const { mockPrisma } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (input: string | { financeAccessLevel?: string }) =>
+    (typeof input === "string" ? input : input.financeAccessLevel) === "MANAGER",
 }));
 
 import { buildFinanceBookingsReportPageModel } from "@/lib/finance-bookings-report-page";

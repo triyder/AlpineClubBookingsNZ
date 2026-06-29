@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS "MemberAccessRole" (
   "role" "AccessRole" NOT NULL,
   "assignedByMemberId" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "MemberAccessRole_pkey" PRIMARY KEY ("id")
 );
 
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS "MembershipTypeAgeTier" (
   "membershipTypeId" TEXT NOT NULL,
   "ageTier" "AgeTier" NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "MembershipTypeAgeTier_pkey" PRIMARY KEY ("id")
 );
 
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS "XeroContactGroupRule" (
   "isActive" BOOLEAN NOT NULL DEFAULT true,
   "sortOrder" INTEGER NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "XeroContactGroupRule_pkey" PRIMARY KEY ("id")
 );
 

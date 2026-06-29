@@ -43,7 +43,18 @@ vi.mock("@/lib/prisma", () => ({
         return Promise.all(operation);
       }
 
-      return (operation as (tx: unknown) => Promise<unknown>)({});
+      return (operation as (tx: unknown) => Promise<unknown>)({
+        member: {
+          update: vi.fn(),
+        },
+        memberAccessRole: {
+          createMany: vi.fn(),
+          deleteMany: vi.fn(),
+        },
+        auditLog: {
+          create: vi.fn(),
+        },
+      });
     }),
   },
 }));
@@ -96,6 +107,24 @@ function makePutRequest(id: string, body: Record<string, unknown>) {
 describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return operation({
+        member: {
+          update: prisma.member.update,
+        },
+        memberAccessRole: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        auditLog: {
+          create: prisma.auditLog.create,
+        },
+      });
+    });
     mockRequireAdmin.mockResolvedValue({
       ok: true,
       session: { user: { id: "admin1", role: "ADMIN" } },
@@ -217,14 +246,19 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
         category: "admin",
         severity: "critical",
         metadata: expect.objectContaining({
-          changedFields: ["role"],
-          accessChanges: [
+          changedFields: expect.arrayContaining(["role", "accessRoles"]),
+          accessChanges: expect.arrayContaining([
             {
               field: "role",
               before: "MEMBER",
               after: "ADMIN",
             },
-          ],
+            {
+              field: "accessRoles",
+              before: ["USER"],
+              after: ["ADMIN"],
+            },
+          ]),
         }),
       }),
     });

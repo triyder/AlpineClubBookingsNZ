@@ -45,7 +45,9 @@ describe("admin runtime status route", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
-    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "member-1" } }),
+    );
   });
 
   it("rejects inactive admin callers", async () => {
