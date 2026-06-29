@@ -463,9 +463,13 @@ OAuth scopes:
 Before reconnecting, update the Xero developer app allowed scopes to include the
 exact app request, and verify that `XERO_REDIRECT_URI` matches the deployed
 `/api/admin/xero/callback` URL. Then reconnect Xero from `/admin/xero` so fresh
-tokens carry the current scope set. Access is controlled per member by the
-`FINANCE_USER` and `FINANCE_ADMIN` access roles; the legacy
-`financeAccessLevel` field is kept synchronized for compatibility.
+tokens carry the current scope set. Access is controlled per member by
+`MemberAccessRole` rows. `FINANCE_USER` can read the finance dashboard and
+finance viewer APIs; `FINANCE_ADMIN` can also run manager-only finance actions
+such as manual sync and report mapping writes. `ADMIN` and `LODGE` do not grant
+finance access by themselves, but mixed-role accounts such as `LODGE` plus
+`FINANCE_USER` are valid. The legacy `financeAccessLevel` field is kept
+synchronized for compatibility.
 
 ## Email Delivery
 

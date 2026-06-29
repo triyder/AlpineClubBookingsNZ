@@ -29,7 +29,7 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
 import { GET as getFinanceSyncStatus } from "@/app/api/finance/sync/status/route";
 
 function managerSession() {
-  return { user: { id: "finance-manager-1", role: "ADMIN" } };
+  return { user: { id: "finance-manager-1", role: "USER" } };
 }
 
 function viewerMember() {
@@ -38,8 +38,9 @@ function viewerMember() {
     email: "viewer@example.com",
     firstName: "View",
     lastName: "Only",
-    role: "MEMBER",
-    financeAccessLevel: "VIEWER",
+    role: "USER",
+    financeAccessLevel: "MANAGER",
+    accessRoles: [{ role: "FINANCE_USER" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -51,8 +52,9 @@ function managerMember() {
     email: "manager@example.com",
     firstName: "Fin",
     lastName: "Manager",
-    role: "ADMIN",
-    financeAccessLevel: "MANAGER",
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "FINANCE_ADMIN" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -79,7 +81,7 @@ describe("finance sync diagnostics route", () => {
     });
   });
 
-  it("returns diagnostics status for a finance manager", async () => {
+  it("returns diagnostics status for FINANCE_ADMIN access", async () => {
     const response = await getFinanceSyncStatus();
 
     expect(response.status).toBe(200);
@@ -100,7 +102,7 @@ describe("finance sync diagnostics route", () => {
     expect(mockGetFinanceSyncDiagnosticsStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects finance viewer access", async () => {
+  it("rejects FINANCE_USER access even when financeAccessLevel is stale", async () => {
     mockFindUnique.mockResolvedValue(viewerMember());
 
     const response = await getFinanceSyncStatus();

@@ -41,7 +41,7 @@ vi.mock("@/lib/logger", () => ({
 import { POST as runFinanceSyncRoute } from "@/app/api/finance/sync/run/route";
 
 function managerSession() {
-  return { user: { id: "finance-manager-1", role: "ADMIN" } };
+  return { user: { id: "finance-manager-1", role: "USER" } };
 }
 
 function viewerMember() {
@@ -50,8 +50,9 @@ function viewerMember() {
     email: "viewer@example.com",
     firstName: "View",
     lastName: "Only",
-    role: "MEMBER",
-    financeAccessLevel: "VIEWER",
+    role: "USER",
+    financeAccessLevel: "MANAGER",
+    accessRoles: [{ role: "FINANCE_USER" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -63,8 +64,9 @@ function managerMember() {
     email: "manager@example.com",
     firstName: "Fin",
     lastName: "Manager",
-    role: "ADMIN",
-    financeAccessLevel: "MANAGER",
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "FINANCE_ADMIN" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -92,7 +94,7 @@ describe("finance manual sync route", () => {
     expect(mockRunManualFinanceSync).not.toHaveBeenCalled();
   });
 
-  it("redirects finance viewers back to /finance", async () => {
+  it("redirects FINANCE_USER viewers back to /finance", async () => {
     mockFindUnique.mockResolvedValue(viewerMember());
 
     const response = await runFinanceSyncRoute(

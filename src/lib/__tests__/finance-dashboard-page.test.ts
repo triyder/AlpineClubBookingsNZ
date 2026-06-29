@@ -67,8 +67,23 @@ function financeManager() {
     email: "manager@example.com",
     firstName: "Fin",
     lastName: "Manager",
-    role: "ADMIN" as const,
+    role: "USER" as const,
+    financeAccessLevel: "NONE" as const,
+    accessRoles: [{ role: "FINANCE_ADMIN" as const }],
+    active: true,
+    forcePasswordChange: false,
+  };
+}
+
+function financeViewer() {
+  return {
+    id: "finance-viewer-1",
+    email: "viewer@example.com",
+    firstName: "Fin",
+    lastName: "Viewer",
+    role: "USER" as const,
     financeAccessLevel: "MANAGER" as const,
+    accessRoles: [{ role: "FINANCE_USER" as const }],
     active: true,
     forcePasswordChange: false,
   };
@@ -358,6 +373,20 @@ describe("finance dashboard page model", () => {
     const subheading = panel?.items.find((item) => item.emphasis);
     expect(subheading).toMatchObject({ label: "Operating", value: "$1000.00" });
     expect(panel?.items.some((item) => item.label === "Hut Fees")).toBe(true);
+  });
+
+  it("derives manager-only dashboard actions from access role rows", async () => {
+    const managerModel = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings" },
+    });
+    const viewerModel = await buildFinanceDashboardPageModel({
+      member: financeViewer(),
+      searchParams: { view: "bookings" },
+    });
+
+    expect(managerModel.isManager).toBe(true);
+    expect(viewerModel.isManager).toBe(false);
   });
 
   it("surfaces missing stored snapshot coverage as a compact warning", async () => {

@@ -37,7 +37,7 @@ vi.mock("@/lib/finance-booking-metrics", () => ({
 import { GET as getFinanceBookingMetricsRoute } from "@/app/api/finance/bookings/metrics/route";
 
 function viewerSession() {
-  return { user: { id: "finance-viewer-1", role: "MEMBER" } };
+  return { user: { id: "finance-viewer-1", role: "USER" } };
 }
 
 function viewerMember() {
@@ -46,8 +46,9 @@ function viewerMember() {
     email: "viewer@example.com",
     firstName: "View",
     lastName: "Only",
-    role: "MEMBER",
-    financeAccessLevel: "VIEWER",
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "FINANCE_USER" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -59,8 +60,9 @@ function memberWithoutFinanceAccess() {
     email: "member@example.com",
     firstName: "Plain",
     lastName: "Member",
-    role: "MEMBER",
+    role: "USER",
     financeAccessLevel: "NONE",
+    accessRoles: [{ role: "USER" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -74,19 +76,35 @@ function adminWithoutFinanceAccess() {
     lastName: "Only",
     role: "ADMIN",
     financeAccessLevel: "NONE",
+    accessRoles: [{ role: "ADMIN" }],
     active: true,
     forcePasswordChange: false,
   };
 }
 
-function lodgeViewerMember() {
+function mixedLodgeFinanceViewerMember() {
   return {
     id: "finance-lodge-1",
     email: "lodge@example.com",
     firstName: "Lodge",
     lastName: "Session",
     role: "LODGE",
-    financeAccessLevel: "VIEWER",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
+    active: true,
+    forcePasswordChange: false,
+  };
+}
+
+function lodgeOnlyMember() {
+  return {
+    id: "lodge-only-1",
+    email: "lodge-only@example.com",
+    firstName: "Lodge",
+    lastName: "Only",
+    role: "LODGE",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "LODGE" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -235,9 +253,9 @@ describe("finance booking metrics route", () => {
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
-  it("allows LODGE sessions when the member row has finance viewer access", async () => {
+  it("allows mixed LODGE plus FINANCE_USER accounts to read metrics", async () => {
     mockAuth.mockResolvedValue({ user: { id: "finance-lodge-1", role: "LODGE" } });
-    mockFindUnique.mockResolvedValue(lodgeViewerMember());
+    mockFindUnique.mockResolvedValue(mixedLodgeFinanceViewerMember());
 
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
@@ -250,6 +268,23 @@ describe("finance booking metrics route", () => {
       bookingCount: 2,
     });
     expect(mockGetFinanceBookingMetrics).toHaveBeenCalled();
+  });
+
+  it("rejects lodge-only accounts without finance access", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "lodge-only-1", role: "LODGE" } });
+    mockFindUnique.mockResolvedValue(lodgeOnlyMember());
+
+    const response = await getFinanceBookingMetricsRoute(
+      new NextRequest(
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Finance viewer access required",
+    });
+    expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
   it("rejects unauthenticated callers", async () => {

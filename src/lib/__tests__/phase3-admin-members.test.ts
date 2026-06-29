@@ -2101,6 +2101,76 @@ describe("Phase 3: Admin Member Management", () => {
       expect(createArgs.data.financeAccessLevel).toBe("VIEWER");
     });
 
+    it("synchronizes mixed lodge finance access roles when creating a member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+
+      let createArgs: any;
+      let accessRoleCreateArgs: any;
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockImplementation(async (args: any) => {
+              createArgs = args;
+              return {
+                id: "m1",
+                firstName: "Lodge",
+                lastName: "Finance",
+                email: "lodge-finance@test.com",
+                phoneCountryCode: null,
+                phoneAreaCode: null,
+                phoneNumber: null,
+                dateOfBirth: null,
+                role: "LODGE",
+                financeAccessLevel: "VIEWER",
+                ageTier: "ADULT",
+                active: true,
+                canLogin: true,
+                xeroContactId: null,
+                joinedDate: null,
+                createdAt: new Date("2026-04-11"),
+                accessRoles: [],
+              };
+            }),
+          },
+          memberAccessRole: {
+            createMany: vi.fn().mockImplementation(async (args: any) => {
+              accessRoleCreateArgs = args;
+              return { count: args.data.length };
+            }),
+          },
+          memberSubscription: {
+            upsert: vi.fn().mockResolvedValue({}),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: "Lodge",
+          lastName: "Finance",
+          email: "lodge-finance@test.com",
+          accessRoles: ["LODGE", "FINANCE_USER"],
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+
+      expect(res.status).toBe(201);
+      expect(createArgs.data.role).toBe("LODGE");
+      expect(createArgs.data.financeAccessLevel).toBe("VIEWER");
+      expect(accessRoleCreateArgs).toEqual({
+        data: [
+          { memberId: "m1", role: "LODGE" },
+          { memberId: "m1", role: "FINANCE_USER" },
+        ],
+        skipDuplicates: true,
+      });
+    });
+
     it("sends a setup invite when creating a login-enabled member", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findFirst).mockResolvedValue(null);

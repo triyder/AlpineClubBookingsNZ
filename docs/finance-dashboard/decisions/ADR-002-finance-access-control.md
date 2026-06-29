@@ -6,23 +6,30 @@ Accepted
 
 ## Context
 
-`AlpineClubBookingsNZ` uses coarse app-access roles such as `USER`, `ADMIN`, and `LODGE`.
+`AlpineClubBookingsNZ` uses application access roles such as `USER`, `ADMIN`,
+`LODGE`, `FINANCE_USER`, and `FINANCE_ADMIN`.
 
 The finance dashboard must be available to selected members and selected admins, without granting broad administrative power to all finance viewers.
 
 ## Decision
 
-Add a dedicated finance access model separate from the existing coarse role enum.
+Add dedicated finance access roles separate from membership types and from broad
+admin access.
 
-Preferred direction:
+Current roles:
 
-- `NONE`
-- `VIEWER`
-- `MANAGER`
+- `FINANCE_USER`
+- `FINANCE_ADMIN`
 
-`VIEWER` grants read-only finance access.
+`FINANCE_USER` grants read-only finance access.
 
-`MANAGER` grants privileged finance actions such as triggering a manual finance sync or managing the operational Xero connection from `/admin/xero`.
+`FINANCE_ADMIN` grants privileged finance actions such as triggering a manual
+finance sync or managing finance report mappings.
+
+`ADMIN` and `LODGE` do not grant finance access by themselves. Mixed-role
+accounts are allowed where intended: for example, `LODGE` plus `FINANCE_USER`
+keeps lodge access and grants finance viewer access. `Member.financeAccessLevel`
+is kept synchronized as a rollout compatibility field only.
 
 ## Consequences
 
@@ -31,6 +38,8 @@ Preferred direction:
 - finance access can be granted to named members without making them admins
 - finance management privileges can remain narrow
 - existing admin authorization boundaries stay intact
+- lodge operator access and finance viewer access can be combined without
+  inventing a separate global member role
 
 ### Negative
 

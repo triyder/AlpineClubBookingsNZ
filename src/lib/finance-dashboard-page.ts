@@ -25,6 +25,7 @@ import {
   type FinanceMappedPnlCategorySummary,
 } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
+import { hasFinanceManagerAccess } from "@/lib/access-roles";
 import type { FinanceAccessMember } from "@/lib/finance-auth";
 import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
@@ -1177,7 +1178,7 @@ export async function buildFinanceDashboardPageModel(input: {
 
   return {
     generatedOn: formatDateTime(new Date()),
-    isManager: input.member.financeAccessLevel === "MANAGER",
+    isManager: hasFinanceManagerAccess(input.member),
     selection,
     selectionLabels: labels,
     syncStatus: sync.status,

@@ -1,19 +1,24 @@
 # Finance Dashboard
 
 The finance dashboard is the native AlpineClubBookingsNZ reporting workspace under
-`/finance`. It uses AlpineClubBookingsNZ credentials, explicit finance access levels,
-first-party booking data, and the single operational Xero connection.
+`/finance`. It uses AlpineClubBookingsNZ credentials, explicit finance access
+roles, first-party booking data, and the single operational Xero connection.
 
 ## Access Model
 
-- `Member.financeAccessLevel = NONE` cannot access finance pages or finance
+- `FINANCE_USER` can read the finance workspace, reports, and finance viewer
   APIs.
-- `VIEWER` can read the finance workspace and reports.
-- `MANAGER` can trigger a manual finance sync from `/finance`.
+- `FINANCE_ADMIN` can read finance data and trigger manager-only actions such
+  as manual finance sync and finance report mapping writes.
+- `USER`, `ADMIN`, and `LODGE` do not grant finance access by themselves.
+- Mixed-role accounts are intentional: for example, `LODGE` plus
+  `FINANCE_USER` can use lodge tools and read finance data, while lodge-only
+  accounts remain blocked from finance pages and APIs.
 - Admin Setup owns finance report mappings and historical backfill actions.
 - Operational Xero setup remains an admin setup concern; `/finance` does not
   link to Xero connection management.
-- `ADMIN` alone does not grant finance access.
+- `Member.financeAccessLevel` remains synchronized as `NONE`, `VIEWER`, or
+  `MANAGER` only for legacy compatibility during the rollout.
 
 ## Xero Connection
 

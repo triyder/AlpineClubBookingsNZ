@@ -489,12 +489,14 @@ Hardening applied in #618:
 
 Verified controls already present and intentionally preserved:
 
-- Finance access remains separate from `ADMIN`: `NONE` cannot access finance
-  pages/APIs, `VIEWER` can read reports and the legacy bridge auth/export
-  surfaces, and `MANAGER` is required for manual sync routes. Xero connection
-  state is managed through the shared operational admin Xero connection.
-- `LODGE` sessions are rejected by finance API guards even if a member row has a
-  finance access value.
+- Finance access remains separate from `ADMIN`: `FINANCE_USER` can read finance
+  pages/APIs and `FINANCE_ADMIN` is required for manager-only sync and mapping
+  routes. Xero connection state is managed through the shared operational admin
+  Xero connection, with `financeAccessLevel` kept synchronized only for legacy
+  compatibility.
+- `LODGE` alone is rejected by finance guards; deliberate mixed-role accounts
+  such as `LODGE` plus `FINANCE_USER` retain lodge access and gain finance
+  viewer access.
 - Lodge mutation routes continue to reject `staying-guest` access for arrivals,
   departures, and chore toggles; roster generation and confirmation remain
   limited to `admin` or `hut-leader` tiers.

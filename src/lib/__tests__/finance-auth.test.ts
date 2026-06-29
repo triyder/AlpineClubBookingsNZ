@@ -55,16 +55,33 @@ describe("finance auth helpers", () => {
   it("allows finance access from access role rows", () => {
     expect(
       hasFinanceViewerAccess({
-        role: "MEMBER",
+        role: "USER",
         financeAccessLevel: "NONE",
         accessRoles: [{ role: "FINANCE_USER" }],
       }),
     ).toBe(true);
     expect(
       hasFinanceManagerAccess({
-        role: "MEMBER",
-        financeAccessLevel: "VIEWER",
+        role: "USER",
+        financeAccessLevel: "NONE",
         accessRoles: [{ role: "FINANCE_ADMIN" }],
+      }),
+    ).toBe(true);
+  });
+
+  it("uses explicit access role rows before stale financeAccessLevel values", () => {
+    expect(
+      hasFinanceManagerAccess({
+        role: "USER",
+        financeAccessLevel: "MANAGER",
+        accessRoles: [{ role: "FINANCE_USER" }],
+      }),
+    ).toBe(false);
+    expect(
+      hasFinanceViewerAccess({
+        role: "LODGE",
+        financeAccessLevel: "NONE",
+        accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
       }),
     ).toBe(true);
   });
@@ -103,14 +120,14 @@ describe("finance auth helpers", () => {
   });
 
   it("returns the active finance viewer member", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER" } });
     mockFindUnique.mockResolvedValue({
       id: "viewer-1",
       email: "viewer@example.com",
       firstName: "View",
       lastName: "Only",
-      role: "MEMBER",
-      financeAccessLevel: "VIEWER",
+      role: "USER",
+      financeAccessLevel: "NONE",
       accessRoles: [{ role: "FINANCE_USER" }],
       active: true,
       forcePasswordChange: false,
@@ -118,20 +135,21 @@ describe("finance auth helpers", () => {
 
     await expect(requireFinanceViewer("/finance")).resolves.toMatchObject({
       id: "viewer-1",
-      financeAccessLevel: "VIEWER",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "FINANCE_USER" }],
     });
     expect(mockRedirect).not.toHaveBeenCalled();
   });
 
   it("redirects finance viewers away from manager-only actions", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "viewer-1", role: "USER" } });
     mockFindUnique.mockResolvedValue({
       id: "viewer-1",
       email: "viewer@example.com",
       firstName: "View",
       lastName: "Only",
-      role: "MEMBER",
-      financeAccessLevel: "VIEWER",
+      role: "USER",
+      financeAccessLevel: "MANAGER",
       accessRoles: [{ role: "FINANCE_USER" }],
       active: true,
       forcePasswordChange: false,
@@ -143,15 +161,15 @@ describe("finance auth helpers", () => {
   });
 
   it("redirects non-finance members away from finance booking source drill-downs", async () => {
-    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "USER" } });
     mockFindUnique.mockResolvedValue({
       id: "member-1",
       email: "member@example.com",
       firstName: "No",
       lastName: "Finance",
-      role: "MEMBER",
+      role: "USER",
       financeAccessLevel: "NONE",
-      accessRoles: [],
+      accessRoles: [{ role: "USER" }],
       active: true,
       forcePasswordChange: false,
     });

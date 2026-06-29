@@ -286,6 +286,82 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     );
   });
 
+  it("syncs explicit mixed lodge finance access roles on edit", async () => {
+    let createManyArgs: any;
+    let deleteManyArgs: any;
+    vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return operation({
+        member: {
+          update: prisma.member.update,
+        },
+        memberAccessRole: {
+          createMany: vi.fn().mockImplementation(async (args: any) => {
+            createManyArgs = args;
+            return { count: args.data.length };
+          }),
+          deleteMany: vi.fn().mockImplementation(async (args: any) => {
+            deleteManyArgs = args;
+            return { count: 1 };
+          }),
+        },
+        auditLog: {
+          create: prisma.auditLog.create,
+        },
+      });
+    });
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      role: "LODGE",
+      financeAccessLevel: "VIEWER",
+      accessRoles: [{ role: "LODGE" }, { role: "FINANCE_USER" }],
+      xeroContactId: null,
+    } as any);
+
+    const res = await updateMember(
+      makePutRequest("m1", { accessRoles: ["LODGE", "FINANCE_USER"] }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "m1" },
+        data: expect.objectContaining({
+          role: "LODGE",
+          financeAccessLevel: "VIEWER",
+        }),
+      }),
+    );
+    expect(deleteManyArgs).toEqual({ where: { memberId: "m1" } });
+    expect(createManyArgs).toEqual({
+      data: [
+        { memberId: "m1", role: "LODGE", assignedByMemberId: "admin1" },
+        { memberId: "m1", role: "FINANCE_USER", assignedByMemberId: "admin1" },
+      ],
+      skipDuplicates: true,
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "admin.member.updated",
+        actorMemberId: "admin1",
+        subjectMemberId: "m1",
+        metadata: expect.objectContaining({
+          changedFields: expect.arrayContaining([
+            "role",
+            "financeAccessLevel",
+            "accessRoles",
+          ]),
+        }),
+      }),
+    });
+  });
+
   it("forces finance access to NONE when updating a LODGE member", async () => {
     const lodgeMember = {
       ...baseMember,
