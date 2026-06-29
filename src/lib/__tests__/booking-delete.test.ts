@@ -334,6 +334,108 @@ describe("deleteBooking", () => {
     });
   });
 
+  it("soft-deletes a cancelled booking when unpaid modification deltas net to zero", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      makeBooking({
+        status: "CANCELLED",
+        draftExpiresAt: null,
+        payment: {
+          id: "payment-1",
+          status: "FAILED",
+          amountCents: 845000,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+          additionalAmountCents: 0,
+          additionalPaymentStatus: null,
+          creditAppliedCents: 0,
+          stripePaymentIntentId: "pi_failed",
+          additionalPaymentIntentId: null,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          xeroRefundCreditNoteId: null,
+        },
+        modifications: [
+          {
+            id: "mod-1",
+            modificationType: "DATE_CHANGE",
+            priceDiffCents: 169000,
+            changeFeeCents: 0,
+            createdAt: new Date("2026-04-20T08:55:00.000Z"),
+          },
+          {
+            id: "mod-2",
+            modificationType: "DATE_CHANGE",
+            priceDiffCents: -169000,
+            changeFeeCents: 0,
+            createdAt: new Date("2026-04-20T09:50:00.000Z"),
+          },
+        ],
+      })
+    );
+
+    const result = await deleteBooking({
+      bookingId: "booking-1",
+      actor: { memberId: "admin-1", role: "ADMIN", ipAddress: "127.0.0.1" },
+      reason: "Booked instead via school group function",
+    });
+
+    expect(result).toEqual({
+      status: 200,
+      data: {
+        success: true,
+        mode: "soft-delete",
+        bookingId: "booking-1",
+        message: "Cancelled booking deleted",
+      },
+    });
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: {
+        deletedAt: expect.any(Date),
+        deletedById: "admin-1",
+        deletedReason: "Booked instead via school group function",
+      },
+    });
+  });
+
+  it("blocks cancelled booking deletion when modification deltas do not net to zero", async () => {
+    mocks.bookingFindUnique.mockResolvedValue(
+      makeBooking({
+        status: "CANCELLED",
+        draftExpiresAt: null,
+        modifications: [
+          {
+            id: "mod-1",
+            modificationType: "DATE_CHANGE",
+            priceDiffCents: 500,
+            changeFeeCents: 0,
+            createdAt: new Date("2026-05-27T02:00:00.000Z"),
+          },
+        ],
+      })
+    );
+
+    const result = await deleteBooking({
+      bookingId: "booking-1",
+      actor: { memberId: "admin-1", role: "ADMIN" },
+      reason: "Duplicate test booking",
+    });
+
+    expect(result.status).toBe(409);
+    expect(result).toMatchObject({
+      error:
+        "Cancelled booking cannot be deleted because financial or Xero history exists",
+      blockers: [
+        {
+          code: "financial_modification",
+          label: "Net booking modification financial effect exists",
+          count: 1,
+        },
+      ],
+    });
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+
   it("returns blocker details for cancelled bookings with financial or Xero history", async () => {
     mocks.bookingFindUnique.mockResolvedValue(
       makeBooking({
