@@ -39,8 +39,6 @@ const INDUCTION_INCLUDE = {
       id: true,
       firstName: true,
       lastName: true,
-      email: true,
-      ageTier: true,
     },
   },
   template: { include: TEMPLATE_INCLUDE },
@@ -48,7 +46,7 @@ const INDUCTION_INCLUDE = {
   application: { select: { nominator1Id: true, nominator2Id: true } },
   assignedSigners: {
     include: {
-      member: { select: { id: true, firstName: true, lastName: true, email: true } },
+      member: { select: { id: true, firstName: true, lastName: true } },
     },
   },
 } satisfies Prisma.MemberInductionInclude;

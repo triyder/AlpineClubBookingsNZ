@@ -40,9 +40,23 @@ export async function GET(
   }
 
   const eligibility = canSignOff(induction, ctx);
+  const safeInduction = {
+    ...induction,
+    member: {
+      id: induction.member.id,
+      firstName: induction.member.firstName,
+      lastName: induction.member.lastName,
+    },
+    assignedSigners: induction.assignedSigners.map((signer) => ({
+      memberId: signer.memberId,
+      firstName: signer.member.firstName,
+      lastName: signer.member.lastName,
+      emailSentAt: signer.emailSentAt,
+    })),
+  };
 
   return NextResponse.json({
-    induction,
+    induction: safeInduction,
     declaration: INDUCTION_SIGN_OFF_DECLARATION,
     viewer: {
       isInductee,

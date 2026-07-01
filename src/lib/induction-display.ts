@@ -67,7 +67,6 @@ export interface AssignedSignerClient {
   memberId: string;
   firstName: string;
   lastName: string;
-  email: string;
   emailSentAt: string | null;
 }
 
