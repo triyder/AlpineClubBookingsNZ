@@ -30,11 +30,15 @@ export async function GET() {
   const own = ownRaw
     ? {
         ...ownRaw,
+        member: {
+          id: ownRaw.member.id,
+          firstName: ownRaw.member.firstName,
+          lastName: ownRaw.member.lastName,
+        },
         assignedSigners: ownRaw.assignedSigners.map((s) => ({
           memberId: s.memberId,
           firstName: s.member.firstName,
           lastName: s.member.lastName,
-          email: s.member.email,
           emailSentAt: s.emailSentAt,
         })),
       }

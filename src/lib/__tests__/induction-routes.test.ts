@@ -161,6 +161,52 @@ describe("induction route boundaries", () => {
     );
   });
 
+  it("does not expose member emails in member-facing induction detail", async () => {
+    mocks.getInductionById.mockResolvedValue({
+      ...inductionForAnotherMember,
+      memberId: "member-2",
+      member: {
+        id: "member-2",
+        firstName: "Inducted",
+        lastName: "Member",
+        email: "inducted@example.com",
+      },
+      assignedSigners: [
+        {
+          memberId: "signer-1",
+          emailSentAt: null,
+          member: {
+            id: "signer-1",
+            firstName: "Assigned",
+            lastName: "Signer",
+            email: "signer@example.com",
+          },
+        },
+      ],
+    });
+
+    const response = await inductionDetailGET(
+      new NextRequest("http://localhost/api/inductions/induction-1"),
+      routeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.induction.member).toEqual({
+      id: "member-2",
+      firstName: "Inducted",
+      lastName: "Member",
+    });
+    expect(body.induction.assignedSigners).toEqual([
+      {
+        memberId: "signer-1",
+        firstName: "Assigned",
+        lastName: "Signer",
+        emailSentAt: null,
+      },
+    ]);
+  });
+
   it("does not let an unrelated member sign off another member induction", async () => {
     const response = await signOffPOST(
       request("/api/inductions/induction-1/sign-off", {
