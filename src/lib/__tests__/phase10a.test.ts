@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import faqSections from "@/data/faq";
+import { starterPageContent } from "../../../prisma/starter-page-content";
 import { checkRateLimit, _testStore } from "@/lib/rate-limit";
 import { rateLimiters } from "@/lib/rate-limit";
 
@@ -7,42 +7,28 @@ import { rateLimiters } from "@/lib/rate-limit";
 
 // ─── FAQ data ──────────────────────────────────────────────────────────────
 
-describe("faq data (F-PUB-04)", () => {
-  it("exports an array of FAQ sections", () => {
-    expect(Array.isArray(faqSections)).toBe(true);
-    expect(faqSections.length).toBeGreaterThan(0);
+describe("faq page content (F-PUB-04)", () => {
+  const faq = starterPageContent.find((page) => page.slug === "faq");
+
+  it("is seeded as editable PageContent", () => {
+    expect(faq).toBeDefined();
+    expect(faq?.path).toBe("/faq");
+    expect(faq?.title).toContain("Frequently Asked Questions");
   });
 
-  it("every section has a title and items array", () => {
-    for (const section of faqSections) {
-      expect(typeof section.title).toBe("string");
-      expect(section.title.length).toBeGreaterThan(0);
-      expect(Array.isArray(section.items)).toBe(true);
-      expect(section.items.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("every FAQ item has a question and answer", () => {
-    for (const section of faqSections) {
-      for (const item of section.items) {
-        expect(typeof item.question).toBe("string");
-        expect(item.question.length).toBeGreaterThan(0);
-        expect(typeof item.answer).toBe("string");
-        expect(item.answer.length).toBeGreaterThan(0);
-      }
-    }
+  it("keeps question and answer content in the CMS body", () => {
+    expect(faq?.contentHtml).toContain("How do I book a stay at the lodge?");
+    expect(faq?.contentHtml).toContain("Members can book directly");
   });
 
   it("covers required topics", () => {
-    const allQuestions = faqSections
-      .flatMap((s) => s.items)
-      .map((i) => i.question.toLowerCase());
+    const body = faq?.contentHtml.toLowerCase() ?? "";
 
-    expect(allQuestions.some((q) => q.includes("book"))).toBe(true);
-    expect(allQuestions.some((q) => q.includes("cancellation"))).toBe(true);
-    expect(allQuestions.some((q) => q.includes("member"))).toBe(true);
-    expect(allQuestions.some((q) => q.includes("chore"))).toBe(true);
-    expect(allQuestions.some((q) => q.includes("password"))).toBe(true);
+    expect(body).toContain("book");
+    expect(body).toContain("cancellation");
+    expect(body).toContain("member");
+    expect(body).toContain("chore");
+    expect(body).toContain("password");
   });
 });
 
@@ -92,29 +78,21 @@ describe("contact form rate limit (F-PUB-03)", () => {
 // ─── Privacy & Terms pages metadata ────────────────────────────────────────
 
 describe("compliance pages (F-COMP-01, F-COMP-02)", () => {
-  it("privacy page module exports metadata with correct structure", async () => {
-    const mod = await import(
-      "@/app/(website)/privacy/page"
-    );
-    expect(mod.metadata).toBeDefined();
-    expect(mod.metadata.title).toBeDefined();
-    expect(String(mod.metadata.title).toLowerCase()).toContain("privacy");
+  it("privacy page is seeded as editable PageContent", () => {
+    const page = starterPageContent.find((item) => item.slug === "privacy");
+
+    expect(page).toBeDefined();
+    expect(page?.path).toBe("/privacy");
+    expect(page?.title.toLowerCase()).toContain("privacy");
+    expect(page?.contentHtml).toContain("Privacy Act 2020");
   });
 
-  it("terms page module exports metadata with correct structure", async () => {
-    const mod = await import(
-      "@/app/(website)/terms/page"
-    );
-    expect(mod.metadata).toBeDefined();
-    expect(mod.metadata.title).toBeDefined();
-    expect(String(mod.metadata.title).toLowerCase()).toContain("terms");
-  });
+  it("terms page is seeded as editable PageContent", () => {
+    const page = starterPageContent.find((item) => item.slug === "terms");
 
-  it("faq page module exports metadata", async () => {
-    const mod = await import(
-      "@/app/(website)/faq/page"
-    );
-    expect(mod.metadata).toBeDefined();
-    expect(mod.metadata.title).toBeDefined();
+    expect(page).toBeDefined();
+    expect(page?.path).toBe("/terms");
+    expect(page?.title.toLowerCase()).toContain("terms");
+    expect(page?.contentHtml).toContain("Terms of Service");
   });
 });

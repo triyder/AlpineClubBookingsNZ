@@ -40,6 +40,9 @@ export const BUILTIN_PAGE_SLUGS: ReadonlySet<string> = new Set([
   "rules",
   "contact",
   "committee",
+  "privacy",
+  "terms",
+  "faq",
 ]);
 
 export function isBuiltinPageSlug(slug: string): boolean {
@@ -59,10 +62,10 @@ export const PAGE_SLUG_PATTERN =
 
 // Names that must not appear in any segment of an admin-created slug.
 // Application route prefixes (admin, api, book, ...) would let database
-// pages shadow or sit underneath real routes; faq/privacy/terms are
-// code-backed website pages. Slugs like "contact", "join", and "home" are
-// intentionally NOT reserved: their code-backed routes read the matching
-// PageContent record, which is how those pages are edited.
+// pages shadow or sit underneath real routes. Slugs like "contact", "join",
+// "home", "privacy", "terms", and "faq" are intentionally NOT reserved:
+// their code-backed routes or the catch-all read the matching PageContent
+// record, which is how those pages are edited.
 const RESERVED_PAGE_SLUGS = new Set([
   "admin",
   "api",
@@ -73,9 +76,6 @@ const RESERVED_PAGE_SLUGS = new Set([
   "register",
   "forgot-password",
   "reset-password",
-  "faq",
-  "privacy",
-  "terms",
 ]);
 
 export function normalizePageSlug(value: string): string {

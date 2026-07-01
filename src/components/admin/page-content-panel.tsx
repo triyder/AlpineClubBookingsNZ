@@ -1767,6 +1767,14 @@ export function PageContentPanel() {
               For example:{" "}
               <code>{"{{photo-slideshow:/public/images/photos/One}}"}</code>
             </p>
+            <p>
+              <i>
+                <b>club-name</b>, <b>currency</b>, <b>lodge-capacity</b>
+              </i>
+              <br />
+              These text tokens are replaced with the current club name,
+              currency code, and lodge capacity when the public page renders.
+            </p>
           </div>
         </DialogContent>
       </Dialog>
@@ -2110,6 +2118,15 @@ export function PageContentPanel() {
                   </span>
                   <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
                     photo-slideshow
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    club-name
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    currency
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    lodge-capacity
                   </span>
                 </div>
                 <p className="mt-2 text-[11px] text-slate-500">

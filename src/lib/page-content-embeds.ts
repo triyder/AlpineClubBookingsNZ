@@ -7,6 +7,9 @@ import {
   imagePublicUrl,
   resolveInImagesRoot,
 } from "@/lib/image-storage";
+import { CLUB_NAME } from "@/config/club-identity";
+import { APP_CURRENCY } from "@/config/operational";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { extractImageDimensions } from "@/lib/media-image";
 
 export type PhotoGalleryImage = {
@@ -33,6 +36,41 @@ type ParsedEmbedToken = {
 
 const EMBED_TOKEN_REGEX =
   /\{\{\s*(committee-members-cards|member-application-form|contact-form|join-apply-form|skifield-conditions|skifield-whakapapa|photo-gallery|photo-slideshow)(?:\s*:\s*([^{}]+?))?\s*\}\}|\{\s*(committee-members-cards|member-application-form|contact-form|join-apply-form|skifield-conditions|skifield-whakapapa)(?:\s*:\s*([^{}]+?))?\s*\}/gi;
+const TEXT_TOKEN_REGEX = /\{\{\s*(lodge-capacity|club-name|currency)\s*\}\}/gi;
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function resolveTextTokens(contentHtml: string): Promise<string> {
+  TEXT_TOKEN_REGEX.lastIndex = 0;
+  if (!TEXT_TOKEN_REGEX.test(contentHtml)) {
+    return contentHtml;
+  }
+
+  TEXT_TOKEN_REGEX.lastIndex = 0;
+  const lodgeCapacity = contentHtml.match(/\{\{\s*lodge-capacity\s*\}\}/i)
+    ? await getLodgeCapacity()
+    : null;
+
+  return contentHtml.replace(TEXT_TOKEN_REGEX, (_match, token: string) => {
+    switch (token.toLowerCase()) {
+      case "lodge-capacity":
+        return escapeHtmlText(String(lodgeCapacity));
+      case "club-name":
+        return escapeHtmlText(CLUB_NAME);
+      case "currency":
+        return escapeHtmlText(APP_CURRENCY);
+      default:
+        return "";
+    }
+  });
+}
 
 function parseTokenMatch(match: RegExpMatchArray): ParsedEmbedToken {
   return {
@@ -145,7 +183,8 @@ async function resolveGalleryImages(
 }
 
 export async function buildEmbeddedBody(contentHtml: string) {
-  const matches = Array.from(contentHtml.matchAll(EMBED_TOKEN_REGEX));
+  const htmlWithTextTokens = await resolveTextTokens(contentHtml);
+  const matches = Array.from(htmlWithTextTokens.matchAll(EMBED_TOKEN_REGEX));
   const hasInlineGalleryToken = matches.some((match) => {
     const parsed = parseTokenMatch(match);
     return (
@@ -156,8 +195,8 @@ export async function buildEmbeddedBody(contentHtml: string) {
   });
 
   const { cleanedHtml, images: inlineImages } = hasInlineGalleryToken
-    ? extractInlinePhotoGalleryImages(contentHtml)
-    : { cleanedHtml: contentHtml, images: [] as PhotoGalleryImage[] };
+    ? extractInlinePhotoGalleryImages(htmlWithTextTokens)
+    : { cleanedHtml: htmlWithTextTokens, images: [] as PhotoGalleryImage[] };
 
   const parts: EmbeddedBodyPart[] = [];
   let lastIndex = 0;

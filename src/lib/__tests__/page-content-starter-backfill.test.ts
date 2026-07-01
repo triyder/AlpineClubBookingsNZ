@@ -24,6 +24,14 @@ const BACKFILL_404_MIGRATION_PATH = join(
   "migration.sql",
 );
 
+const POLICY_PAGES_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20260702090000_backfill_policy_page_content",
+  "migration.sql",
+);
+
 const HOME_UPDATE_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
@@ -46,11 +54,19 @@ function sqlQuote(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function expectSqlContainsValue(sql: string, value: string) {
+  expect(
+    sql.includes(sqlQuote(value)) || sql.includes(value),
+    `expected backfill SQL to contain ${value}`,
+  ).toBe(true);
+}
+
 describe("starter page content backfill migration", () => {
   const insertSql = readFileSync(INSERT_MIGRATION_PATH, "utf8");
   const backfill404Sql = readFileSync(BACKFILL_404_MIGRATION_PATH, "utf8");
+  const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
   const updateSql = readFileSync(HOME_UPDATE_MIGRATION_PATH, "utf8");
-  const allInsertSql = `${insertSql}\n${backfill404Sql}`;
+  const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}`;
   const combinedSql = `${allInsertSql}\n${updateSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
@@ -75,10 +91,7 @@ describe("starter page content backfill migration", () => {
         page.contentHtml,
       ].filter((value) => value !== "");
       for (const value of fields) {
-        expect(
-          combinedSql,
-          `expected backfill SQL to contain ${value}`,
-        ).toContain(sqlQuote(value));
+        expectSqlContainsValue(combinedSql, value);
       }
       expect(combinedSql).toContain(`${page.sortOrder},`);
     }
@@ -91,10 +104,13 @@ describe("starter page content backfill migration", () => {
   });
 
   it("covers the routes that hard-404 without a record", () => {
-    // "/" renders the "/home" record and the footer/terms/sitemap link to
-    // "/rules"; both must exist after migrations alone.
+    // "/" renders the "/home" record and the footer/sitemap link to "/rules";
+    // both must exist after migrations alone.
     expect(insertSql).toContain("'/home'");
     expect(insertSql).toContain("'/rules'");
+    expect(policyPagesSql).toContain("'/privacy'");
+    expect(policyPagesSql).toContain("'/terms'");
+    expect(policyPagesSql).toContain("'/faq'");
   });
 });
 

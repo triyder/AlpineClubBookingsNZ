@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/config/club-identity", () => ({ CLUB_NAME: "Club <Name>" }));
+vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
+vi.mock("@/lib/lodge-capacity", () => ({
+  getLodgeCapacity: vi.fn(async () => 42),
+}));
 
 import { buildEmbeddedBody } from "../page-content-embeds";
 
@@ -89,6 +94,19 @@ describe("buildEmbeddedBody", () => {
       { type: "html", value: "<p>Before</p>" },
       { type: "contact-form" },
       { type: "html", value: "<p>After</p>" },
+    ]);
+  });
+
+  it("resolves live text tokens as escaped html", async () => {
+    const parts = await buildEmbeddedBody(
+      "<p>{{club-name}} sleeps {{lodge-capacity}} and charges {{currency}}.</p>",
+    );
+
+    expect(parts).toEqual([
+      {
+        type: "html",
+        value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD &amp; GST.</p>",
+      },
     ]);
   });
 });

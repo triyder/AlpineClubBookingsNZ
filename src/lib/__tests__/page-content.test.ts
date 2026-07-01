@@ -62,6 +62,9 @@ describe("isReservedPageSlug", () => {
     expect(isReservedPageSlug("contact")).toBe(false);
     expect(isReservedPageSlug("home")).toBe(false);
     expect(isReservedPageSlug("rules")).toBe(false);
+    expect(isReservedPageSlug("privacy")).toBe(false);
+    expect(isReservedPageSlug("terms")).toBe(false);
+    expect(isReservedPageSlug("faq")).toBe(false);
   });
 });
 
@@ -78,6 +81,9 @@ describe("isBuiltinPageSlug", () => {
     expect(isBuiltinPageSlug("about")).toBe(true);
     expect(isBuiltinPageSlug("join/apply")).toBe(true);
     expect(isBuiltinPageSlug("committee")).toBe(true);
+    expect(isBuiltinPageSlug("privacy")).toBe(true);
+    expect(isBuiltinPageSlug("terms")).toBe(true);
+    expect(isBuiltinPageSlug("faq")).toBe(true);
   });
 
   it("does not match admin-created pages", () => {
@@ -98,5 +104,8 @@ describe("canUnpublishPage", () => {
     expect(canUnpublishPage("about")).toBe(false);
     expect(canUnpublishPage("join/apply")).toBe(false);
     expect(canUnpublishPage("contact")).toBe(false);
+    expect(canUnpublishPage("privacy")).toBe(false);
+    expect(canUnpublishPage("terms")).toBe(false);
+    expect(canUnpublishPage("faq")).toBe(false);
   });
 });

@@ -97,11 +97,13 @@ menu title and menu order; pages with an empty menu title stay out of the
 menu.
 
 - Seeding creates starter pages (`home`, `about`, `join`, `join/apply`,
-  `rules`, `contact`, `committee`) only when they do not already exist, so
-  re-running the seed never overwrites edited content.
+  `rules`, `contact`, `committee`, `privacy`, `terms`, `faq`) only when they
+  do not already exist, so re-running the seed never overwrites edited
+  content.
 - The home route (`/`) renders the `home` page record. `/contact`, `/join`,
-  and `/join/apply` are code-backed routes that render their matching
-  record; all other records are served by the dynamic catch-all route.
+  and `/join/apply` are code-backed routes that render their matching record;
+  all other records, including `/privacy`, `/terms`, and `/faq`, are served by
+  the dynamic catch-all route.
 - Admin-created pages can be hidden from the public site with the
   **Hide**/**Publish** toggle in Admin > Page Content (no permanent delete):
   hidden pages drop out of the menu and return a 404 on the catch-all route.
@@ -117,8 +119,11 @@ menu.
   `{{member-application-form}}`, `{{join-apply-form}}`, `{{contact-form}}`,
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
-  `{{photo-slideshow:path}}`. The `dataHash` parameter is the Snow.nz widget
-  hash. Photo token `path` parameters are normalised relative to
+  `{{photo-slideshow:path}}`. Legal and help-copy pages can also use text
+  tokens `{{club-name}}`, `{{currency}}`, and `{{lodge-capacity}}`, which are
+  resolved server-side from the current club/runtime settings. The `dataHash`
+  parameter is the Snow.nz widget hash. Photo token `path` parameters are
+  normalised relative to
   `public/images/` and load images from that shared image-manager storage tree:
   a committed `public/images/` directory in a source checkout, or the mounted
   `public/images` volume in containerised deployments. Without a path, photo
