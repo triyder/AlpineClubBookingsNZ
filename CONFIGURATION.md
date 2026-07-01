@@ -422,7 +422,7 @@ cannot be read, optional modules fail closed.
 | Address autocomplete | off | Addy-powered suggestions on address fields. Manual address entry remains available whenever the module is off, credentials are missing, Addy fails, or rate limiting applies. |
 | Group bookings | on | Group-booking organiser, join, and settlement surfaces. |
 | Lockers | on | Physical locker records and member allocations. |
-| Lodge induction | on | Lodge induction templates, self-assessment, and sign-off. |
+| Lodge induction | on | Lodge induction templates, assigned signers, and single-Pass sign-off. |
 | Work parties | on | Volunteer work-party events and the internal booking discounts they grant. |
 | Promo codes | on | Promo-code administration and promo-aware booking flows. |
 | Hut leaders | on | Hut-leader assignments, kiosk access, and auto-assignment. |

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,7 @@ interface RegisterRow {
     email: string;
     ageTier: string;
   };
+  assignedSigners: AssignedSigner[];
 }
 
 interface MemberResult {
@@ -52,6 +53,14 @@ interface MemberResult {
   firstName: string;
   lastName: string;
   email: string;
+}
+
+interface AssignedSigner {
+  memberId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  emailSentAt: string | null;
 }
 
 const STATUS_VARIANT: Record<
@@ -65,9 +74,10 @@ const STATUS_VARIANT: Record<
 };
 
 const KIND_OPTIONS: InductionKind[] = [
+  "NEW_MEMBER",
+  "HUT_LEADER",
   "RE_INDUCTION",
   "YOUTH_TO_FULL",
-  "NEW_MEMBER",
 ];
 
 export function InductionRegisterTable() {
@@ -84,6 +94,10 @@ export function InductionRegisterTable() {
   const [signerSearch, setSignerSearch] = useState("");
   const [signerResults, setSignerResults] = useState<MemberResult[]>([]);
   const [selectedSigners, setSelectedSigners] = useState<MemberResult[]>([]);
+  const [reassignRowId, setReassignRowId] = useState<string | null>(null);
+  const [reassignSigners, setReassignSigners] = useState<MemberResult[]>([]);
+  const [reassignSearch, setReassignSearch] = useState("");
+  const [reassignResults, setReassignResults] = useState<MemberResult[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,6 +152,69 @@ export function InductionRegisterTable() {
 
   function removeSigner(id: string) {
     setSelectedSigners((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  function startReassign(row: RegisterRow) {
+    setReassignRowId(row.id);
+    setReassignSigners(
+      row.assignedSigners.map((signer) => ({
+        id: signer.memberId,
+        firstName: signer.firstName,
+        lastName: signer.lastName,
+        email: signer.email,
+      }))
+    );
+    setReassignSearch("");
+    setReassignResults([]);
+  }
+
+  async function searchReassignSigners() {
+    if (!reassignSearch.trim()) return;
+    const res = await fetch(
+      `/api/admin/members?search=${encodeURIComponent(reassignSearch.trim())}`,
+      { credentials: "same-origin" }
+    );
+    const body = await res.json().catch(() => ({}));
+    const results: MemberResult[] = (body.members ?? []).slice(0, 10);
+    setReassignResults(
+      results.filter((m) => !reassignSigners.some((s) => s.id === m.id))
+    );
+  }
+
+  function addReassignSigner(member: MemberResult) {
+    setReassignSigners((prev) =>
+      prev.some((s) => s.id === member.id) ? prev : [...prev, member]
+    );
+    setReassignSearch("");
+    setReassignResults([]);
+  }
+
+  function removeReassignSigner(id: string) {
+    setReassignSigners((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  async function saveReassignSigners() {
+    if (!reassignRowId) return;
+    const res = await fetch(`/api/admin/inductions/${reassignRowId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        action: "REASSIGN_SIGNERS",
+        signerMemberIds: reassignSigners.map((signer) => signer.id),
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(body.error ?? "Failed to reassign signers");
+      return;
+    }
+    toast.success("Assigned signers updated");
+    setReassignRowId(null);
+    setReassignSigners([]);
+    setReassignResults([]);
+    setReassignSearch("");
+    void load();
   }
 
   async function createInduction() {
@@ -210,8 +287,8 @@ export function InductionRegisterTable() {
         <CardHeader>
           <CardTitle>Start an induction</CardTitle>
           <CardDescription>
-            Create an induction for an existing member, a youth becoming a full
-            member, or a re-induction.
+            Create a New Member, Hut Leader, youth-to-full, or re-induction
+            workflow for an existing member.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -340,7 +417,7 @@ export function InductionRegisterTable() {
         <CardHeader>
           <CardTitle>Induction register</CardTitle>
           <CardDescription>
-            Signed induction records — useful when appointing hut leaders.
+            Signed induction records and assigned signers.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -378,64 +455,169 @@ export function InductionRegisterTable() {
                   <TableHead>Type</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Sign-offs</TableHead>
+                  <TableHead>Signers</TableHead>
                   <TableHead>Completed</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <div className="font-medium">
-                        {row.member.firstName} {row.member.lastName}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {row.member.email}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {INDUCTION_KIND_LABELS[row.kind]}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={STATUS_VARIANT[row.status]}>
-                        {INDUCTION_STATUS_LABELS[row.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {row.signOffCount}/{row.requiredSignOffs}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {formatInductionDate(row.completedAt) ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button asChild size="sm" variant="outline">
-                          <Link href={`/admin/induction/${row.id}/print`}>
-                            View
-                          </Link>
-                        </Button>
-                        {row.status !== "COMPLETED" &&
-                          row.status !== "VOIDED" && (
+                  <Fragment key={row.id}>
+                    <TableRow>
+                      <TableCell>
+                        <div className="font-medium">
+                          {row.member.firstName} {row.member.lastName}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {row.member.email}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {INDUCTION_KIND_LABELS[row.kind]}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={STATUS_VARIANT[row.status]}>
+                          {INDUCTION_STATUS_LABELS[row.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {row.signOffCount}/{row.requiredSignOffs}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {row.assignedSigners.length > 0
+                          ? row.assignedSigners
+                              .map((signer) => `${signer.firstName} ${signer.lastName}`)
+                              .join(", ")
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatInductionDate(row.completedAt) ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button asChild size="sm" variant="outline">
+                            <Link href={`/admin/induction/${row.id}/print`}>
+                              View
+                            </Link>
+                          </Button>
+                          {row.status !== "VOIDED" && (
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => overrideComplete(row.id)}
+                              onClick={() => startReassign(row)}
                             >
-                              Complete
+                              Signers
                             </Button>
                           )}
-                        {row.status !== "VOIDED" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => voidInductionRow(row.id)}
-                          >
-                            Void
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                          {row.status !== "COMPLETED" &&
+                            row.status !== "VOIDED" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => overrideComplete(row.id)}
+                              >
+                                Complete
+                              </Button>
+                            )}
+                          {row.status !== "VOIDED" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => voidInductionRow(row.id)}
+                            >
+                              Void
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {reassignRowId === row.id && (
+                      <TableRow>
+                        <TableCell colSpan={7}>
+                          <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                            <p className="text-sm font-medium">
+                              Assigned signers for {row.member.firstName}{" "}
+                              {row.member.lastName}
+                            </p>
+                            <div className="flex flex-wrap items-end gap-2">
+                              <div className="space-y-1">
+                                <label className="text-xs">Find signer</label>
+                                <Input
+                                  value={reassignSearch}
+                                  onChange={(e) => setReassignSearch(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") void searchReassignSigners();
+                                  }}
+                                  placeholder="Name or email"
+                                  className="w-64"
+                                />
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={searchReassignSigners}
+                              >
+                                Search
+                              </Button>
+                            </div>
+                            {reassignResults.length > 0 && (
+                              <ul className="space-y-1">
+                                {reassignResults.map((member) => (
+                                  <li key={member.id}>
+                                    <button
+                                      type="button"
+                                      onClick={() => addReassignSigner(member)}
+                                      className="text-sm text-primary hover:underline"
+                                    >
+                                      + {member.firstName} {member.lastName} —{" "}
+                                      {member.email}
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {reassignSigners.length > 0 ? (
+                              <ul className="space-y-1">
+                                {reassignSigners.map((signer) => (
+                                  <li
+                                    key={signer.id}
+                                    className="flex items-center gap-2 text-sm"
+                                  >
+                                    <span>
+                                      {signer.firstName} {signer.lastName}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeReassignSigner(signer.id)}
+                                      className="text-xs text-destructive hover:underline"
+                                    >
+                                      Remove
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">
+                                No explicit signers assigned.
+                              </p>
+                            )}
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={saveReassignSigners}>
+                                Save signers
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setReassignRowId(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>

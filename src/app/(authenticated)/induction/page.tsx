@@ -11,7 +11,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { InductionSelfAssessForm } from "@/components/induction-self-assess-form";
 import { InductionSignOffForm } from "@/components/induction-sign-off-form";
 import {
   type AwaitingInductionClient,
@@ -43,7 +42,6 @@ export default function InductionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeSignOffId, setActiveSignOffId] = useState<string | null>(null);
-  const [showSelfAssess, setShowSelfAssess] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,22 +87,13 @@ export default function InductionPage() {
             <CardHeader>
               <CardTitle>Your induction</CardTitle>
               <CardDescription>
-                Work through the checklist below to record your understanding of
-                each item. Your assigned signers will then confirm and formally
-                sign off.
+                Work through the checklist below with your assigned signers so
+                they can confirm one overall Pass.
               </CardDescription>
             </CardHeader>
             <CardContent>
               {data.own ? (
-                <OwnInduction
-                  induction={data.own}
-                  showSelfAssess={showSelfAssess}
-                  onToggleSelfAssess={() => setShowSelfAssess((v) => !v)}
-                  onSelfAssessSaved={() => {
-                    setShowSelfAssess(false);
-                    void load();
-                  }}
-                />
+                <OwnInduction induction={data.own} />
               ) : (
                 <p className="text-sm text-muted-foreground">
                   You don&apos;t have an induction record yet. An administrator
@@ -182,14 +171,8 @@ export default function InductionPage() {
 
 function OwnInduction({
   induction,
-  showSelfAssess,
-  onToggleSelfAssess,
-  onSelfAssessSaved,
 }: {
   induction: InductionDetailClient;
-  showSelfAssess: boolean;
-  onToggleSelfAssess: () => void;
-  onSelfAssessSaved: () => void;
 }) {
   const signedCount = induction.signOffs.length;
   const isOpen = induction.status === "IN_PROGRESS" || induction.status === "DRAFT";
@@ -212,11 +195,6 @@ function OwnInduction({
             Completed {formatInductionDate(induction.completedAt)}
           </span>
         )}
-        {induction.selfAssessedAt && (
-          <span className="text-sm text-muted-foreground">
-            Self-assessed {formatInductionDate(induction.selfAssessedAt)}
-          </span>
-        )}
       </div>
 
       {/* Assigned signers */}
@@ -226,7 +204,7 @@ function OwnInduction({
           <ul className="mt-1 space-y-1 text-sm text-muted-foreground">
             {induction.assignedSigners.map((signer) => {
               const hasSigned = induction.signOffs.some(
-                (s) => s.signerName === `${signer.firstName} ${signer.lastName}`.trim()
+                (signOff) => signOff.signerMemberId === signer.memberId
               );
               return (
                 <li key={signer.memberId}>
@@ -265,48 +243,42 @@ function OwnInduction({
       {/* Status message */}
       {induction.status === "COMPLETED" ? (
         <p className="text-sm text-muted-foreground">
-          Your induction is complete. Well done!
+          Your induction is complete.
         </p>
       ) : isOpen ? (
         <p className="text-sm text-muted-foreground">
           Your induction needs {induction.requiredSignOffs} sign-off
           {induction.requiredSignOffs === 1 ? "" : "s"}. Work through the
-          checklist below so your signers can confirm each item.
+          checklist with your signers so they can record an overall Pass.
         </p>
       ) : null}
 
-      {/* Self-assessment checklist */}
+      {/* Checklist reference */}
       {isOpen && induction.template.sections.length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold">Induction checklist</h4>
-            <Button variant="outline" size="sm" onClick={onToggleSelfAssess}>
-              {showSelfAssess
-                ? "Close checklist"
-                : induction.selfAssessedAt
-                ? "Update my self-assessment"
-                : "Fill in my self-assessment"}
-            </Button>
-          </div>
-          {!showSelfAssess && induction.selfAssessedAt && (
-            <p className="text-xs text-muted-foreground">
-              You last saved your self-assessment on{" "}
-              {formatInductionDate(induction.selfAssessedAt)}. Your signers can
-              see your responses.
-            </p>
-          )}
-          {!showSelfAssess && !induction.selfAssessedAt && (
-            <p className="text-xs text-muted-foreground">
-              Go through each item and mark your level of understanding. This
-              helps your signers verify your competency when they sign off.
-            </p>
-          )}
-          {showSelfAssess && (
-            <InductionSelfAssessForm
-              induction={induction}
-              onSaved={onSelfAssessSaved}
-            />
-          )}
+          <h4 className="text-sm font-semibold">Induction checklist</h4>
+          {induction.template.sections.map((section) => (
+            <div key={section.id} className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {section.title}
+              </p>
+              <ul className="space-y-1 text-sm text-muted-foreground">
+                {section.items.map((item) => (
+                  <li key={item.id} className="rounded-md border px-3 py-2">
+                    <span className="font-medium text-foreground">{item.label}</span>
+                    {item.isMandatory && (
+                      <span className="ml-2 text-xs text-destructive">
+                        Mandatory
+                      </span>
+                    )}
+                    {item.requiresDemonstration && (
+                      <span className="ml-2 text-xs">Demonstrate</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
     </div>

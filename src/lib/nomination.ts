@@ -1549,17 +1549,18 @@ export async function approveMemberApplication(
   const inductionModules = await loadEffectiveModuleFlags();
   if (inductionModules.induction) {
     try {
-      await createMemberInduction({
+      const nominatorIds = Array.from(new Set([
+        approved.application.nominator1Id,
+        approved.application.nominator2Id,
+      ].filter((value): value is string => Boolean(value))));
+
+      const induction = await createMemberInduction({
         memberId: approved.applicantMember.id,
         kind: "NEW_MEMBER",
         applicationId,
         createdByMemberId: adminMemberId,
+        signerMemberIds: nominatorIds,
       });
-
-      const nominatorIds = [
-        approved.application.nominator1Id,
-        approved.application.nominator2Id,
-      ].filter((value): value is string => Boolean(value));
 
       if (nominatorIds.length > 0) {
         const nominators = await prisma.member.findMany({
@@ -1570,13 +1571,19 @@ export async function approveMemberApplication(
           `${approved.applicantMember.firstName} ${approved.applicantMember.lastName}`.trim();
 
         await Promise.all(
-          nominators.map((nominator) =>
-            sendInductionSignOffRequestEmail({
-              email: nominator.email,
-              signerName: nominator.firstName,
-              inducteeName,
-              signerRoleLabel: "Nominator",
-            }).catch((err) => {
+          nominators.map(async (nominator) => {
+            try {
+              await sendInductionSignOffRequestEmail({
+                email: nominator.email,
+                signerName: nominator.firstName,
+                inducteeName,
+                signerRoleLabel: "Nominator",
+              });
+              await prisma.memberInductionAssignedSigner.updateMany({
+                where: { inductionId: induction.id, memberId: nominator.id },
+                data: { emailSentAt: new Date() },
+              });
+            } catch (err) {
               logger.error(
                 { err, applicationId, nominatorId: nominator.id },
                 "Failed to send induction sign-off request email"
@@ -1584,8 +1591,8 @@ export async function approveMemberApplication(
               warnings.push(
                 `Could not email induction sign-off request to ${nominator.email}`
               );
-            })
-          )
+            }
+          })
         );
       }
     } catch (err) {

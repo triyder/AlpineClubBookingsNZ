@@ -14,6 +14,9 @@ const TEMPLATE_INCLUDE = {
 const createSchema = z.object({
   name: z.string().trim().min(1).max(200),
   version: z.string().trim().min(1).max(50),
+  kind: z
+    .enum(["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"])
+    .optional(),
   cloneFromId: z.string().min(1).optional(),
 });
 
@@ -33,6 +36,7 @@ export async function GET() {
       id: template.id,
       name: template.name,
       version: template.version,
+      kind: template.kind,
       sourceLabel: template.sourceLabel,
       isActive: template.isActive,
       createdAt: template.createdAt,
@@ -63,6 +67,7 @@ export async function POST(request: NextRequest) {
   }
 
   let sectionsCreate: object | undefined;
+  let templateKind = parsed.data.kind ?? "NEW_MEMBER";
   if (parsed.data.cloneFromId) {
     const source = await prisma.inductionChecklistTemplate.findUnique({
       where: { id: parsed.data.cloneFromId },
@@ -74,6 +79,7 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+    templateKind = parsed.data.kind ?? source.kind;
     sectionsCreate = {
       create: source.sections.map((section) => ({
         title: section.title,
@@ -99,6 +105,7 @@ export async function POST(request: NextRequest) {
     data: {
       name: parsed.data.name,
       version: parsed.data.version,
+      kind: templateKind,
       isActive: false,
       ...(sectionsCreate ? { sections: sectionsCreate } : {}),
     },
@@ -116,6 +123,7 @@ export async function POST(request: NextRequest) {
     details: JSON.stringify({
       name: template.name,
       version: template.version,
+      kind: template.kind,
       clonedFrom: parsed.data.cloneFromId ?? null,
     }),
   });

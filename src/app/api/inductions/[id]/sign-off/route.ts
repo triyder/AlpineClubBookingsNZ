@@ -13,14 +13,6 @@ import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
 
-const itemResultSchema = z.object({
-  itemId: z.string().min(1),
-  result: z.enum(["YES", "NO", "NOT_APPLICABLE"]),
-  explanationProvided: z.boolean().optional(),
-  demonstrationProvided: z.boolean().optional(),
-  notes: z.string().max(2000).optional().nullable(),
-});
-
 const signOffSchema = z.object({
   declarationAccepted: z
     .boolean()
@@ -28,7 +20,6 @@ const signOffSchema = z.object({
       message: "You must accept the declaration",
     }),
   comments: z.string().max(2000).optional().nullable(),
-  itemResults: z.array(itemResultSchema).max(200).optional(),
 });
 
 export async function POST(
@@ -92,7 +83,6 @@ export async function POST(
       signerRole: eligibility.role,
       declarationAccepted: parsed.data.declarationAccepted,
       comments: parsed.data.comments ?? null,
-      itemResults: parsed.data.itemResults,
     });
 
     return NextResponse.json({

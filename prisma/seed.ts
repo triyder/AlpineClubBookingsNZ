@@ -49,6 +49,7 @@ type InductionChecklistTemplateDelegate = {
     data: {
       name: string;
       version: string;
+      kind: "NEW_MEMBER" | "HUT_LEADER" | "YOUTH_TO_FULL" | "RE_INDUCTION";
       sourceLabel: string | null;
       isActive: boolean;
       sections: {
@@ -246,6 +247,7 @@ async function seedInductionChecklistTemplate() {
     data: {
       name: DEFAULT_INDUCTION_TEMPLATE.name,
       version: DEFAULT_INDUCTION_TEMPLATE.version,
+      kind: DEFAULT_INDUCTION_TEMPLATE.kind,
       sourceLabel: DEFAULT_INDUCTION_TEMPLATE.sourceLabel,
       isActive: activeCount === 0,
       sections: {

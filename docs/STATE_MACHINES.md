@@ -264,6 +264,26 @@ token expired/invalid/wrong user/replaced -> safe error and retry/admin path
 To verify: token fields, expiry, reminder counters, ownership checks, replaced
 token rejection, and duplicate nomination prevention.
 
+## Lodge Induction Lifecycle
+
+Known induction statuses: `DRAFT`, `IN_PROGRESS`, `COMPLETED`, `VOIDED`.
+Known workflow kinds: `NEW_MEMBER`, `HUT_LEADER`, `YOUTH_TO_FULL`,
+`RE_INDUCTION`.
+
+```text
+admin/application creates induction -> assigned signers review checklist
+signer records overall Pass -> sign-off count increments
+required sign-offs reached -> COMPLETED
+admin override -> COMPLETED
+admin void -> VOIDED
+```
+
+Checklist templates are versioned and active per workflow kind, so a Hut Leader
+Induction can use different checklist wording from a New Member Induction.
+Completing a `HUT_LEADER` induction sets the member's hut-leader eligibility
+flag. Actual `HutLeaderAssignment` rows remain separate dated roster/coverage
+records and are not created by induction completion.
+
 ## Membership Cancellation, Archive, And Delete Lifecycle
 
 Known request statuses: `REQUESTED`, `APPROVED`, `REJECTED`, `WITHDRAWN`,

@@ -29,6 +29,9 @@ const sectionSchema = z.object({
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   version: z.string().trim().min(1).max(50).optional(),
+  kind: z
+    .enum(["NEW_MEMBER", "HUT_LEADER", "YOUTH_TO_FULL", "RE_INDUCTION"])
+    .optional(),
   sections: z.array(sectionSchema).max(30),
 });
 
@@ -106,6 +109,7 @@ export async function PUT(
       data: {
         ...(parsed.data.name ? { name: parsed.data.name } : {}),
         ...(parsed.data.version ? { version: parsed.data.version } : {}),
+        ...(parsed.data.kind ? { kind: parsed.data.kind } : {}),
         sections: {
           create: parsed.data.sections.map((section, sectionIndex) => ({
             title: section.title,
@@ -167,7 +171,7 @@ export async function PATCH(
 
   const existing = await prisma.inductionChecklistTemplate.findUnique({
     where: { id },
-    select: { id: true },
+    select: { id: true, kind: true },
   });
   if (!existing) {
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
@@ -175,7 +179,7 @@ export async function PATCH(
 
   await prisma.$transaction([
     prisma.inductionChecklistTemplate.updateMany({
-      where: { id: { not: id } },
+      where: { id: { not: id }, kind: existing.kind },
       data: { isActive: false },
     }),
     prisma.inductionChecklistTemplate.update({

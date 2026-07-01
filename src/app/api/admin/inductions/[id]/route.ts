@@ -4,6 +4,7 @@ import {
   getInductionById,
   InductionError,
   overrideCompleteInduction,
+  reassignInductionSigners,
   voidInduction,
 } from "@/lib/induction";
 import { INDUCTION_SIGN_OFF_DECLARATION } from "@/lib/induction-checklist-template";
@@ -18,6 +19,10 @@ const patchSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("VOID"),
     reason: z.string().trim().min(3).max(2000),
+  }),
+  z.object({
+    action: z.literal("REASSIGN_SIGNERS"),
+    signerMemberIds: z.array(z.string().min(1)).max(10),
   }),
 ]);
 
@@ -70,11 +75,17 @@ export async function PATCH(
         adminMemberId: guard.session.user.id,
         comments: parsed.data.comments ?? null,
       });
-    } else {
+    } else if (parsed.data.action === "VOID") {
       await voidInduction({
         inductionId: id,
         adminMemberId: guard.session.user.id,
         reason: parsed.data.reason,
+      });
+    } else {
+      await reassignInductionSigners({
+        inductionId: id,
+        adminMemberId: guard.session.user.id,
+        signerMemberIds: parsed.data.signerMemberIds,
       });
     }
     return NextResponse.json({ ok: true });

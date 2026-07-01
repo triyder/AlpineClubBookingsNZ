@@ -6,6 +6,7 @@
 // used, so historical induction wording is never mutated).
 
 import type {
+  InductionKind,
   InductionSectionPriority,
   InductionSignerRole,
 } from "@prisma/client";
@@ -19,7 +20,7 @@ export const DEFAULT_INDUCTION_TEMPLATE_SOURCE_LABEL =
 // sign-off records acceptance of this statement (declarationAccepted).
 export const INDUCTION_SIGN_OFF_DECLARATION =
   "I confirm that I have explained and demonstrated, where necessary, each of " +
-  "the above matters to my sponsored member and I am satisfied that they are " +
+  "the above matters to the member and I am satisfied that they are " +
   "fully competent and familiar with the lodge system.";
 
 export const INDUCTION_SIGNER_ROLE_LABELS: Record<InductionSignerRole, string> = {
@@ -49,6 +50,7 @@ export interface InductionTemplateSectionSeed {
 export interface InductionTemplateSeed {
   name: string;
   version: string;
+  kind: InductionKind;
   sourceLabel: string;
   sections: InductionTemplateSectionSeed[];
 }
@@ -56,6 +58,7 @@ export interface InductionTemplateSeed {
 export const DEFAULT_INDUCTION_TEMPLATE: InductionTemplateSeed = {
   name: DEFAULT_INDUCTION_TEMPLATE_NAME,
   version: DEFAULT_INDUCTION_TEMPLATE_VERSION,
+  kind: "NEW_MEMBER",
   sourceLabel: DEFAULT_INDUCTION_TEMPLATE_SOURCE_LABEL,
   sections: [
     {

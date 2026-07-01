@@ -395,6 +395,8 @@ model Member {
   // membership type changes are managed through SeasonalMembershipAssignment.
   lifeMemberDate                      DateTime?
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
+  hutLeaderEligible                   Boolean            @default(false)
+  hutLeaderEligibleAt                 DateTime?
   cancelledAt                         DateTime?
   cancelledReason                     String?
   cancelledViaRequestId               String?
@@ -499,6 +501,7 @@ model Member {
   @@index([archivedAt])
   @@index([canLogin])
   @@index([active])
+  @@index([hutLeaderEligible])
 }
 
 model MemberAccessRole {
@@ -3049,6 +3052,7 @@ enum InductionStatus {
 
 enum InductionKind {
   NEW_MEMBER
+  HUT_LEADER
   YOUTH_TO_FULL
   RE_INDUCTION
 }
@@ -3082,6 +3086,7 @@ model InductionChecklistTemplate {
   id          String   @id @default(cuid())
   name        String
   version     String
+  kind        InductionKind @default(NEW_MEMBER)
   sourceLabel String?
   isActive    Boolean  @default(false)
   createdAt   DateTime @default(now())
@@ -3091,6 +3096,7 @@ model InductionChecklistTemplate {
   inductions MemberInduction[]
 
   @@index([isActive])
+  @@index([kind, isActive])
 }
 
 model InductionChecklistSection {

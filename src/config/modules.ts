@@ -134,7 +134,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "induction",
     label: "Lodge induction",
     description:
-      "New-member lodge induction checklists, self-assessment, and sponsor sign-off.",
+      "New-member and hut-leader induction checklists, assigned signers, and single-Pass sign-off.",
     dependencies: [
       "When off, inductions are no longer auto-created for newly approved members.",
     ],

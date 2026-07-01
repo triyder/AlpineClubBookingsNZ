@@ -6,39 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import {
-  type InductionDetailClient,
-  type InductionItemResultValue,
-  INDUCTION_RESULT_LABELS,
-  SELF_ASSESSMENT_LABELS,
-} from "@/lib/induction-display";
-
-interface ItemDraft {
-  result: InductionItemResultValue | "";
-  explanationProvided: boolean;
-  demonstrationProvided: boolean;
-  notes: string;
-}
-
-const RESULT_OPTIONS: InductionItemResultValue[] = ["YES", "NO", "NOT_APPLICABLE"];
-
-function buildInitialDrafts(detail: InductionDetailClient): Record<string, ItemDraft> {
-  const byItem = new Map(detail.itemResults.map((r) => [r.itemId, r]));
-  const drafts: Record<string, ItemDraft> = {};
-  for (const section of detail.template.sections) {
-    for (const item of section.items) {
-      const existing = byItem.get(item.id);
-      drafts[item.id] = {
-        result: existing?.result ?? "",
-        explanationProvided: existing?.explanationProvided ?? false,
-        demonstrationProvided: existing?.demonstrationProvided ?? false,
-        notes: existing?.notes ?? "",
-      };
-    }
-  }
-  return drafts;
-}
+import { type InductionDetailClient } from "@/lib/induction-display";
 
 export function InductionSignOffForm({
   inductionId,
@@ -51,7 +19,6 @@ export function InductionSignOffForm({
 }) {
   const [detail, setDetail] = useState<InductionDetailClient | null>(null);
   const [declaration, setDeclaration] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, ItemDraft>>({});
   const [declarationAccepted, setDeclarationAccepted] = useState(false);
   const [comments, setComments] = useState("");
   const [loading, setLoading] = useState(true);
@@ -76,7 +43,6 @@ export function InductionSignOffForm({
         if (cancelled) return;
         setDetail(body.induction);
         setDeclaration(body.declaration);
-        setDrafts(buildInitialDrafts(body.induction));
       })
       .catch(() => {
         if (!cancelled) setError("Failed to load the induction.");
@@ -89,25 +55,12 @@ export function InductionSignOffForm({
     };
   }, [inductionId]);
 
-  function updateItem(itemId: string, patch: Partial<ItemDraft>) {
-    setDrafts((prev) => ({ ...prev, [itemId]: { ...prev[itemId], ...patch } }));
-  }
-
   async function handleSubmit() {
     if (!declarationAccepted) {
       toast.error("Please accept the declaration before signing off.");
       return;
     }
     setSubmitting(true);
-    const itemResults = Object.entries(drafts)
-      .filter(([, draft]) => draft.result !== "")
-      .map(([itemId, draft]) => ({
-        itemId,
-        result: draft.result as InductionItemResultValue,
-        explanationProvided: draft.explanationProvided,
-        demonstrationProvided: draft.demonstrationProvided,
-        notes: draft.notes.trim() || null,
-      }));
 
     try {
       const res = await fetch(`/api/inductions/${inductionId}/sign-off`, {
@@ -117,7 +70,6 @@ export function InductionSignOffForm({
         body: JSON.stringify({
           declarationAccepted: true,
           comments: comments.trim() || null,
-          itemResults,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -127,8 +79,8 @@ export function InductionSignOffForm({
       }
       toast.success(
         body.completed
-          ? "Induction sign-off recorded — the induction is now complete."
-          : "Induction sign-off recorded."
+          ? "Induction passed and completed."
+          : "Induction pass recorded."
       );
       onComplete();
     } catch {
@@ -155,7 +107,7 @@ export function InductionSignOffForm({
         <strong className="text-foreground">
           {detail.member.firstName} {detail.member.lastName}
         </strong>
-        . Work through each item with them, then accept the declaration and sign off.
+        . Work through the checklist, then record one overall Pass.
       </p>
 
       {detail.template.sections.map((section) => (
@@ -163,86 +115,32 @@ export function InductionSignOffForm({
           <h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             {section.title}
           </h4>
-          <ul className="space-y-4">
-            {section.items.map((item) => {
-              const draft = drafts[item.id];
-              return (
-                <li key={item.id} className="rounded-md border p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">
-                        {item.label}
-                        {item.isMandatory && (
-                          <span className="ml-2 text-xs font-normal text-destructive">
-                            Mandatory
-                          </span>
-                        )}
-                        {detail.selfAssessment?.[item.id] && (
-                          <span className="ml-2 text-xs font-normal text-muted-foreground">
-                            Member: {SELF_ASSESSMENT_LABELS[detail.selfAssessment[item.id]]}
-                          </span>
-                        )}
-                      </p>
-                      {item.competencyPrompt && (
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {item.competencyPrompt}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 gap-1">
-                      {RESULT_OPTIONS.map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          onClick={() => updateItem(item.id, { result: option })}
-                          className={cn(
-                            "rounded-md border px-2 py-1 text-xs font-medium transition-colors",
-                            draft?.result === option
-                              ? "border-primary bg-primary text-primary-foreground"
-                              : "text-muted-foreground hover:bg-accent"
-                          )}
-                        >
-                          {INDUCTION_RESULT_LABELS[option]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-4">
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Checkbox
-                        checked={draft?.explanationProvided ?? false}
-                        onCheckedChange={(checked) =>
-                          updateItem(item.id, { explanationProvided: checked === true })
-                        }
-                      />
-                      Explained
-                    </label>
-                    {item.requiresDemonstration && (
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Checkbox
-                          checked={draft?.demonstrationProvided ?? false}
-                          onCheckedChange={(checked) =>
-                            updateItem(item.id, {
-                              demonstrationProvided: checked === true,
-                            })
-                          }
-                        />
-                        Demonstrated
-                      </label>
-                    )}
-                  </div>
-
-                  <Textarea
-                    value={draft?.notes ?? ""}
-                    onChange={(e) => updateItem(item.id, { notes: e.target.value })}
-                    placeholder={item.notesPrompt ?? "Notes (optional)"}
-                    className="mt-2 min-h-[36px] text-sm"
-                    rows={1}
-                  />
-                </li>
-              );
-            })}
+          {section.description && (
+            <p className="text-xs text-muted-foreground">{section.description}</p>
+          )}
+          <ul className="space-y-2">
+            {section.items.map((item) => (
+              <li key={item.id} className="rounded-md border p-3">
+                <p className="text-sm font-medium">
+                  {item.label}
+                  {item.isMandatory && (
+                    <span className="ml-2 text-xs font-normal text-destructive">
+                      Mandatory
+                    </span>
+                  )}
+                  {item.requiresDemonstration && (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      Demonstrate
+                    </span>
+                  )}
+                </p>
+                {item.competencyPrompt && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {item.competencyPrompt}
+                  </p>
+                )}
+              </li>
+            ))}
           </ul>
         </div>
       ))}
@@ -268,7 +166,7 @@ export function InductionSignOffForm({
         </label>
         <div className="flex gap-2">
           <Button onClick={handleSubmit} disabled={submitting || !declarationAccepted}>
-            {submitting ? "Signing off…" : "Sign off induction"}
+            {submitting ? "Signing off…" : "Pass induction"}
           </Button>
           <Button variant="outline" onClick={onCancel} disabled={submitting}>
             Cancel

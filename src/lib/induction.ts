@@ -1,7 +1,6 @@
 import "server-only";
 
 import type {
-  InductionItemResultValue,
   InductionKind,
   InductionSignerRole,
   InductionStatus,
@@ -45,7 +44,6 @@ const INDUCTION_INCLUDE = {
     },
   },
   template: { include: TEMPLATE_INCLUDE },
-  itemResults: true,
   signOffs: { orderBy: { signedAt: "asc" } },
   application: { select: { nominator1Id: true, nominator2Id: true } },
   assignedSigners: {
@@ -60,9 +58,9 @@ export type MemberInductionWithDetail = Prisma.MemberInductionGetPayload<{
 }>;
 
 /** The currently active checklist template with ordered sections and items. */
-export async function getActiveTemplate() {
+export async function getActiveTemplate(kind: InductionKind = "NEW_MEMBER") {
   return prisma.inductionChecklistTemplate.findFirst({
-    where: { isActive: true },
+    where: { isActive: true, kind },
     orderBy: { createdAt: "desc" },
     include: TEMPLATE_INCLUDE,
   });
@@ -82,14 +80,18 @@ export async function createMemberInduction(params: {
   createdByMemberId?: string | null;
   signerMemberIds?: string[];
 }) {
+  const kind = params.kind ?? "NEW_MEMBER";
+  const signerMemberIds = Array.from(
+    new Set((params.signerMemberIds ?? []).filter((id) => id !== params.memberId)),
+  );
   const template = await prisma.inductionChecklistTemplate.findFirst({
-    where: { isActive: true },
+    where: { isActive: true, kind },
     orderBy: { createdAt: "desc" },
     select: { id: true },
   });
   if (!template) {
     throw new InductionError(
-      "No active induction checklist template is configured",
+      `No active ${kind.toLowerCase().replaceAll("_", " ")} induction checklist template is configured`,
       409,
     );
   }
@@ -101,16 +103,14 @@ export async function createMemberInduction(params: {
       memberId: params.memberId,
       templateId: template.id,
       applicationId: params.applicationId ?? null,
-      kind: params.kind ?? "NEW_MEMBER",
+      kind,
       status: "IN_PROGRESS",
       requiredSignOffs: settings.requiredSignOffs,
       createdByMemberId: params.createdByMemberId ?? null,
-      ...(params.signerMemberIds?.length
+      ...(signerMemberIds.length
         ? {
             assignedSigners: {
-              create: params.signerMemberIds
-                .filter((id) => id !== params.memberId)
-                .map((id) => ({ memberId: id })),
+              create: signerMemberIds.map((id) => ({ memberId: id })),
             },
           }
         : {}),
@@ -128,43 +128,11 @@ export async function createMemberInduction(params: {
     details: JSON.stringify({
       kind: induction.kind,
       applicationId: params.applicationId ?? null,
-      assignedSignerCount: params.signerMemberIds?.length ?? 0,
+      assignedSignerCount: signerMemberIds.length,
     }),
   });
 
   return induction;
-}
-
-export interface InductionItemResultInput {
-  itemId: string;
-  result: InductionItemResultValue;
-  explanationProvided?: boolean;
-  demonstrationProvided?: boolean;
-  notes?: string | null;
-}
-
-async function upsertItemResults(
-  tx: Prisma.TransactionClient,
-  inductionId: string,
-  results: InductionItemResultInput[],
-  recordedByMemberId: string | null,
-) {
-  const now = new Date();
-  for (const result of results) {
-    const data = {
-      result: result.result,
-      explanationProvided: result.explanationProvided ?? false,
-      demonstrationProvided: result.demonstrationProvided ?? false,
-      notes: result.notes ?? null,
-      recordedByMemberId,
-      completedAt: now,
-    };
-    await tx.memberInductionItemResult.upsert({
-      where: { inductionId_itemId: { inductionId, itemId: result.itemId } },
-      create: { inductionId, itemId: result.itemId, ...data },
-      update: data,
-    });
-  }
 }
 
 export interface AddSignOffParams {
@@ -174,13 +142,26 @@ export interface AddSignOffParams {
   signerRole: InductionSignerRole;
   declarationAccepted: boolean;
   comments?: string | null;
-  itemResults?: InductionItemResultInput[];
+}
+
+async function applyCompletionSideEffects(
+  tx: Prisma.TransactionClient,
+  induction: { memberId: string; kind: InductionKind },
+  completedAt: Date,
+) {
+  if (induction.kind !== "HUT_LEADER") return;
+  await tx.member.update({
+    where: { id: induction.memberId },
+    data: {
+      hutLeaderEligible: true,
+      hutLeaderEligibleAt: completedAt,
+    },
+  });
 }
 
 /**
- * Record a sign-off against an induction. Optionally records/updates the item
- * results in the same transaction, then auto-completes the induction once the
- * required number of sign-offs is reached.
+ * Record a single Pass sign-off against an induction, then auto-complete the
+ * induction once the required number of sign-offs is reached.
  */
 export async function addSignOff(params: AddSignOffParams) {
   if (!params.declarationAccepted) {
@@ -199,6 +180,7 @@ export async function addSignOff(params: AddSignOffParams) {
         requiredSignOffs: true,
         inductionDate: true,
         memberId: true,
+        kind: true,
       },
     });
     if (!induction) {
@@ -227,15 +209,6 @@ export async function addSignOff(params: AddSignOffParams) {
       );
     }
 
-    if (params.itemResults?.length) {
-      await upsertItemResults(
-        tx,
-        params.inductionId,
-        params.itemResults,
-        params.signerMemberId,
-      );
-    }
-
     await tx.memberInductionSignOff.create({
       data: {
         inductionId: params.inductionId,
@@ -256,10 +229,12 @@ export async function addSignOff(params: AddSignOffParams) {
       updateData.inductionDate = new Date();
     }
     const completed = signOffCount >= induction.requiredSignOffs;
+    const completedAt = new Date();
     if (completed) {
       updateData.status = "COMPLETED";
-      updateData.completedAt = new Date();
+      updateData.completedAt = completedAt;
       updateData.completionSource = "SIGN_OFFS";
+      await applyCompletionSideEffects(tx, induction, completedAt);
     }
 
     const updated = await tx.memberInduction.update({
@@ -304,7 +279,7 @@ export async function overrideCompleteInduction(params: {
 }) {
   const induction = await prisma.memberInduction.findUnique({
     where: { id: params.inductionId },
-    select: { id: true, status: true, memberId: true },
+    select: { id: true, status: true, memberId: true, kind: true },
   });
   if (!induction) {
     throw new InductionError("Induction not found", 404);
@@ -316,14 +291,19 @@ export async function overrideCompleteInduction(params: {
     throw new InductionError("A voided induction cannot be completed", 409);
   }
 
-  const updated = await prisma.memberInduction.update({
-    where: { id: params.inductionId },
-    data: {
-      status: "COMPLETED",
-      completedAt: new Date(),
-      completionSource: "ADMIN_OVERRIDE",
-      ...(params.comments ? { finalComments: params.comments } : {}),
-    },
+  const completedAt = new Date();
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.memberInduction.update({
+      where: { id: params.inductionId },
+      data: {
+        status: "COMPLETED",
+        completedAt,
+        completionSource: "ADMIN_OVERRIDE",
+        ...(params.comments ? { finalComments: params.comments } : {}),
+      },
+    });
+    await applyCompletionSideEffects(tx, induction, completedAt);
+    return result;
   });
 
   logAudit({
@@ -339,6 +319,70 @@ export async function overrideCompleteInduction(params: {
   });
 
   return updated;
+}
+
+export async function reassignInductionSigners(params: {
+  inductionId: string;
+  adminMemberId: string;
+  signerMemberIds: string[];
+}) {
+  const induction = await prisma.memberInduction.findUnique({
+    where: { id: params.inductionId },
+    include: { assignedSigners: { select: { memberId: true } } },
+  });
+  if (!induction) {
+    throw new InductionError("Induction not found", 404);
+  }
+  if (induction.status === "VOIDED") {
+    throw new InductionError("A voided induction cannot be reassigned", 409);
+  }
+
+  const signerMemberIds = Array.from(
+    new Set(params.signerMemberIds.filter((id) => id !== induction.memberId)),
+  );
+  if (signerMemberIds.length > 0) {
+    const existingCount = await prisma.member.count({
+      where: { id: { in: signerMemberIds } },
+    });
+    if (existingCount !== signerMemberIds.length) {
+      throw new InductionError("One or more assigned signers were not found", 404);
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.memberInductionAssignedSigner.deleteMany({
+      where: {
+        inductionId: params.inductionId,
+        ...(signerMemberIds.length
+          ? { memberId: { notIn: signerMemberIds } }
+          : {}),
+      },
+    });
+    if (signerMemberIds.length > 0) {
+      await tx.memberInductionAssignedSigner.createMany({
+        data: signerMemberIds.map((memberId) => ({
+          inductionId: params.inductionId,
+          memberId,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  });
+
+  logAudit({
+    action: "MEMBER_INDUCTION_SIGNERS_REASSIGNED",
+    memberId: params.adminMemberId,
+    targetId: params.inductionId,
+    subjectMemberId: induction.memberId,
+    entityType: "MemberInduction",
+    entityId: params.inductionId,
+    category: "lodge",
+    severity: "important",
+    details: JSON.stringify({
+      before: induction.assignedSigners.map((signer) => signer.memberId),
+      after: signerMemberIds,
+    }),
+  });
 }
 
 /** Admin void an induction (e.g. created in error, member departed). */

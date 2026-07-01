@@ -16,13 +16,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  type InductionKind,
   type InductionSectionPriority,
+  INDUCTION_KIND_LABELS,
 } from "@/lib/induction-display";
 
 interface TemplateSummary {
   id: string;
   name: string;
   version: string;
+  kind: InductionKind;
   isActive: boolean;
   createdAt: string;
   sectionCount: number;
@@ -49,6 +52,7 @@ interface ActiveTemplate {
   id: string;
   name: string;
   version: string;
+  kind: InductionKind;
   sections: ActiveTemplateSection[];
 }
 
@@ -71,8 +75,16 @@ interface TemplateDraft {
   id: string;
   name: string;
   version: string;
+  kind: InductionKind;
   sections: SectionDraft[];
 }
+
+const KINDS: InductionKind[] = [
+  "NEW_MEMBER",
+  "HUT_LEADER",
+  "YOUTH_TO_FULL",
+  "RE_INDUCTION",
+];
 
 const PRIORITIES: InductionSectionPriority[] = [
   "EMERGENCY",
@@ -89,6 +101,7 @@ export function InductionTemplateManager() {
   const [saving, setSaving] = useState(false);
   const [newName, setNewName] = useState("Lodge Induction Checklist");
   const [newVersion, setNewVersion] = useState("");
+  const [newKind, setNewKind] = useState<InductionKind>("NEW_MEMBER");
   const [activeTemplate, setActiveTemplate] = useState<ActiveTemplate | null>(null);
   const [showActiveTemplate, setShowActiveTemplate] = useState(false);
 
@@ -101,8 +114,8 @@ export function InductionTemplateManager() {
       const body = await res.json();
       const list: TemplateSummary[] = body.templates ?? [];
       setTemplates(list);
-      // Pre-load the active template for the read-only view
-      const active = list.find((t) => t.isActive);
+      // Pre-load the active template for the selected workflow type.
+      const active = list.find((t) => t.isActive && t.kind === newKind);
       if (active) {
         const detail = await fetch(`/api/admin/induction-templates/${active.id}`, {
           credentials: "same-origin",
@@ -117,7 +130,7 @@ export function InductionTemplateManager() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [newKind]);
 
   useEffect(() => {
     void loadTemplates();
@@ -164,6 +177,7 @@ export function InductionTemplateManager() {
       body: JSON.stringify({
         name: newName.trim(),
         version: newVersion.trim(),
+        kind: newKind,
         cloneFromId,
       }),
     });
@@ -196,6 +210,7 @@ export function InductionTemplateManager() {
       id: template.id,
       name: template.name,
       version: template.version,
+      kind: template.kind,
       sections: template.sections.map((section: SectionDraft & { items: ItemDraft[] }) => ({
         title: section.title,
         description: section.description ?? "",
@@ -286,6 +301,7 @@ export function InductionTemplateManager() {
         body: JSON.stringify({
           name: draft.name,
           version: draft.version,
+          kind: draft.kind,
           sections: draft.sections.map((section) => ({
             title: section.title,
             description: section.description || null,
@@ -342,6 +358,9 @@ export function InductionTemplateManager() {
                     <span className="text-muted-foreground">
                       v{template.version}
                     </span>
+                    <Badge className="ml-2" variant="outline">
+                      {INDUCTION_KIND_LABELS[template.kind]}
+                    </Badge>
                     {template.isActive && (
                       <Badge className="ml-2" variant="default">
                         Active
@@ -403,6 +422,8 @@ export function InductionTemplateManager() {
                 View active checklist —{" "}
                 <span className="font-normal text-muted-foreground">
                   {activeTemplate.name} v{activeTemplate.version}
+                  {" · "}
+                  {INDUCTION_KIND_LABELS[activeTemplate.kind]}
                 </span>
               </span>
               {showActiveTemplate ? (
@@ -450,6 +471,23 @@ export function InductionTemplateManager() {
           <p className="text-sm font-medium">Create a new version</p>
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1">
+              <Label htmlFor="new-kind" className="text-xs">
+                Type
+              </Label>
+              <select
+                id="new-kind"
+                value={newKind}
+                onChange={(e) => setNewKind(e.target.value as InductionKind)}
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                {KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {INDUCTION_KIND_LABELS[kind]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
               <Label htmlFor="new-name" className="text-xs">
                 Name
               </Label>
@@ -476,7 +514,9 @@ export function InductionTemplateManager() {
               size="sm"
               variant="outline"
               onClick={() =>
-                duplicate(templates.find((t) => t.isActive)?.id)
+                duplicate(
+                  templates.find((t) => t.isActive && t.kind === newKind)?.id
+                )
               }
             >
               Duplicate active
@@ -496,6 +536,26 @@ export function InductionTemplateManager() {
               <Button size="sm" variant="outline" onClick={addSection}>
                 <Plus className="mr-1 h-4 w-4" /> Add section
               </Button>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Type</Label>
+              <select
+                value={draft.kind}
+                onChange={(e) =>
+                  setDraft((prev) =>
+                    prev
+                      ? { ...prev, kind: e.target.value as InductionKind }
+                      : prev
+                  )
+                }
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+              >
+                {KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {INDUCTION_KIND_LABELS[kind]}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {draft.sections.map((section, sIdx) => (

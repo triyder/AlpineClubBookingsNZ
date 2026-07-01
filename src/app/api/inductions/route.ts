@@ -30,19 +30,11 @@ export async function GET() {
   const own = ownRaw
     ? {
         ...ownRaw,
-        selfAssessment: ownRaw.selfAssessmentJson
-          ? (() => {
-              try {
-                return JSON.parse(ownRaw.selfAssessmentJson) as Record<string, string>;
-              } catch {
-                return null;
-              }
-            })()
-          : null,
         assignedSigners: ownRaw.assignedSigners.map((s) => ({
           memberId: s.memberId,
           firstName: s.member.firstName,
           lastName: s.member.lastName,
+          email: s.member.email,
           emailSentAt: s.emailSentAt,
         })),
       }

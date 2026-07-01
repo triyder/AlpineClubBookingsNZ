@@ -9,8 +9,8 @@ export default function AdminInductionPage() {
         <div>
           <h1 className="text-2xl font-bold">Induction Register</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Who has a signed lodge induction — and start inductions for existing
-            members or youth becoming full members.
+            Start member, hut-leader, youth-to-full, and re-induction workflows;
+            track sign-offs and assigned signers.
           </p>
         </div>
         <Button asChild variant="outline">

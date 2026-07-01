@@ -659,19 +659,13 @@ async function main() {
   // -------------------------------------------------------------------------
   const template = await prisma.inductionChecklistTemplate.findFirst({ where: { isActive: true }, include: { sections: { include: { items: true } } } });
   if (template) {
-    const items = template.sections.flatMap((s) => s.items).slice(0, 4);
-
-    // COMPLETED induction with item results + sign-offs.
+    // COMPLETED induction with sign-offs.
     const completedInduction = await prisma.memberInduction.create({ data: { memberId: alice.id, templateId: template.id, kind: "NEW_MEMBER", status: "COMPLETED", requiredSignOffs: 2, inductionDate: d("2026-05-15"), completedAt: d("2026-05-16"), completionSource: "SIGN_OFFS", finalComments: "Confident lodge user." } });
-    const resultValues: Array<"YES" | "NO" | "NOT_APPLICABLE"> = ["YES", "YES", "NOT_APPLICABLE", "NO"];
-    for (const [i, item] of items.entries()) {
-      await prisma.memberInductionItemResult.create({ data: { inductionId: completedInduction.id, itemId: item.id, result: resultValues[i % resultValues.length], explanationProvided: true, demonstrationProvided: i === 0, notes: i === 3 ? "Needs a refresher on the generator." : null, recordedByMemberId: dave.id, completedAt: d("2026-05-16") } });
-    }
     await prisma.memberInductionSignOff.create({ data: { inductionId: completedInduction.id, signerMemberId: dave.id, signerName: "Dave Davis", signerRole: "NOMINATOR", declarationAccepted: true, comments: "Inducted on the June trip." } });
     await prisma.memberInductionSignOff.create({ data: { inductionId: completedInduction.id, signerMemberId: admin.id, signerName: "Demo Admin", signerRole: "ADMIN", declarationAccepted: true } });
 
     // IN_PROGRESS with assigned signers.
-    const inProgress = await prisma.memberInduction.create({ data: { memberId: bob.id, templateId: template.id, kind: "NEW_MEMBER", status: "IN_PROGRESS", selfAssessedAt: d("2026-06-10") } });
+    const inProgress = await prisma.memberInduction.create({ data: { memberId: bob.id, templateId: template.id, kind: "NEW_MEMBER", status: "IN_PROGRESS" } });
     await prisma.memberInductionAssignedSigner.create({ data: { inductionId: inProgress.id, memberId: dave.id, emailSentAt: d("2026-06-11") } });
 
     // DRAFT

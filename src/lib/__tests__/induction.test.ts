@@ -10,12 +10,18 @@ const { prismaMock, txMock } = vi.hoisted(() => {
       create: vi.fn(),
       count: vi.fn(),
     },
-    memberInductionItemResult: { upsert: vi.fn() },
+    memberInductionAssignedSigner: {
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
+    member: { update: vi.fn() },
   };
   return {
     txMock,
     prismaMock: {
       $transaction: vi.fn(async (cb: (tx: typeof txMock) => unknown) => cb(txMock)),
+      member: { count: vi.fn() },
+      memberInduction: { findUnique: vi.fn() },
     },
   };
 });
@@ -32,7 +38,13 @@ vi.mock("@/lib/membership-nomination-settings", () => ({
   }),
 }));
 
-import { addSignOff, canSignOff, InductionError, resolveSignerRole } from "@/lib/induction";
+import {
+  addSignOff,
+  canSignOff,
+  InductionError,
+  reassignInductionSigners,
+  resolveSignerRole,
+} from "@/lib/induction";
 
 const ctxNominator = { memberId: "nom1", isAdmin: false, isHutLeader: false };
 const ctxHutLeader = { memberId: "hl1", isAdmin: false, isHutLeader: true };
@@ -51,6 +63,9 @@ describe("resolveSignerRole", () => {
   });
   it("returns null for an unrelated member", () => {
     expect(resolveSignerRole(ctxStranger, application)).toBeNull();
+  });
+  it("treats explicitly assigned signers as NOMINATOR fallback", () => {
+    expect(resolveSignerRole(ctxStranger, application, ["x1"])).toBe("NOMINATOR");
   });
 });
 
@@ -106,10 +121,12 @@ describe("addSignOff", () => {
       requiredSignOffs: 2,
       inductionDate: null,
       memberId: "inductee",
+      kind: "NEW_MEMBER",
     });
     txMock.memberInductionSignOff.findUnique.mockResolvedValue(null);
     txMock.memberInductionSignOff.create.mockResolvedValue({});
     txMock.memberInduction.update.mockResolvedValue({ id: "i1" });
+    txMock.member.update.mockResolvedValue({});
   });
 
   it("rejects when the declaration is not accepted", async () => {
@@ -141,6 +158,35 @@ describe("addSignOff", () => {
     const updateArg = txMock.memberInduction.update.mock.calls[0][0];
     expect(updateArg.data.status).toBe("COMPLETED");
     expect(updateArg.data.completionSource).toBe("SIGN_OFFS");
+    expect(txMock.member.update).not.toHaveBeenCalled();
+  });
+
+  it("marks the member hut-leader-eligible when a hut-leader induction completes", async () => {
+    txMock.memberInduction.findUnique.mockResolvedValue({
+      id: "i1",
+      status: "IN_PROGRESS",
+      requiredSignOffs: 1,
+      inductionDate: null,
+      memberId: "inductee",
+      kind: "HUT_LEADER",
+    });
+    txMock.memberInductionSignOff.count.mockResolvedValue(1);
+
+    await addSignOff({
+      inductionId: "i1",
+      signerMemberId: "nom1",
+      signerName: "Nom One",
+      signerRole: "NOMINATOR",
+      declarationAccepted: true,
+    });
+
+    expect(txMock.member.update).toHaveBeenCalledWith({
+      where: { id: "inductee" },
+      data: {
+        hutLeaderEligible: true,
+        hutLeaderEligibleAt: expect.any(Date),
+      },
+    });
   });
 
   it("stays in progress below the required sign-off count", async () => {
@@ -170,5 +216,43 @@ describe("addSignOff", () => {
         declarationAccepted: true,
       })
     ).rejects.toBeInstanceOf(InductionError);
+  });
+});
+
+describe("reassignInductionSigners", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(
+      async (cb: (tx: typeof txMock) => unknown) => cb(txMock)
+    );
+    prismaMock.memberInduction.findUnique.mockResolvedValue({
+      id: "i1",
+      memberId: "inductee",
+      status: "IN_PROGRESS",
+      assignedSigners: [{ memberId: "old1" }],
+    });
+    prismaMock.member.count.mockResolvedValue(2);
+  });
+
+  it("replaces explicit assigned signer rows", async () => {
+    await reassignInductionSigners({
+      inductionId: "i1",
+      adminMemberId: "admin1",
+      signerMemberIds: ["new1", "new2", "new1", "inductee"],
+    });
+
+    expect(txMock.memberInductionAssignedSigner.deleteMany).toHaveBeenCalledWith({
+      where: {
+        inductionId: "i1",
+        memberId: { notIn: ["new1", "new2"] },
+      },
+    });
+    expect(txMock.memberInductionAssignedSigner.createMany).toHaveBeenCalledWith({
+      data: [
+        { inductionId: "i1", memberId: "new1" },
+        { inductionId: "i1", memberId: "new2" },
+      ],
+      skipDuplicates: true,
+    });
   });
 });

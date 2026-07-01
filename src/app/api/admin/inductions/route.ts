@@ -12,7 +12,12 @@ import { sendInductionSignOffRequestEmail } from "@/lib/email";
 import { z } from "zod";
 
 const INDUCTION_STATUSES = ["DRAFT", "IN_PROGRESS", "COMPLETED", "VOIDED"] as const;
-const INDUCTION_KINDS = ["NEW_MEMBER", "YOUTH_TO_FULL", "RE_INDUCTION"] as const;
+const INDUCTION_KINDS = [
+  "NEW_MEMBER",
+  "HUT_LEADER",
+  "YOUTH_TO_FULL",
+  "RE_INDUCTION",
+] as const;
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -61,6 +66,13 @@ export async function GET(request: NextRequest) {
         },
       },
       _count: { select: { signOffs: true } },
+      assignedSigners: {
+        include: {
+          member: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
+        },
+      },
     },
   });
 
@@ -75,6 +87,13 @@ export async function GET(request: NextRequest) {
       completionSource: induction.completionSource,
       createdAt: induction.createdAt,
       member: induction.member,
+      assignedSigners: induction.assignedSigners.map((signer) => ({
+        memberId: signer.memberId,
+        firstName: signer.member.firstName,
+        lastName: signer.member.lastName,
+        email: signer.member.email,
+        emailSentAt: signer.emailSentAt,
+      })),
     })),
   });
 }
@@ -110,20 +129,27 @@ export async function POST(request: NextRequest) {
     where: { id: parsed.data.memberId },
     select: { firstName: true, lastName: true },
   });
+  const assignedSignerIds = Array.from(
+    new Set(
+      (parsed.data.signerMemberIds ?? []).filter(
+        (memberId) => memberId !== parsed.data.memberId
+      )
+    )
+  );
 
   try {
     const induction = await createMemberInduction({
       memberId: parsed.data.memberId,
       kind: parsed.data.kind ?? "RE_INDUCTION",
       createdByMemberId: guard.session.user.id,
-      signerMemberIds: parsed.data.signerMemberIds ?? [],
+      signerMemberIds: assignedSignerIds,
     });
 
     // Send sign-off request emails to assigned signers
-    if (parsed.data.signerMemberIds?.length && inducteeMember) {
+    if (assignedSignerIds.length && inducteeMember) {
       const inducteeName = `${inducteeMember.firstName} ${inducteeMember.lastName}`.trim();
       const signers = await prisma.member.findMany({
-        where: { id: { in: parsed.data.signerMemberIds } },
+        where: { id: { in: assignedSignerIds } },
         select: { id: true, firstName: true, lastName: true, email: true },
       });
       await Promise.allSettled(

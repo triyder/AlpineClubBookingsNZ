@@ -3,10 +3,12 @@
 // client components. API responses serialise dates to strings, so the client
 // shapes below use string dates.
 
-export type InductionItemResultValue = "YES" | "NO" | "NOT_APPLICABLE";
-export type SelfAssessmentLevel = "UNDERSTAND" | "CAN_DO" | "CAN_TEACH";
 export type InductionStatus = "DRAFT" | "IN_PROGRESS" | "COMPLETED" | "VOIDED";
-export type InductionKind = "NEW_MEMBER" | "YOUTH_TO_FULL" | "RE_INDUCTION";
+export type InductionKind =
+  | "NEW_MEMBER"
+  | "HUT_LEADER"
+  | "YOUTH_TO_FULL"
+  | "RE_INDUCTION";
 export type InductionSignerRole = "NOMINATOR" | "HUT_LEADER" | "ADMIN";
 export type InductionSectionPriority =
   | "EMERGENCY"
@@ -24,6 +26,7 @@ export const INDUCTION_STATUS_LABELS: Record<InductionStatus, string> = {
 
 export const INDUCTION_KIND_LABELS: Record<InductionKind, string> = {
   NEW_MEMBER: "New member",
+  HUT_LEADER: "Hut Leader Induction",
   YOUTH_TO_FULL: "Youth → full member",
   RE_INDUCTION: "Re-induction",
 };
@@ -32,18 +35,6 @@ export const INDUCTION_SIGNER_ROLE_LABELS: Record<InductionSignerRole, string> =
   NOMINATOR: "Nominator",
   HUT_LEADER: "Hut leader",
   ADMIN: "Administrator",
-};
-
-export const INDUCTION_RESULT_LABELS: Record<InductionItemResultValue, string> = {
-  YES: "Yes",
-  NO: "No",
-  NOT_APPLICABLE: "N/A",
-};
-
-export const SELF_ASSESSMENT_LABELS: Record<SelfAssessmentLevel, string> = {
-  UNDERSTAND: "I understand it",
-  CAN_DO: "I can do it",
-  CAN_TEACH: "I can teach it",
 };
 
 export interface InductionItemClient {
@@ -63,16 +54,9 @@ export interface InductionSectionClient {
   items: InductionItemClient[];
 }
 
-export interface InductionItemResultClient {
-  itemId: string;
-  result: InductionItemResultValue;
-  explanationProvided: boolean;
-  demonstrationProvided: boolean;
-  notes: string | null;
-}
-
 export interface InductionSignOffClient {
   id: string;
+  signerMemberId: string | null;
   signerName: string;
   signerRole: InductionSignerRole;
   comments: string | null;
@@ -83,6 +67,7 @@ export interface AssignedSignerClient {
   memberId: string;
   firstName: string;
   lastName: string;
+  email: string;
   emailSentAt: string | null;
 }
 
@@ -94,16 +79,14 @@ export interface InductionDetailClient {
   inductionDate: string | null;
   completedAt: string | null;
   finalComments: string | null;
-  selfAssessedAt: string | null;
-  selfAssessment: Record<string, SelfAssessmentLevel> | null;
   member: { id: string; firstName: string; lastName: string };
   template: {
     id: string;
     name: string;
     version: string;
+    kind: InductionKind;
     sections: InductionSectionClient[];
   };
-  itemResults: InductionItemResultClient[];
   signOffs: InductionSignOffClient[];
   assignedSigners: AssignedSignerClient[];
 }

@@ -8,7 +8,6 @@ import {
   type InductionDetailClient,
   formatInductionDate,
   INDUCTION_KIND_LABELS,
-  INDUCTION_RESULT_LABELS,
   INDUCTION_SIGNER_ROLE_LABELS,
   INDUCTION_STATUS_LABELS,
 } from "@/lib/induction-display";
@@ -37,8 +36,6 @@ export default function InductionPrintPage() {
 
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!induction) return <p className="text-sm text-muted-foreground">Loading…</p>;
-
-  const resultByItem = new Map(induction.itemResults.map((r) => [r.itemId, r]));
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 bg-white p-2 text-slate-900">
@@ -73,36 +70,25 @@ export default function InductionPrintPage() {
             <thead>
               <tr className="border-b text-left text-xs text-slate-500">
                 <th className="py-1 pr-2">Item</th>
-                <th className="py-1 pr-2 w-16">Result</th>
-                <th className="py-1 pr-2 w-20">Expl./Demo.</th>
-                <th className="py-1">Notes</th>
+                <th className="py-1 pr-2 w-24">Required</th>
+                <th className="py-1">Prompt</th>
               </tr>
             </thead>
             <tbody>
-              {section.items.map((item) => {
-                const result = resultByItem.get(item.id);
-                return (
-                  <tr key={item.id} className="border-b align-top">
-                    <td className="py-1 pr-2">
-                      {item.label}
-                      {item.isMandatory && (
-                        <span className="ml-1 text-xs text-red-600">*</span>
-                      )}
-                    </td>
-                    <td className="py-1 pr-2">
-                      {result ? INDUCTION_RESULT_LABELS[result.result] : "—"}
-                    </td>
-                    <td className="py-1 pr-2 text-xs">
-                      {result
-                        ? `${result.explanationProvided ? "E" : "–"} / ${
-                            result.demonstrationProvided ? "D" : "–"
-                          }`
-                        : "—"}
-                    </td>
-                    <td className="py-1 text-xs">{result?.notes ?? ""}</td>
-                  </tr>
-                );
-              })}
+              {section.items.map((item) => (
+                <tr key={item.id} className="border-b align-top">
+                  <td className="py-1 pr-2">
+                    {item.label}
+                    {item.isMandatory && (
+                      <span className="ml-1 text-xs text-red-600">*</span>
+                    )}
+                  </td>
+                  <td className="py-1 pr-2 text-xs">
+                    {item.requiresDemonstration ? "Demo" : item.isMandatory ? "Yes" : "—"}
+                  </td>
+                  <td className="py-1 text-xs">{item.competencyPrompt ?? ""}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

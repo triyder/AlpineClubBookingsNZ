@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   canSignOff: vi.fn(),
   addSignOff: vi.fn(),
   memberFindUnique: vi.fn(),
-  memberInductionUpdate: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -56,14 +55,10 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findUnique: mocks.memberFindUnique,
     },
-    memberInduction: {
-      update: mocks.memberInductionUpdate,
-    },
   },
 }));
 
 import { GET as inductionDetailGET } from "@/app/api/inductions/[id]/route";
-import { POST as selfAssessPOST } from "@/app/api/inductions/[id]/self-assess/route";
 import { POST as signOffPOST } from "@/app/api/inductions/[id]/sign-off/route";
 
 const unrelatedMemberSession = {
@@ -78,7 +73,6 @@ const inductionForAnotherMember = {
   id: "induction-1",
   memberId: "member-1",
   status: "IN_PROGRESS",
-  selfAssessmentJson: null,
   signOffs: [],
   assignedSigners: [],
   application: {
@@ -131,6 +125,7 @@ describe("induction route boundaries", () => {
         isHutLeader: false,
       },
       inductionForAnotherMember.application,
+      [],
     );
     expect(mocks.canSignOff).not.toHaveBeenCalled();
   });
@@ -162,22 +157,8 @@ describe("induction route boundaries", () => {
         isHutLeader: false,
       },
       inductionForAnotherMember.application,
+      [],
     );
-  });
-
-  it("does not let an unrelated member update self-assessment answers", async () => {
-    const response = await selfAssessPOST(
-      request("/api/inductions/induction-1/self-assess", {
-        items: {
-          "checklist-item-1": "UNDERSTAND",
-        },
-      }),
-      routeParams(),
-    );
-
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "Forbidden" });
-    expect(mocks.memberInductionUpdate).not.toHaveBeenCalled();
   });
 
   it("does not let an unrelated member sign off another member induction", async () => {
