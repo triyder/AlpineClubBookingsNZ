@@ -116,19 +116,6 @@ vi.mock("@/lib/capacity", () => ({
   LODGE_CAPACITY: 29,
 }));
 
-vi.mock("@/lib/bumping", () => ({
-  bumpPendingBookings: vi.fn(),
-  sendBumpedNotifications: vi.fn().mockResolvedValue(undefined),
-  sendPartialBumpNotifications: vi.fn().mockResolvedValue(undefined),
-}));
-
-// The partial-bump helper's internals are unit-tested separately; mock it here
-// so the cron's default partial path is controllable.
-const mockApplyPartialBump = vi.fn();
-vi.mock("@/lib/partial-bump", () => ({
-  applyPartialBumpInTransaction: (...args: unknown[]) => mockApplyPartialBump(...args),
-}));
-
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
@@ -505,17 +492,6 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
     mockPrismaTransaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx)
     );
-    // Default: partial bump drops the non-member, keeps the member ($0).
-    mockApplyPartialBump.mockResolvedValue({
-      kind: "partial",
-      removedGuests: [{ id: "g1_b1", isMember: false }],
-      remainingGuests: [{ id: "g2_b1", isMember: true }],
-      newTotalPriceCents: 0,
-      newDiscountCents: 0,
-      newPromoAdjustmentCents: 0,
-      newFinalPriceCents: 0,
-      promoRemoved: true,
-    });
   });
 
   afterEach(() => {

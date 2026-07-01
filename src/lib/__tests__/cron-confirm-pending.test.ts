@@ -66,12 +66,6 @@ vi.mock("@/lib/payment-link", () => ({
     mockRevokePaymentLinksForBooking(...args),
 }));
 
-// Mock the partial-bump helper (its internals are unit-tested separately).
-const mockApplyPartialBump = vi.fn();
-vi.mock("../partial-bump", () => ({
-  applyPartialBumpInTransaction: (...args: unknown[]) => mockApplyPartialBump(...args),
-}));
-
 // Mock promo cleanup used by the whole-bump path.
 const mockDeletePromoRedemption = vi.fn().mockResolvedValue(undefined);
 vi.mock("../promo", () => ({
@@ -739,7 +733,6 @@ describe("Cron: Confirm Pending Bookings", () => {
     });
     expect(mockSendGuestsCancelledEmail).toHaveBeenCalled();
     expect(mockSendBumpedEmail).not.toHaveBeenCalled();
-    expect(mockApplyPartialBump).not.toHaveBeenCalled();
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
   });
 
@@ -754,8 +747,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     const result = await confirmPendingBookings();
 
-    // No partial bump and no reduced members-only charge (issue #737).
-    expect(mockApplyPartialBump).not.toHaveBeenCalled();
+    // No reduced members-only charge (issue #737).
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
     expect(result.partialBumpedBookingIds).toEqual([]);
     expect(result.confirmedBookingIds).toEqual([]);

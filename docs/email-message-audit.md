@@ -371,7 +371,6 @@ We apologise for the inconvenience.
 
 Triggers and frequency:
 
-- `sendBumpedNotifications()` after a member booking bumps one or more pending bookings to restore capacity.
 - Pending-booking cron every 3 hours when a pending booking reaches its hold deadline and capacity is no longer available.
 - One email per bumped booking.
 
@@ -1767,7 +1766,7 @@ View Bookings: {{BASE_URL}}/admin/bookings
 
 Triggers and frequency:
 
-- Sent to opted-in admins from `sendBumpedNotifications()` after a pending booking is bumped by a member booking.
+- Sent to opted-in admins by the pending-booking cron after a pending booking is bumped.
 - One alert event per bumped booking.
 
 ### admin-capacity-warning

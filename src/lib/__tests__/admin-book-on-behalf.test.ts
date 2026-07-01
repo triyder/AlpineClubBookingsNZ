@@ -53,10 +53,6 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   }),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(null),
 }));
-vi.mock("@/lib/bumping", () => ({
-  bumpPendingBookings: vi.fn(),
-  sendBumpedNotifications: vi.fn().mockResolvedValue(undefined),
-}));
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
@@ -107,7 +103,6 @@ import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { calculateBookingPrice } from "@/lib/pricing";
-import { bumpPendingBookings } from "@/lib/bumping";
 import { POST } from "@/app/api/bookings/route";
 import { POST as postQuote } from "@/app/api/bookings/quote/route";
 import { POST as postPromoValidate } from "@/app/api/promo-codes/validate/route";
@@ -117,7 +112,6 @@ const mockedPrisma = vi.mocked(prisma);
 const mockedAudit = vi.mocked(logAudit);
 const mockedGetCredit = vi.mocked(getMemberCreditBalance);
 const mockedCalcPrice = vi.mocked(calculateBookingPrice);
-const mockedBumpPendingBookings = vi.mocked(bumpPendingBookings);
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/bookings", {
@@ -375,10 +369,6 @@ describe("Admin Book on Behalf", () => {
         guests: Array.from({ length: 29 }, (_, index) => ({ id: `occupied-${index}` })),
       },
     ]);
-    mockedBumpPendingBookings.mockResolvedValue({
-      capacityRestored: false,
-      bumpedBookingIds: [],
-    });
     (mockedPrisma.booking.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({

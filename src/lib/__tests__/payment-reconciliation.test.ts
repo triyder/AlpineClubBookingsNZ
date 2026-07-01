@@ -11,8 +11,6 @@ const mocks = vi.hoisted(() => ({
   paymentUpsert: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
   refundPaymentTransactions: vi.fn(),
-  bumpPendingBookings: vi.fn(),
-  sendBumpedNotifications: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
@@ -29,12 +27,6 @@ vi.mock("@/lib/payment-transactions", () => ({
     mocks.upsertPaymentIntentTransaction(...args),
   refundPaymentTransactions: (...args: unknown[]) =>
     mocks.refundPaymentTransactions(...args),
-}));
-
-vi.mock("@/lib/bumping", () => ({
-  bumpPendingBookings: (...args: unknown[]) => mocks.bumpPendingBookings(...args),
-  sendBumpedNotifications: (...args: unknown[]) =>
-    mocks.sendBumpedNotifications(...args),
 }));
 
 vi.mock("@/lib/member-credit", () => ({
@@ -120,10 +112,6 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(undefined);
     mocks.refundPaymentTransactions.mockResolvedValue({});
-    mocks.bumpPendingBookings.mockResolvedValue({
-      bumpedBookingIds: [],
-      capacityRestored: false,
-    });
   });
 
   it("pays a staggered booking when only one bed is available on each active guest night", async () => {
@@ -226,7 +214,5 @@ describe("markBookingPaymentSucceeded", () => {
       expect.objectContaining({ data: expect.objectContaining({ status: BookingStatus.PAID }) })
     );
     expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
-    // No synchronous bump is attempted, so no PENDING booking is bumped to fake room.
-    expect(mocks.bumpPendingBookings).not.toHaveBeenCalled();
   });
 });

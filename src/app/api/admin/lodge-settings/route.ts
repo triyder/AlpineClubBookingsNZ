@@ -4,8 +4,8 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
-  loadLodgeCapacityOverride,
-  updateLodgeCapacity,
+  loadLodgeSettings,
+  updateLodgeSettings,
 } from "@/lib/lodge-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -13,6 +13,7 @@ const settingsSchema = z
   .object({
     // Null clears the override and falls back to the club config bed total.
     capacity: z.number().int().positive().max(100000).nullable(),
+    hutLeaderLookaheadDays: z.number().int().min(1).max(365).optional(),
   })
   .strict();
 
@@ -20,9 +21,10 @@ export async function GET() {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const capacity = await loadLodgeCapacityOverride();
+  const settings = await loadLodgeSettings();
   return NextResponse.json({
-    capacity,
+    capacity: settings.capacity,
+    hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
   });
 }
@@ -42,9 +44,12 @@ export async function PUT(request: Request) {
     );
   }
 
-  const previousCapacity = await loadLodgeCapacityOverride();
-  const settings = await updateLodgeCapacity({
+  const previousSettings = await loadLodgeSettings();
+  const settings = await updateLodgeSettings({
     capacity: body.data.capacity,
+    hutLeaderLookaheadDays:
+      body.data.hutLeaderLookaheadDays ??
+      previousSettings.hutLeaderLookaheadDays,
     updatedByMemberId: guard.session.user.id,
   });
 
@@ -57,15 +62,19 @@ export async function PUT(request: Request) {
     category: "admin",
     severity: "important",
     outcome: "success",
-    summary: "Lodge capacity updated",
+    summary: "Lodge settings updated",
     metadata: {
-      previousCapacity,
+      previousCapacity: previousSettings.capacity,
       newCapacity: settings.capacity,
+      previousHutLeaderLookaheadDays:
+        previousSettings.hutLeaderLookaheadDays,
+      newHutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     },
   });
 
   return NextResponse.json({
     capacity: settings.capacity,
+    hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
   });
 }
