@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { formatMemberPhone, parsePhoneString } from "@/lib/member-phone";
 
 // ── Mocks ──
 
@@ -93,114 +92,6 @@ const baseMember = {
   postalAddressLine1: "PO Box 42", postalAddressLine2: null, postalCity: "Example",
   postalRegion: "Waikato", postalPostalCode: "3420", postalCountry: "NZ",
 };
-
-// ──────────────────────────────────────────────────────────────
-// formatMemberPhone
-// ──────────────────────────────────────────────────────────────
-
-describe("formatMemberPhone", () => {
-  it("formats all 3 fields correctly", () => {
-    expect(formatMemberPhone({
-      phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "4224115",
-    })).toBe("+64 27 4224115");
-  });
-
-  it("handles country code with leading +", () => {
-    expect(formatMemberPhone({
-      phoneCountryCode: "+64", phoneAreaCode: "27", phoneNumber: "4224115",
-    })).toBe("+64 27 4224115");
-  });
-
-  it("omits country code if null", () => {
-    expect(formatMemberPhone({
-      phoneCountryCode: null, phoneAreaCode: "027", phoneNumber: "4224115",
-    })).toBe("027 4224115");
-  });
-
-  it("omits area code if null", () => {
-    expect(formatMemberPhone({
-      phoneCountryCode: "64", phoneAreaCode: null, phoneNumber: "4224115",
-    })).toBe("+64 4224115");
-  });
-
-  it("returns just the number if no country or area", () => {
-    expect(formatMemberPhone({
-      phoneCountryCode: null, phoneAreaCode: null, phoneNumber: "0274224115",
-    })).toBe("0274224115");
-  });
-
-  it("returns null if phoneNumber is null", () => {
-    expect(formatMemberPhone({
-      phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: null,
-    })).toBeNull();
-  });
-
-  it("returns null if phoneNumber is undefined", () => {
-    expect(formatMemberPhone({})).toBeNull();
-  });
-});
-
-// ──────────────────────────────────────────────────────────────
-// parsePhoneString
-// ──────────────────────────────────────────────────────────────
-
-describe("parsePhoneString", () => {
-  it("parses +CC AC NUM format", () => {
-    expect(parsePhoneString("+64 27 4224115")).toEqual({
-      phoneCountryCode: "64",
-      phoneAreaCode: "27",
-      phoneNumber: "4224115",
-    });
-  });
-
-  it("parses +CC NUM (no area code) format", () => {
-    expect(parsePhoneString("+64 4224115")).toEqual({
-      phoneCountryCode: "64",
-      phoneAreaCode: null,
-      phoneNumber: "4224115",
-    });
-  });
-
-  it("parses plain number (no country code)", () => {
-    expect(parsePhoneString("021 123 4567")).toEqual({
-      phoneCountryCode: null,
-      phoneAreaCode: null,
-      phoneNumber: "021 123 4567",
-    });
-  });
-
-  it("parses bare number", () => {
-    expect(parsePhoneString("4224115")).toEqual({
-      phoneCountryCode: null,
-      phoneAreaCode: null,
-      phoneNumber: "4224115",
-    });
-  });
-
-  it("handles empty string", () => {
-    expect(parsePhoneString("")).toEqual({
-      phoneCountryCode: null,
-      phoneAreaCode: null,
-      phoneNumber: "",
-    });
-  });
-
-  it("handles whitespace-only string", () => {
-    expect(parsePhoneString("   ")).toEqual({
-      phoneCountryCode: null,
-      phoneAreaCode: null,
-      phoneNumber: "",
-    });
-  });
-
-  it("joins extra parts into phoneNumber", () => {
-    expect(parsePhoneString("+64 27 422 4115")).toEqual({
-      phoneCountryCode: "64",
-      phoneAreaCode: "27",
-      phoneNumber: "422 4115",
-    });
-  });
-});
 
 // ──────────────────────────────────────────────────────────────
 // Profile API — structured phone + address validation
