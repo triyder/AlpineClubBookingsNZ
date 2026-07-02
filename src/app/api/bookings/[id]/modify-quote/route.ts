@@ -62,6 +62,10 @@ import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
 } from "@/lib/access-roles";
+import {
+  findBookingMemberNightConflicts,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -530,6 +534,21 @@ export async function POST(
     return NextResponse.json(
       { error: `A booking cannot exceed ${lodgeCapacity} guests` },
       { status: 400 }
+    );
+  }
+
+  const memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
+    actorMemberId: session.user.id,
+    actorRole,
+    checkIn: newCheckIn,
+    checkOut: newCheckOut,
+    guests: guestsForPricing,
+    excludeBookingId: booking.id,
+  });
+  if (memberNightConflicts.length > 0) {
+    return NextResponse.json(
+      getBookingMemberNightConflictResponse(memberNightConflicts),
+      { status: 409 },
     );
   }
 

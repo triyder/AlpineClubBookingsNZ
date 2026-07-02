@@ -15,6 +15,9 @@ const mockTx = {
     update: vi.fn(),
     updateMany: vi.fn(),
   },
+  bookingGuest: {
+    findMany: vi.fn(),
+  },
   payment: { create: vi.fn() },
   season: { findMany: vi.fn() },
   promoRedemption: { count: vi.fn(), create: vi.fn() },
@@ -32,6 +35,9 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+    },
+    bookingGuest: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     payment: { create: vi.fn() },
     member: {
@@ -152,6 +158,7 @@ import { POST as getModifyQuote } from "@/app/api/bookings/[id]/modify-quote/rou
 
 const mockPrisma = prisma as unknown as {
   booking: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  bookingGuest: { findMany: ReturnType<typeof vi.fn> };
   payment: { create: ReturnType<typeof vi.fn> };
   member: { count: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   memberSubscription: { findFirst: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
@@ -256,11 +263,13 @@ beforeEach(() => {
       xeroInvoiceNumber: null,
     },
   ]);
+  mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
   mockPrisma.season.findMany.mockResolvedValue([]);
 
   mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx as unknown as typeof mockTx));
   mockTx.$executeRaw.mockResolvedValue(undefined);
   mockTx.booking.findMany.mockResolvedValue([]);
+  mockTx.bookingGuest.findMany.mockResolvedValue([]);
   mockTx.booking.create.mockResolvedValue({
     id: "booking-1",
     status: "CONFIRMED",

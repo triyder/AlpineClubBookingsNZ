@@ -21,6 +21,10 @@ Future reviews and issues should cite this file when proposing changes.
   source of truth is `CAPACITY_HOLDING_BOOKING_STATUSES` in
   `src/lib/booking-status.ts`.
 - Waitlisted and offered bookings do not consume capacity until confirmed.
+- A linked `Member` may be present on only one live booking per lodge night.
+  This person-night guard is separate from bed capacity: it checks draft,
+  pending, confirmed/paid/completed, waitlist, offered, and admin-review
+  bookings, but ignores cancelled, bumped, deleted, and expired draft rows.
 - Draft, pending, waitlist, payment-recovery, and review states must have
   expiry, retry, admin visibility, or repair paths.
 

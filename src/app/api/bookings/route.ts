@@ -49,6 +49,11 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 import {
+  BookingMemberNightConflictError,
+  findBookingMemberNightConflicts,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
+import {
   BookingGuestStayRangeValidationError,
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
@@ -250,6 +255,20 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
+  const memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
+    actorMemberId: session.user.id,
+    actorRole,
+    checkIn,
+    checkOut,
+    guests: guestInputs,
+  });
+  if (memberNightConflicts.length > 0) {
+    return NextResponse.json(
+      getBookingMemberNightConflictResponse(memberNightConflicts),
+      { status: 409 },
+    );
+  }
+
   const today = getTodayDateOnly();
   if (checkIn < today) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
@@ -392,6 +411,12 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+      if (err instanceof BookingMemberNightConflictError) {
+        return NextResponse.json(
+          getBookingMemberNightConflictResponse(err.conflicts),
+          { status: 409 },
+        );
+      }
       const message = err instanceof BookingPromoError
         ? err.message
         : err instanceof Error
@@ -518,6 +543,12 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+      if (waitlistErr instanceof BookingMemberNightConflictError) {
+        return NextResponse.json(
+          getBookingMemberNightConflictResponse(waitlistErr.conflicts),
+          { status: 409 },
+        );
+      }
       if (waitlistErr instanceof BookingPromoError) {
         return NextResponse.json({ error: waitlistErr.message }, { status: 400 });
       }
@@ -535,6 +566,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: err.message, code: "REVIEW_JUSTIFICATION_REQUIRED" },
         { status: 400 }
+      );
+    }
+    if (err instanceof BookingMemberNightConflictError) {
+      return NextResponse.json(
+        getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
       );
     }
     const message = err instanceof Error ? err.message : "Failed to create booking";

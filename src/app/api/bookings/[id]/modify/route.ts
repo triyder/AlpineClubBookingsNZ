@@ -8,6 +8,10 @@ import {
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
 } from "@/lib/booking-guests";
+import {
+  BookingMemberNightConflictError,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import {
   getMembershipTypeBookingPolicyErrorBody,
@@ -125,6 +129,12 @@ export async function PUT(
       return NextResponse.json(getBookingGuestValidationErrorResponse(err), {
         status: err.status,
       });
+    }
+    if (err instanceof BookingMemberNightConflictError) {
+      return NextResponse.json(
+        getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
+      );
     }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

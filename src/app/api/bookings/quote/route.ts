@@ -35,6 +35,10 @@ import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
 } from "@/lib/access-roles";
+import {
+  findBookingMemberNightConflicts,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -129,6 +133,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
+  }
+
+  const memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
+    actorMemberId: session.user.id,
+    actorRole,
+    checkIn,
+    checkOut,
+    guests,
+  });
+  if (memberNightConflicts.length > 0) {
+    return NextResponse.json(
+      getBookingMemberNightConflictResponse(memberNightConflicts),
+      { status: 409 },
+    );
   }
 
   // Fetch seasons that cover the booking dates
