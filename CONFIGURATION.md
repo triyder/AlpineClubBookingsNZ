@@ -296,7 +296,8 @@ Xero contact-group rules, and committee assignment are separate axes:
   Non-Member, Family, or club-created types. Each type carries booking behavior
   (`MEMBER_RATE`, `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior
   (`REQUIRED`, `NOT_REQUIRED`), allowed age tiers, and optional Xero
-  contact-group rules.
+  contact-group rules. Display names must be unique: creating or renaming a
+  type to a case-insensitive exact match of an existing name is rejected.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
   drive age-based rates and age-based default Xero grouping. Use Age Tier Xero

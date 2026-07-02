@@ -136,7 +136,11 @@ describe("Admin membership types API", () => {
     mocks.membershipTypeUpsert.mockResolvedValue({});
     mocks.membershipTypeFindMany.mockResolvedValue([membershipType()]);
     mocks.membershipTypeFindUnique.mockResolvedValue(null);
-    mocks.membershipTypeFindFirst.mockResolvedValue({ sortOrder: 3 });
+    // findFirst serves both the duplicate-name guard (where.name) and the
+    // next-sortOrder lookup; default to "no duplicate" for name queries.
+    mocks.membershipTypeFindFirst.mockImplementation(async (args) =>
+      args?.where?.name ? null : { sortOrder: 3 },
+    );
     mocks.membershipTypeCreate.mockImplementation(async ({ data }) =>
       membershipType({
         id: "type-custom",
@@ -308,6 +312,36 @@ describe("Admin membership types API", () => {
         }),
       }),
     );
+    expect(mocks.membershipTypeFindFirst).toHaveBeenCalledWith({
+      where: { name: { equals: "Social member", mode: "insensitive" } },
+      select: { id: true, name: true },
+    });
+  });
+
+  it("rejects creating a case-insensitive duplicate membership type name", async () => {
+    mocks.membershipTypeFindFirst.mockResolvedValueOnce({
+      id: "type-social",
+      name: "Social",
+    });
+
+    const response = await createMembershipType(
+      request("http://localhost/api/admin/membership-types", {
+        name: "SOCIAL",
+        bookingBehavior: "NON_MEMBER_RATE",
+        subscriptionBehavior: "NOT_REQUIRED",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe(
+      'A membership type named "Social" already exists.',
+    );
+    expect(mocks.membershipTypeFindFirst).toHaveBeenCalledWith({
+      where: { name: { equals: "SOCIAL", mode: "insensitive" } },
+      select: { id: true, name: true },
+    });
+    expect(mocks.membershipTypeCreate).not.toHaveBeenCalled();
   });
 
   it("archives and reactivates membership types through audited updates", async () => {
@@ -379,6 +413,78 @@ describe("Admin membership types API", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.membershipTypeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects renaming a membership type to another type's name", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValueOnce(
+      membershipType({
+        id: "type-custom",
+        key: "SOCIAL_MEMBER",
+        name: "Social member",
+        isBuiltIn: false,
+        _count: { assignments: 0 },
+      }),
+    );
+    mocks.membershipTypeFindFirst.mockResolvedValueOnce({
+      id: "type-1",
+      name: "Full",
+    });
+
+    const response = await updateMembershipType(
+      request(
+        "http://localhost/api/admin/membership-types/type-custom",
+        { name: "full" },
+        "PATCH",
+      ),
+      params("type-custom"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toBe('A membership type named "Full" already exists.');
+    expect(mocks.membershipTypeFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: { not: "type-custom" },
+        name: { equals: "full", mode: "insensitive" },
+      },
+      select: { id: true, name: true },
+    });
+    expect(mocks.membershipTypeUpdate).not.toHaveBeenCalled();
+  });
+
+  it("allows renaming a membership type to a case variant of its own name", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValueOnce(
+      membershipType({
+        id: "type-custom",
+        key: "SOCIAL_MEMBER",
+        name: "Social member",
+        isBuiltIn: false,
+        _count: { assignments: 0 },
+      }),
+    );
+
+    const response = await updateMembershipType(
+      request(
+        "http://localhost/api/admin/membership-types/type-custom",
+        { name: "SOCIAL MEMBER" },
+        "PATCH",
+      ),
+      params("type-custom"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.membershipTypeFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: { not: "type-custom" },
+        name: { equals: "SOCIAL MEMBER", mode: "insensitive" },
+      },
+      select: { id: true, name: true },
+    });
+    expect(mocks.membershipTypeUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ name: "SOCIAL MEMBER" }),
+      }),
+    );
   });
 
   it("updates allowed age tiers and Xero group rules", async () => {

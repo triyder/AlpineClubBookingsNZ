@@ -266,7 +266,9 @@ stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, subscription behavior, allowed age tiers, and optional Xero
 contact-group rules for built-in and admin-defined types. The built-ins are
 Full, Associate, Life, School, Non-Member, and Family; Associate is the single
-Associate/Reserve-style built-in and can be renamed by the club. Age tiers stay
+Associate/Reserve-style built-in and can be renamed by the club. Create and
+rename requests that would duplicate another type's display name
+(case-insensitive exact match) are rejected with a 409. Age tiers stay
 separate because the same tier can appear under several membership types. Age
 Tier Xero groups are for broad age cohorts, Membership Type Xero groups are for
 status or policy labels, and clubs can configure both when Xero needs both
