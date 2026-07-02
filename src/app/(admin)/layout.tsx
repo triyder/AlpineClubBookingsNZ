@@ -5,6 +5,7 @@ import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AdminSidebar } from "@/components/admin-sidebar";
+import { ContextualHelpButton } from "@/components/contextual-help-button";
 import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
@@ -99,6 +100,9 @@ export default async function AdminLayout({
           <AdminSidebar features={effectiveModules} />
           <div className="flex flex-1 flex-col md:overflow-hidden">
             <main className="flex-1 overflow-y-auto p-6 pb-24 print:overflow-visible print:p-0 md:p-8 md:pb-28">
+              <div className="mb-4 flex justify-end print:hidden">
+                <ContextualHelpButton scope="admin" />
+              </div>
               {!siteStyleComplete && (
                 <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 print:hidden">
                   <div className="flex flex-wrap items-center justify-between gap-3">

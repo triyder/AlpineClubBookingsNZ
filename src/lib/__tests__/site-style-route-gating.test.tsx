@@ -83,6 +83,10 @@ vi.mock("@/components/admin-sidebar", () => ({
   AdminSidebar: () => <aside>Admin sidebar</aside>,
 }));
 
+vi.mock("@/components/contextual-help-button", () => ({
+  ContextualHelpButton: () => <button type="button">Help</button>,
+}));
+
 vi.mock("@/components/nav-bar", () => ({
   NavBar: () => <nav>Admin nav</nav>,
 }));

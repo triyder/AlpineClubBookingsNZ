@@ -251,6 +251,11 @@ and the WysiwygEditor token help dialog are both derived from it. Lodge
 instruction reader/kiosk routes resolve text tokens on read; the admin editor
 route returns them unresolved so edits round-trip.
 
+`src/lib/contextual-help.ts` is the client-safe registry for Admin and Finance
+page help popups. `ContextualHelpButton` reads the current route, opens an
+accessible dialog from the shell-level help icon, and uses the most specific
+matching route entry so nested Admin pages inherit their parent menu help.
+
 Site banners are managed at `/admin/site-banners` (Setup & Configuration).
 Admins create plain-text notices with a priority (URGENT/WARNING/NOTIFY) and
 an inclusive NZ date-only display window; current active banners render above
