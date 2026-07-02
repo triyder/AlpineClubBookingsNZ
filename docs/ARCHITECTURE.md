@@ -235,6 +235,8 @@ inbound-event drilldowns, committee data, issue reports, waitlist, lodge
 operations, hut leaders, and roster/chores. Lodge settings are a singleton
 record for lodge-wide operational defaults such as fallback capacity and the
 hut-leader lookahead window used by dashboard and Needs Attention warnings.
+The sidebar's Needs Attention Booking Requests badge sums pending internal
+booking reviews, requested change requests, and queued public booking requests.
 
 Member CSV import allows distinct identities to share an email address while
 preserving the database invariant that only one member per email can have

@@ -381,6 +381,7 @@ function usePendingRefundAppeals(): number {
   return count;
 }
 
+/** Fetch pending internal booking review + change request counts. */
 function usePendingBookingRequests(): number {
   const [count, setCount] = useState(0);
 
@@ -401,6 +402,36 @@ function usePendingBookingRequests(): number {
             (reviewData?.pagination?.total ?? 0) +
               (typeof changeData?.total === "number" ? changeData.total : 0),
           );
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
+/**
+ * Fetch the count of public (non-member) booking requests waiting in the
+ * admin queue (VERIFIED, PRICED, QUOTED, QUOTE_SENT, QUERY_PENDING,
+ * MODIFICATION_REQUESTED). Summed with the internal review/change-request
+ * count for the single Booking Requests badge, since /admin/booking-requests
+ * covers both queues via its tabs.
+ */
+function usePendingPublicBookingRequests(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/booking-requests?status=QUEUE&pageSize=1")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && typeof data?.total === "number") {
+          setCount(data.total);
         }
       })
       .catch(() => {});
@@ -526,6 +557,7 @@ function SidebarLinks({
   const pendingApplications = usePendingApplications();
   const pendingRefundAppeals = usePendingRefundAppeals();
   const pendingBookingRequests = usePendingBookingRequests();
+  const pendingPublicBookingRequests = usePendingPublicBookingRequests();
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
   const pendingIssueReports = usePendingIssueReports();
@@ -575,8 +607,9 @@ function SidebarLinks({
   if (pendingFamilyRequests > 0) {
     badges["/admin/family-groups"] = pendingFamilyRequests;
   }
-  if (pendingBookingRequests > 0) {
-    badges["/admin/booking-requests"] = pendingBookingRequests;
+  if (pendingBookingRequests + pendingPublicBookingRequests > 0) {
+    badges["/admin/booking-requests"] =
+      pendingBookingRequests + pendingPublicBookingRequests;
   }
   if (pendingRefundAppeals + pendingCreditApprovals > 0) {
     badges["/admin/refund-requests"] =

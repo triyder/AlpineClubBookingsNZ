@@ -28,7 +28,12 @@ function mockJsonResponse(body: unknown) {
 }
 
 function buildFetchMock(
-  options: { familyRequestCount?: number; unassignedHutLeaderDates?: number } = {},
+  options: {
+    familyRequestCount?: number;
+    unassignedHutLeaderDates?: number;
+    bookingReviewCount?: number;
+    publicBookingQueueCount?: number;
+  } = {},
 ) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -50,10 +55,20 @@ function buildFetchMock(
       return mockJsonResponse({ total: 0 });
     }
     if (url.includes("/api/admin/booking-reviews")) {
-      return mockJsonResponse({ pagination: { total: 0 } });
+      return mockJsonResponse({
+        pagination: { total: options.bookingReviewCount ?? 0 },
+      });
     }
     if (url.includes("/api/admin/booking-change-requests")) {
       return mockJsonResponse({ total: 0 });
+    }
+    if (url.includes("/api/admin/booking-requests")) {
+      return mockJsonResponse({
+        data: [],
+        page: 1,
+        pageSize: 1,
+        total: options.publicBookingQueueCount ?? 0,
+      });
     }
     if (url.includes("/api/admin/credit-approvals")) {
       return mockJsonResponse([]);
@@ -154,6 +169,37 @@ describe("AdminSidebar", () => {
       screen.getByRole("link", { name: /Family Groups/ }),
     ).not.toBeNull();
     expect(screen.getByText("2")).not.toBeNull();
+  });
+
+  it("surfaces queued public booking requests in Needs Attention", async () => {
+    vi.stubGlobal("fetch", buildFetchMock({ publicBookingQueueCount: 3 }));
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole("link", { name: /Booking Requests/ }),
+    ).not.toBeNull();
+    expect(screen.getByText("3")).not.toBeNull();
+  });
+
+  it("combines internal review and public queue counts on the Booking Requests badge", async () => {
+    vi.stubGlobal(
+      "fetch",
+      buildFetchMock({ bookingReviewCount: 2, publicBookingQueueCount: 3 }),
+    );
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole("link", { name: /Booking Requests/ }),
+    ).not.toBeNull();
+    expect(screen.getByText("5")).not.toBeNull();
   });
 
   it("shows unassigned hut leader dates in Needs Attention", async () => {
