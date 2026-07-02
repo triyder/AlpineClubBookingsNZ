@@ -28,6 +28,8 @@ fork for another organisation. See `NOTICE.md`.
   settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site
   Content"); every admin rich-text editor includes a token help button listing
   the tokens it supports
+- Admin-managed site banners (urgent/warning/notify) shown above the site
+  header for a set NZ date window, dismissible per browser
 - Lodge kiosk with PIN access, arrivals/departures, chores, and issue reporting
 - Xero integrations for operational accounting, Internet Banking settlement,
   and finance reports backed by the same operational Xero connection

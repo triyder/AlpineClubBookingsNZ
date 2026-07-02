@@ -160,6 +160,9 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 - Public website content records: `PageContent` owns routable page
   header/body/menu content, while `SiteContent` owns shared public chrome such
   as the editable footer columns that never appear in the website menu.
+- `SiteBanner` records: admin-managed plain-text notices with
+  `URGENT`/`WARNING`/`NOTIFY` priority and an inclusive NZ date-only display
+  window, rendered above the public and member site headers.
 
 ## Booking and Payment Flow
 
@@ -247,6 +250,14 @@ instructions); the embed/text matching regexes in `src/lib/page-content-embeds.t
 and the WysiwygEditor token help dialog are both derived from it. Lodge
 instruction reader/kiosk routes resolve text tokens on read; the admin editor
 route returns them unresolved so edits round-trip.
+
+Site banners are managed at `/admin/site-banners` (Setup & Configuration).
+Admins create plain-text notices with a priority (URGENT/WARNING/NOTIFY) and
+an inclusive NZ date-only display window; current active banners render above
+the site header on the public, website, and authenticated member shells (not
+admin/finance/lodge shells). Visitors can dismiss a banner per browser via
+localStorage; editing a banner invalidates prior dismissals. All banner
+create/update/delete actions write structured audit logs.
 
 Member CSV import allows distinct identities to share an email address while
 preserving the database invariant that only one member per email can have

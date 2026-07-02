@@ -179,6 +179,24 @@ reusable layout fragments that are not routable pages.
   tokens include `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`, and
   `{{facebook-url}}`; embed tokens are not supported in footer sections.
 
+## Website Site Banners
+
+Admin > Site Banners manages site-wide notification banners stored as
+`SiteBanner` records. Banners are plain text only and render above the public
+website, public-auth, and signed-in member headers while active and while the
+current New Zealand date-only value falls inside the inclusive display window.
+
+- Priorities are `URGENT`, `WARNING`, and `NOTIFY`, displayed with faded red,
+  amber, and blue styling respectively.
+- Admins can create, edit, activate/deactivate, and delete banners. The admin
+  page groups banners into current, upcoming, and the 50 most recent past
+  banners by their date-only display windows.
+- Visitors can dismiss a banner per browser. Dismissal is stored in
+  localStorage and is invalidated when an admin edits the banner, so updated
+  wording is shown again.
+- Banner create/update/delete actions write structured audit logs. Messages are
+  rendered as escaped plain text; HTML and tokens are not supported.
+
 ## Lodge Instructions
 
 Lodge opening, closing, and day-to-day instructions for hut leaders are

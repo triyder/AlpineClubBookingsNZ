@@ -4,6 +4,7 @@ import { AppProviders } from "@/components/app-providers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
+import { SiteBanners } from "@/components/site-banners";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
@@ -21,6 +22,7 @@ import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
+import { getCurrentSiteBanners } from "@/lib/site-banners";
 import {
   buildTwoFactorGatePath,
   isTwoFactorSessionBlocked,
@@ -120,9 +122,10 @@ export default async function AuthenticatedLayout({
     isStayingGuest,
   };
   const showOnboardingWizard = shouldShowMemberOnboarding(member);
-  const [effectiveModules, lodgeCapacity] = await Promise.all([
+  const [effectiveModules, lodgeCapacity, siteBanners] = await Promise.all([
     loadEffectiveModuleFlags(),
     getLodgeCapacity(),
+    getCurrentSiteBanners(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
@@ -130,6 +133,7 @@ export default async function AuthenticatedLayout({
   return (
     <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
       <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
+        <SiteBanners banners={siteBanners} />
         <NavBar user={user} features={effectiveModules} />
         <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           {children}

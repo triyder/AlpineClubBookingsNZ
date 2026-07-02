@@ -27,6 +27,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// The layout fetches current site banners; none are needed here (and the
+// real module imports "server-only", which vitest cannot resolve).
+vi.mock("@/lib/site-banners", () => ({
+  getCurrentSiteBanners: vi.fn(async () => []),
+}));
+
 // Stub the layout's UI dependencies so importing it stays light; the anonymous
 // redirect path returns before any of these are rendered.
 vi.mock("@/components/app-providers", () => ({

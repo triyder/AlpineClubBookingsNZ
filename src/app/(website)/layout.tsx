@@ -1,10 +1,12 @@
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { SiteBanners } from "@/components/site-banners";
 import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
 import { CLUB_CONTACT_EMAIL, CLUB_NAME } from "@/config/club-identity";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
+import { getCurrentSiteBanners } from "@/lib/site-banners";
 
 function resolvePageSlug(requestHeaders: Headers) {
   return requestHeaders.get("x-page-slug") ?? "home";
@@ -15,10 +17,11 @@ export default async function WebsiteLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [session, theme, requestHeaders] = await Promise.all([
+  const [session, theme, requestHeaders, siteBanners] = await Promise.all([
     auth(),
     getWebsiteThemeRenderState(),
     headers(),
+    getCurrentSiteBanners(),
   ]);
   const pageSlug = resolvePageSlug(requestHeaders);
   const themeStyle = (
@@ -64,6 +67,7 @@ export default async function WebsiteLayout({
       className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
     >
       {themeStyle}
+      <SiteBanners banners={siteBanners} />
       <WebsiteHeader
         isAuthenticated={!!session?.user}
         logoDataUrl={theme.logoDataUrl}

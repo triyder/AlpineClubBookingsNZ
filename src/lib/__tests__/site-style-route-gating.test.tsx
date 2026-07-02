@@ -47,6 +47,12 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mocks.loadEffectiveModuleFlags,
 }));
 
+// The layouts fetch current site banners; none are needed for gating tests
+// (and the real module imports "server-only", which vitest cannot resolve).
+vi.mock("@/lib/site-banners", () => ({
+  getCurrentSiteBanners: vi.fn(async () => []),
+}));
+
 vi.mock("@/lib/finance-auth", () => ({
   hasFinanceViewerAccess: () => false,
 }));

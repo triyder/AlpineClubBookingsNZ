@@ -49,6 +49,7 @@ import {
   Landmark,
   MessageSquareText,
   BadgeCheck,
+  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -257,6 +258,7 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
+      { href: "/admin/site-banners", label: "Site Banners", icon: Megaphone },
       {
         href: "/admin/site-content",
         label: "Site Content",

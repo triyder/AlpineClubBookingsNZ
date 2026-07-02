@@ -2402,6 +2402,30 @@ model MediaImage {
   @@index([createdAt])
 }
 
+// Admin-managed site-wide notification banners. Displayed above the site
+// header on public and member shells while today (NZ date-only) falls inside
+// the banner's display window. Message is always rendered as plain text.
+enum SiteBannerPriority {
+  URGENT
+  WARNING
+  NOTIFY
+}
+
+model SiteBanner {
+  id                String             @id @default(cuid())
+  message           String
+  priority          SiteBannerPriority
+  startDate         DateTime           @db.Date
+  endDate           DateTime           @db.Date
+  active            Boolean            @default(true)
+  createdByMemberId String?
+  updatedByMemberId String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([active, startDate, endDate])
+}
+
 enum NotificationDeliveryMode {
   ALWAYS
   CONTENT_ONLY
