@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { listRefundsForCharge } from "@/lib/stripe";
+import { listRefundsForCharge, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 import {
@@ -191,10 +191,16 @@ async function handlePaymentIntentSucceeded(
   // bookings, so it carries groupBookingId (not bookingId) and is reconciled by
   // its own handler before the per-booking path below.
   if (paymentIntent.metadata?.type === "group_settlement") {
-    await applyGroupSettlementSucceeded({
+    const applied = await applyGroupSettlementSucceeded({
       id: paymentIntent.id,
       amount: paymentIntent.amount,
     });
+    if (
+      applied.outcome === "not_found" ||
+      applied.outcome === "amount_mismatch"
+    ) {
+      await refundSupersededGroupSettlementIntent(paymentIntent, applied.outcome);
+    }
     return;
   }
 
@@ -783,6 +789,115 @@ async function alertPaymentAmountMismatch(
     logger.error(
       { err, bookingId, paymentIntentId },
       "Failed to send admin alert for payment amount mismatch"
+    );
+  }
+}
+
+/**
+ * Safety net for a captured group-settlement PaymentIntent that no longer
+ * matches a PENDING settlement. The settlement's stripePaymentIntentId is
+ * legitimately superseded by ordinary flows (a switch to Internet Banking
+ * nulls it; a card re-attempt after the party/total changes overwrites it), so
+ * a stale intent confirmed off a retained client_secret captures money that
+ * settles nothing. Mirror the single-booking superseded/late-capture paths:
+ * refund the intent in full and alert admins.
+ *
+ * Idempotency: the ProcessedWebhookEvent claim stops repeated delivery of the
+ * same event from re-running this at all, and the refund carries a
+ * deterministic per-intent idempotency key so a redelivery after a mid-handler
+ * failure can never double-refund. A refund failure rethrows so the event
+ * claim is released and Stripe redelivers, retrying the refund.
+ */
+async function refundSupersededGroupSettlementIntent(
+  paymentIntent: Stripe.PaymentIntent,
+  outcome: "not_found" | "amount_mismatch"
+) {
+  const groupBookingId = paymentIntent.metadata?.groupBookingId ?? null;
+  const failureDescription =
+    outcome === "not_found"
+      ? "matched no group settlement record (the settlement switched payment method or was re-attempted)"
+      : "did not match the recorded group settlement amount";
+
+  let refundId: string | null = null;
+  try {
+    const refund = await processRefund({
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      reason: "requested_by_customer",
+      metadata: {
+        ...(groupBookingId ? { groupBookingId } : {}),
+        reason: "group_settlement_superseded",
+      },
+      idempotencyKey: `group_settlement_superseded_refund_${paymentIntent.id}`,
+    });
+    refundId = refund.id;
+  } catch (refundErr) {
+    logger.error(
+      { err: refundErr, paymentIntentId: paymentIntent.id, groupBookingId, outcome },
+      "Failed to refund superseded group settlement PaymentIntent; rethrowing so Stripe redelivers"
+    );
+    await alertSupersededGroupSettlementIntent(
+      paymentIntent,
+      groupBookingId,
+      `Group settlement payment ${failureDescription} and the automatic refund failed. The organiser has been charged with nothing settled; refund PaymentIntent ${paymentIntent.id} manually in Stripe.`
+    );
+    throw refundErr;
+  }
+
+  logAudit({
+    action: "group.settlement.superseded_intent_refunded",
+    targetId: groupBookingId ?? paymentIntent.id,
+    details: JSON.stringify({
+      paymentIntentId: paymentIntent.id,
+      refundId,
+      amountCents: paymentIntent.amount,
+      outcome,
+    }),
+  });
+
+  logger.warn(
+    { paymentIntentId: paymentIntent.id, groupBookingId, refundId, outcome },
+    "Refunded superseded group settlement PaymentIntent that succeeded"
+  );
+
+  await alertSupersededGroupSettlementIntent(
+    paymentIntent,
+    groupBookingId,
+    `Group settlement payment ${failureDescription}. TAC Bookings auto-refunded the charge; no bookings were settled and the organiser can retry.`
+  );
+}
+
+/** Best-effort admin alert for a superseded group-settlement capture; never throws. */
+async function alertSupersededGroupSettlementIntent(
+  paymentIntent: Stripe.PaymentIntent,
+  groupBookingId: string | null,
+  errorMessage: string
+) {
+  try {
+    const group = groupBookingId
+      ? await prisma.groupBooking.findUnique({
+          where: { id: groupBookingId },
+          select: {
+            organiserMember: { select: { firstName: true, lastName: true } },
+            organiserBooking: { select: { checkIn: true, checkOut: true } },
+          },
+        })
+      : null;
+
+    await sendAdminPaymentFailureAlert({
+      memberName: group
+        ? `${group.organiserMember.firstName} ${group.organiserMember.lastName}`
+        : "Unknown group organiser",
+      checkIn: group?.organiserBooking.checkIn ?? new Date(),
+      checkOut: group?.organiserBooking.checkOut ?? new Date(),
+      amountCents: paymentIntent.amount,
+      errorMessage,
+      paymentIntentId: paymentIntent.id,
+    });
+  } catch (err) {
+    logger.error(
+      { err, paymentIntentId: paymentIntent.id, groupBookingId },
+      "Failed to send admin alert for superseded group settlement PaymentIntent"
     );
   }
 }

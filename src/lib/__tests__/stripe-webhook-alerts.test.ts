@@ -32,6 +32,10 @@ const {
   mockMarkBookingPaymentSucceeded,
   mockMarkBookingSetupIntentSucceeded,
   mockListRefundsForCharge,
+  mockProcessRefund,
+  mockApplyGroupSettlementSucceeded,
+  mockMarkGroupSettlementIntentFailed,
+  mockGroupBookingFindUnique,
 } = vi.hoisted(() => ({
   mockConstructWebhookEvent: vi.fn(),
   mockProcessedWebhookCreate: vi.fn(),
@@ -85,11 +89,25 @@ const {
   }),
   mockMarkBookingSetupIntentSucceeded: vi.fn().mockResolvedValue(undefined),
   mockListRefundsForCharge: vi.fn().mockResolvedValue([]),
+  mockProcessRefund: vi.fn().mockResolvedValue({ id: "re_1" }),
+  mockApplyGroupSettlementSucceeded: vi.fn().mockResolvedValue({
+    outcome: "settled",
+    settledBookingIds: [],
+  }),
+  mockMarkGroupSettlementIntentFailed: vi.fn().mockResolvedValue(undefined),
+  mockGroupBookingFindUnique: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/stripe", () => ({
   constructWebhookEvent: (...args: unknown[]) => mockConstructWebhookEvent(...args),
   listRefundsForCharge: (...args: unknown[]) => mockListRefundsForCharge(...args),
+  processRefund: (...args: unknown[]) => mockProcessRefund(...args),
+}));
+vi.mock("@/lib/group-settlement", () => ({
+  applyGroupSettlementSucceeded: (...args: unknown[]) =>
+    mockApplyGroupSettlementSucceeded(...args),
+  markGroupSettlementIntentFailed: (...args: unknown[]) =>
+    mockMarkGroupSettlementIntentFailed(...args),
 }));
 vi.mock("@/lib/payment-reconciliation", () => ({
   markBookingPaymentSucceeded: (...args: unknown[]) =>
@@ -137,6 +155,9 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
+    },
+    groupBooking: {
+      findUnique: (...args: unknown[]) => mockGroupBookingFindUnique(...args),
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -212,6 +233,13 @@ describe("Stripe webhook Xero alerting", () => {
     });
     mockMarkBookingSetupIntentSucceeded.mockResolvedValue(undefined);
     mockListRefundsForCharge.mockResolvedValue([]);
+    mockProcessRefund.mockResolvedValue({ id: "re_1" });
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "settled",
+      settledBookingIds: [],
+    });
+    mockMarkGroupSettlementIntentFailed.mockResolvedValue(undefined);
+    mockGroupBookingFindUnique.mockResolvedValue(null);
     mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         payment: {
@@ -834,6 +862,160 @@ describe("Stripe webhook Xero alerting", () => {
     expect(response.status).toBe(500);
     expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
       where: { eventId: "evt_fail", source: "stripe" },
+    });
+  });
+
+  // Issue #1016: a captured group-settlement intent that matches no PENDING
+  // settlement is a superseded intent confirmed off a retained client_secret.
+  function groupSettlementSucceededEvent(eventId: string, intentId: string) {
+    return {
+      id: eventId,
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: intentId,
+          amount: 50000,
+          payment_method: "pm_group",
+          metadata: { type: "group_settlement", groupBookingId: "group-1" },
+        },
+      },
+    } as any;
+  }
+
+  it("refunds and alerts exactly once when a succeeded group settlement intent matches no settlement", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_orphan", "pi_group_stale"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "not_found",
+      settledBookingIds: [],
+    });
+    mockGroupBookingFindUnique.mockResolvedValue({
+      organiserMember: { firstName: "Olive", lastName: "Organiser" },
+      organiserBooking: {
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+      },
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockApplyGroupSettlementSucceeded).toHaveBeenCalledWith({
+      id: "pi_group_stale",
+      amount: 50000,
+    });
+    // Full refund with a deterministic per-intent idempotency key.
+    expect(mockProcessRefund).toHaveBeenCalledTimes(1);
+    expect(mockProcessRefund).toHaveBeenCalledWith({
+      paymentIntentId: "pi_group_stale",
+      amountCents: 50000,
+      reason: "requested_by_customer",
+      metadata: {
+        groupBookingId: "group-1",
+        reason: "group_settlement_superseded",
+      },
+      idempotencyKey: "group_settlement_superseded_refund_pi_group_stale",
+    });
+    // One admin alert naming the organiser.
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Olive Organiser",
+        amountCents: 50000,
+        paymentIntentId: "pi_group_stale",
+      }),
+    );
+    // The group path never falls through to the per-booking handlers.
+    expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("refunds and alerts exactly once when a succeeded group settlement intent mismatches the recorded amount", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_mismatch", "pi_group_mismatch"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "amount_mismatch",
+      settledBookingIds: [],
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockProcessRefund).toHaveBeenCalledTimes(1);
+    expect(mockProcessRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_group_mismatch",
+        amountCents: 50000,
+        idempotencyKey: "group_settlement_superseded_refund_pi_group_mismatch",
+      }),
+    );
+    // The alert still sends when the group cannot be loaded for details.
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+  });
+
+  it("does not refund or alert when the group settlement applies cleanly", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_ok", "pi_group_ok"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "settled",
+      settledBookingIds: ["child-1"],
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockProcessRefund).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits a redelivered group settlement event without refunding or alerting again", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_dup", "pi_group_stale"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "not_found",
+      settledBookingIds: [],
+    });
+    // The first delivery already claimed and processed this event.
+    mockProcessedWebhookCreate.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockApplyGroupSettlementSucceeded).not.toHaveBeenCalled();
+    expect(mockProcessRefund).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("alerts, releases the claim, and returns 500 when the group settlement refund fails", async () => {
+    mockConstructWebhookEvent.mockReturnValue(
+      groupSettlementSucceededEvent("evt_group_refund_fail", "pi_group_stale"),
+    );
+    mockApplyGroupSettlementSucceeded.mockResolvedValue({
+      outcome: "not_found",
+      settledBookingIds: [],
+    });
+    mockProcessRefund.mockRejectedValue(new Error("stripe unavailable"));
+
+    const response = await POST(makeRequest());
+
+    // The failure alert still reaches admins, and the released claim lets
+    // Stripe's redelivery retry the refund (idempotency key stops doubles).
+    expect(response.status).toBe(500);
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorMessage: expect.stringContaining("automatic refund failed"),
+      }),
+    );
+    expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
+      where: { eventId: "evt_group_refund_fail", source: "stripe" },
     });
   });
 });
