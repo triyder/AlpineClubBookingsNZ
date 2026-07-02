@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, Save, UserCog } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
   type MemberFieldKey,
   type MemberFieldsSettingsValues,
 } from "@/config/member-fields";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 interface FieldsResponse {
   settings: MemberFieldsSettingsValues;
@@ -52,6 +53,9 @@ export default function AdminMemberFieldsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const pageRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   async function loadSettings() {
     setLoading(true);
@@ -84,6 +88,14 @@ export default function AdminMemberFieldsPage() {
   useEffect(() => {
     void loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (error) scrollToError(feedbackRef);
+  }, [error, scrollToError]);
+
+  useEffect(() => {
+    if (savedMessage) scrollToTop(pageRef);
+  }, [savedMessage, scrollToTop]);
 
   const dirty =
     payload !== null &&
@@ -145,7 +157,7 @@ export default function AdminMemberFieldsPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div ref={pageRef} className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Member fields</h1>
@@ -182,9 +194,12 @@ export default function AdminMemberFieldsPage() {
 
       {(error || savedMessage) && (
         <div
+          ref={feedbackRef}
+          role={error ? "alert" : "status"}
+          tabIndex={error ? -1 : undefined}
           className={
             error
-              ? "rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+              ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 focus:outline-none"
               : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
           }
         >

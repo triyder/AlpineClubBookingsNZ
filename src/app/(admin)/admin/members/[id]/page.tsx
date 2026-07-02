@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, use } from "react";
+import { useCallback, useEffect, useRef, useState, use } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address";
 import { hasAccessRole } from "@/lib/access-roles";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { MemberDetailHeader } from "./_components/member-detail-header";
 import { MemberStatsCards } from "./_components/member-stats-cards";
 import { MemberInfoCard } from "./_components/member-info-card";
@@ -147,6 +148,10 @@ export default function MemberDetailPage({
   const [success, setSuccess] = useState("");
   const [relationshipError, setRelationshipError] = useState("");
   const [xeroError, setXeroError] = useState("");
+  const pageRef = useRef<HTMLDivElement>(null);
+  const relationshipErrorRef = useRef<HTMLDivElement>(null);
+  const xeroErrorRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   // Edit dialog state
   const [editOpen, setEditOpen] = useState(false);
@@ -316,6 +321,33 @@ export default function MemberDetailPage({
   const currentMemberPath = currentMemberQuery
     ? `/admin/members/${id}?${currentMemberQuery}`
     : `/admin/members/${id}`;
+
+  useEffect(() => {
+    if (success) scrollToTop(pageRef);
+  }, [scrollToTop, success]);
+
+  useEffect(() => {
+    if (relationshipError) scrollToError(relationshipErrorRef);
+  }, [relationshipError, scrollToError]);
+
+  useEffect(() => {
+    if (
+      xeroError &&
+      !xeroSearchOpen &&
+      !editOpen &&
+      !xeroCreateOpen &&
+      !xeroCreateDecisionOpen
+    ) {
+      scrollToError(xeroErrorRef);
+    }
+  }, [
+    editOpen,
+    scrollToError,
+    xeroCreateDecisionOpen,
+    xeroCreateOpen,
+    xeroError,
+    xeroSearchOpen,
+  ]);
 
   const fetchMember = async () => {
     try {
@@ -1658,7 +1690,7 @@ export default function MemberDetailPage({
   void parentLinkInheritEmail;
 
   return (
-    <div className="space-y-6">
+    <div ref={pageRef} className="space-y-6">
       <MemberDetailHeader
         member={member}
         backHref={backHref}
@@ -1681,7 +1713,12 @@ export default function MemberDetailPage({
         </div>
       )}
       {relationshipError && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+        <div
+          ref={relationshipErrorRef}
+          role="alert"
+          tabIndex={-1}
+          className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+        >
           {relationshipError}
         </div>
       )}
@@ -1690,7 +1727,12 @@ export default function MemberDetailPage({
         !editOpen &&
         !xeroCreateOpen &&
         !xeroCreateDecisionOpen && (
-          <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+          <div
+            ref={xeroErrorRef}
+            role="alert"
+            tabIndex={-1}
+            className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+          >
             {xeroError}
           </div>
         )}

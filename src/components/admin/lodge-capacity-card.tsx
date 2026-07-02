@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 interface LodgeSettingsResponse {
   capacity: number | null;
@@ -29,6 +30,9 @@ export function LodgeCapacityCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const cardRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   async function load() {
     setLoading(true);
@@ -52,6 +56,14 @@ export function LodgeCapacityCard() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (error) scrollToError(feedbackRef);
+  }, [error, scrollToError]);
+
+  useEffect(() => {
+    if (savedMessage) scrollToTop(cardRef);
+  }, [savedMessage, scrollToTop]);
 
   async function save() {
     setSaving(true);
@@ -102,7 +114,7 @@ export function LodgeCapacityCard() {
   }
 
   return (
-    <Card>
+    <Card ref={cardRef}>
       <CardHeader>
         <CardTitle className="text-lg">Lodge settings</CardTitle>
         <CardDescription>
@@ -113,9 +125,12 @@ export function LodgeCapacityCard() {
       <CardContent className="space-y-4">
         {(error || savedMessage) && (
           <div
+            ref={feedbackRef}
+            role={error ? "alert" : "status"}
+            tabIndex={error ? -1 : undefined}
             className={
               error
-                ? "rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+                ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 focus:outline-none"
                 : "rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800"
             }
           >

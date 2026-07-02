@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowDown,
@@ -34,6 +34,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { getSeasonYear } from "@/lib/utils";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
@@ -282,6 +283,9 @@ export default function AdminMembershipTypesPage() {
     useState<RollForwardResponse | null>(null);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const pageRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   const sortedTypes = useMemo(
     () =>
@@ -331,6 +335,14 @@ export default function AdminMembershipTypesPage() {
   useEffect(() => {
     void loadMembershipTypes();
   }, []);
+
+  useEffect(() => {
+    if (error) scrollToError(feedbackRef);
+  }, [error, scrollToError]);
+
+  useEffect(() => {
+    if (savedMessage) scrollToTop(pageRef);
+  }, [savedMessage, scrollToTop]);
 
   async function loadXeroGroups(refreshFromXero = false) {
     if (refreshFromXero) {
@@ -689,7 +701,7 @@ export default function AdminMembershipTypesPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div ref={pageRef} className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
@@ -727,9 +739,12 @@ export default function AdminMembershipTypesPage() {
 
       {(error || savedMessage) && (
         <div
+          ref={feedbackRef}
+          role={error ? "alert" : "status"}
+          tabIndex={error ? -1 : undefined}
           className={
             error
-              ? "rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+              ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 focus:outline-none"
               : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
           }
         >

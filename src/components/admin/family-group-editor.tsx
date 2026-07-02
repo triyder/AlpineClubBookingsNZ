@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   type RequestMemberMatch,
   type SharedEmailCluster,
 } from "@/lib/admin-family-group-ui-helpers";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { resolveEffectiveEmail } from "@/lib/member-email";
 
 export interface FamilyGroupEditorProps {
@@ -65,6 +66,9 @@ export function FamilyGroupEditor({
   const [loginHolderMessages, setLoginHolderMessages] = useState<Record<string, string>>({});
   const [setupInviteSendingId, setSetupInviteSendingId] = useState<string | null>(null);
   const [setupInviteMessages, setSetupInviteMessages] = useState<Record<string, string>>({});
+  const editorRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   const sharedEmailClusters = useMemo(
     () => buildSharedEmailClusters(group?.members ?? []),
@@ -140,6 +144,10 @@ export function FamilyGroupEditor({
   useEffect(() => {
     refreshEditor();
   }, [refreshEditor]);
+
+  useEffect(() => {
+    if (error) scrollToError(errorRef);
+  }, [error, scrollToError]);
 
   useEffect(() => {
     if (memberSearch.length < 2) {
@@ -298,6 +306,7 @@ export function FamilyGroupEditor({
         return;
       }
 
+      scrollToTop(editorRef);
       onChanged?.();
       onClose();
     } finally {
@@ -504,7 +513,7 @@ export function FamilyGroupEditor({
   }
 
   return (
-    <Card>
+    <Card ref={editorRef}>
       <CardHeader>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -527,7 +536,16 @@ export function FamilyGroupEditor({
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && (
+          <p
+            ref={errorRef}
+            role="alert"
+            tabIndex={-1}
+            className="scroll-mt-20 text-sm text-red-600 focus:outline-none"
+          >
+            {error}
+          </p>
+        )}
         {statusMessage && <p className="text-sm text-emerald-700">{statusMessage}</p>}
 
         <form onSubmit={handleSubmit} className="space-y-4">

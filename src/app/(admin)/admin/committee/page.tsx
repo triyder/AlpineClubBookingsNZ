@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 interface LegacyCommitteeMember {
   id: string;
@@ -134,6 +135,9 @@ export default function CommitteePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const pageRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   const [showLegacyForm, setShowLegacyForm] = useState(false);
   const [editingLegacyId, setEditingLegacyId] = useState<string | null>(null);
@@ -202,6 +206,10 @@ export default function CommitteePage() {
   useEffect(() => {
     void fetchCommitteeData();
   }, [fetchCommitteeData]);
+
+  useEffect(() => {
+    if (error) scrollToError(errorRef);
+  }, [error, scrollToError]);
 
   function openAddLegacyForm() {
     setEditingLegacyId(null);
@@ -316,6 +324,7 @@ export default function CommitteePage() {
       }
       closeLegacyForm();
       await fetchCommitteeData();
+      scrollToTop(pageRef);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -356,6 +365,7 @@ export default function CommitteePage() {
       }
       closeRoleForm();
       await fetchCommitteeData();
+      scrollToTop(pageRef);
     } catch (saveError) {
       setError(
         saveError instanceof Error ? saveError.message : "Failed to save role",
@@ -396,6 +406,7 @@ export default function CommitteePage() {
       }
       closeAssignmentForm();
       await fetchCommitteeData();
+      scrollToTop(pageRef);
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -480,7 +491,7 @@ export default function CommitteePage() {
   ).length;
 
   return (
-    <div className="space-y-6">
+    <div ref={pageRef} className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Committee</h1>
@@ -499,7 +510,12 @@ export default function CommitteePage() {
       </div>
 
       {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div
+          ref={errorRef}
+          role="alert"
+          tabIndex={-1}
+          className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+        >
           {error}
         </div>
       ) : null}

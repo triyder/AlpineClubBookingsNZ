@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Download, RefreshCw, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   getMemberPasswordActionKind,
 } from "@/components/admin/member-password-action-button"
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
@@ -61,6 +62,9 @@ export default function MembersPage() {
   const [passwordActionDialogOpen, setPasswordActionDialogOpen] = useState(false)
   const [passwordActionTarget, setPasswordActionTarget] =
     useState<PasswordActionTarget | null>(null)
+  const pageRef = useRef<HTMLDivElement>(null)
+  const errorRef = useRef<HTMLDivElement>(null)
+  const { scrollToError, scrollToTop } = useScrollToFeedback()
 
   const showSuccess = useCallback((message: string, durationMs = 3000) => {
     setSuccess(message)
@@ -71,6 +75,14 @@ export default function MembersPage() {
     setError(message)
     setTimeout(() => setError(""), 8000)
   }, [])
+
+  useEffect(() => {
+    if (error) scrollToError(errorRef)
+  }, [error, scrollToError])
+
+  useEffect(() => {
+    if (success) scrollToTop(pageRef)
+  }, [scrollToTop, success])
 
   const fetchMembers = useCallback(async () => {
     try {
@@ -225,7 +237,7 @@ export default function MembersPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div ref={pageRef} className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Members</h1>
@@ -263,7 +275,12 @@ export default function MembersPage() {
       </div>
 
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+        <div
+          ref={errorRef}
+          role="alert"
+          tabIndex={-1}
+          className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+        >
           {error}
           <button onClick={() => setError("")} className="ml-2 underline">
             Dismiss

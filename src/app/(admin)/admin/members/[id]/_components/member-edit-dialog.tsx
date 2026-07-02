@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,6 +29,7 @@ import { MemberAddressFields } from "@/components/member-address-fields";
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import { getMissingFieldsForXeroCreate } from "@/lib/admin-member-detail-helpers";
 import type { MemberAddressValues } from "@/lib/member-address";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import {
   ACCESS_ROLE_DESCRIPTIONS,
   ACCESS_ROLE_LABELS,
@@ -137,6 +139,13 @@ export function MemberEditDialog({
   onSubmit,
 }: MemberEditDialogProps) {
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
+  const formErrorRef = useRef<HTMLDivElement>(null);
+  const { scrollToError } = useScrollToFeedback();
+
+  useEffect(() => {
+    if (formError) scrollToError(formErrorRef);
+  }, [formError, scrollToError]);
+
   const toggleAccessRole = (role: AppAccessRole, checked: boolean) => {
     onChangeForm((current) => {
       const nextRoles = normalizeAssignableAccessRoles(
@@ -167,7 +176,12 @@ export function MemberEditDialog({
           </DialogDescription>
         </DialogHeader>
         {formError && (
-          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+          <div
+            ref={formErrorRef}
+            role="alert"
+            tabIndex={-1}
+            className="scroll-mt-20 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+          >
             {formError}
           </div>
         )}

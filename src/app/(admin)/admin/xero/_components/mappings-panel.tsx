@@ -1,10 +1,11 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { fetchJson } from "./api"
 import {
   ACCOUNT_MAPPING_KEYS,
@@ -58,6 +59,9 @@ export function MappingsPanel({
   const [savedHutFeeItemCodes, setSavedHutFeeItemCodes] = useState<HutFeeMap>({})
   const [entranceFeeItemCodes, setEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
   const [savedEntranceFeeItemCodes, setSavedEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
+  const panelRef = useRef<HTMLDivElement>(null)
+  const errorRef = useRef<HTMLParagraphElement>(null)
+  const { scrollToError, scrollToTop } = useScrollToFeedback()
 
   const fetchMappings = useCallback(async (options?: { forceRefresh?: boolean }) => {
     setLoading(true)
@@ -90,6 +94,14 @@ export function MappingsPanel({
   useEffect(() => {
     if (connected && open && !accountMappings && !loading) void fetchMappings()
   }, [accountMappings, connected, fetchMappings, loading, open])
+
+  useEffect(() => {
+    if (error) scrollToError(errorRef)
+  }, [error, scrollToError])
+
+  useEffect(() => {
+    if (saved) scrollToTop(panelRef)
+  }, [saved, scrollToTop])
 
   const refreshReferenceData = async () => {
     setRefreshingReferenceData(true)
@@ -151,8 +163,17 @@ export function MappingsPanel({
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading accounts...</p>
       ) : (
-        <div className="space-y-4">
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        <div ref={panelRef} className="space-y-4">
+          {error ? (
+            <p
+              ref={errorRef}
+              role="alert"
+              tabIndex={-1}
+              className="scroll-mt-20 text-sm text-red-600 focus:outline-none"
+            >
+              {error}
+            </p>
+          ) : null}
           {saved ? <p className="text-sm text-green-700">Account mappings saved.</p> : null}
           <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">

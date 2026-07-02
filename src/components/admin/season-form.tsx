@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 interface RateInput {
   ageTier: string;
@@ -35,6 +36,13 @@ export function SeasonForm() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [rates, setRates] = useState<RateInput[]>(defaultRates);
+  const formRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
+
+  useEffect(() => {
+    if (error) scrollToError(errorRef);
+  }, [error, scrollToError]);
 
   function updateRate(index: number, price: string) {
     setRates((prev) => prev.map((r, i) => (i === index ? { ...r, pricePerNight: price } : r)));
@@ -64,6 +72,7 @@ export function SeasonForm() {
     });
 
     if (res.ok) {
+      scrollToTop(formRef);
       setOpen(false);
       setName("");
       setStartDate("");
@@ -84,14 +93,21 @@ export function SeasonForm() {
   }
 
   return (
-    <Card>
+    <Card ref={formRef}>
       <CardHeader>
         <CardTitle>Create New Season</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+            <div
+              ref={errorRef}
+              role="alert"
+              tabIndex={-1}
+              className="scroll-mt-20 rounded-md bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+            >
+              {error}
+            </div>
           )}
 
           <div className="grid grid-cols-2 gap-4">

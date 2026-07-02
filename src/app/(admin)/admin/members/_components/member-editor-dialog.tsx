@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -41,6 +41,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import {
   linkMemberXeroContact,
   pushMemberToXero,
@@ -160,6 +161,9 @@ export function MemberEditorDialog({
   const [pendingXeroDecisionError, setPendingXeroDecisionError] = useState("");
   const [pendingXeroDecisionLoading, setPendingXeroDecisionLoading] =
     useState(false);
+  const dialogContentRef = useRef<HTMLDivElement>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
   const { resetXeroEntranceFeeDecision } = entranceFeeDecision;
 
   useEffect(() => {
@@ -175,6 +179,15 @@ export function MemberEditorDialog({
     resetXeroEntranceFeeDecision();
     setFormError("");
   }, [editingMember, open, resetXeroEntranceFeeDecision]);
+
+  useEffect(() => {
+    if (formError) scrollToError(formErrorRef);
+  }, [formError, scrollToError]);
+
+  const onDialogSuccess = (message: string) => {
+    scrollToTop(dialogContentRef);
+    onSuccess(message);
+  };
 
   const handleXeroChoiceChange = (value: XeroChoice) => {
     setXeroChoice(value);
@@ -200,7 +213,7 @@ export function MemberEditorDialog({
           : member,
       );
       setXeroChoice("");
-      onSuccess("Xero contact unlinked");
+      onDialogSuccess("Xero contact unlinked");
       onSaved();
     } catch (err) {
       setFormError(
@@ -223,7 +236,7 @@ export function MemberEditorDialog({
       setXeroChoice("");
       setSelectedXeroContactId("");
       setXeroSearchResults([]);
-      onSuccess(`Linked to Xero contact: ${data.contactName}`);
+      onDialogSuccess(`Linked to Xero contact: ${data.contactName}`);
       onSaved();
     } catch (err) {
       setFormError(
@@ -267,7 +280,7 @@ export function MemberEditorDialog({
           : member,
       );
       setXeroChoice("");
-      onSuccess(
+      onDialogSuccess(
         entranceFeeInvoiceOptions.createEntranceFeeInvoice &&
           result.data.entranceFeeInvoiceQueued
           ? "Xero contact created, linked, and entrance fee invoice queued"
@@ -318,7 +331,7 @@ export function MemberEditorDialog({
 
       closePendingXeroCreateDecision();
       setXeroChoice("");
-      onSuccess(`Linked to Xero contact: ${data.contactName}`);
+      onDialogSuccess(`Linked to Xero contact: ${data.contactName}`);
       onSaved();
     } catch (err) {
       setPendingXeroDecisionError(
@@ -362,7 +375,7 @@ export function MemberEditorDialog({
 
       closePendingXeroCreateDecision();
       setXeroChoice("");
-      onSuccess(
+      onDialogSuccess(
         decision.entranceFeeInvoiceOptions.createEntranceFeeInvoice &&
           result.data.entranceFeeInvoiceQueued
           ? "Xero contact created, linked, and entrance fee invoice queued"
@@ -615,6 +628,7 @@ export function MemberEditorDialog({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
+          ref={dialogContentRef}
           className="sm:max-w-2xl max-h-[90vh] overflow-y-auto"
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
@@ -630,7 +644,12 @@ export function MemberEditorDialog({
             </DialogDescription>
           </DialogHeader>
           {formError && (
-            <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+            <div
+              ref={formErrorRef}
+              role="alert"
+              tabIndex={-1}
+              className="scroll-mt-20 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+            >
               {formError}
             </div>
           )}

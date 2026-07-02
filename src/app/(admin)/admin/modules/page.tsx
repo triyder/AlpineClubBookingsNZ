@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MODULE_KEYS, type ModuleKey, type ModuleSettingsValues } from "@/config/modules";
+import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 type ModuleReadinessStatus =
   | "ready"
@@ -108,6 +109,9 @@ export default function AdminModulesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const pageRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const { scrollToError, scrollToTop } = useScrollToFeedback();
 
   async function loadModules() {
     setLoading(true);
@@ -136,6 +140,14 @@ export default function AdminModulesPage() {
   useEffect(() => {
     void loadModules();
   }, []);
+
+  useEffect(() => {
+    if (error) scrollToError(feedbackRef);
+  }, [error, scrollToError]);
+
+  useEffect(() => {
+    if (savedMessage) scrollToTop(pageRef);
+  }, [savedMessage, scrollToTop]);
 
   const modules = useMemo(() => {
     if (!payload || !draft) return [];
@@ -203,7 +215,7 @@ export default function AdminModulesPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div ref={pageRef} className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Modules</h1>
@@ -240,9 +252,12 @@ export default function AdminModulesPage() {
 
       {(error || savedMessage) && (
         <div
+          ref={feedbackRef}
+          role={error ? "alert" : "status"}
+          tabIndex={error ? -1 : undefined}
           className={
             error
-              ? "rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+              ? "scroll-mt-20 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 focus:outline-none"
               : "rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
           }
         >
