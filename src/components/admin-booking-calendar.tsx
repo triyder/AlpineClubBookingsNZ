@@ -65,7 +65,11 @@ export function AdminBookingCalendar() {
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
   const [availability, setAvailability] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
-  const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(new Set(ALL_STATUSES));
+  // Cancelled bookings are hidden by default to reduce noise; the CANCELLED
+  // toggle pill below re-enables them (filtering is purely client-side).
+  const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(
+    new Set(ALL_STATUSES.filter((status) => status !== "CANCELLED"))
+  );
 
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
   const currentPageParams = new URLSearchParams(searchParams.toString());
@@ -190,6 +194,7 @@ export function AdminBookingCalendar() {
             <button
               key={status}
               type="button"
+              aria-pressed={isOn}
               onClick={() => toggleStatus(status)}
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors border ${
                 isOn
