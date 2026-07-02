@@ -25,6 +25,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     "circle",
     "code",
     "data",
+    "details",
     "div",
     "dl",
     "dt",
@@ -52,6 +53,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     "span",
     "strong",
     "sub",
+    "summary",
     "sup",
     "svg",
     "table",
@@ -66,6 +68,9 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   ],
   allowedAttributes: {
     a: ["href", "name", "target", "rel"],
+    // "open" is a boolean state attribute (no scriptable surface); it lets
+    // CMS authors pre-expand an accordion item.
+    details: ["open"],
     img: ["src", "alt", "width", "height"],
     th: ["colspan", "rowspan"],
     td: ["colspan", "rowspan"],

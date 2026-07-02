@@ -299,6 +299,20 @@
     @apply mt-3 list-decimal space-y-2 pl-6;
   }
 
+  /* Native <details>/<summary> FAQ accordion items (#992). The default
+     disclosure marker is kept as the expand/collapse affordance. */
+  .website-legal-copy details {
+    @apply mt-3 rounded-xl border border-brand-ridge/20 bg-brand-mist/25 px-4 py-3;
+  }
+
+  .website-legal-copy summary {
+    @apply cursor-pointer font-heading text-lg font-semibold text-brand-charcoal marker:text-brand-gold;
+  }
+
+  .website-legal-copy details[open] > summary {
+    @apply mb-2;
+  }
+
   .website-legal-callout {
     @apply mt-4 rounded-2xl border border-brand-ridge/20 bg-brand-mist/45 p-5;
   }

@@ -29,6 +29,24 @@ describe("sanitizePageContentHtml", () => {
     expect(sanitizePageContentHtml(html)).toBe(html);
   });
 
+  it("keeps details/summary accordions, including the open state (#992)", () => {
+    const closed = "<details><summary>How do I book?</summary><p>A</p></details>";
+    expect(sanitizePageContentHtml(closed)).toBe(closed);
+
+    const open =
+      '<details open><summary class="faq-q">How do I book?</summary><p>A</p></details>';
+    expect(sanitizePageContentHtml(open)).toBe(open);
+  });
+
+  it("strips disallowed attributes and handlers from details/summary", () => {
+    expect(
+      sanitizePageContentHtml(
+        '<details ontoggle="alert(1)" style="position:fixed" name="grp">' +
+          '<summary onclick="alert(1)" id="s" open>Q</summary><p>A</p></details>',
+      ),
+    ).toBe("<details><summary>Q</summary><p>A</p></details>");
+  });
+
   it("strips script tags and their content", () => {
     expect(
       sanitizePageContentHtml('<p>ok</p><script>alert("x")</script>'),

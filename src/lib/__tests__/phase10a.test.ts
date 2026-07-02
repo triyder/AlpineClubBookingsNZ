@@ -30,6 +30,17 @@ describe("faq page content (F-PUB-04)", () => {
     expect(body).toContain("chore");
     expect(body).toContain("password");
   });
+
+  it("wraps every question in a native details/summary accordion item (#992)", () => {
+    const body = faq?.contentHtml ?? "";
+    const detailsCount = (body.match(/<details>/g) ?? []).length;
+    const summaryCount = (body.match(/<summary>/g) ?? []).length;
+
+    expect(detailsCount).toBeGreaterThan(0);
+    expect(summaryCount).toBe(detailsCount);
+    // The flat pre-accordion markup used <h3> question headings.
+    expect(body).not.toContain("<h3>");
+  });
 });
 
 // ─── Contact rate limit (F-PUB-03) ─────────────────────────────────────────

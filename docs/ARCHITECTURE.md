@@ -53,8 +53,8 @@ deploy/                         production proxy/runtime support files
 
 Important route groups:
 
-- `src/app/(public)` contains unauthenticated pages such as login, join, FAQ,
-  contact, reset password, nomination, and public token flows.
+- `src/app/(public)` contains unauthenticated pages such as login, register,
+  password reset, email verification, payment, and public token flows.
 - `src/app/(authenticated)` contains member dashboard, booking, profile, family,
   and booking-detail pages.
 - `src/app/(admin)` contains administrative operations for members, member CSV

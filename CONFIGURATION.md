@@ -131,7 +131,10 @@ menu.
   require double braces. Legacy single-brace syntax remains accepted only for
   non-photo tokens.
 - Content and header HTML are sanitised on save and again on render. The
-  allowlist lives in `src/lib/page-content-html.ts`.
+  allowlist lives in `src/lib/page-content-html.ts`. It includes native
+  `<details>`/`<summary>` elements (plus the boolean `open` attribute on
+  `<details>`), which the starter FAQ page uses for its collapsible
+  question-and-answer accordion.
 - The editor's image picker can insert images from three sources:
   database-backed image-library uploads, deployed branding files under
   `public/branding/`, and filesystem/image-manager files under the shared
