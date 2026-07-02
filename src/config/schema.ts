@@ -57,7 +57,15 @@ const ageTierSchema = z
 
 const socialLinksSchema = z
   .object({
-    facebook: z.string().url("facebook social link must be a valid URL").optional(),
+    // z.string().url() accepts any scheme (javascript:, data:, ...); the
+    // isHttpUrl refinement keeps social links http(s)-only like publicUrl.
+    facebook: z
+      .string()
+      .url("facebook social link must be a valid URL")
+      .refine(isHttpUrl, {
+        message: "facebook social link must be a valid http(s) URL",
+      })
+      .optional(),
   })
   .strict();
 

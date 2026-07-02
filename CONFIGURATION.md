@@ -37,7 +37,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `publicUrl`                                        | yes      | Canonical public origin with no trailing slash.                                                                  |
 | `emailFromName`                                    | yes      | Display name for outbound email sender headers.                                                                  |
 | `lodgeTravelNote`                                  | no       | Email reminder travel/location note.                                                                             |
-| `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer.                                                                        |
+| `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`.                              |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
 | `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |
@@ -178,6 +178,9 @@ reusable layout fragments that are not routable pages.
   allowlist as page content (`src/lib/page-content-html.ts`). Footer text
   tokens include `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`, and
   `{{facebook-url}}`; embed tokens are not supported in footer sections.
+- URL-bearing tokens are scheme-validated when they resolve: `{{facebook-url}}`
+  only renders http, https, or mailto values. Anything else is replaced with
+  the configured `publicUrl` (or `#`) and logged as a server warning.
 
 ## Website Site Banners
 

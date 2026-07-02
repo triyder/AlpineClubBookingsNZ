@@ -14,6 +14,7 @@ import {
 } from "@/config/club-identity";
 import { APP_CURRENCY } from "@/config/operational";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import logger from "@/lib/logger";
 import { extractImageDimensions } from "@/lib/media-image";
 import {
   embedTokenNames,
@@ -77,9 +78,46 @@ function escapeHtmlText(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// URL schemes a token value may safely carry into an href attribute. Mirrors
+// allowedSchemes in page-content-html.ts, whose sanitiser cannot vet token
+// values because tokens resolve after sanitisation.
+const SAFE_TOKEN_URL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+
+function isSafeTokenUrl(value: string): boolean {
+  try {
+    return SAFE_TOKEN_URL_SCHEMES.has(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+// Warn once per offending config value so a bad deploy shows up in the logs
+// without repeating on every render.
+const warnedUnsafeTokenUrls = new Set<string>();
+
+// Authors place URL tokens inside href attributes (the starter footer uses
+// <a href="{{facebook-url}}">), and because resolution runs after
+// sanitisation the sanitiser's scheme allowlist never sees the resolved
+// value. HTML-escaping does not neutralise a dangerous URL scheme, so
+// enforce the same http/https/mailto allowlist here before injection.
+function safeTokenUrl(token: string, value: string): string {
+  if (isSafeTokenUrl(value)) {
+    return value;
+  }
+  if (!warnedUnsafeTokenUrls.has(value)) {
+    warnedUnsafeTokenUrls.add(value);
+    logger.warn(
+      { token },
+      "Blocked text-token config value with a disallowed URL scheme; only http, https, and mailto URLs are rendered.",
+    );
+  }
+  return isSafeTokenUrl(CLUB_PUBLIC_URL) ? CLUB_PUBLIC_URL : "#";
+}
+
 // Exported for reuse by other sanitised HTML surfaces (lodge instructions).
-// Replacement values are HTML-escaped via escapeHtmlText, so this stays safe
-// to run after sanitisation.
+// Replacement values are HTML-escaped via escapeHtmlText and URL-bearing
+// tokens are additionally scheme-validated via safeTokenUrl, so this stays
+// safe to run after sanitisation.
 export async function resolveTextTokens(contentHtml: string): Promise<string> {
   TEXT_TOKEN_REGEX.lastIndex = 0;
   if (!TEXT_TOKEN_REGEX.test(contentHtml)) {
@@ -100,9 +138,12 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
       case "currency":
         return escapeHtmlText(APP_CURRENCY);
       case "facebook-url":
-        // Escaped like every other replacement, so the value stays safe both
-        // as visible text and inside a sanitised href attribute.
-        return escapeHtmlText(CLUB_FACEBOOK_URL ?? CLUB_PUBLIC_URL);
+        // Escaping keeps the value safe as visible text and attribute
+        // content, but not as an href target: a javascript: scheme survives
+        // HTML-escaping, so safeTokenUrl vets the scheme first.
+        return escapeHtmlText(
+          safeTokenUrl("facebook-url", CLUB_FACEBOOK_URL ?? CLUB_PUBLIC_URL),
+        );
       default:
         return "";
     }

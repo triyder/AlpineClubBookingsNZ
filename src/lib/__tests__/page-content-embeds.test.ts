@@ -1,13 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/club-identity", () => ({ CLUB_NAME: "Club <Name>" }));
+
+// Mutable identity state so URL-token tests can vary the configured values;
+// getters make the mocked module read the current state on every access.
+const identityState = vi.hoisted(() => ({
+  facebookUrl: undefined as string | undefined,
+  publicUrl: "https://club.example.org",
+}));
+
+vi.mock("@/config/club-identity", () => ({
+  CLUB_NAME: "Club <Name>",
+  get CLUB_FACEBOOK_URL() {
+    return identityState.facebookUrl;
+  },
+  get CLUB_PUBLIC_URL() {
+    return identityState.publicUrl;
+  },
+}));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn(async () => 42),
 }));
+// sanitizePageContentHtml is pure but its module imports the prisma client.
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
-import { buildEmbeddedBody } from "../page-content-embeds";
+import { buildEmbeddedBody, resolveTextTokens } from "../page-content-embeds";
+import { sanitizePageContentHtml } from "../page-content-html";
+import { starterSiteContent } from "../../../prisma/starter-site-content";
+import logger from "@/lib/logger";
 
 describe("buildEmbeddedBody", () => {
   it("preserves inline images when no gallery token is present", async () => {
@@ -108,5 +129,97 @@ describe("buildEmbeddedBody", () => {
         value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD &amp; GST.</p>",
       },
     ]);
+  });
+});
+
+describe("resolveTextTokens URL scheme validation", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    identityState.facebookUrl = undefined;
+    identityState.publicUrl = "https://club.example.org";
+    warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("passes an http(s) facebook URL through unchanged", async () => {
+    identityState.facebookUrl = "https://www.facebook.com/exampleclub";
+
+    const resolved = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+
+    expect(resolved).toBe(
+      '<a href="https://www.facebook.com/exampleclub">Facebook</a>',
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes a mailto value through unchanged", async () => {
+    identityState.facebookUrl = "mailto:social@example.org";
+
+    const resolved = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Contact</a>',
+    );
+
+    expect(resolved).toBe('<a href="mailto:social@example.org">Contact</a>');
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the public URL when no facebook URL is configured", async () => {
+    const resolved = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+
+    expect(resolved).toBe(
+      '<a href="https://club.example.org">Facebook</a>',
+    );
+  });
+
+  it("replaces a javascript: facebook URL with the public URL and warns once", async () => {
+    identityState.facebookUrl = "javascript:alert(document.cookie)";
+
+    const first = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+    const second = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+
+    expect(first).toBe('<a href="https://club.example.org">Facebook</a>');
+    expect(second).toBe(first);
+    expect(first).not.toContain("javascript:");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to # when the public URL is also unsafe", async () => {
+    identityState.facebookUrl = "javascript:void(0)";
+    identityState.publicUrl = "javascript:bad()";
+
+    const resolved = await resolveTextTokens(
+      '<a href="{{facebook-url}}">Facebook</a>',
+    );
+
+    expect(resolved).toBe('<a href="#">Facebook</a>');
+    expect(resolved).not.toContain("javascript:");
+  });
+
+  it("never renders a javascript: href through the starter footer path", async () => {
+    identityState.facebookUrl = "javascript:alert(1)";
+    const affiliations = starterSiteContent.find(
+      (section) => section.key === "FOOTER_AFFILIATIONS",
+    );
+    expect(affiliations).toBeDefined();
+
+    // Mirrors renderFooterSection in site-content.ts: sanitise the stored
+    // HTML first, then resolve text tokens on the sanitised output.
+    const sanitised = sanitizePageContentHtml(affiliations!.contentHtml);
+    const resolved = await resolveTextTokens(sanitised);
+
+    expect(resolved).not.toContain("javascript:");
+    expect(resolved).toContain('href="https://club.example.org"');
   });
 });
