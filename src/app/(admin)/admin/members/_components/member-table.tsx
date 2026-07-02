@@ -200,9 +200,11 @@ export function MemberTable({
                       member.accessRoles.map((role) => (
                         <Badge
                           key={role}
-                          variant={role === "ADMIN" ? "default" : "secondary"}
+                          variant={
+                            role.startsWith("ADMIN") ? "default" : "secondary"
+                          }
                           className={
-                            role === "ADMIN"
+                            role.startsWith("ADMIN")
                               ? "bg-blue-600 text-white hover:bg-blue-700"
                               : ""
                           }

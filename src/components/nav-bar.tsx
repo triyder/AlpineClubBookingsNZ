@@ -31,6 +31,7 @@ interface NavBarUser {
   name: string;
   email: string;
   role: string;
+  canAccessAdmin?: boolean;
   canAccessFinance?: boolean;
   isHutLeader?: boolean;
   isStayingGuest?: boolean;
@@ -68,7 +69,7 @@ export function getNavBarLinks(user: NavBarUser, features: FeatureFlags) {
           ? [viewLodgeLink]
           : []
       : []),
-    ...(user.role === "ADMIN" ? [adminLink] : []),
+    ...(user.canAccessAdmin || user.role === "ADMIN" ? [adminLink] : []),
   ];
 }
 

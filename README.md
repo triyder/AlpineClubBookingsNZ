@@ -74,7 +74,11 @@ fork for another organisation. See `NOTICE.md`.
    allocation, Internet Banking payments, address autocomplete, two-factor
    authentication, and Google Analytics default off until an admin enables
    them. General-purpose modules default on and can be disabled there.
-6. Use **Admin > Membership Types** to review the seeded seasonal membership
+6. Use **Admin > Members** to assign access roles. `Full Admin` keeps all
+   admin permissions; `Read-only Admin`, `Booking Office`, `Membership Officer`,
+   `Treasurer`, and `Content Manager` are bundled permissions that can be
+   combined on one login-enabled member for custom access.
+7. Use **Admin > Membership Types** to review the seeded seasonal membership
    types: Full, Associate, Life, School, Non-Member, and Family. Associate is
    the built-in Associate/Reserve-style type and can be renamed by the club.
    These records drive season-aware booking policy (`MEMBER_RATE`,
@@ -86,7 +90,7 @@ fork for another organisation. See `NOTICE.md`.
    previewing affected future bookings, drafts, waitlist records, and
    subscription history;
    existing future bookings are not automatically repriced by this change.
-7. Use **Admin > Committee** to review seeded committee master roles and
+8. Use **Admin > Committee** to review seeded committee master roles and
    member-linked committee assignments. Assignments remain hidden/unpublished
    until an admin explicitly enables their presentation flags; public contact
    options use only published, contactable assignments and deliver to the

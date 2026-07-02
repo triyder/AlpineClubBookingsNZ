@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,14 +25,12 @@ import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import { ExternalLink, Link2, Plus } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
+import { MemberAccessRolePicker } from "@/components/member-access-role-picker";
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import { getMissingFieldsForXeroCreate } from "@/lib/admin-member-detail-helpers";
 import type { MemberAddressValues } from "@/lib/member-address";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import {
-  ACCESS_ROLE_DESCRIPTIONS,
-  ACCESS_ROLE_LABELS,
-  ACCESS_ROLE_VALUES,
   financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
@@ -582,45 +579,15 @@ export function MemberEditDialog({
           </fieldset>
 
           <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">
-            <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
-              <legend className="px-1 text-sm font-medium">
-                Access Roles
-              </legend>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {ACCESS_ROLE_VALUES.map((role) => (
-                  <label
-                    key={role}
-                    className="flex items-start gap-3 rounded-md border border-slate-200 p-3"
-                  >
-                    <Checkbox
-                      checked={form.accessRoles.includes(role)}
-                      disabled={isSelf || !form.canLogin}
-                      onCheckedChange={(checked) =>
-                        toggleAccessRole(role, checked === true)
-                      }
-                    />
-                    <span className="space-y-1">
-                      <span className="block text-sm font-medium">
-                        {ACCESS_ROLE_LABELS[role]}
-                      </span>
-                      <span className="block text-xs text-muted-foreground">
-                        {ACCESS_ROLE_DESCRIPTIONS[role]}
-                      </span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              {isSelf && (
-                <p className="text-xs text-muted-foreground">
-                  You cannot change your own access roles.
-                </p>
-              )}
-              {!form.canLogin && (
-                <p className="text-xs text-muted-foreground">
-                  Access roles only apply to login-enabled records.
-                </p>
-              )}
-            </fieldset>
+            <MemberAccessRolePicker
+              accessRoles={form.accessRoles}
+              canLogin={form.canLogin}
+              disabled={isSelf}
+              disabledMessage={
+                isSelf ? "You cannot change your own access roles." : undefined
+              }
+              onToggleRole={toggleAccessRole}
+            />
             <div className="space-y-2">
               <Label>Age Tier</Label>
               <Select

@@ -276,7 +276,9 @@ off, is gated by Admin Modules and `src/proxy.ts` before route handlers run, and
 never replaces manual address entry.
 
 Access roles live in `MemberAccessRole` and are the normalized login/permission
-axis: `USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
+axis: `USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
+`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`,
+`FINANCE_ADMIN`, and `ORG`.
 `Member.role` remains a synchronized compatibility/classification field with
 `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
 club-created categories are membership types, not role enum values.
@@ -286,6 +288,14 @@ access-role rows. The canonical access-role constants and compatibility helpers
 live in `src/lib/access-roles.ts`; compatibility role constants stay in
 `src/lib/member-roles.ts` for old imports, membership classification, and
 provider-created non-member records.
+
+Admin authorization is area-based in `src/lib/admin-permissions.ts`. `ADMIN`
+has edit access everywhere; `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
+`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, and `FINANCE_ADMIN` are bundled
+permissions that merge when assigned together. `requireAdmin()` infers the
+requested admin path and HTTP method from proxy headers and enforces view/edit
+requirements centrally, while admin layout/sidebar rendering uses the same
+matrix for page access and navigation visibility.
 
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
@@ -465,8 +475,10 @@ disable cron with `CRON_ENABLED=false`.
 
 ## Security and Privacy Boundaries
 
-- Auth uses credentials sessions with explicit admin and finance guards.
-- Finance access is separate from general admin access.
+- Auth uses credentials sessions with explicit admin, admin-area, and finance
+  guards.
+- Finance access is separate from general admin access; `FINANCE_ADMIN` also
+  grants Treasurer edit access to finance admin routes.
 - Public bearer tokens are stored hashed or encrypted according to use case.
 - Logs, Sentry events, and webhook records should be redacted before storing or
   emitting sensitive values.

@@ -3,6 +3,10 @@ import type { AccessRole, FinanceAccessLevel, Role } from "@prisma/client";
 export const ACCESS_ROLE_VALUES = [
   "USER",
   "ADMIN",
+  "ADMIN_READONLY",
+  "ADMIN_BOOKINGS",
+  "ADMIN_MEMBERSHIP",
+  "ADMIN_CONTENT",
   "LODGE",
   "FINANCE_USER",
   "FINANCE_ADMIN",
@@ -13,19 +17,27 @@ export type AppAccessRole = (typeof ACCESS_ROLE_VALUES)[number];
 
 export const ACCESS_ROLE_LABELS: Record<AppAccessRole, string> = {
   USER: "User",
-  ADMIN: "Admin",
+  ADMIN: "Full Admin",
+  ADMIN_READONLY: "Read-only Admin",
+  ADMIN_BOOKINGS: "Booking Office",
+  ADMIN_MEMBERSHIP: "Membership Officer",
+  ADMIN_CONTENT: "Content Manager",
   LODGE: "Lodge",
-  FINANCE_USER: "Finance User",
-  FINANCE_ADMIN: "Finance Admin",
+  FINANCE_USER: "Finance Viewer",
+  FINANCE_ADMIN: "Treasurer",
   ORG: "Organisation",
 };
 
 export const ACCESS_ROLE_DESCRIPTIONS: Record<AppAccessRole, string> = {
   USER: "Can use normal member-facing account features.",
-  ADMIN: "Can access admin tools and manage club operations.",
+  ADMIN: "Can view and edit every admin area.",
+  ADMIN_READONLY: "Can view admin areas without making changes.",
+  ADMIN_BOOKINGS: "Can manage bookings, bed allocation, and lodge operations.",
+  ADMIN_MEMBERSHIP: "Can manage members, applications, and membership setup.",
+  ADMIN_CONTENT: "Can manage public website content, banners, and images.",
   LODGE: "Can use lodge kiosk and lodge operations tools.",
   FINANCE_USER: "Can view finance dashboard data.",
-  FINANCE_ADMIN: "Can manage finance dashboard syncs and mappings.",
+  FINANCE_ADMIN: "Can manage finance, payments, subscriptions, and Xero.",
   ORG: "Can use organisation self-service flows without member status.",
 };
 

@@ -67,16 +67,16 @@ describe("site style wizard", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
-    await screen.findByText("Fonts");
+    await screen.findByRole("heading", { name: "Fonts" });
 
     fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
-    await screen.findByText("Raw CSS");
+    await screen.findByRole("heading", { name: "Raw CSS" });
 
     fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
-    await screen.findByText("Logo");
+    await screen.findByRole("heading", { name: "Logo" });
 
     fireEvent.click(screen.getByRole("button", { name: "Save and next" }));
-    await screen.findByText("Review");
+    await screen.findByRole("heading", { name: "Review" });
 
     fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
 

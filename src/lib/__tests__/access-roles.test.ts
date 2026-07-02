@@ -43,11 +43,11 @@ describe("access role compatibility helpers", () => {
 
   it("normalizes explicit role lists before writing compatibility fields", () => {
     const roles = normalizeAssignableAccessRoles(
-      ["USER", "FINANCE_USER", "FINANCE_ADMIN", "USER"],
+      ["USER", "FINANCE_USER", "FINANCE_ADMIN", "ADMIN_BOOKINGS", "USER"],
       { canLogin: true },
     );
 
-    expect(roles).toEqual(["USER", "FINANCE_ADMIN"]);
+    expect(roles).toEqual(["USER", "FINANCE_ADMIN", "ADMIN_BOOKINGS"]);
     expect(legacyRoleFromAccessRoles(roles)).toBe("USER");
     expect(financeAccessLevelFromAccessRoles(roles)).toBe("MANAGER");
   });
@@ -72,6 +72,14 @@ describe("access role compatibility helpers", () => {
         accessRoles: [],
       }),
     ).toBe("USER");
+  });
+
+  it("does not project bundled admin roles into the legacy full-admin role", () => {
+    expect(legacyRoleFromAccessRoles(["ADMIN_READONLY"])).toBe("USER");
+    expect(legacyRoleFromAccessRoles(["ADMIN_BOOKINGS"])).toBe("USER");
+    expect(authorizationRoleFromAccessRoles({
+      accessRoles: [{ role: "ADMIN_MEMBERSHIP" }],
+    })).toBe("USER");
   });
 
   it("clears access roles for non-login records", () => {

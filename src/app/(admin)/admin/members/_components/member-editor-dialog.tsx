@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MemberAccessRolePicker } from "@/components/member-access-role-picker";
 import { MemberAddressFields } from "@/components/member-address-fields";
 import {
   Select,
@@ -27,9 +27,6 @@ import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee";
 import {
-  ACCESS_ROLE_DESCRIPTIONS,
-  ACCESS_ROLE_LABELS,
-  ACCESS_ROLE_VALUES,
   accessRolesFromCompatibilityFields,
   financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
@@ -879,40 +876,11 @@ export function MemberEditorDialog({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">
-              <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
-                <legend className="px-1 text-sm font-medium">
-                  Access Roles
-                </legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {ACCESS_ROLE_VALUES.map((role) => (
-                    <label
-                      key={role}
-                      className="flex items-start gap-3 rounded-md border border-slate-200 p-3"
-                    >
-                      <Checkbox
-                        checked={form.accessRoles.includes(role)}
-                        disabled={!form.canLogin}
-                        onCheckedChange={(checked) =>
-                          toggleAccessRole(role, checked === true)
-                        }
-                      />
-                      <span className="space-y-1">
-                        <span className="block text-sm font-medium">
-                          {ACCESS_ROLE_LABELS[role]}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {ACCESS_ROLE_DESCRIPTIONS[role]}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                {!form.canLogin && (
-                  <p className="text-xs text-muted-foreground">
-                    Access roles only apply to login-enabled records.
-                  </p>
-                )}
-              </fieldset>
+              <MemberAccessRolePicker
+                accessRoles={form.accessRoles}
+                canLogin={form.canLogin}
+                onToggleRole={toggleAccessRole}
+              />
               <div className="space-y-2">
                 <Label>Age Tier</Label>
                 <Select

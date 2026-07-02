@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { hasAdminAccess, type AppAccessRole } from "@/lib/access-roles";
+import {
+  getAdminRouteRequirement,
+  hasAdminAreaAccess,
+  type AdminAccessRequirement,
+} from "@/lib/admin-permissions";
+import {
+  REQUEST_METHOD_HEADER,
+  REQUEST_PATH_HEADER,
+} from "@/lib/internal-return-path";
 import { prisma } from "@/lib/prisma";
 import {
   isTwoFactorSessionBlocked,
@@ -29,6 +39,7 @@ type RequireActiveSessionResult =
 type RequireAdminOptions = {
   unauthenticatedResponse?: () => NextResponse;
   forbiddenResponse?: () => NextResponse;
+  permission?: AdminAccessRequirement | false;
 };
 
 type RequireActiveSessionOptions = RequireActiveSessionUserOptions & {
@@ -54,6 +65,25 @@ function twoFactorRequiredResponse() {
   );
 }
 
+async function inferAdminAccessRequirement(
+  options: RequireAdminOptions,
+): Promise<AdminAccessRequirement | null> {
+  if (options.permission === false) return null;
+  if (options.permission) return options.permission;
+
+  try {
+    const requestHeaders = await headers();
+    const pathname = requestHeaders.get(REQUEST_PATH_HEADER);
+    if (!pathname) return null;
+    return getAdminRouteRequirement(
+      pathname,
+      requestHeaders.get(REQUEST_METHOD_HEADER),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Shared admin auth helper. Returns the session on success; otherwise
  * a NextResponse with the correct 401 vs 403 split and the active
@@ -74,15 +104,18 @@ export async function requireAdmin(
     };
   }
 
-  const member = await prisma.member.findUnique({
-    where: { id: session.user.id },
-    select: {
-      active: true,
-      forcePasswordChange: true,
-      twoFactorEnabled: true,
-      accessRoles: { select: { role: true } },
-    },
-  });
+  const [member, requirement] = await Promise.all([
+    prisma.member.findUnique({
+      where: { id: session.user.id },
+      select: {
+        active: true,
+        forcePasswordChange: true,
+        twoFactorEnabled: true,
+        accessRoles: { select: { role: true } },
+      },
+    }),
+    inferAdminAccessRequirement(options),
+  ]);
 
   if (!member?.active) {
     return {
@@ -94,7 +127,11 @@ export async function requireAdmin(
     };
   }
 
-  if (!hasAdminAccess(member)) {
+  const hasRequiredAccess = requirement
+    ? hasAdminAreaAccess(member, requirement)
+    : hasAdminAccess(member);
+
+  if (!hasRequiredAccess) {
     return {
       ok: false,
       response: options.forbiddenResponse?.() ?? forbiddenResponse(),

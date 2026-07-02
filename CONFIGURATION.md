@@ -329,9 +329,13 @@ Seasonal membership type settings are database-backed and managed from
 Xero contact-group rules, and committee assignment are separate axes:
 
 - `MemberAccessRole` is the normalized access source for login permissions:
-  `USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
-  Runtime authorization must read these rows only. `session.user.role` is kept
-  only for display and older serialized shapes.
+  `USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`,
+  `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
+  Runtime authorization must read these rows only. `ADMIN` is the full-admin
+  bundle; the other `ADMIN_*` rows are read-only, booking office, membership
+  officer, and content manager bundles. Multiple rows may be combined for a
+  custom role. `session.user.role` is kept only for display and older
+  serialized shapes.
   `Member.role` remains a compatibility/classification field with only
   `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
   club-created categories live in `MembershipType`. `financeAccessLevel`
@@ -562,9 +566,10 @@ exact app request, and verify that `XERO_REDIRECT_URI` matches the deployed
 `/api/admin/xero/callback` URL. Then reconnect Xero from `/admin/xero` so fresh
 tokens carry the current scope set. Access is controlled per member by
 `MemberAccessRole` rows. `FINANCE_USER` can read the finance dashboard and
-finance viewer APIs; `FINANCE_ADMIN` can also run manager-only finance actions
-such as manual sync and report mapping writes. `ADMIN` and `LODGE` do not grant
-finance access by themselves, but mixed-role accounts such as `LODGE` plus
+finance viewer APIs; `FINANCE_ADMIN` is the Treasurer bundle and can also run
+manager-only finance actions such as manual sync, report mapping writes, and
+finance admin routes. `ADMIN` has full admin access, while `LODGE` does not
+grant finance access by itself. Mixed-role accounts such as `LODGE` plus
 `FINANCE_USER` are valid. The legacy `financeAccessLevel` field is kept
 synchronized for compatibility only; finance page and API guards ignore it and
 read `MemberAccessRole` rows.

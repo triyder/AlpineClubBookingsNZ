@@ -12,7 +12,10 @@ import {
   CSP_NONCE_HEADER,
   setSecurityHeaders,
 } from "./lib/csp";
-import { REQUEST_PATH_HEADER } from "./lib/internal-return-path";
+import {
+  REQUEST_METHOD_HEADER,
+  REQUEST_PATH_HEADER,
+} from "./lib/internal-return-path";
 
 export function getFeatureFlagBlockResponse(
   pathname: string,
@@ -63,6 +66,7 @@ export async function proxy(request: NextRequest) {
     REQUEST_PATH_HEADER,
     `${request.nextUrl.pathname}${request.nextUrl.search}`
   );
+  requestHeaders.set(REQUEST_METHOD_HEADER, request.method);
   requestHeaders.set("x-page-slug", pageSlug);
 
   const response = NextResponse.next({
@@ -89,6 +93,7 @@ export const config = {
         { type: "header", key: "purpose", value: "prefetch" },
       ],
     },
+    "/api/admin/:path*",
     "/api/admin/bed-allocation/:path*",
     "/api/admin/chores/:path*",
     "/api/admin/communications/:path*",

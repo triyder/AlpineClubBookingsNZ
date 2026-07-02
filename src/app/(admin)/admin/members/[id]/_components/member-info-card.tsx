@@ -92,7 +92,9 @@ export function MemberInfoCard({
                 accessRoles.map((role) => (
                   <Badge
                     key={role}
-                    variant={role === "ADMIN" ? "default" : "secondary"}
+                    variant={
+                      role.startsWith("ADMIN") ? "default" : "secondary"
+                    }
                   >
                     {ACCESS_ROLE_LABELS[role]}
                   </Badge>

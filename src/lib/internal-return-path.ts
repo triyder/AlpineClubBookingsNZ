@@ -2,6 +2,7 @@
 // the path being requested — used to build a login callbackUrl that returns the
 // visitor to where they were headed after they sign in.
 export const REQUEST_PATH_HEADER = "x-pathname";
+export const REQUEST_METHOD_HEADER = "x-request-method";
 
 const INTERNAL_RETURN_ORIGIN = "https://tacbookings.local";
 const MAX_RETURN_PATH_LENGTH = 2048;

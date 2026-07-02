@@ -62,6 +62,8 @@ import {
 } from "@/components/ui/sheet";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
+import { canViewAdminHref } from "@/lib/admin-permissions";
+import type { AppAccessRole } from "@/lib/access-roles";
 
 interface NavSection {
   label?: string;
@@ -290,12 +292,16 @@ const navSections: NavSection[] = [
 
 export function getVisibleAdminNavSections(
   features: FeatureFlags,
+  accessRoles?: readonly AppAccessRole[],
 ): NavSection[] {
   return navSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) =>
-        isFeatureHrefVisible(item.href, features),
+      items: section.items.filter(
+        (item) =>
+          isFeatureHrefVisible(item.href, features) &&
+          (!accessRoles ||
+            canViewAdminHref({ accessRoles, canLogin: true }, item.href)),
       ),
     }))
     .filter((section) => section.items.length > 0);
@@ -306,8 +312,9 @@ type AdminNavBadgeMap = Record<string, number>;
 export function getRenderedAdminNavSections(
   features: FeatureFlags,
   badges: AdminNavBadgeMap,
+  accessRoles?: readonly AppAccessRole[],
 ): NavSection[] {
-  return getVisibleAdminNavSections(features)
+  return getVisibleAdminNavSections(features, accessRoles)
     .map((section) =>
       section.label === NEEDS_ATTENTION_LABEL
         ? {
@@ -555,9 +562,11 @@ function useUnassignedHutLeaderDates(): number {
 
 function SidebarLinks({
   features,
+  accessRoles,
   onNavigate,
 }: {
   features: FeatureFlags;
+  accessRoles?: readonly AppAccessRole[];
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -633,8 +642,12 @@ function SidebarLinks({
     badges["/admin/hut-leaders"] = unassignedHutLeaderDates;
   }
 
-  const renderedNavSections = getRenderedAdminNavSections(features, badges);
-  const visibleNavSections = getVisibleAdminNavSections(features);
+  const renderedNavSections = getRenderedAdminNavSections(
+    features,
+    badges,
+    accessRoles,
+  );
+  const visibleNavSections = getVisibleAdminNavSections(features, accessRoles);
 
   // Highlight the most specific nav item whose href is a prefix of the current
   // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
@@ -734,7 +747,13 @@ function SidebarLinks({
   );
 }
 
-export function AdminSidebar({ features }: { features: FeatureFlags }) {
+export function AdminSidebar({
+  features,
+  accessRoles,
+}: {
+  features: FeatureFlags;
+  accessRoles?: readonly AppAccessRole[];
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -748,7 +767,7 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
           <span>Admin Panel</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3 pb-8">
-          <SidebarLinks features={features} />
+          <SidebarLinks features={features} accessRoles={accessRoles} />
         </div>
       </aside>
 
@@ -770,6 +789,7 @@ export function AdminSidebar({ features }: { features: FeatureFlags }) {
             <div className="flex-1 overflow-y-auto p-3 pb-8">
               <SidebarLinks
                 features={features}
+                accessRoles={accessRoles}
                 onNavigate={() => setMobileOpen(false)}
               />
             </div>

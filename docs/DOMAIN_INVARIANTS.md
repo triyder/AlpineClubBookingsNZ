@@ -68,10 +68,14 @@ contact/link history where required.
 
 Access role, seasonal membership type, age tier, Xero contact-group rule, and
 committee assignment are separate axes. `MemberAccessRole` controls application
-access (`USER`, `ADMIN`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`);
+access (`USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
+`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`,
+`FINANCE_ADMIN`, `ORG`);
 `Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
 `SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
 be used as a runtime permission gate or for new membership-category semantics.
+Bundled `ADMIN_*` rows are composed by the central admin permission matrix; they
+must not be projected into legacy `Member.role = ADMIN`.
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.

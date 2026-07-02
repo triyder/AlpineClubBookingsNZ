@@ -127,6 +127,55 @@ describe("requireAdmin", () => {
     }
   });
 
+  it("allows bundled admin roles when the requested admin area permits them", async () => {
+    mockAuth.mockResolvedValue({
+      user: {
+        id: "booking-office-1",
+        role: "USER",
+        accessRoles: [{ role: "ADMIN_BOOKINGS" }],
+      },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      role: "USER",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN_BOOKINGS" }],
+    });
+
+    const result = await requireAdmin({
+      permission: { area: "bookings", level: "edit" },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("blocks read-only admin roles from edit-level admin routes", async () => {
+    mockAuth.mockResolvedValue({
+      user: {
+        id: "readonly-admin-1",
+        role: "USER",
+        accessRoles: [{ role: "ADMIN_READONLY" }],
+      },
+    });
+    mockFindUnique.mockResolvedValue({
+      active: true,
+      forcePasswordChange: false,
+      role: "USER",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN_READONLY" }],
+    });
+
+    const result = await requireAdmin({
+      permission: { area: "bookings", level: "edit" },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+    }
+  });
+
   it("rejects inactive admins through the active-session check", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockFindUnique.mockResolvedValue({

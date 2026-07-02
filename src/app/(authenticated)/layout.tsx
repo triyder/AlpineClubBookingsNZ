@@ -10,6 +10,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
+import { hasAdminPortalAccess } from "@/lib/admin-permissions";
 import {
   hasAccessRole,
   hasFinanceViewerAccess,
@@ -117,6 +118,7 @@ export default async function AuthenticatedLayout({
     name: session.user.name ?? "Member",
     email: session.user.email ?? "",
     role: member.role,
+    canAccessAdmin: hasAdminPortalAccess(member),
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,

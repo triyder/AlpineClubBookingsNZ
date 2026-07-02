@@ -117,7 +117,9 @@ describe("site style route-group gating", () => {
     mocks.memberFindUnique.mockResolvedValue({
       active: true,
       forcePasswordChange: false,
+      role: "ADMIN",
       financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN" }],
     });
     mocks.loadEffectiveModuleFlags.mockResolvedValue({});
   });
