@@ -58,6 +58,17 @@ Booking changes must not orphan or desynchronize:
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
 
+A price reduction against an issued-but-unpaid Xero invoice (pay-on-account,
+no captured payment) is corrected for the full net delta — there is no captured
+money and therefore no cancellation-policy tier to apply — via a modification
+credit note against the primary invoice, which is never reissued. Consequently
+the true outstanding balance on such an invoice is the current `finalPrice`
+plus any billed change fee, i.e. the original total minus the modification
+credit notes already issued. Cancellation must clear that true outstanding and
+must not read the captured-amount mirror (`payment.amountCents`), which stays at
+the original total until asynchronous Xero reconciliation folds the credit note
+into `refundedAmountCents`.
+
 Cancelled-booking soft-delete may hide an operational duplicate only when it
 preserves the booking row and no external money/Xero history needs to remain
 operator-visible by default. Balanced internal modification deltas that net to

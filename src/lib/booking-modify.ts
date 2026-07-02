@@ -1629,9 +1629,17 @@ export async function applyPaymentAdjustments(
     settlementOptions,
     settlementMethod,
   });
+  // On a reduction against an issued Xero invoice (#1015): when a payment has
+  // been captured the credit note is policy-limited (selectedSettlement); when
+  // the invoice is issued but unpaid (pay-on-account, no captured payment) no
+  // policy tier applies — nothing was paid — so the invoice must be corrected
+  // for the full net delta, otherwise a `settlementOptions` of null leaves
+  // xeroRefund at 0 and the outstanding invoice keeps the removed guests.
   const xeroRefundAmountCents =
     hasIssuedXeroInvoice && netAmountCents < 0
-      ? selectedSettlement.amountCents
+      ? hasSettledPayment
+        ? selectedSettlement.amountCents
+        : Math.abs(netAmountCents)
       : 0;
   const xeroAdditionalAmountCents =
     hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;

@@ -284,6 +284,60 @@ describe("cancelBooking credit refunds", () => {
     });
   });
 
+  it("clears only the reduced outstanding balance on an unpaid invoice already credited by a prior reduction (#1015)", async () => {
+    // A prior guest removal issued a full-delta modification credit note
+    // against the primary invoice (finalPrice 10000 -> 5000) but never
+    // reissued it, so payment.amountCents stays at the original 10000 and
+    // refundedAmountCents is still 0 until async Xero reconciliation folds in
+    // the credit note. Cancelling in that window must clear the true
+    // outstanding (finalPrice 5000), not the stale amountCents (10000), or the
+    // total credit notes exceed the invoice.
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_3",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 5000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_3",
+        bookingId: "booking_3",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "PROCESSING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_3",
+        xeroInvoiceId: "inv_3",
+        additionalPaymentStatus: null,
+      },
+    });
+
+    const result = await cancelBooking(
+      "booking_3",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "booking_3",
+        refundAmountCents: 5000,
+      },
+      {
+        createdByMemberId: "member_1",
+      }
+    );
+  });
+
   it("waits for Stripe cancellation before finalising an unpaid booking cancellation", async () => {
     let releaseCancellation: (() => void) | null = null;
 
