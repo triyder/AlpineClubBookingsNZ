@@ -18,6 +18,9 @@ const mockTx = {
     updateMany: vi.fn(),
     deleteMany: vi.fn(),
   },
+  bookingGuest: {
+    findMany: vi.fn(),
+  },
   payment: {
     create: vi.fn(),
     upsert: vi.fn(),
@@ -44,6 +47,9 @@ vi.mock("@/lib/prisma", () => ({
     payment: {
       create: vi.fn(),
       upsert: vi.fn(),
+    },
+    bookingGuest: {
+      findMany: vi.fn(),
     },
     member: {
       count: vi.fn(),
@@ -200,6 +206,7 @@ const mockPrisma = prisma as unknown as {
     deleteMany: ReturnType<typeof vi.fn>;
   };
   payment: { create: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
+  bookingGuest: { findMany: ReturnType<typeof vi.fn> };
   member: { count: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   memberSubscription: { findFirst: ReturnType<typeof vi.fn> };
   familyGroupMember: { findMany: ReturnType<typeof vi.fn> };
@@ -265,10 +272,12 @@ beforeEach(() => {
     guests: [{ id: "g1" }],
   });
   mockTx.booking.update.mockResolvedValue({});
+  mockTx.bookingGuest.findMany.mockResolvedValue([]);
   mockTx.payment.create.mockResolvedValue({});
   mockTx.season.findMany.mockResolvedValue([]);
   mockTx.promoRedemption.aggregate.mockResolvedValue({ _sum: { freeNightsUsed: 0 } });
   mockTx.promoCodeAssignment.findMany.mockResolvedValue([]);
+  mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
   mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-1" });
   mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mockRecordInternetBankingPaymentTransaction.mockResolvedValue(undefined);
@@ -333,6 +342,57 @@ describe("Issue 7: Draft Booking Creation", () => {
     expect(mockTx.$executeRaw).toHaveBeenCalled();
     expect(mockTx.booking.create).toHaveBeenCalled();
     expect(mockPrisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate member nights before creating another booking", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([
+      {
+        id: "existing-guest",
+        memberId: "member-1",
+        firstName: "Alice",
+        lastName: "Smith",
+        stayStart: null,
+        stayEnd: null,
+        nights: [],
+        member: { firstName: "Alice", lastName: "Smith" },
+        booking: {
+          id: "existing-booking",
+          memberId: "member-1",
+          status: "DRAFT",
+          checkIn: new Date(`${checkInDate}T00:00:00.000Z`),
+          checkOut: new Date(`${checkOutDate}T00:00:00.000Z`),
+          member: { firstName: "Alice", lastName: "Smith" },
+          guests: [{ id: "existing-guest", memberId: "member-1" }],
+        },
+      },
+    ]);
+
+    const res = await createBooking(makeBookingBody({
+      guests: [
+        {
+          firstName: "Alice",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "member-1",
+        },
+      ],
+    }));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "BOOKING_MEMBER_NIGHT_CONFLICT",
+      conflicts: [
+        expect.objectContaining({
+          memberId: "member-1",
+          bookingId: "existing-booking",
+          conflictingNights: ["2026-12-01", "2026-12-02"],
+        }),
+      ],
+    });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockTx.booking.create).not.toHaveBeenCalled();
   });
 
   it("draft booking does NOT call sendBookingConfirmedEmail or admin alert", async () => {

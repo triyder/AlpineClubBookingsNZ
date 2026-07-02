@@ -21,7 +21,7 @@ import {
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
-import { CreditCard, Landmark } from "lucide-react";
+import { CreditCard, ExternalLink, Landmark, UserMinus } from "lucide-react";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -75,6 +75,20 @@ interface GuestProfileRequiredMember {
     | "own_login_required"
     | "pending_admin_approval"
     | "contact_admin";
+}
+
+interface BookingMemberNightConflict {
+  memberId: string;
+  memberName: string;
+  bookingId: string;
+  bookingStatus: string;
+  bookingOwnerName: string;
+  bookingCheckIn: string;
+  bookingCheckOut: string;
+  guestId: string;
+  conflictingNights: string[];
+  canOpenBooking: boolean;
+  canSelfRemove: boolean;
 }
 
 interface RoomOption {
@@ -205,6 +219,8 @@ export default function BookPage() {
   const [workPartyError, setWorkPartyError] = useState("");
   const [workPartyClearedNotice, setWorkPartyClearedNotice] = useState<string | null>(null);
   const [guestProfileBlocks, setGuestProfileBlocks] = useState<GuestProfileRequiredMember[]>([]);
+  const [memberNightConflicts, setMemberNightConflicts] = useState<BookingMemberNightConflict[]>([]);
+  const [removingConflictGuestId, setRemovingConflictGuestId] = useState<string | null>(null);
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
   const requiresAdminReviewLocal = (() => {
     if (guests.length === 0) return false;
@@ -258,6 +274,7 @@ export default function BookPage() {
     setAppliedPromo(null);
     setPriceQuote(null);
     setUseCredit(false);
+    setMemberNightConflicts([]);
     setGuests((current) =>
       enabled ? withDefaultGuestStayRanges(current) : clearGuestStayRanges(current)
     );
@@ -268,6 +285,7 @@ export default function BookPage() {
     setAppliedPromo(null);
     setPriceQuote(null);
     setUseCredit(false);
+    setMemberNightConflicts([]);
     if (enabled) {
       // Multiple date ranges supersedes the simple per-guest date inputs.
       setPerGuestDatesEnabled(false);
@@ -282,6 +300,7 @@ export default function BookPage() {
     setAppliedPromo(null);
     setPriceQuote(null);
     setUseCredit(false);
+    setMemberNightConflicts([]);
   }
 
   function validateGuestStayRanges(guestList: GuestData[]): string | null {
@@ -458,6 +477,7 @@ export default function BookPage() {
     setAppliedPromo(null);
     setPriceQuote(null);
     setUseCredit(false);
+    setMemberNightConflicts([]);
     setGuests([
       ...guests,
       {
@@ -483,6 +503,20 @@ export default function BookPage() {
     );
     setGuestProfileBlocks(data.members || []);
     setErrorPaymentTargets([]);
+    setMemberNightConflicts([]);
+  }
+
+  function handleMemberNightConflict(data: {
+    error?: string;
+    conflicts?: BookingMemberNightConflict[];
+  }) {
+    setError(
+      data.error ||
+        "One or more members are already on a booking for these nights."
+    );
+    setMemberNightConflicts(data.conflicts || []);
+    setGuestProfileBlocks([]);
+    setErrorPaymentTargets([]);
   }
 
   function handleBookingApiError(data: Record<string, unknown>, fallback: string) {
@@ -493,10 +527,68 @@ export default function BookPage() {
       });
       return;
     }
+    if (data.code === "BOOKING_MEMBER_NIGHT_CONFLICT") {
+      handleMemberNightConflict(data as {
+        error?: string;
+        conflicts?: BookingMemberNightConflict[];
+      });
+      return;
+    }
 
     setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
     setError(typeof data.error === "string" ? data.error : fallback);
     setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
+  }
+
+  function formatConflictNights(nights: string[]) {
+    if (nights.length === 0) return "the selected nights";
+    if (nights.length === 1) return nights[0];
+    if (nights.length === 2) return nights.join(" and ");
+    return `${nights.length} nights`;
+  }
+
+  function formatConflictStatus(status: string) {
+    return status.toLowerCase().split("_").join(" ");
+  }
+
+  async function handleRemoveConflictGuest(conflict: BookingMemberNightConflict) {
+    setRemovingConflictGuestId(conflict.guestId);
+    try {
+      const res = await fetch(
+        `/api/bookings/${conflict.bookingId}/guests/${conflict.guestId}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(
+          typeof data.error === "string"
+            ? data.error
+            : "Failed to remove you from that booking.",
+        );
+        return;
+      }
+
+      const nextConflicts = memberNightConflicts.filter(
+        (item) =>
+          item.bookingId !== conflict.bookingId || item.guestId !== conflict.guestId,
+      );
+      setMemberNightConflicts(nextConflicts);
+      setError(
+        nextConflicts.length > 0
+          ? "One or more members are already on a booking for these nights."
+          : "",
+      );
+
+      if (nextConflicts.length === 0 && step !== "review") {
+        void handleGuestsDone();
+      }
+    } catch {
+      setError("Failed to remove you from that booking.");
+    } finally {
+      setRemovingConflictGuestId(null);
+    }
   }
 
   async function handleDateSelect(ci: Date, co: Date) {
@@ -504,6 +596,7 @@ export default function BookPage() {
     setCheckOut(co);
     setError("");
     setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
     setAppliedPromo(null);
     setPriceQuote(null);
     setUseCredit(false);
@@ -542,6 +635,7 @@ export default function BookPage() {
 
   async function handleGuestsDone() {
     setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
     if (guests.length === 0) {
       setError("Add at least one guest");
       return;
@@ -569,6 +663,7 @@ export default function BookPage() {
     }
 
     setError("");
+    setMemberNightConflicts([]);
     setPriceLoading(true);
 
     // Fetch price quote
@@ -651,6 +746,7 @@ export default function BookPage() {
     setError("");
     setErrorPaymentTargets([]);
     setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
     setShowWaitlistPrompt(false);
     const checkInStr = formatLocalDateOnly(checkIn!);
     const checkOutStr = formatLocalDateOnly(checkOut!);
@@ -712,6 +808,7 @@ export default function BookPage() {
     setError("");
     setErrorPaymentTargets([]);
     setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
     const checkInStr = formatLocalDateOnly(checkIn!);
     const checkOutStr = formatLocalDateOnly(checkOut!);
 
@@ -760,6 +857,7 @@ export default function BookPage() {
     setError("");
     setErrorPaymentTargets([]);
     setGuestProfileBlocks([]);
+    setMemberNightConflicts([]);
     const checkInStr = formatLocalDateOnly(checkIn!);
     const checkOutStr = formatLocalDateOnly(checkOut!);
 
@@ -1021,6 +1119,60 @@ export default function BookPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+          {memberNightConflicts.length > 0 && (
+            <div className="mt-3 space-y-3">
+              {memberNightConflicts.map((conflict) => (
+                <div
+                  key={`${conflict.bookingId}-${conflict.guestId}`}
+                  className="rounded-md border border-red-200 bg-white/70 p-3"
+                >
+                  <p className="font-medium text-red-800">
+                    {conflict.memberName}
+                  </p>
+                  <p className="mt-1">
+                    Already booked on {formatConflictNights(conflict.conflictingNights)} in a{" "}
+                    {formatConflictStatus(conflict.bookingStatus)} booking owned by{" "}
+                    {conflict.bookingOwnerName}.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {conflict.canOpenBooking && (
+                      <Button
+                        asChild
+                        size="sm"
+                        variant="outline"
+                        className="border-red-200 text-red-800 hover:bg-red-100"
+                      >
+                        <Link href={`/bookings/${conflict.bookingId}`}>
+                          <ExternalLink className="mr-2 h-4 w-4" />
+                          Open booking
+                        </Link>
+                      </Button>
+                    )}
+                    {conflict.canSelfRemove && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-red-200 text-red-800 hover:bg-red-100"
+                        onClick={() => void handleRemoveConflictGuest(conflict)}
+                        disabled={removingConflictGuestId === conflict.guestId}
+                      >
+                        <UserMinus className="mr-2 h-4 w-4" />
+                        {removingConflictGuestId === conflict.guestId
+                          ? "Removing..."
+                          : "Remove me from this booking"}
+                      </Button>
+                    )}
+                  </div>
+                  {!conflict.canOpenBooking && !conflict.canSelfRemove && (
+                    <p className="mt-2 text-red-600">
+                      Ask the booking owner or an admin to update that booking before continuing.
+                    </p>
+                  )}
+                </div>
+              ))}
             </div>
           )}
           {errorPaymentTargets.length > 0 && (

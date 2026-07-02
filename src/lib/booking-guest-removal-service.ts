@@ -1,4 +1,4 @@
-import type { AgeTier, Prisma } from "@prisma/client";
+import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import {
   type SeasonRateData,
 } from "@/lib/pricing";
@@ -19,6 +19,10 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { calculateGuestRemovalPaymentImpact } from "@/lib/booking-guest-removal-payment";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getSeasonYear } from "@/lib/utils";
+import {
+  getTodayDateOnly,
+  normalizeDateOnlyForTimeZone,
+} from "@/lib/date-only";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -43,6 +47,17 @@ export type RemoveBookingGuestResult = {
   oldGuestCount: number;
   bookingModificationId: string;
 };
+
+const SELF_REMOVABLE_GUEST_BOOKING_STATUSES = new Set<string>([
+  BookingStatus.DRAFT,
+  BookingStatus.PENDING,
+  BookingStatus.PAYMENT_PENDING,
+  BookingStatus.CONFIRMED,
+  BookingStatus.PAID,
+  BookingStatus.WAITLISTED,
+  BookingStatus.WAITLIST_OFFERED,
+  BookingStatus.AWAITING_REVIEW,
+]);
 
 type PromoRedemptionWithTargets = {
   promoCode: {
@@ -123,14 +138,45 @@ export async function removeBookingGuestInTransaction({
     throw new BookingGuestRemovalError("Booking not found", 404);
   }
 
-  if (booking.memberId !== actorMemberId && actorRole !== "ADMIN") {
+  const guestToRemove = booking.guests.find((guest) => guest.id === guestId);
+  const isOwnerOrAdmin = booking.memberId === actorMemberId || actorRole === "ADMIN";
+  const isSelfRemoval =
+    !isOwnerOrAdmin && guestToRemove?.memberId === actorMemberId;
+  const isLinkedGuestViewer = booking.guests.some(
+    (guest) => guest.memberId === actorMemberId,
+  );
+
+  if (!isOwnerOrAdmin && !isLinkedGuestViewer) {
     throw new BookingGuestRemovalError("Forbidden", 403);
   }
 
-  if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+  if (!guestToRemove) {
+    throw new BookingGuestRemovalError(
+      isOwnerOrAdmin ? "Guest not found on this booking" : "Forbidden",
+      isOwnerOrAdmin ? 404 : 403,
+    );
+  }
+
+  if (!isOwnerOrAdmin && !isSelfRemoval) {
+    throw new BookingGuestRemovalError("Forbidden", 403);
+  }
+
+  if (
+    !isSelfRemoval &&
+    !["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)
+  ) {
     throw new BookingGuestRemovalError(
       "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
       400
+    );
+  }
+  if (
+    isSelfRemoval &&
+    !SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(booking.status)
+  ) {
+    throw new BookingGuestRemovalError(
+      "You cannot remove yourself from this booking in its current status",
+      400,
     );
   }
 
@@ -140,22 +186,26 @@ export async function removeBookingGuestInTransaction({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
-  if (!editPolicy.canModify) {
+  const selfRemovalIsFuture =
+    isSelfRemoval &&
+    normalizeDateOnlyForTimeZone(booking.checkIn) > getTodayDateOnly();
+  if (!isSelfRemoval && !editPolicy.canModify) {
     throw new BookingGuestRemovalError(
       editPolicy.reason ?? "This booking cannot be modified",
       400
     );
   }
-  if (editPolicy.mode !== "future") {
+  if (isSelfRemoval && !selfRemovalIsFuture) {
+    throw new BookingGuestRemovalError(
+      "Only future booking guests can remove themselves from another member's booking",
+      400,
+    );
+  }
+  if (!isSelfRemoval && editPolicy.mode !== "future") {
     throw new BookingGuestRemovalError(
       "Use the full booking edit flow for in-progress booking guest changes",
       400
     );
-  }
-
-  const guestToRemove = booking.guests.find((guest) => guest.id === guestId);
-  if (!guestToRemove) {
-    throw new BookingGuestRemovalError("Guest not found on this booking", 404);
   }
 
   if (booking.guests.length <= 1) {

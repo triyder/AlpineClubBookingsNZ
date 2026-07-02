@@ -21,6 +21,13 @@ To verify in later review: exact terminal transitions, capacity-holding
 statuses, non-member hold expiry, school group `CONFIRMED` semantics, and
 payment-failure back paths.
 
+Booking quote and create paths reject a linked member who is already present on
+another live booking for any requested lodge night. The guard covers draft,
+pending, confirmed/paid/completed, waitlist, offered, and admin-review bookings,
+but does not change capacity-holding status rules. A member can open their own
+conflicting booking, and a linked guest can remove only themselves from another
+future booking when they are not the last guest.
+
 ### BookingEvent Scope
 
 `BookingEvent` is a durable narrative fact store, not the complete transition

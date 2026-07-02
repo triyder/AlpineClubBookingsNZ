@@ -287,6 +287,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       ),
     },
     bookingGuest: {
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
         const guest = { id: "g2", ...data };
         createdGuests.push(guest);
@@ -507,6 +508,72 @@ describe("PUT /api/bookings/[id]/modify", () => {
         onBehalfOfMemberId: null,
       }
     );
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("rejects batch add when a linked member is already booked elsewhere", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    tx.bookingGuest.findMany.mockResolvedValue([
+      {
+        id: "existing-guest",
+        memberId: "guest-member-1",
+        firstName: "Bob",
+        lastName: "Jones",
+        stayStart: null,
+        stayEnd: null,
+        nights: [],
+        member: { firstName: "Bob", lastName: "Jones" },
+        booking: {
+          id: "existing-booking",
+          memberId: "other-owner",
+          status: "CONFIRMED",
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          member: { firstName: "Other", lastName: "Owner" },
+          guests: [
+            { id: "existing-owner", memberId: "other-owner" },
+            { id: "existing-guest", memberId: "guest-member-1" },
+          ],
+        },
+      },
+    ]);
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [
+          {
+            firstName: "Bob",
+            lastName: "Jones",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "guest-member-1",
+          },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "BOOKING_MEMBER_NIGHT_CONFLICT",
+      conflicts: [
+        expect.objectContaining({
+          memberId: "guest-member-1",
+          bookingId: "existing-booking",
+        }),
+      ],
+    });
     expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   }, 10_000);
 

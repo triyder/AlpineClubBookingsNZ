@@ -66,6 +66,7 @@ import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import type { GroupDiscountConfig } from "@/lib/pricing";
+import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
@@ -645,6 +646,13 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
 
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    await assertNoBookingMemberNightConflicts(tx, {
+      actorMemberId: sessionUserId,
+      actorRole: isOnBehalf ? "ADMIN" : "USER",
+      checkIn,
+      checkOut,
+      guests,
+    });
     const draftExpiresAt = review.blockForReview
       ? null
       : new Date(Date.now() + 72 * 60 * 60 * 1000);
@@ -953,6 +961,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   try {
     booking = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await assertNoBookingMemberNightConflicts(tx, {
+        actorMemberId: sessionUserId,
+        actorRole: isOnBehalf ? "ADMIN" : "USER",
+        checkIn,
+        checkOut,
+        guests,
+      });
 
       const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
       const capacityCheck = await checkCapacityForGuestRanges(
@@ -1551,6 +1566,13 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
 
   const { newBooking, position } = await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+    await assertNoBookingMemberNightConflicts(tx, {
+      actorMemberId: sessionUserId,
+      actorRole: isOnBehalf ? "ADMIN" : "USER",
+      checkIn,
+      checkOut,
+      guests,
+    });
 
     const createdBooking = await tx.booking.create({
       data: {

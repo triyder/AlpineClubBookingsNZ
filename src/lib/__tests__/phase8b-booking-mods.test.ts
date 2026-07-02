@@ -40,6 +40,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mockUpdate,
     },
     bookingGuest: {
+      findMany: mockFindMany,
       create: mockCreate,
       update: mockUpdate,
       delete: mockDelete,
@@ -176,6 +177,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       }),
     },
     bookingGuest: {
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new-g", ...data })),
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
@@ -850,6 +852,75 @@ describe("POST /api/bookings/[id]/guests", () => {
     expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   });
 
+  it("returns member-night conflicts when adding a linked guest already booked elsewhere", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    tx.member.findMany.mockResolvedValue([
+      {
+        id: "guest-member-1",
+        active: true,
+        ageTier: "ADULT",
+        firstName: "Bob",
+        lastName: "Jones",
+      },
+    ]);
+    tx.bookingGuest.findMany.mockResolvedValue([
+      {
+        id: "existing-guest",
+        memberId: "guest-member-1",
+        firstName: "Bob",
+        lastName: "Jones",
+        stayStart: null,
+        stayEnd: null,
+        nights: [],
+        member: { firstName: "Bob", lastName: "Jones" },
+        booking: {
+          id: "existing-booking",
+          memberId: "other-owner",
+          status: "CONFIRMED",
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          member: { firstName: "Other", lastName: "Owner" },
+          guests: [
+            { id: "existing-owner", memberId: "other-owner" },
+            { id: "existing-guest", memberId: "guest-member-1" },
+          ],
+        },
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [
+          {
+            firstName: "Bob",
+            lastName: "Jones",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "guest-member-1",
+          },
+        ],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({
+      code: "BOOKING_MEMBER_NIGHT_CONFLICT",
+      conflicts: [
+        expect.objectContaining({
+          memberId: "guest-member-1",
+          bookingId: "existing-booking",
+        }),
+      ],
+    });
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+  });
+
   it("successfully adds guests and recalculates price", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
@@ -1099,6 +1170,51 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g1", { method: "DELETE" });
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g1" }) });
     expect(res.status).toBe(403);
+  });
+
+  it("lets a linked future guest remove themselves from another member's booking", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "guest-member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({
+      status: "DRAFT",
+      payment: null,
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true, memberId: "guest-member-1", priceCents: 5000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
+
+    expect(res.status).toBe(200);
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({ where: { id: "g2" } });
+    expect(tx.bookingModification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ memberId: "guest-member-1" }),
+      })
+    );
+  });
+
+  it("does not let a linked guest remove someone else", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "guest-member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true, memberId: "guest-member-1", priceCents: 5000 },
+        { id: "g3", bookingId: "bk1", firstName: "Carol", lastName: "Jones", ageTier: "ADULT", isMember: true, memberId: "member-3", priceCents: 5000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g3", { method: "DELETE" });
+    const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g3" }) });
+
+    expect(res.status).toBe(403);
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
   });
 
   it("returns 400 for non-modifiable booking", async () => {

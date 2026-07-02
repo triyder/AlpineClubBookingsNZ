@@ -85,6 +85,7 @@ import {
 } from "@/lib/date-only";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getSeasonYear } from "@/lib/utils";
+import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 
 export type BatchModifyInput = {
   checkIn?: string;
@@ -678,6 +679,15 @@ export async function prepareGuestPlan(
       400,
     );
   }
+
+  await assertNoBookingMemberNightConflicts(tx, {
+    actorMemberId: actorId,
+    actorRole: role,
+    checkIn: newCheckIn,
+    checkOut: newCheckOut,
+    guests: guestsForPricing,
+    excludeBookingId: booking.id,
+  });
 
   const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
   const adminReviewReason = requiresAdminReview

@@ -56,6 +56,11 @@ import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
 } from "@/lib/access-roles";
+import {
+  assertNoBookingMemberNightConflicts,
+  BookingMemberNightConflictError,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -254,6 +259,15 @@ export async function POST(
         }
         throw error;
       }
+
+      await assertNoBookingMemberNightConflicts(tx, {
+        actorMemberId: session.user.id,
+        actorRole,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        guests: normalizedNewGuests,
+        excludeBookingId: bookingId,
+      });
 
       const seasonYear = getSeasonYear(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
@@ -745,6 +759,12 @@ export async function POST(
       return NextResponse.json(
         getBookingGuestValidationErrorResponse(err),
         { status: err.status }
+      );
+    }
+    if (err instanceof BookingMemberNightConflictError) {
+      return NextResponse.json(
+        getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
       );
     }
     if (err instanceof ApiError) {
