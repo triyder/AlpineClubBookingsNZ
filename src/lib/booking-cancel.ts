@@ -391,11 +391,20 @@ async function performBookingCancellation(
     }
     await cleanupPromoRedemption(bookingId);
 
+    // Clear the outstanding balance on an unpaid issued invoice. The true
+    // amount owed is the current finalPrice plus any billed change fee: a
+    // prior reduction issues a modification credit note against the primary
+    // invoice but never reissues it, so the invoice's outstanding balance is
+    // originalTotal minus those credit notes = finalPrice. Reading
+    // `amountCents - refundedAmountCents` instead over-credits during the
+    // window before async Xero reconciliation folds the modification credit
+    // note into refundedAmountCents (the mirror stays at the original total),
+    // issuing a clearing credit note larger than the invoice (#1015). The old
+    // `Math.max` only ever picked that stale term in exactly that leak window;
+    // for price increases (billed via a separate supplementary invoice) and
+    // for unchanged bookings finalPrice already equals the true outstanding.
     const xeroClearingAmountCents = booking.payment?.xeroInvoiceId
-      ? Math.max(
-          booking.payment.amountCents - booking.payment.refundedAmountCents,
-          booking.finalPriceCents + booking.payment.changeFeeCents
-        )
+      ? booking.finalPriceCents + booking.payment.changeFeeCents
       : 0;
 
     if (booking.payment?.id && xeroClearingAmountCents > 0) {

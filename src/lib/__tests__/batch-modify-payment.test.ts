@@ -1543,6 +1543,79 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
   });
 
+  it("corrects an unpaid pay-on-account Xero invoice for the full delta on a batch reduction (#1015)", async () => {
+    const booking = makeBooking({
+      status: "CONFIRMED",
+      totalPriceCents: 10000,
+      finalPriceCents: 10000,
+    });
+    // Pay-on-account: Xero invoice issued but not yet paid, so no captured
+    // payment. hasCapturedPayment() is false, settlementOptions is null, and
+    // before the fix xeroRefundAmountCents collapsed to 0 -> classify 'none'
+    // -> the outstanding invoice kept the removed guest.
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.payment = {
+      ...booking.payment!,
+      amountCents: 10000,
+      status: "PENDING",
+      source: "INTERNET_BANKING",
+      stripePaymentIntentId: null,
+      stripeCustomerId: null,
+      xeroInvoiceId: "inv_unpaid_1",
+    };
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    // No settlementMethod: an unpaid invoice has no policy tier / captured
+    // funds, so the endpoint must not demand a card/credit choice.
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"] }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(0);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 5000,
+        bookingModificationId: "mod_1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+  });
+
   it("caps partially refunded Stripe reductions at the remaining refundable balance", async () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
