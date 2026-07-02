@@ -7,12 +7,14 @@ const {
   mockNextAuth,
   mockRawAuth,
   mockLoadEffectiveModuleFlags,
+  mockConsumeTwoFactorSessionChallenge,
 } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockFindFirst: vi.fn(),
   mockUpdate: vi.fn(),
   mockRawAuth: vi.fn(),
   mockLoadEffectiveModuleFlags: vi.fn(),
+  mockConsumeTwoFactorSessionChallenge: vi.fn(),
   mockNextAuth: vi.fn(() => ({
     handlers: {},
     signIn: vi.fn(),
@@ -66,6 +68,10 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mockLoadEffectiveModuleFlags,
 }));
 
+vi.mock("@/lib/two-factor", () => ({
+  consumeTwoFactorSessionChallenge: mockConsumeTwoFactorSessionChallenge,
+}));
+
 import { auth, authConfig } from "@/lib/auth";
 
 describe("auth session refresh", () => {
@@ -76,6 +82,8 @@ describe("auth session refresh", () => {
     mockRawAuth.mockReset();
     mockLoadEffectiveModuleFlags.mockReset();
     mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: false });
+    mockConsumeTwoFactorSessionChallenge.mockReset();
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(false);
   });
 
   it("refreshes a stale admin JWT role from the database", async () => {
@@ -185,8 +193,58 @@ describe("auth session refresh", () => {
     );
   });
 
-  it("keeps a session verified after the server two-factor challenge update", async () => {
+  it("ignores a forged session update that claims twoFactorVerified without a challenge token", async () => {
     mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
+      forcePasswordChange: false,
+      emailVerified: true,
+      passwordChangedAt: null,
+      twoFactorEnabled: true,
+      twoFactorMethod: "EMAIL",
+    });
+
+    // The exact payload an attacker can POST to /api/auth/session.
+    const refreshedToken = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now(),
+      },
+      trigger: "update",
+      session: { user: { twoFactorVerified: true } },
+    } as never);
+
+    expect(mockConsumeTwoFactorSessionChallenge).not.toHaveBeenCalled();
+    expect(refreshedToken).toEqual(
+      expect.objectContaining({
+        twoFactorRequired: true,
+        twoFactorEnrolled: true,
+        twoFactorMethod: "EMAIL",
+        twoFactorVerified: false,
+        twoFactorVerifiedByChallenge: false,
+      }),
+    );
+
+    // A forged update must not seed verification into later refreshes either.
+    const subsequentToken = await authConfig.callbacks.jwt?.({
+      token: { ...(refreshedToken as object) },
+    } as never);
+
+    expect(subsequentToken).toEqual(
+      expect.objectContaining({
+        twoFactorVerified: false,
+        twoFactorVerifiedByChallenge: false,
+      }),
+    );
+  });
+
+  it("ignores a session update whose challenge token is invalid or already consumed", async () => {
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(false);
     mockFindUnique.mockResolvedValue({
       role: "MEMBER",
       accessRoles: [{ role: "USER" }],
@@ -206,14 +264,74 @@ describe("auth session refresh", () => {
         sessionIssuedAt: Date.now(),
       },
       trigger: "update",
-      session: { user: { twoFactorVerified: true } },
+      session: {
+        user: { twoFactorVerified: true, twoFactorChallengeToken: "guessed" },
+      },
     } as never);
 
+    expect(mockConsumeTwoFactorSessionChallenge).toHaveBeenCalledWith(
+      "member-1",
+      "guessed",
+    );
+    expect(refreshedToken).toEqual(
+      expect.objectContaining({
+        twoFactorVerified: false,
+        twoFactorVerifiedByChallenge: false,
+      }),
+    );
+  });
+
+  it("verifies the session when the update carries a valid server-minted challenge token", async () => {
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    mockConsumeTwoFactorSessionChallenge.mockResolvedValue(true);
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      accessRoles: [{ role: "USER" }],
+      forcePasswordChange: false,
+      emailVerified: true,
+      passwordChangedAt: null,
+      twoFactorEnabled: true,
+      twoFactorMethod: "EMAIL",
+    });
+
+    const refreshedToken = await authConfig.callbacks.jwt?.({
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionIssuedAt: Date.now(),
+      },
+      trigger: "update",
+      session: {
+        user: {
+          twoFactorVerified: true,
+          twoFactorChallengeToken: "server-minted-token",
+        },
+      },
+    } as never);
+
+    expect(mockConsumeTwoFactorSessionChallenge).toHaveBeenCalledWith(
+      "member-1",
+      "server-minted-token",
+    );
     expect(refreshedToken).toEqual(
       expect.objectContaining({
         twoFactorRequired: true,
         twoFactorEnrolled: true,
         twoFactorMethod: "EMAIL",
+        twoFactorVerified: true,
+        twoFactorVerifiedByChallenge: true,
+      }),
+    );
+
+    // Verification persists across later refreshes of the same session.
+    const subsequentToken = await authConfig.callbacks.jwt?.({
+      token: { ...(refreshedToken as object) },
+    } as never);
+
+    expect(subsequentToken).toEqual(
+      expect.objectContaining({
         twoFactorVerified: true,
         twoFactorVerifiedByChallenge: true,
       }),

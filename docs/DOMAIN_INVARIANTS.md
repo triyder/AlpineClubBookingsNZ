@@ -107,9 +107,15 @@ when the effective subscription status is `NOT_REQUIRED`.
 When the global two-factor module is enabled, password login is not sufficient
 for protected app access. The Auth.js JWT must carry `twoFactorVerified=false`
 until a server-side two-factor verification or enrollment endpoint flips it.
-Route-group layouts and API guards must enforce that claim; login form code
-must not be the only 2FA gate. TOTP secrets, email OTP codes, and recovery
-codes must never be stored in plaintext.
+The Auth.js session-update trigger is reachable by any authenticated client
+(POST `/api/auth/session`), so the jwt callback must never trust a
+client-supplied `twoFactorVerified` flag. The claim flips only after the
+callback consumes a single-use, short-lived challenge token minted server-side
+by the verification and enrollment endpoints and stored hashed in
+`TwoFactorSessionChallenge`. Route-group layouts and API guards must enforce
+that claim; login form code must not be the only 2FA gate. TOTP secrets, email
+OTP codes, recovery codes, and session challenge tokens must never be stored
+in plaintext.
 
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do

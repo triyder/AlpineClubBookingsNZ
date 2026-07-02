@@ -366,10 +366,13 @@ password accepted -> JWT session issued with twoFactorVerified=false
 module off -> session treated verified for normal routing
 module on + unenrolled -> protected layout redirects to /login/enroll
 module on + enrolled -> protected layout redirects to /login/verify
-valid TOTP/email/recovery code -> session update flips twoFactorVerified=true
+valid TOTP/email/recovery code -> server mints single-use challenge token (hashed, short TTL)
+session update carrying that token -> jwt callback consumes it -> twoFactorVerified=true
+client-forged session update without a valid token -> ignored, session stays unverified
 invalid attempts -> per-member counter increments -> 15 minute lockout after 5 failures
 ```
 
-To verify: Auth.js JWT callback claim handling, protected route-group layout
-redirects, API guard rejection, email-code expiry, TOTP skew window, recovery
-code single-use consumption, and lockout reset after successful verification.
+To verify: Auth.js JWT callback claim handling, challenge-token single-use
+consumption, protected route-group layout redirects, API guard rejection,
+email-code expiry, TOTP skew window, recovery code single-use consumption, and
+lockout reset after successful verification.

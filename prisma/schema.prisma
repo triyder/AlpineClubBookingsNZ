@@ -459,6 +459,7 @@ model Member {
   emailChangeTokens                          EmailChangeToken[]
   twoFactorEmailCodes                        TwoFactorEmailCode[]
   twoFactorRecoveryCodes                     TwoFactorRecoveryCode[]
+  twoFactorSessionChallenges                 TwoFactorSessionChallenge[]
   subscriptions                              MemberSubscription[]
   seasonalMembershipAssignments              SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentMember")
   seasonalMembershipAssignmentsAssigned      SeasonalMembershipAssignment[]             @relation("SeasonalMembershipAssignmentAssignedBy")
@@ -606,6 +607,22 @@ model TwoFactorRecoveryCode {
   @@index([memberId])
   @@index([codeHash])
   @@index([usedAt])
+}
+
+// Single-use proof that a two-factor challenge succeeded. Minted server-side
+// after code verification, consumed (deleted) by the Auth.js jwt callback, so
+// a client-forged session update cannot flip twoFactorVerified.
+model TwoFactorSessionChallenge {
+  id        String   @id @default(cuid())
+  memberId  String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([expiresAt])
 }
 
 model MemberApplication {

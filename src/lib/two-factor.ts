@@ -18,6 +18,7 @@ const AUTH_TAG_LENGTH = 16;
 const ENCRYPTION_VERSION = "v1";
 
 export const TWO_FACTOR_EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+export const TWO_FACTOR_SESSION_CHALLENGE_TTL_MS = 2 * 60 * 1000;
 export const TWO_FACTOR_RECOVERY_CODE_COUNT = 10;
 export const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
 export const TWO_FACTOR_TOTP_WINDOW = 1;
@@ -198,6 +199,50 @@ export async function verifyTwoFactorEmailCode(memberId: string, code: string) {
     data: { used: true },
   });
   return updated.count === 1;
+}
+
+// Mints a single-use, server-side proof that this member just passed a
+// two-factor challenge. Only the HMAC hash is stored; the raw token travels
+// through the Auth.js session update within the same request and is consumed
+// by the jwt callback, so a client-forged POST to /api/auth/session can never
+// flip twoFactorVerified.
+export async function createTwoFactorSessionChallenge(memberId: string) {
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + TWO_FACTOR_SESSION_CHALLENGE_TTL_MS);
+
+  await prisma.$transaction([
+    // Housekeeping only: expired tokens are already unusable. Live tokens for
+    // the member are left alone so concurrent challenges cannot race.
+    prisma.twoFactorSessionChallenge.deleteMany({
+      where: { memberId, expiresAt: { lte: new Date() } },
+    }),
+    prisma.twoFactorSessionChallenge.create({
+      data: {
+        memberId,
+        tokenHash: hashTwoFactorCode(token),
+        expiresAt,
+      },
+    }),
+  ]);
+
+  return token;
+}
+
+export async function consumeTwoFactorSessionChallenge(
+  memberId: string,
+  token: string,
+) {
+  // Delete-and-count keeps consumption atomic: of two concurrent updates
+  // presenting the same token, exactly one can succeed.
+  const deleted = await prisma.twoFactorSessionChallenge.deleteMany({
+    where: {
+      tokenHash: hashTwoFactorCode(token),
+      memberId,
+      expiresAt: { gt: new Date() },
+    },
+  });
+
+  return deleted.count === 1;
 }
 
 export function getActiveTwoFactorLockout(member?: {

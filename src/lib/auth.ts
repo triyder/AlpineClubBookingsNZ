@@ -11,6 +11,7 @@ import {
   type AppAccessRole,
 } from "./access-roles";
 import { loadEffectiveModuleFlags } from "./module-settings";
+import { consumeTwoFactorSessionChallenge } from "./two-factor";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
@@ -164,16 +165,28 @@ export const authConfig = {
 
       if (
         trigger === "update" &&
+        typeof token.id === "string" &&
         typeof session === "object" &&
         session !== null &&
         "user" in session &&
         typeof session.user === "object" &&
         session.user !== null &&
-        "twoFactorVerified" in session.user &&
-        session.user.twoFactorVerified === true
+        "twoFactorChallengeToken" in session.user &&
+        typeof session.user.twoFactorChallengeToken === "string"
       ) {
-        token.twoFactorVerified = true;
-        token.twoFactorVerifiedByChallenge = true;
+        // The update trigger is reachable by any authenticated client via
+        // POST /api/auth/session, so client-supplied fields such as
+        // twoFactorVerified must never be trusted here. Verification is only
+        // honoured when the update carries the single-use challenge token
+        // minted server-side by markTwoFactorSessionVerified().
+        const challengeVerified = await consumeTwoFactorSessionChallenge(
+          token.id,
+          session.user.twoFactorChallengeToken,
+        );
+        if (challengeVerified) {
+          token.twoFactorVerified = true;
+          token.twoFactorVerifiedByChallenge = true;
+        }
       }
 
       const sessionIssuedAt = getTokenSessionIssuedAtMs(token);

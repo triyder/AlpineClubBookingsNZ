@@ -3,6 +3,7 @@ import { auth, updateSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   clearTwoFactorLockout,
+  createTwoFactorSessionChallenge,
   getActiveTwoFactorLockout,
 } from "@/lib/two-factor";
 
@@ -73,15 +74,29 @@ export async function requireTwoFactorApiSession(): Promise<TwoFactorApiGuardRes
 
 export async function markTwoFactorSessionVerified() {
   const session = await auth();
-  if (session?.user?.id) {
-    await clearTwoFactorLockout(session.user.id);
+  if (!session?.user?.id) {
+    return;
   }
+
+  await clearTwoFactorLockout(session.user.id);
+
+  // The session-update trigger is reachable by any authenticated client, so
+  // the jwt callback only honours twoFactorVerified when the update carries
+  // this single-use, server-minted challenge token. The raw token never
+  // leaves the server: it is consumed by the jwt callback inside this same
+  // updateSession() call.
+  const twoFactorChallengeToken = await createTwoFactorSessionChallenge(
+    session.user.id,
+  );
 
   await updateSession({
     user: {
       twoFactorVerified: true,
+      twoFactorChallengeToken,
     },
-  });
+    // The extra token field is not part of the public Session shape, so the
+    // literal needs an assertion to pass through unstable_update's typing.
+  } as unknown as Parameters<typeof updateSession>[0]);
 }
 
 export function passwordChangeRequiredResponse() {

@@ -17,6 +17,10 @@ const mockPrisma = vi.hoisted(() => ({
     findUnique: vi.fn(),
     updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   },
+  twoFactorSessionChallenge: {
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    create: vi.fn().mockResolvedValue({ id: "session-challenge-1" }),
+  },
   member: {
     findUnique: vi.fn(),
     update: vi.fn().mockResolvedValue({ id: "member-1" }),
@@ -27,13 +31,16 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 import {
   consumeRecoveryCode,
+  consumeTwoFactorSessionChallenge,
   createTwoFactorEmailCode,
+  createTwoFactorSessionChallenge,
   decryptTwoFactorSecret,
   encryptTwoFactorSecret,
   enrollTwoFactor,
   generateTotpEnrollment,
   hashEmailOtpCode,
   hashRecoveryCode,
+  hashTwoFactorCode,
   recordTwoFactorFailure,
   verifyTotpCode,
   verifyTwoFactorEmailCode,
@@ -146,6 +153,49 @@ describe("two-factor helpers", () => {
         }),
       ]),
     });
+  });
+
+  it("stores session challenge tokens hashed with a short expiry", async () => {
+    const token = await createTwoFactorSessionChallenge("member-1");
+
+    const createCall =
+      mockPrisma.twoFactorSessionChallenge.create.mock.calls[0]?.[0];
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(createCall.data.memberId).toBe("member-1");
+    expect(createCall.data.tokenHash).toBe(hashTwoFactorCode(token));
+    expect(createCall.data.tokenHash).not.toBe(token);
+    expect(createCall.data.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    // Housekeeping removes only expired rows so live challenges cannot race.
+    expect(
+      mockPrisma.twoFactorSessionChallenge.deleteMany,
+    ).toHaveBeenCalledWith({
+      where: { memberId: "member-1", expiresAt: { lte: expect.any(Date) } },
+    });
+  });
+
+  it("consumes a session challenge token exactly once", async () => {
+    mockPrisma.twoFactorSessionChallenge.deleteMany.mockResolvedValueOnce({
+      count: 1,
+    });
+    await expect(
+      consumeTwoFactorSessionChallenge("member-1", "raw-token"),
+    ).resolves.toBe(true);
+    expect(
+      mockPrisma.twoFactorSessionChallenge.deleteMany,
+    ).toHaveBeenCalledWith({
+      where: {
+        tokenHash: hashTwoFactorCode("raw-token"),
+        memberId: "member-1",
+        expiresAt: { gt: expect.any(Date) },
+      },
+    });
+
+    mockPrisma.twoFactorSessionChallenge.deleteMany.mockResolvedValueOnce({
+      count: 0,
+    });
+    await expect(
+      consumeTwoFactorSessionChallenge("member-1", "raw-token"),
+    ).resolves.toBe(false);
   });
 
   it("locks the member after repeated invalid two-factor attempts", async () => {

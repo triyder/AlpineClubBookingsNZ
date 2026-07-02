@@ -512,7 +512,10 @@ The Two-factor authentication Admin Modules toggle is a global enforcement
 switch. It defaults off. When enabled, password sign-in creates a limited JWT
 session with `twoFactorVerified=false`; protected route-group layouts and API
 guards redirect or reject that session until the user completes `/login/enroll`
-or `/login/verify`.
+or `/login/verify`. A session becomes verified only when the Auth.js jwt
+callback consumes a single-use, short-lived challenge token minted server-side
+after a successful code check (stored hashed in `TwoFactorSessionChallenge`);
+client-initiated session updates cannot flip the flag.
 
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
 secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or
