@@ -119,7 +119,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const key = await buildUniqueMembershipTypeKey(prisma, parsed.data.name);
+  // Reject duplicate display names (case-insensitive exact match) before the
+  // key builder silently suffixes a unique key for the same visible name.
+  const name = parsed.data.name.trim();
+  const duplicate = await prisma.membershipType.findFirst({
+    where: { name: { equals: name, mode: "insensitive" } },
+    select: { id: true, name: true },
+  });
+  if (duplicate) {
+    return NextResponse.json(
+      { error: `A membership type named "${duplicate.name}" already exists.` },
+      { status: 409 },
+    );
+  }
+
+  const key = await buildUniqueMembershipTypeKey(prisma, name);
   const lastType = await prisma.membershipType.findFirst({
     orderBy: { sortOrder: "desc" },
     select: { sortOrder: true },
@@ -127,7 +141,7 @@ export async function POST(request: Request) {
   const sortOrder = parsed.data.sortOrder ?? (lastType?.sortOrder ?? -1) + 1;
   const data = {
     key,
-    name: parsed.data.name.trim(),
+    name,
     description: normalizeMembershipTypeText(parsed.data.description),
     isActive: parsed.data.isActive,
     isBuiltIn: false,

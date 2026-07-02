@@ -163,7 +163,26 @@ export async function PATCH(
 
   const data: Prisma.MembershipTypeUpdateInput = {};
   if (parsed.data.name !== undefined) {
-    data.name = parsed.data.name.trim();
+    const name = parsed.data.name.trim();
+    // Reject renames that collide with another type's display name
+    // (case-insensitive exact match). Renaming a type to a case variant of
+    // its own name stays allowed because the type itself is excluded.
+    const duplicate = await prisma.membershipType.findFirst({
+      where: {
+        id: { not: existing.id },
+        name: { equals: name, mode: "insensitive" },
+      },
+      select: { id: true, name: true },
+    });
+    if (duplicate) {
+      return NextResponse.json(
+        {
+          error: `A membership type named "${duplicate.name}" already exists.`,
+        },
+        { status: 409 },
+      );
+    }
+    data.name = name;
   }
   if (parsed.data.description !== undefined) {
     data.description = normalizeMembershipTypeText(parsed.data.description);
