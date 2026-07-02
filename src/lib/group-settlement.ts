@@ -33,6 +33,7 @@ import {
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
+  cancelPaymentIntentIfCancellable,
   createPaymentIntent,
   findOrCreateCustomer,
   getPaymentIntent,
@@ -190,6 +191,7 @@ export async function createGroupSettlementIntent(
       group.organiserBooking.checkIn,
       children,
       amountCents,
+      group.settlement?.stripePaymentIntentId ?? null,
     );
   }
 
@@ -258,6 +260,15 @@ export async function createGroupSettlementIntent(
     },
   });
 
+  // The new intent supersedes any prior card attempt (e.g. the total changed).
+  // Void the old intent so a retained client_secret in a stale tab can no
+  // longer capture money that settles nothing.
+  await cancelSupersededSettlementIntent(
+    group.settlement?.stripePaymentIntentId ?? null,
+    paymentIntent.id,
+    group.id,
+  );
+
   return {
     outcome: "ready",
     amountCents,
@@ -280,7 +291,8 @@ async function createGroupSettlementInvoice(
   groupBookingId: string,
   checkIn: Date,
   children: SettleableChild[],
-  amountCents: number
+  amountCents: number,
+  staleStripePaymentIntentId: string | null
 ): Promise<GroupSettlementIntentResult> {
   const modules = await loadEffectiveModuleFlags();
   if (!modules.xeroIntegration || !modules.internetBankingPayments) {
@@ -330,6 +342,14 @@ async function createGroupSettlementInvoice(
     },
   });
 
+  // Void the dropped card intent in Stripe so a retained client_secret in a
+  // stale tab can no longer capture money alongside the combined invoice.
+  await cancelSupersededSettlementIntent(
+    staleStripePaymentIntentId,
+    null,
+    groupBookingId,
+  );
+
   // Enqueue the combined invoice. A failure here is logged, not thrown: the beds
   // are held and the settlement is recorded, and the outbox can be re-driven.
   try {
@@ -350,6 +370,31 @@ async function createGroupSettlementInvoice(
     childCount: children.length,
     reference: buildGroupSettlementPaymentReference(groupBookingId),
   };
+}
+
+/**
+ * Best-effort void of a group-settlement PaymentIntent the settlement no longer
+ * references (method switch or card re-attempt). Runs after the settlement row
+ * is updated and outside any database transaction. A failed cancel is logged
+ * and never breaks the settlement flow: if the stale intent later captures, the
+ * webhook safety net refunds it and alerts admins.
+ */
+async function cancelSupersededSettlementIntent(
+  staleIntentId: string | null,
+  currentIntentId: string | null,
+  groupBookingId: string
+) {
+  if (!staleIntentId || staleIntentId === currentIntentId) {
+    return;
+  }
+  try {
+    await cancelPaymentIntentIfCancellable(staleIntentId);
+  } catch (err) {
+    logger.error(
+      { err, groupBookingId, paymentIntentId: staleIntentId },
+      "Failed to cancel superseded group settlement intent; the webhook safety net will refund it if it captures"
+    );
+  }
 }
 
 /**

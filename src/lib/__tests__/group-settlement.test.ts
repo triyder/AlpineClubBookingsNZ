@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   createPaymentIntent: vi.fn(),
   findOrCreateCustomer: vi.fn(),
   getPaymentIntent: vi.fn(),
+  cancelPaymentIntent: vi.fn(),
   checkCapacity: vi.fn(),
   reconcileBedAllocations: vi.fn(),
   recordBookingEvent: vi.fn(),
@@ -68,6 +69,7 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: mocks.createPaymentIntent,
   findOrCreateCustomer: mocks.findOrCreateCustomer,
   getPaymentIntent: mocks.getPaymentIntent,
+  cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntent,
 }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacity,
@@ -147,6 +149,7 @@ beforeEach(() => {
   });
   mocks.sendSettlementReceipt.mockResolvedValue(undefined);
   mocks.sendJoinSettled.mockResolvedValue(undefined);
+  mocks.cancelPaymentIntent.mockResolvedValue(null);
 });
 
 describe("createGroupSettlementIntent", () => {
@@ -313,6 +316,107 @@ describe("createGroupSettlementIntent", () => {
     // One combined invoice enqueued; never a Stripe PaymentIntent.
     expect(mocks.enqueueSettlementInvoice).toHaveBeenCalledWith("settle-1");
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("cancels the superseded card intent when a re-attempt opens a new one (issue #1016)", async () => {
+    // A prior card attempt recorded pi_old for a different total; the party
+    // changed, so this attempt creates a fresh intent and voids the old one.
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_old",
+          amountCents: 8000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("ready");
+    expect(result.paymentIntentId).toBe("pi_settle_1");
+    expect(mocks.cancelPaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_old");
+  });
+
+  it("does not cancel when Stripe idempotency returns the same intent id", async () => {
+    // Same total: the recorded intent is canceled in Stripe, so the reuse branch
+    // falls through and the amount-scoped idempotency key returns the same id.
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_settle_1",
+          amountCents: 9000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+    mocks.getPaymentIntent.mockResolvedValue({
+      id: "pi_settle_1",
+      status: "canceled",
+      client_secret: null,
+    });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("ready");
+    expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("a failed cancel of the superseded intent never breaks the settlement flow", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_old",
+          amountCents: 8000,
+        },
+      })
+    );
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+    mocks.cancelPaymentIntent.mockRejectedValue(new Error("stripe unavailable"));
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    // The webhook safety net is the backstop; the organiser can still pay.
+    expect(result.outcome).toBe("ready");
+    expect(result.clientSecret).toBe("cs_settle_1");
+    expect(mocks.cancelPaymentIntent).toHaveBeenCalledWith("pi_old");
   });
 
   it("internet banking: rejects with 400 when the module is off (no beds held, no invoice)", async () => {

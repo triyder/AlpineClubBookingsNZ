@@ -379,6 +379,12 @@ through `PaymentRecoveryOperation`. The recovery worker cancels still-open
 intents, treats already-cancelled intents as complete, and queues/refunds late
 captures without running the normal booking-confirmation path.
 
+Group-settlement PaymentIntents get the same safety net: switching a group
+settlement to Internet Banking or re-attempting a card settlement voids the
+superseded intent in Stripe, and if a stale intent still captures, the webhook
+handler refunds it in full (with a deterministic idempotency key) and alerts
+admins instead of settling anything.
+
 ### Operational Xero
 
 Operational Xero handles member/contact sync, booking invoices, payments,
