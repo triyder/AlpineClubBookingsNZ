@@ -36,7 +36,7 @@ describe("SwitchToInternetBankingButton", () => {
       expect(refreshMock).toHaveBeenCalled();
     });
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, { body: string }];
     expect(url).toContain("/api/payments/switch-to-internet-banking");
     expect(JSON.parse(init.body)).toEqual({ bookingId: "abcd1234-booking" });
   });

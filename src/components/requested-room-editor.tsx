@@ -112,7 +112,7 @@ export function RequestedRoomEditor({
     <div className="flex items-center gap-3">
       <div className="w-64">
         <Select value={room?.id ?? "none"} onValueChange={handleChange} disabled={saving}>
-          <SelectTrigger>
+          <SelectTrigger aria-label="Preferred room">
             <SelectValue placeholder="No preference" />
           </SelectTrigger>
           <SelectContent>

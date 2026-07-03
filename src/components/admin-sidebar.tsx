@@ -461,7 +461,7 @@ function SidebarLinks({
     .reduce((best, href) => (href.length > best.length ? href : best), "");
 
   return (
-    <nav className="flex flex-col gap-0.5">
+    <nav aria-label="Admin sections" className="flex flex-col gap-0.5">
       <Link
         href="/dashboard"
         onClick={onNavigate}

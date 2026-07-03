@@ -11,7 +11,7 @@ npm audit --audit-level=high
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
 npm run db:generate
-DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx tsc --noEmit
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run typecheck
 npm test
 npm run quality:report
 git diff --check

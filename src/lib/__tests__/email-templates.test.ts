@@ -291,7 +291,8 @@ describe("email-templates", () => {
         new Date("2026-07-03"),
         2,
         expiresAt,
-        "booking123"
+        "booking123",
+        10000
       );
 
       expect(html).toContain(formatNZDateTime(expiresAt));

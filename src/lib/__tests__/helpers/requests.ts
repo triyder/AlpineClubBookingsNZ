@@ -19,6 +19,9 @@ export function routeParams<T extends Record<string, string>>(
 
 const DEFAULT_ORIGIN = "http://localhost";
 
+/** Init type the NextRequest constructor actually accepts (no `signal: null`). */
+type NextRequestInit = NonNullable<ConstructorParameters<typeof NextRequest>[1]>;
+
 function resolveUrl(input: string): string {
   if (input.startsWith("http://") || input.startsWith("https://")) return input;
   if (!input.startsWith("/")) return `${DEFAULT_ORIGIN}/${input}`;
@@ -32,7 +35,7 @@ function resolveUrl(input: string): string {
  */
 export function nextRequest(
   pathOrUrl: string,
-  init: RequestInit = {},
+  init: NextRequestInit = {},
 ): NextRequest {
   return new NextRequest(resolveUrl(pathOrUrl), init);
 }
@@ -40,7 +43,7 @@ export function nextRequest(
 export function jsonRequest(
   pathOrUrl: string,
   body: unknown,
-  init: RequestInit = {},
+  init: NextRequestInit = {},
 ): NextRequest {
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json");

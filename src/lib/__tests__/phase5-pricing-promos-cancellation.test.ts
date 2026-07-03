@@ -218,10 +218,11 @@ describe("P5.3: Promo code booking date gating", () => {
     active: true,
     validFrom: null as Date | null,
     validUntil: null as Date | null,
-    maxRedemptions: null as number | null,
+    maxRedemptionsTotal: null as number | null,
     currentRedemptions: 0,
     membersOnly: false,
-    singleUse: false,
+    maxUsesPerMember: null as number | null,
+    maxUniqueMembersTotal: null as number | null,
     bookingStartFrom: new Date("2026-07-01") as Date | null,
     bookingStartUntil: new Date("2026-08-01") as Date | null,
   };

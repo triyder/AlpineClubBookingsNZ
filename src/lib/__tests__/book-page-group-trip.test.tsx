@@ -215,7 +215,7 @@ describe("booking wizard group trip option", () => {
 
     const calls = groupCreateCalls(fetchMock);
     expect(calls).toHaveLength(1);
-    expect(JSON.parse(String(calls[0][1]!.body))).toEqual({
+    expect(JSON.parse(String((calls[0][1] as { body?: unknown })!.body))).toEqual({
       organiserBookingId: "booking-1",
       paymentMode: "ORGANISER_PAYS",
     });

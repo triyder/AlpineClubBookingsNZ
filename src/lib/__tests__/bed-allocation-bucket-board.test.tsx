@@ -30,6 +30,7 @@ function buildBooking(
     checkOut: "2026-07-12",
     memberName: "Example Member",
     requestedRoom: null,
+    parentBookingId: null,
     ...overrides,
   };
 }

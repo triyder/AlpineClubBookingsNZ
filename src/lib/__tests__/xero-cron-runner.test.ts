@@ -146,7 +146,7 @@ describe("xero cron runner", () => {
         cleanupStaleCanonicalXeroObjectLinks: vi.fn(async () => ({
           scannedActiveLinks: 3,
           deactivatedLinks: 1,
-        })),
+        })) as never,
       },
     });
 

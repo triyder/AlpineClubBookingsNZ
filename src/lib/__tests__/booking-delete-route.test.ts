@@ -9,9 +9,9 @@ vi.mock("@/lib/booking-delete", () => ({
   deleteBooking: vi.fn(),
 }));
 
-const mockRequireActiveSessionUser = vi.fn(async () => null);
+const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) =>
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) =>
     mockRequireActiveSessionUser(...args),
 }));
 

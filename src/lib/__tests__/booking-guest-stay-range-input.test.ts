@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BookingGuestStayRangeValidationError,
   normalizeGuestStayRanges,
+  type BookingGuestStayRangeInput,
 } from "@/lib/booking-guest-stay-range-input";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 
@@ -12,10 +13,10 @@ describe("normalizeGuestStayRanges", () => {
   };
 
   it("defaults guests without per-guest dates to the booking range", () => {
-    const guests = normalizeGuestStayRanges(
-      [{ ageTier: "ADULT" as const, isMember: true }],
-      booking
-    );
+    const inputGuests: Array<
+      { ageTier: "ADULT"; isMember: boolean } & BookingGuestStayRangeInput
+    > = [{ ageTier: "ADULT", isMember: true }];
+    const guests = normalizeGuestStayRanges(inputGuests, booking);
 
     expect(formatDateOnly(guests[0].stayStart)).toBe("2026-07-10");
     expect(formatDateOnly(guests[0].stayEnd)).toBe("2026-07-14");

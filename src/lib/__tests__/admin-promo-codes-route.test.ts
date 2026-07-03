@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
         findUnique: vi.fn(),
         findMany: vi.fn(),
       },
-      $transaction: vi.fn(async (callback: (tx: typeof tx) => unknown) => callback(tx)),
+      $transaction: vi.fn(async (callback: (innerTx: typeof tx) => unknown) => callback(tx)),
     },
   };
 });

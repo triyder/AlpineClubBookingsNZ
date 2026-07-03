@@ -73,6 +73,7 @@ const adultRequiresSubscription: AgeTierSettingData[] = [
     maxAge: null,
     label: "Adult",
     subscriptionRequiredForBooking: true,
+    sortOrder: 0,
   },
   {
     tier: "CHILD",
@@ -80,6 +81,7 @@ const adultRequiresSubscription: AgeTierSettingData[] = [
     maxAge: 17,
     label: "Child",
     subscriptionRequiredForBooking: false,
+    sortOrder: 1,
   },
 ];
 

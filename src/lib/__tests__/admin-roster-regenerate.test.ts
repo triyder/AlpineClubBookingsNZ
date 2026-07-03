@@ -15,9 +15,9 @@ const mockTxExecuteRaw = vi.fn()
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
 }))
-const mockRequireActiveSessionUser = vi.fn(async () => null)
+const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null)
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) => mockRequireActiveSessionUser(...args),
   requireAdmin: async (options?: { forbiddenResponse?: () => Response }) => {
     const session = await mockAuth()
     if (!session?.user?.id) {

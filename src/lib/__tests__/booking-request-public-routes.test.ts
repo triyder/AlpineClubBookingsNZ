@@ -354,7 +354,7 @@ describe("POST /api/booking-requests/quote", () => {
   });
 
   it("returns no price when pricing visibility is off, without parsing the body", async () => {
-    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: false });
+    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: false, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3 });
 
     const res = await quoteRequest({ checkIn: "2026-08-01", checkOut: "2026-08-03", guests: [VALID_GUEST] });
     const body = await res.json();
@@ -365,7 +365,7 @@ describe("POST /api/booking-requests/quote", () => {
   });
 
   it("returns an indicative price when pricing visibility is on", async () => {
-    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true });
+    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3 });
     mockedCalculateIndicative.mockResolvedValue(24000);
 
     const res = await quoteRequest({ checkIn: "2026-08-01", checkOut: "2026-08-03", guests: [VALID_GUEST] });
@@ -376,7 +376,7 @@ describe("POST /api/booking-requests/quote", () => {
   });
 
   it("rejects check-out on or before check-in when pricing is on", async () => {
-    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true });
+    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3 });
 
     const res = await quoteRequest({ checkIn: "2026-08-03", checkOut: "2026-08-01", guests: [VALID_GUEST] });
 
@@ -399,7 +399,7 @@ describe("GET /api/booking-requests/settings", () => {
   });
 
   it("returns the public pricing visibility flag", async () => {
-    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true });
+    mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3 });
 
     const res = await getBookingRequestSettingsRoute(
       new NextRequest("http://localhost/api/booking-requests/settings")
@@ -407,7 +407,11 @@ describe("GET /api/booking-requests/settings", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ showPricingToNonMembers: true });
+    expect(body).toEqual({
+      showPricingToNonMembers: true,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+    });
   });
 });
 

@@ -125,7 +125,11 @@ gets night rows at creation so later edits honour the prices they joined at.
 The waitlist offer reprice is the other deliberate exception: an offer re-bases
 the whole booking at current rates before the member confirms, and the offer
 email states that price. Legacy guests without stored night rows price at
-current rates.
+current rates; a one-off backfill migration (#1098) synthesised rows for
+pre-#713 guests on live, non-quote-priced bookings (stored price split evenly
+across the stay envelope, integer cents, remainder on the first night), so
+that fallback now covers only quote-priced bookings — already protected by
+the #1032 edit block — and rows created outside the app.
 
 Every edit path passes the default group discount into pricing exactly as
 creation and the waitlist reprice do (#1095), and locks win over the discount:

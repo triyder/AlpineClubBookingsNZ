@@ -26,10 +26,12 @@ function financeViewer() {
     email: "viewer@example.com",
     firstName: "View",
     lastName: "Only",
-    role: "MEMBER" as const,
+    role: "USER" as const,
     financeAccessLevel: "VIEWER" as const,
     active: true,
     forcePasswordChange: false,
+    accessRoles: [],
+    twoFactorEnabled: false,
   };
 }
 

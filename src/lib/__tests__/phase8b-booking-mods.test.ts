@@ -368,7 +368,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(res.status).toBe(200);
 
     const [, , pricedGuests] = mockedCalcPrice.mock.calls.at(-1) ?? [];
-    expect(pricedGuests[0]).toEqual(
+    expect(pricedGuests?.[0]).toEqual(
       expect.objectContaining({
         lockedNightPrices: [
           expect.objectContaining({ priceCents: 5000 }),
@@ -478,8 +478,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000], nightDates: [] },
       ],
       totalPriceCents: 30000,
     });
@@ -511,8 +511,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     // Shorter stay = cheaper
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 2500, perNightCents: [2500] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 2500, perNightCents: [2500] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 2500, perNightCents: [2500], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 2500, perNightCents: [2500], nightDates: [] },
       ],
       totalPriceCents: 5000,
     });
@@ -568,8 +568,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
       ],
       totalPriceCents: 10000,
     });
@@ -597,8 +597,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
       ],
       totalPriceCents: 10000,
     });
@@ -632,8 +632,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
       ],
       totalPriceCents: 10000,
     });
@@ -670,8 +670,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
       ],
       totalPriceCents: 10000,
     });
@@ -702,8 +702,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
       ],
       totalPriceCents: 10000,
     });
@@ -741,8 +741,8 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
     mockedCalcPrice.mockReturnValue({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 7000, perNightCents: [7000, 7000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 7000, perNightCents: [7000, 7000], nightDates: [] },
       ],
       totalPriceCents: 12000,
     });
@@ -1153,9 +1153,9 @@ describe("POST /api/bookings/[id]/guests", () => {
     // slice of the combined breakdown.
     mockedCalcPrice.mockReturnValueOnce({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000], nightDates: [] },
       ],
       totalPriceCents: 24000,
     });
@@ -1214,9 +1214,9 @@ describe("POST /api/bookings/[id]/guests", () => {
     mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 0, nightDetails: [] });
     mockedCalcPrice.mockReturnValueOnce({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000] },
-        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000], nightDates: [] },
       ],
       totalPriceCents: 24000,
     });
@@ -1250,9 +1250,9 @@ describe("POST /api/bookings/[id]/guests", () => {
     mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
     mockedCalcPrice.mockReturnValueOnce({
       guests: [
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
-        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000], nightDates: [] },
       ],
       totalPriceCents: 24000,
     });
@@ -1296,7 +1296,7 @@ describe("POST /api/bookings/[id]/guests", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
-    mockedCalcPrice.mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 15000 });
+    mockedCalcPrice.mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }], totalPriceCents: 15000 });
     mockedGetHoldDays.mockResolvedValue(7);
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
@@ -1316,7 +1316,7 @@ describe("POST /api/bookings/[id]/guests", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
-    mockedCalcPrice.mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 15000 });
+    mockedCalcPrice.mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }], totalPriceCents: 15000 });
     mockedGetHoldDays.mockResolvedValue(7);
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
@@ -1504,7 +1504,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockRefundPaymentTransactions.mockResolvedValue({
@@ -1555,7 +1555,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     ]);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_789" } as any);
@@ -1576,7 +1576,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_000" } as any);
@@ -1601,7 +1601,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_nm" } as any);
@@ -1624,7 +1624,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_audit" } as any);
@@ -1644,7 +1644,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     // 50% card tier inside the window: the 5000 delta returns only 2500,
@@ -1679,7 +1679,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockedCalcDualRefund.mockReturnValue({
@@ -1703,7 +1703,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
-      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }],
       totalPriceCents: 5000,
     });
     mockedCalcDualRefund.mockReturnValue({
@@ -1781,7 +1781,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     } as any);
 
     const res = await DELETE(deleteWithMethod("g2"), {
@@ -1791,7 +1791,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
 
     // The remaining guest's stored per-night prices reach the engine as locks.
     const [, , pricedGuests] = mockedCalcPrice.mock.calls.at(-1) ?? [];
-    expect(pricedGuests[0]).toEqual(
+    expect(pricedGuests?.[0]).toEqual(
       expect.objectContaining({
         bookingGuestId: "g1",
         lockedNightPrices: [
@@ -1828,7 +1828,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     } as any);
 
     const res = await DELETE(deleteWithMethod("g1", "card"), {
@@ -1858,7 +1858,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     } as any);
 
     const res = await DELETE(
@@ -1879,7 +1879,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     } as any);
 
     const res = await DELETE(deleteWithMethod("g1", "card"), {
@@ -1910,7 +1910,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     } as any);
 
     const res = await DELETE(deleteWithMethod("g2", "card"), {
@@ -1958,7 +1958,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     // Remaining guest reprices to 10000 and the promo covers all of it.
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 10000,
-      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] }],
     } as any);
     mockValidateAndCalculatePromoDiscount.mockResolvedValueOnce({
       discount: {
@@ -2062,8 +2062,8 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 24000,
       guests: [
-        { priceCents: 10000, perNightCents: [5000, 5000] },
-        { priceCents: 14000, perNightCents: [7000, 7000] },
+        { priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] },
+        { priceCents: 14000, perNightCents: [7000, 7000], nightDates: [] },
       ],
     } as any);
 
@@ -2100,7 +2100,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockTransaction.mockImplementation((fn: any) => fn(tx));
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 10000,
-      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] }],
     } as any);
 
     const res = await DELETE(
@@ -2151,7 +2151,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
   function mockPromoInvalidatedRepricing() {
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 10000,
-      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] }],
     } as any);
     mockValidateAndCalculatePromoDiscount.mockResolvedValueOnce({
       error: "Party is below the promo's minimum group size",
@@ -2259,7 +2259,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     // Repricing lands exactly on the old final price: zero delta.
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 10000,
-      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000], nightDates: [] }],
     } as any);
 
     const res = await DELETE(deleteWithMethod("g2"), {

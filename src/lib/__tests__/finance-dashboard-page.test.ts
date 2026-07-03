@@ -72,6 +72,7 @@ function financeManager() {
     accessRoles: [{ role: "FINANCE_ADMIN" as const }],
     active: true,
     forcePasswordChange: false,
+    twoFactorEnabled: false,
   };
 }
 
@@ -86,6 +87,7 @@ function financeViewer() {
     accessRoles: [{ role: "FINANCE_USER" as const }],
     active: true,
     forcePasswordChange: false,
+    twoFactorEnabled: false,
   };
 }
 

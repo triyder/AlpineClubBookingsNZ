@@ -23,9 +23,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-const mockRequireActiveSessionUser = vi.fn(async () => null);
+const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) => mockRequireActiveSessionUser(...args),
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
@@ -705,7 +705,7 @@ describe("Promo Validate API - forMemberId", () => {
     (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     mockedCalcPrice.mockReturnValueOnce({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [5000] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000], nightDates: [] }],
     });
     const { validateAndCalculatePromoDiscount } = await import("@/lib/promo");
     vi.mocked(validateAndCalculatePromoDiscount).mockResolvedValueOnce({

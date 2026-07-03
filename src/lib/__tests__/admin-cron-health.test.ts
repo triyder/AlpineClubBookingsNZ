@@ -121,7 +121,7 @@ describe("admin cron health", () => {
   it("documents the finance daily sync schedule as a Pacific/Auckland local-time job", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     const finance = definitions.find(
       (definition) => definition.jobName === FINANCE_SYNC_CRON_JOB_NAME
     );
@@ -138,7 +138,7 @@ describe("admin cron health", () => {
   it("tracks draft cleanup as a daily CronJobRun-backed job", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     const draftCleanup = definitions.find(
       (definition) => definition.jobName === "draft-cleanup"
     );
@@ -153,7 +153,7 @@ describe("admin cron health", () => {
   it("tracks general cron cycle jobs with matching freshness thresholds", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
 
     for (const jobName of [
       "confirm-pending",
@@ -174,7 +174,7 @@ describe("admin cron health", () => {
   it("tracks payment recovery every fifteen minutes with a matching freshness threshold", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     const paymentRecovery = definitions.find(
       (definition) => definition.jobName === "payment-recovery"
     );
@@ -189,7 +189,7 @@ describe("admin cron health", () => {
   it("tracks Xero outbox and stale link cleanup as CronJobRun-backed jobs", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
 
     expect(
       definitions.find((definition) => definition.jobName === "xero-outbox")
@@ -211,7 +211,7 @@ describe("admin cron health", () => {
     const definitions = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     const refresh = definitions.find(
       (definition) => definition.jobName === "xero-membership-refresh"
     );

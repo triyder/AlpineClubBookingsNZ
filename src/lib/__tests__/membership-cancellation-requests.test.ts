@@ -38,7 +38,7 @@ vi.mock("@/lib/prisma", () => {
       updateMany: mocks.participantUpdateMany,
     },
     $transaction: (
-      callback: (tx: typeof prismaClient) => Promise<unknown>,
+      callback: (tx: unknown) => Promise<unknown>,
     ) => callback(prismaClient),
   };
   return { prisma: prismaClient };

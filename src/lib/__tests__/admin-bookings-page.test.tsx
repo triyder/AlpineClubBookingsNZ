@@ -51,6 +51,19 @@ const effectiveModulesOn = {
   xeroIntegration: true,
   bedAllocation: true,
   internetBankingPayments: true,
+  // Flags this page does not exercise stay off, matching the pre-existing
+  // runtime behaviour when they were absent from the fixture.
+  addressAutocomplete: false,
+  groupBookings: false,
+  lockers: false,
+  induction: false,
+  workParties: false,
+  promoCodes: false,
+  hutLeaders: false,
+  communications: false,
+  skifieldConditions: false,
+  twoFactor: false,
+  analytics: false,
 };
 
 describe("AdminBookingsPage", () => {

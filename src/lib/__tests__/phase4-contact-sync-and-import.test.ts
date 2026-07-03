@@ -235,9 +235,9 @@ describe("Phase 4 contact sync and cached import", () => {
       }
     );
 
-    const hashPayload = mocks.buildXeroPayloadHash.mock.calls[0][0] as {
-      contacts: Array<Record<string, unknown>>;
-    };
+    const hashPayload = (mocks.buildXeroPayloadHash.mock.calls as unknown as Array<
+      [{ contacts: Array<Record<string, unknown>> }]
+    >)[0][0];
     expect(hashPayload.contacts[0]).toEqual(
       expect.objectContaining({
         contactID: "contact_1",

@@ -411,7 +411,7 @@ describe("auth session refresh", () => {
     });
     mockUpdate.mockResolvedValue({ id: "member-1" });
 
-    const credentialsProvider = authConfig.providers[0] as {
+    const credentialsProvider = authConfig.providers[0] as unknown as {
       authorize: (credentials: Record<string, string>) => Promise<unknown>;
     };
 
