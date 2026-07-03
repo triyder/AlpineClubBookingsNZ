@@ -53,6 +53,11 @@ Future reviews and issues should cite this file when proposing changes.
   auto-settle at the stale total. Mismatches go to operator review: Stripe
   captures are auto-refunded with an admin alert; paid Internet Banking
   invoices stay PENDING with an admin alert.
+- Committing organiser-pays group children to CONFIRMED before payment has an
+  expiry path: the `group-settlement-reaper` cron releases the beds when the
+  settlement stays unpaid past its window (never past check-in), voids the
+  open intent, and notifies the organiser and joiners — idempotently, and a
+  payment that lands first always wins under the shared lock.
 
 ## Booking Modifications
 

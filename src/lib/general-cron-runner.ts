@@ -4,12 +4,14 @@ import {
   recordCronJobRunSafe,
   type RecordCronJobRunInput,
 } from "@/lib/cron-job-run";
+import { reapStaleGroupSettlements } from "@/lib/cron-group-settlement-reaper";
 import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
 import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
 import logger from "@/lib/logger";
 
 export const GENERAL_CRON_JOB_NAMES = [
   "confirm-pending",
+  "group-settlement-reaper",
   "pre-arrival-reminders",
   "purge-booking-requests",
   "quote-expiry-reminders",
@@ -19,6 +21,7 @@ export type GeneralCronJobName = (typeof GENERAL_CRON_JOB_NAMES)[number];
 
 export interface GeneralCronCycleResult {
   confirmPending: Awaited<ReturnType<typeof confirmPendingBookings>> | null;
+  groupSettlementReap: Awaited<ReturnType<typeof reapStaleGroupSettlements>> | null;
   preArrivalReminders: Awaited<ReturnType<typeof sendPreArrivalReminders>> | null;
   bookingRequestPurge: Awaited<ReturnType<typeof purgeExpiredBookingRequests>> | null;
   quoteExpiryReminders: Awaited<ReturnType<typeof sendQuoteExpiryReminders>> | null;
@@ -38,6 +41,7 @@ export interface GeneralCronRunnerDependencies {
   log?: Pick<typeof logger, "error" | "info">;
   tasks?: Partial<{
     confirmPendingBookings: typeof confirmPendingBookings;
+    reapStaleGroupSettlements: typeof reapStaleGroupSettlements;
     sendPreArrivalReminders: typeof sendPreArrivalReminders;
     purgeExpiredBookingRequests: typeof purgeExpiredBookingRequests;
     sendQuoteExpiryReminders: typeof sendQuoteExpiryReminders;
@@ -109,6 +113,7 @@ export async function runGeneralCronCycle(
   const taskDependencies = dependencies.tasks ?? {};
   const result: GeneralCronCycleResult = {
     confirmPending: null,
+    groupSettlementReap: null,
     preArrivalReminders: null,
     bookingRequestPurge: null,
     quoteExpiryReminders: null,
@@ -122,6 +127,14 @@ export async function runGeneralCronCycle(
       work:
         taskDependencies.confirmPendingBookings ??
         confirmPendingBookings,
+    },
+    {
+      jobName: "group-settlement-reaper",
+      resultKey: "groupSettlementReap",
+      failureMessage: "Group settlement reaper cron error",
+      work:
+        taskDependencies.reapStaleGroupSettlements ??
+        reapStaleGroupSettlements,
     },
     {
       jobName: "pre-arrival-reminders",
