@@ -16,6 +16,7 @@ import {
   replacePromoRedemptionAllocations,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
@@ -386,12 +387,19 @@ export async function removeBookingGuestInTransaction({
     seasonYear,
   });
 
+  const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
+    where: { id: "default" },
+  });
   const priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
     ownerMemberId: booking.memberId,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     guests: guestsForPricing,
     seasons: seasonRateData,
+    // Group discount applies to any newly priced nights (#1095); remaining
+    // guests' locked nights keep their booked (discount-inclusive) prices, so
+    // a party dropping below the minimum never loses a discount it bought.
+    groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
     seasonYear,
   });
   const guestNightRates = guestsForPricing.map((guest, index) => ({

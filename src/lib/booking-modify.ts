@@ -49,6 +49,7 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import {
   deletePromoRedemptionAndAdjustCount,
   redeemPromoCode,
@@ -1043,6 +1044,13 @@ export async function calculateModifiedPricing(
           checkOut: newCheckOut,
           guests: policyAdjustedGuestsForPricing,
           seasons: seasonRateData,
+          // Group discount applies to the newly priced nights (#1095); locked
+          // nights keep their booked (discount-inclusive) prices regardless.
+          groupDiscount: toGroupDiscountConfig(
+            await tx.groupDiscountSetting.findUnique({
+              where: { id: "default" },
+            }),
+          ),
           seasonYear,
         });
   } catch (error) {

@@ -276,6 +276,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       create: vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new-g", ...data })),
       update: vi.fn().mockResolvedValue({}),
     },
+    groupDiscountSetting: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     bookingGuestNight: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
