@@ -47,6 +47,7 @@ const memberLinks = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/book", label: "Book" },
   { href: "/bookings", label: "My Bookings" },
+  { href: "/profile", label: "Profile" },
 ];
 
 const financeLink = { href: "/finance", label: "Finance" };
