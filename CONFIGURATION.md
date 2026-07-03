@@ -335,7 +335,7 @@ Xero contact-group rules, and committee assignment are separate axes:
   `USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`,
   `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
   Runtime authorization must read these rows only. `ADMIN` is the full-admin
-  bundle; the other `ADMIN_*` rows are read-only, booking office, membership
+  bundle; the other `ADMIN_*` rows are read-only, booking officer, membership
   officer, and content manager bundles. Multiple rows may be combined for a
   custom role. `session.user.role` is kept only for display and older
   serialized shapes.

@@ -19,7 +19,7 @@ export const ACCESS_ROLE_LABELS: Record<AppAccessRole, string> = {
   USER: "User",
   ADMIN: "Full Admin",
   ADMIN_READONLY: "Read-only Admin",
-  ADMIN_BOOKINGS: "Booking Office",
+  ADMIN_BOOKINGS: "Booking Officer",
   ADMIN_MEMBERSHIP: "Membership Officer",
   ADMIN_CONTENT: "Content Manager",
   LODGE: "Lodge",
