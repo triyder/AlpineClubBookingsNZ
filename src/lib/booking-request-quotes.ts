@@ -30,8 +30,6 @@ import { prisma } from "@/lib/prisma";
 import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const BOOKING_REQUEST_QUOTE_RESPONSE_TTL_MS = 14 * DAY_MS;
-
 const quoteableStatuses = [
   BookingRequestStatus.VERIFIED,
   BookingRequestStatus.PRICED,

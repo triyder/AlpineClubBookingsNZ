@@ -354,11 +354,6 @@ export function hasAdminAreaAccess(
   );
 }
 
-export function hasAnyAdminRequirementAccess(input: AccessRoleInput) {
-  const matrix = getAdminPermissionMatrix(input);
-  return ADMIN_PERMISSION_AREAS.some((area) => matrix[area.key] !== "none");
-}
-
 export function getFirstAccessibleAdminHref(input: AccessRoleInput) {
   const matrix = getAdminPermissionMatrix(input);
   if (matrix.overview !== "none") return "/admin/dashboard";

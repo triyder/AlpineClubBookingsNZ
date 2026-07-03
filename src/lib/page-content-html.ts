@@ -244,13 +244,6 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
   };
 }
 
-export async function getSanitizedPageContentHtmlByPath(
-  path: string,
-): Promise<string | null> {
-  const record = await getSanitizedPageContentByPath(path);
-  return record?.contentHtml ?? null;
-}
-
 export async function listEditablePageContent() {
   const records = await prisma.pageContent.findMany({
     orderBy: [{ sortOrder: "asc" }, { title: "asc" }],

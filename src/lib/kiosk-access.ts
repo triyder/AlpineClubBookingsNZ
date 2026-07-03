@@ -81,17 +81,6 @@ export async function getKioskAccessTier(
 }
 
 /**
- * Returns whether a user can access the kiosk for a given date.
- */
-export async function canAccessKiosk(
-  user: KioskAccessSubject,
-  date: Date
-): Promise<boolean> {
-  const tier = await getKioskAccessTier(user, date);
-  return tier !== "none";
-}
-
-/**
  * Returns the date range the user can navigate within on the kiosk,
  * or null for unrestricted (ADMIN/LODGE).
  */

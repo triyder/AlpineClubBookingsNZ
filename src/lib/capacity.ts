@@ -73,45 +73,6 @@ export function getOccupiedBedsForNight(
 }
 
 /**
- * Get the number of occupied beds for each night in a date range.
- * A booking occupies beds from checkIn to checkOut-1 (nights).
- * Only counts bookings that intentionally reserve capacity.
- */
-export async function getAvailability(
-  checkIn: Date,
-  checkOut: Date
-): Promise<NightAvailability[]> {
-  const lodgeCapacity = await getLodgeCapacity(prisma);
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
-  const nights = eachDateOnlyInRange(start, exclusiveEnd);
-
-  const overlappingBookings = await prisma.booking.findMany({
-    where: {
-      checkIn: { lt: exclusiveEnd },
-      checkOut: { gt: start },
-      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
-    },
-    include: {
-      // Load each guest's explicit night set (issue #713) so non-contiguous
-      // stays are counted only on the nights they actually occupy. Guests
-      // without night rows fall back to the stayStart/stayEnd envelope.
-      guests: { include: { nights: true } },
-    },
-  });
-
-  return nights.map((night) => {
-    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
-
-    return {
-      date: night,
-      occupiedBeds,
-      availableBeds: lodgeCapacity - occupiedBeds,
-    };
-  });
-}
-
-/**
  * Check if there's enough capacity for a given number of guests across all nights.
  */
 export async function checkCapacity(

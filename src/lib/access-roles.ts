@@ -156,11 +156,6 @@ export function hasAccessRole(input: AccessRoleInput, role: AppAccessRole) {
   return resolveAccessRoles(input).includes(role);
 }
 
-export function hasUserAccess(input: AccessRoleInput) {
-  const roles = resolveAccessRoles(input);
-  return roles.includes("USER") || roles.includes("ADMIN");
-}
-
 export function hasAdminAccess(input: AccessRoleInput) {
   return hasAccessRole(input, "ADMIN");
 }

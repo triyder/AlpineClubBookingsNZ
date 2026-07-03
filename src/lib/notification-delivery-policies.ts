@@ -77,12 +77,6 @@ async function loadPolicyRecords(): Promise<NotificationDeliveryPolicyRecord[]> 
   }
 }
 
-export async function listNotificationDeliveryPolicies(): Promise<
-  NotificationDeliveryPolicyPayload[]
-> {
-  return (await listNotificationDeliveryPolicySettings()).policies;
-}
-
 export async function listNotificationDeliveryPolicySettings(): Promise<
   NotificationDeliveryPolicyListPayload
 > {

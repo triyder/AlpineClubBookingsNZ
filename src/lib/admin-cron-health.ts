@@ -675,7 +675,3 @@ export function buildCronHealthReport({
     ),
   };
 }
-
-export function describeCronStaleThreshold(minutes: number | null): string {
-  return minutes === null ? "Not tracked" : formatMinutes(minutes);
-}

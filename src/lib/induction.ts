@@ -55,15 +55,6 @@ export type MemberInductionWithDetail = Prisma.MemberInductionGetPayload<{
   include: typeof INDUCTION_INCLUDE;
 }>;
 
-/** The currently active checklist template with ordered sections and items. */
-export async function getActiveTemplate(kind: InductionKind = "NEW_MEMBER") {
-  return prisma.inductionChecklistTemplate.findFirst({
-    where: { isActive: true, kind },
-    orderBy: { createdAt: "desc" },
-    include: TEMPLATE_INCLUDE,
-  });
-}
-
 /**
  * Create a new induction record for a member against the active template.
  * Snapshots requiredSignOffs from settings so later setting changes do not move

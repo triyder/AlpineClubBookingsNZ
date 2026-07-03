@@ -1,10 +1,7 @@
 import { prisma } from "./prisma";
 import type { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
-export {
-  buildMemberAuditLogWhere,
-  getAuditLogActorMemberId,
-} from "./audit-query";
+export { buildMemberAuditLogWhere } from "./audit-query";
 
 export type AuditCategory =
   | "account"
@@ -513,13 +510,4 @@ export function logAudit(params: AuditLogParams): void {
     .catch((err) => {
       logger.error({ err }, "Failed to write audit log");
     });
-}
-
-/**
- * Fire-and-forget structured audit logging for non-critical supplementary paths.
- */
-export function logStructuredAudit(event: StructuredAuditEvent): void {
-  void createStructuredAuditLog(event).catch((err) => {
-    logger.error({ err }, "Failed to write structured audit log");
-  });
 }

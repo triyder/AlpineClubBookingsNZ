@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, type ReactNode } from "react";
 
 const CspNonceContext = createContext<string | undefined>(undefined);
 
@@ -16,8 +16,4 @@ export function CspNonceProvider({
       {children}
     </CspNonceContext.Provider>
   );
-}
-
-export function useCspNonce() {
-  return useContext(CspNonceContext);
 }
