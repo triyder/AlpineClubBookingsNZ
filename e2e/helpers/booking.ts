@@ -34,16 +34,16 @@ export async function fetchOccupiedBeds(
 
 // First visit to /book runs the member-onboarding dialog when the member's
 // details are incomplete (demo-seed members lack a date of birth and postal
-// address). Completes whichever steps appear; a no-show is fine. Returns
-// whether the gate was completed — the /book page fetched its family list
-// before the confirmation landed, so the caller must reload to unblock the
-// quick-add buttons.
-export async function completeMemberDetailsGateIfShown(page: Page): Promise<boolean> {
+// address). Completes whichever steps appear; a no-show is fine. No reload
+// afterwards: completing the wizard raises the member-onboarding-confirmed
+// event and the page refetches its family list (#1124), which this suite
+// deliberately relies on for regression coverage.
+export async function completeMemberDetailsGateIfShown(page: Page): Promise<void> {
   const dialogTitle = page.getByText("Confirm member details");
   try {
     await dialogTitle.waitFor({ state: "visible", timeout: 5_000 });
   } catch {
-    return false; // details already confirmed
+    return; // details already confirmed
   }
 
   const dialog = page.getByRole("dialog");
@@ -81,7 +81,6 @@ export async function completeMemberDetailsGateIfShown(page: Page): Promise<bool
     await finish.click();
   }
   await dialogTitle.waitFor({ state: "hidden" });
-  return true;
 }
 
 export async function selectCalendarDay(page: Page, dateOnly: string): Promise<void> {
@@ -112,11 +111,7 @@ export async function bookSelfToReviewStep(
   window: StayWindow,
 ): Promise<void> {
   await page.goto("/book");
-  if (await completeMemberDetailsGateIfShown(page)) {
-    // The wizard fetched the family list before the confirmation landed, so
-    // the quick-add buttons stay blocked until a fresh load.
-    await page.reload();
-  }
+  await completeMemberDetailsGateIfShown(page);
 
   await expect(page.getByText("Select Your Dates")).toBeVisible();
   await selectCalendarDay(page, window.checkIn);

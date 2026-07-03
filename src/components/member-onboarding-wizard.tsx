@@ -23,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { emitMemberOnboardingConfirmed } from "@/lib/member-onboarding-events";
 
 interface MissingField {
   key: string;
@@ -243,6 +244,11 @@ export function MemberOnboardingWizard({
       toast.success("Details confirmed");
       setData((prev) => (prev ? { ...prev, shouldShow: body.shouldShow } : prev));
       setOpen(Boolean(body.shouldShow));
+      if (!body.shouldShow) {
+        // Pages under this overlay (e.g. /book's family list) cached
+        // bookability state from before the confirmation and must refetch.
+        emitMemberOnboardingConfirmed();
+      }
     } catch {
       toast.error("Could not confirm your details");
     } finally {

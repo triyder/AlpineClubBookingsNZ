@@ -37,6 +37,7 @@ import {
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 
@@ -394,10 +395,19 @@ export default function BookPage() {
   }, [session, router]);
 
   useEffect(() => {
-    fetch("/api/members/family")
-      .then((res) => res.ok ? res.json() : { familyMembers: [] })
-      .then((data) => setFamilyMembers(data.familyMembers || []))
-      .catch(() => {});
+    const loadFamilyMembers = () => {
+      fetch("/api/members/family")
+        .then((res) => res.ok ? res.json() : { familyMembers: [] })
+        .then((data) => setFamilyMembers(data.familyMembers || []))
+        .catch(() => {});
+    };
+    loadFamilyMembers();
+    // The confirm-details wizard overlays this page on a member's first visit;
+    // completing it flips canBeBookedAsMember, so the cached list must refetch
+    // or the member's own quick-add button stays disabled until a reload.
+    window.addEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
+    return () =>
+      window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, loadFamilyMembers);
   }, []);
 
   useEffect(() => {

@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
+import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
 
 const fetchMock = vi.fn();
 
@@ -160,5 +161,71 @@ describe("MemberOnboardingWizard", () => {
       "/api/member/onboarding/confirm",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("announces completion so overlaid pages can refetch bookability state", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => onboardingData,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, shouldShow: false }),
+      });
+
+    const onConfirmed = vi.fn();
+    window.addEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, onConfirmed);
+    try {
+      render(<MemberOnboardingWizard initialShouldShow />);
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Confirm details are correct" })
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Confirm and finish/ }));
+
+      await waitFor(() => expect(onConfirmed).toHaveBeenCalledTimes(1));
+    } finally {
+      window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, onConfirmed);
+    }
+  });
+
+  it("does not announce completion when the confirm call fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => onboardingData,
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ error: "nope" }),
+      })
+      // confirmOnboarding reloads the onboarding payload after a failure.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => onboardingData,
+      });
+
+    const onConfirmed = vi.fn();
+    window.addEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, onConfirmed);
+    try {
+      render(<MemberOnboardingWizard initialShouldShow />);
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Confirm details are correct" })
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Confirm and finish/ }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/member/onboarding/confirm",
+          expect.objectContaining({ method: "POST" })
+        )
+      );
+      expect(onConfirmed).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toBeTruthy();
+    } finally {
+      window.removeEventListener(MEMBER_ONBOARDING_CONFIRMED_EVENT, onConfirmed);
+    }
   });
 });
