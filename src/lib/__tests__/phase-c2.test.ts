@@ -302,6 +302,7 @@ describe("Admin Xero contact member import API", () => {
         {
           memberId: "member-1",
           role: "USER",
+          roleDefinitionId: null,
           assignedByMemberId: "a1",
         },
       ],

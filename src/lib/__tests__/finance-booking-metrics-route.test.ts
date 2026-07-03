@@ -68,7 +68,7 @@ function memberWithoutFinanceAccess() {
   };
 }
 
-function adminWithoutFinanceAccess() {
+function fullAdminMember() {
   return {
     id: "admin-1",
     email: "admin@example.com",
@@ -77,6 +77,20 @@ function adminWithoutFinanceAccess() {
     role: "ADMIN",
     financeAccessLevel: "NONE",
     accessRoles: [{ role: "ADMIN" }],
+    active: true,
+    forcePasswordChange: false,
+  };
+}
+
+function contentManagerMember() {
+  return {
+    id: "content-1",
+    email: "content@example.com",
+    firstName: "Content",
+    lastName: "Only",
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [{ role: "ADMIN_CONTENT" }],
     active: true,
     forcePasswordChange: false,
   };
@@ -236,9 +250,24 @@ describe("finance booking metrics route", () => {
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
-  it("rejects admins without explicit finance viewer access", async () => {
+  it("allows Full Admins as matrix-derived finance viewers", async () => {
+    // Finance access derives from the merged finance area level, so the
+    // full-edit ADMIN matrix includes it (intentional widening).
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
-    mockFindUnique.mockResolvedValue(adminWithoutFinanceAccess());
+    mockFindUnique.mockResolvedValue(fullAdminMember());
+
+    const response = await getFinanceBookingMetricsRoute(
+      new NextRequest(
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+      )
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects admins whose matrix has no finance access", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "content-1", role: "USER", accessRoles: [{ role: "ADMIN_CONTENT" }] } });
+    mockFindUnique.mockResolvedValue(contentManagerMember());
 
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(

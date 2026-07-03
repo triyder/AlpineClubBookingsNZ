@@ -74,7 +74,7 @@ describe("admin lodge route", () => {
 
     expect(res.status).toBe(200);
     expect(prisma.memberAccessRole.createMany).toHaveBeenCalledWith({
-      data: [{ memberId: "lodge-1", role: "LODGE" }],
+      data: [{ memberId: "lodge-1", role: "LODGE", roleDefinitionId: null }],
       skipDuplicates: true,
     });
     expect(logAudit).toHaveBeenCalledWith(
