@@ -64,6 +64,9 @@ export function MountainConditionsPanel() {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>("");
+  // Sampled whenever the record is (re)loaded so the frozen check below can
+  // stay pure during render (Date.now() must not run mid-render).
+  const [recordSyncedAt, setRecordSyncedAt] = useState(0);
 
   const loadRecord = useCallback(async () => {
     setLoading(true);
@@ -77,9 +80,11 @@ export function MountainConditionsPanel() {
 
       const nextRecord = body.record;
       setRecord(nextRecord);
+      setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(nextRecord?.payload ?? emptyWhakapapaCurlData()));
     } catch (loadError) {
       setRecord(null);
+      setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(emptyWhakapapaCurlData()));
       setError(
         loadError instanceof Error
@@ -110,6 +115,7 @@ export function MountainConditionsPanel() {
       }
 
       setRecord(body.record);
+      setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(body.record?.payload ?? emptyWhakapapaCurlData()));
       toast.success(body.message || "Mountain conditions saved");
     } catch (saveError) {
@@ -137,6 +143,7 @@ export function MountainConditionsPanel() {
       }
 
       setRecord(body.record);
+      setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(body.record?.payload ?? emptyWhakapapaCurlData()));
       toast.success(body.message || "Mountain conditions refreshed");
     } catch (refreshError) {
@@ -153,7 +160,7 @@ export function MountainConditionsPanel() {
 
   const frozenUntil = record?.frozenUntil ?? null;
   const isFrozen = Boolean(
-    frozenUntil && new Date(frozenUntil).getTime() > Date.now(),
+    frozenUntil && new Date(frozenUntil).getTime() > recordSyncedAt,
   );
 
   if (loading) {

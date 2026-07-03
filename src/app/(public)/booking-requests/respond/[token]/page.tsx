@@ -50,6 +50,9 @@ export default function BookingRequestQuoteResponsePage() {
   const { token } = useParams<{ token: string }>();
   const [state, setState] = useState<LoadState>("loading");
   const [context, setContext] = useState<QuoteContext | null>(null);
+  // Sampled when the quote context arrives so the expiry label below can be
+  // derived without calling Date.now() mid-render.
+  const [contextLoadedAt, setContextLoadedAt] = useState<number | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [actioning, setActioning] = useState<Action | null>(null);
@@ -69,6 +72,7 @@ export default function BookingRequestQuoteResponsePage() {
           setState("invalid");
         } else if (res.ok) {
           setContext(data);
+          setContextLoadedAt(Date.now());
           setSelectedOptionId(data.options?.[0]?.id ?? null);
           setState("ready");
         } else {
@@ -91,12 +95,12 @@ export default function BookingRequestQuoteResponsePage() {
   );
 
   const expiresInLabel = useMemo(() => {
-    if (!context) return null;
-    const remainingMs = new Date(context.expiresAt).getTime() - Date.now();
+    if (!context || contextLoadedAt === null) return null;
+    const remainingMs = new Date(context.expiresAt).getTime() - contextLoadedAt;
     if (remainingMs <= 0) return "expired";
     const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
     return days <= 1 ? "expires today" : `expires in ${days} days`;
-  }, [context]);
+  }, [context, contextLoadedAt]);
 
   async function respond(action: Action) {
     setActioning(action);

@@ -287,7 +287,9 @@ export function PublicBookingRequestsPanel({
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+    // setState functions are referentially stable; they are listed so the
+    // manual dependencies match what the React Compiler infers.
+  }, [filter, setError, setLoading, setRequests]);
 
   useEffect(() => {
     fetchRequests();

@@ -92,7 +92,7 @@
   },
   "overrides": {
     "@hono/node-server": "1.19.13",
-    "eslint-plugin-react-hooks": "7.0.1",
+    "eslint-plugin-react-hooks": "7.1.1",
     "hono": "4.12.25",
     "axios": "1.16.1",
     "dompurify": "3.4.11",

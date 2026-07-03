@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -181,7 +181,9 @@ function buildForceConfirmAuditPath(report: ForceConfirmReport) {
 export default function AdminWaitlistPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const queryString = searchParams.toString();
+  // Memoized so the React Compiler treats the derived string as immutable
+  // when it is passed to helpers and used as a loadEntries dependency.
+  const queryString = useMemo(() => searchParams.toString(), [searchParams]);
   const queryPage = parsePositiveInteger(searchParams.get("page"), 1);
   const queryPageSize = parsePageSize(searchParams.get("pageSize"));
   const fromParam = searchParams.get("from") ?? "";
@@ -269,7 +271,10 @@ export default function AdminWaitlistPage() {
   }, [loadEntries]);
 
   function updateQuery(mutator: (params: URLSearchParams) => void) {
-    const nextParams = new URLSearchParams(queryString);
+    // Build the mutable copy from searchParams directly (not queryString):
+    // mutating an object seeded from queryString makes the React Compiler
+    // treat that memoized dependency as mutable and skip the component.
+    const nextParams = new URLSearchParams(searchParams.toString());
     mutator(nextParams);
     router.replace(buildPathWithSearch("/admin/waitlist", nextParams), {
       scroll: false,
