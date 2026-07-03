@@ -130,6 +130,25 @@ Every `src/app/api/**/route.ts` file is covered by one of these family rules.
 The rules are intentionally broad enough to survive routine route additions but
 specific enough for #614 to turn into static boundary tests.
 
+These family rules are enforced by automated tests (issue #1132):
+
+- `src/lib/__tests__/api-route-boundaries.test.ts` asserts per exported HTTP
+  method that admin routes reach `requireAdmin()` (directly, via a local
+  helper, or via an allowlisted shared wrapper), that finance routes call the
+  viewer/manager guard documented for them, and that member routes carry an
+  active-session guard unless explicitly documented as public.
+- `src/lib/__tests__/admin-permissions.test.ts` enumerates every
+  `src/app/api/admin/**` route and method from the filesystem and checks the
+  resolved area/level requirement against a hand-written role-bundle truth
+  table: anonymous, plain member, lodge, finance-viewer, and org identities
+  must be denied everywhere, and each admin bundle must match the table. A new
+  admin route that falls into the `/api/admin` overview catch-all (readable by
+  every scoped admin bundle) fails the suite until it is mapped to a specific
+  area or consciously allowlisted.
+- `src/lib/__tests__/finance-api-auth.test.ts` behaviourally tests the
+  `/api/finance` guard pair, including that a full `ADMIN` without a finance
+  role is rejected (the finance surface is separate from the admin portal).
+
 ### Public or Provider-Signed Exceptions
 
 - `src/app/api/address-autocomplete/**/route.ts`

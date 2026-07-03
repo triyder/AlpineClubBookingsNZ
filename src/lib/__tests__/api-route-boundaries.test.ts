@@ -288,6 +288,181 @@ describe("API route boundary metadata", () => {
     expect(violations).toEqual([]);
   });
 
+  // -------------------------------------------------------------------------
+  // Per-method admin guard enforcement (issue #1132). The file-level admin
+  // marker check above has the same blind spot issue #812 found for member
+  // routes: one guarded method lets a second unguarded exported method ride
+  // along. Admin handlers either call requireAdmin directly, call a local
+  // helper that does, or call a shared wrapper from the allowlist below.
+  // -------------------------------------------------------------------------
+
+  // Shared cross-file wrappers that perform requireAdmin internally. Adding a
+  // wrapper here requires its defining module to call requireAdmin (asserted
+  // in the test), so the allowlist cannot rot into a bypass.
+  const sharedAdminGuardWrappers: Record<string, string> = {
+    requireBedAllocationAdmin: "src/lib/admin-bed-allocation-routes.ts",
+  };
+
+  // Slice every top-level function in a file (declarations and const
+  // arrow/function assignments) so a method body can be traced through local
+  // helpers to a requireAdmin call.
+  function extractLocalFunctionBodies(
+    contents: string,
+  ): Record<string, string> {
+    const definitionPattern =
+      /(?:^|\n)(?:export\s+)?(?:async\s+function\s+(\w+)|function\s+(\w+)|const\s+(\w+)\s*=\s*(?:async\s*)?(?:\(|function))/g;
+    const matches = [...contents.matchAll(definitionPattern)];
+    const bodies: Record<string, string> = {};
+    for (let index = 0; index < matches.length; index += 1) {
+      const name = matches[index][1] ?? matches[index][2] ?? matches[index][3];
+      const start = matches[index].index ?? 0;
+      const end =
+        index + 1 < matches.length
+          ? (matches[index + 1].index ?? contents.length)
+          : contents.length;
+      bodies[name] = contents.slice(start, end);
+    }
+    return bodies;
+  }
+
+  function bodyReachesRequireAdmin(
+    body: string,
+    localFunctions: Record<string, string>,
+    depth = 0,
+  ): boolean {
+    if (/\brequireAdmin\s*\(/.test(body)) return true;
+    if (depth >= 3) return false;
+
+    for (const [name, helperBody] of Object.entries(localFunctions)) {
+      if (!new RegExp(`\\b${name}\\s*\\(`).test(body)) continue;
+      if (helperBody === body) continue;
+      if (bodyReachesRequireAdmin(helperBody, localFunctions, depth + 1)) {
+        return true;
+      }
+    }
+
+    for (const [wrapper, definingFile] of Object.entries(
+      sharedAdminGuardWrappers,
+    )) {
+      if (new RegExp(`\\b${wrapper}\\s*\\(`).test(body)) {
+        const wrapperContents = fs.readFileSync(
+          path.join(process.cwd(), definingFile),
+          "utf8",
+        );
+        if (/\brequireAdmin\s*\(/.test(wrapperContents)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  it("requires every method of an admin-boundary route to reach requireAdmin", () => {
+    const violations = routeFiles.flatMap((routePath) => {
+      if (expectedBoundaryFor(routePath) !== "admin") return [];
+
+      const contents = routeContents(routePath);
+      const localFunctions = extractLocalFunctionBodies(contents);
+      const bodies = extractMethodBodies(contents);
+
+      return Object.entries(bodies).flatMap(([method, body]) =>
+        bodyReachesRequireAdmin(body, localFunctions)
+          ? []
+          : [
+              `${routePath}#${method}: admin-boundary method does not reach requireAdmin directly, via a local helper, or via an allowlisted shared wrapper`,
+            ],
+      );
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Per-method finance guard enforcement with explicit access levels (issue
+  // #1132). Every /api/finance route method must be documented here, so a new
+  // finance route fails the suite until its required level is declared, and a
+  // silent manager→viewer downgrade shows up as a reviewable diff.
+  // -------------------------------------------------------------------------
+
+  const financeRouteAccessLevels: Record<
+    string,
+    Record<string, "viewer" | "manager" | "session-redirect">
+  > = {
+    "src/app/api/finance/bookings/metrics/route.ts": { GET: "viewer" },
+    "src/app/api/finance/legacy-dashboard/auth/route.ts": {
+      // Browser redirect flow: checks auth() + hasFinanceViewerAccess and
+      // redirects to login instead of returning a JSON 401.
+      GET: "session-redirect",
+    },
+    "src/app/api/finance/legacy-dashboard/bookings/route.ts": { GET: "viewer" },
+    "src/app/api/finance/sync/run/route.ts": { POST: "manager" },
+    "src/app/api/finance/sync/status/route.ts": { GET: "manager" },
+  };
+
+  it("requires every finance route method to match its documented access level", () => {
+    const financeRouteFiles = routeFiles.filter((routePath) =>
+      routePath.startsWith("src/app/api/finance/"),
+    );
+
+    const violations = financeRouteFiles.flatMap((routePath) => {
+      const documented = financeRouteAccessLevels[routePath];
+      if (!documented) {
+        return [
+          `${routePath}: finance route is not documented in financeRouteAccessLevels`,
+        ];
+      }
+
+      const bodies = extractMethodBodies(routeContents(routePath));
+      const issues: string[] = [];
+
+      for (const [method, body] of Object.entries(bodies)) {
+        const level = documented[method];
+        if (!level) {
+          issues.push(
+            `${routePath}#${method}: exported finance method has no documented access level`,
+          );
+          continue;
+        }
+
+        if (
+          level === "viewer" &&
+          !/\brequireFinanceViewerApiAccess\s*\(/.test(body)
+        ) {
+          issues.push(
+            `${routePath}#${method}: documented viewer method does not call requireFinanceViewerApiAccess`,
+          );
+        }
+        if (
+          level === "manager" &&
+          !/\brequireFinanceManagerApiAccess\s*\(/.test(body)
+        ) {
+          issues.push(
+            `${routePath}#${method}: documented manager method does not call requireFinanceManagerApiAccess`,
+          );
+        }
+        if (
+          level === "session-redirect" &&
+          !(/\bauth\s*\(/.test(body) && /\bhasFinanceViewerAccess\s*\(/.test(body))
+        ) {
+          issues.push(
+            `${routePath}#${method}: documented session-redirect method must check auth() and hasFinanceViewerAccess`,
+          );
+        }
+      }
+
+      for (const method of Object.keys(documented)) {
+        if (!(method in bodies)) {
+          issues.push(
+            `${routePath}#${method}: documented finance method is not exported`,
+          );
+        }
+      }
+
+      return issues;
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   it("keeps issue #675 JSON-consuming routes on the controlled malformed JSON path", () => {
     const violations = issue675MalformedJsonRoutes.flatMap((routePath) => {
       const contents = routeContents(routePath);
