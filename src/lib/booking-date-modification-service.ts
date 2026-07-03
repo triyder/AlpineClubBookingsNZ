@@ -14,6 +14,7 @@ import {
   queueSupersededPrimaryIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
   createModificationAdditionalPaymentIntent,
   executeBookingModificationRefund,
@@ -304,6 +305,9 @@ export async function modifyBookingDates({
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
+      // Policy (#1093): a booking date change resets every guest — partial
+      // stays included — to the full new range, mirroring the batch path's
+      // date-change reset. That is why no per-guest night set is passed here.
       // Nights kept across the date change keep their booked price (#1036);
       // only the nights the new range adds price at current season rates.
       lockedNightPrices: lockedNightPricesForGuest(g),
@@ -475,17 +479,34 @@ export async function modifyBookingDates({
       newNonMemberHoldUntil = null;
     }
 
+    // Re-sync each guest's BookingGuestNight rows to the priced nights of the
+    // new range (#1093). Leaving the old rows in place would hand a later edit
+    // a stale night set — it would price the guest over nights the booking no
+    // longer covers instead of the range they now hold.
     await Promise.all(
-      booking.guests.map((g, i) =>
-        tx.bookingGuest.update({
+      booking.guests.map(async (g, i) => {
+        await tx.bookingGuest.update({
           where: { id: g.id },
           data: {
             stayStart: newCheckIn,
             stayEnd: newCheckOut,
             priceCents: priceBreakdown.guests[i].priceCents,
           },
-        }),
-      ),
+        });
+        await tx.bookingGuestNight.deleteMany({
+          where: { bookingGuestId: g.id },
+        });
+        const nightDates = priceBreakdown.guests[i].nightDates ?? [];
+        if (nightDates.length > 0) {
+          await tx.bookingGuestNight.createMany({
+            data: nightDates.map((stayDate, k) => ({
+              bookingGuestId: g.id,
+              stayDate,
+              priceCents: priceBreakdown.guests[i].perNightCents[k] ?? 0,
+            })),
+          });
+        }
+      }),
     );
 
     const oldCheckIn = new Date(booking.checkIn);
@@ -580,6 +601,10 @@ export async function modifyBookingDates({
         booking.payment?.id,
       );
     }
+
+    // Fire the deferred envelope constraint triggers here so a violation is
+    // attributed to this service instead of the transaction's COMMIT.
+    await assertBookingEnvelopeInvariants(tx);
 
     return {
       booking: updatedBooking,

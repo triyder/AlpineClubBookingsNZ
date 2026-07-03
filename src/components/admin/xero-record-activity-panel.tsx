@@ -323,7 +323,7 @@ export function XeroRecordActivityPanel({
                   <p className="text-lg font-semibold text-amber-700">{data.summary.partialOperations}</p>
                 </div>
                 <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Pending</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Pending / Running</p>
                   <p className="text-lg font-semibold text-slate-900">{data.summary.pendingOperations}</p>
                 </div>
                 <div className="rounded-lg border bg-slate-50 p-3">

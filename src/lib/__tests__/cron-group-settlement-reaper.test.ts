@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingEventType, BookingStatus, PaymentStatus } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   settlementFindMany: vi.fn(),
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   processWaitlistForDates: vi.fn(),
   sendSettlementExpired: vi.fn(),
   sendJoinReleased: vi.fn(),
+  sendJoinCancelled: vi.fn(),
 }));
 
 const txClient = {
@@ -50,6 +51,7 @@ vi.mock("@/lib/waitlist", () => ({
 vi.mock("@/lib/email", () => ({
   sendGroupSettlementExpiredEmail: mocks.sendSettlementExpired,
   sendGroupJoinReleasedEmail: mocks.sendJoinReleased,
+  sendGroupJoinCancelledEmail: mocks.sendJoinCancelled,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -112,6 +114,7 @@ beforeEach(() => {
   mocks.processWaitlistForDates.mockResolvedValue(undefined);
   mocks.sendSettlementExpired.mockResolvedValue(undefined);
   mocks.sendJoinReleased.mockResolvedValue(undefined);
+  mocks.sendJoinCancelled.mockResolvedValue(undefined);
   mocks.cancelPaymentIntent.mockResolvedValue(null);
 });
 
@@ -150,7 +153,13 @@ describe("reapStaleGroupSettlements", () => {
 
     const result = await reapStaleGroupSettlements(NOW);
 
-    expect(result).toEqual({ scanned: 1, reaped: 1, releasedChildBookings: 2 });
+    expect(result).toEqual({
+      scanned: 1,
+      reaped: 1,
+      releasedChildBookings: 2,
+      expiredSettlements: 0,
+      cancelledChildBookings: 0,
+    });
     // Children revert to their pre-commit, non-capacity-holding state.
     expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
     expect(mocks.bookingUpdate).toHaveBeenCalledWith({
@@ -195,7 +204,13 @@ describe("reapStaleGroupSettlements", () => {
 
     const result = await reapStaleGroupSettlements(NOW);
 
-    expect(result).toEqual({ scanned: 1, reaped: 0, releasedChildBookings: 0 });
+    expect(result).toEqual({
+      scanned: 1,
+      reaped: 0,
+      releasedChildBookings: 0,
+      expiredSettlements: 0,
+      cancelledChildBookings: 0,
+    });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
   });
@@ -235,7 +250,13 @@ describe("reapStaleGroupSettlements", () => {
 
     const result = await reapStaleGroupSettlements(NOW);
 
-    expect(result).toEqual({ scanned: 1, reaped: 0, releasedChildBookings: 0 });
+    expect(result).toEqual({
+      scanned: 1,
+      reaped: 0,
+      releasedChildBookings: 0,
+      expiredSettlements: 0,
+      cancelledChildBookings: 0,
+    });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
     expect(mocks.cancelPaymentIntent).not.toHaveBeenCalled();
@@ -243,19 +264,34 @@ describe("reapStaleGroupSettlements", () => {
   });
 
   it("is idempotent across reruns: no CONFIRMED children means nothing to do", async () => {
-    // A previous run already reverted the children (settlement now FAILED).
+    // A previous run already reverted the children (settlement now FAILED),
+    // and a run before this one already expired them (no PAYMENT_PENDING
+    // children left either).
     mocks.settlementFindMany.mockResolvedValue([
       staleSettlement({ status: PaymentStatus.FAILED }),
     ]);
-    mocks.settlementFindUnique.mockResolvedValue({ status: PaymentStatus.FAILED });
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      updatedAt: new Date(NOW.getTime() - 49 * HOUR),
+    });
     mocks.bookingFindMany.mockResolvedValue([]);
 
     const result = await reapStaleGroupSettlements(NOW);
 
-    expect(result).toEqual({ scanned: 1, reaped: 0, releasedChildBookings: 0 });
+    expect(result).toEqual({
+      scanned: 1,
+      reaped: 0,
+      releasedChildBookings: 0,
+      expiredSettlements: 0,
+      cancelledChildBookings: 0,
+    });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    // No-op passes must not rewrite the settlement: that would bump
+    // updatedAt and hold the expiry window open forever.
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
     expect(mocks.sendJoinReleased).not.toHaveBeenCalled();
+    expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
   });
 
   it("keeps reaping the rest when one settlement fails", async () => {
@@ -276,5 +312,132 @@ describe("reapStaleGroupSettlements", () => {
 
     expect(result.scanned).toBe(2);
     expect(result.reaped).toBe(1);
+  });
+});
+
+describe("expiry of reaped organiser-pays children (#1094)", () => {
+  function paymentPendingChild(id: string) {
+    return confirmedChild(id);
+  }
+
+  function failedSettlement(overrides: Record<string, unknown> = {}) {
+    return staleSettlement({ status: PaymentStatus.FAILED, ...overrides });
+  }
+
+  it("cancels reverted children once a FAILED settlement sits unretried through a second window", async () => {
+    // Phase 1 has nothing to reap; phase 2's fresh scan finds the FAILED
+    // settlement whose reap happened a full window ago.
+    mocks.settlementFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedSettlement()]);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      updatedAt: new Date(NOW.getTime() - 49 * HOUR),
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      paymentPendingChild("child-1"),
+      paymentPendingChild("child-2"),
+    ]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.expiredSettlements).toBe(1);
+    expect(result.cancelledChildBookings).toBe(2);
+    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "child-1" },
+      data: { status: BookingStatus.CANCELLED },
+    });
+    // Terminal event and joiner notification, exactly once per child.
+    expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(2);
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "child-1",
+        type: BookingEventType.CANCELLED,
+      })
+    );
+    expect(mocks.sendJoinCancelled).toHaveBeenCalledTimes(2);
+    expect(mocks.sendJoinCancelled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "child-1@example.com",
+        organiserName: "Olive Organiser",
+      })
+    );
+    // PAYMENT_PENDING held no beds: no bed or waitlist churn, no settlement
+    // rewrite (FAILED is already terminal for an expired settlement).
+    expect(mocks.reconcileBedAllocations).not.toHaveBeenCalled();
+    expect(mocks.processWaitlistForDates).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendJoinReleased).not.toHaveBeenCalled();
+  });
+
+  it("keeps children alive when the organiser retried before expiry (fresh read wins)", async () => {
+    mocks.settlementFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedSettlement()]);
+    // Inside the advisory lock the settlement is PENDING again: a retry won.
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.PENDING,
+      updatedAt: NOW,
+    });
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.expiredSettlements).toBe(0);
+    expect(result.cancelledChildBookings).toBe(0);
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
+  });
+
+  it("restarts the clock when a retry failed again recently (deadline re-checked in the lock)", async () => {
+    mocks.settlementFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedSettlement()]);
+    // Fresh row shows a failed retry one hour ago: a new window is running.
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      updatedAt: new Date(NOW.getTime() - 1 * HOUR),
+    });
+    mocks.bookingFindMany.mockResolvedValue([paymentPendingChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.expiredSettlements).toBe(0);
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
+  });
+
+  it("never expires a settlement in the same run that reaped it (fresh scan, fresh clock)", async () => {
+    // Phase 2's own scan sees the updatedAt the reap just refreshed.
+    mocks.settlementFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedSettlement({ updatedAt: NOW })]);
+    mocks.bookingFindMany.mockResolvedValue([paymentPendingChild("child-1")]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.expiredSettlements).toBe(0);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent across reruns: cancelled children are not re-cancelled or re-notified", async () => {
+    mocks.settlementFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedSettlement()]);
+    mocks.settlementFindUnique.mockResolvedValue({
+      status: PaymentStatus.FAILED,
+      updatedAt: new Date(NOW.getTime() - 49 * HOUR),
+    });
+    // A previous run already cancelled them: no PAYMENT_PENDING children left.
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(result.expiredSettlements).toBe(0);
+    expect(result.cancelledChildBookings).toBe(0);
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
   });
 });

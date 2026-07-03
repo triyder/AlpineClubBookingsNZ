@@ -25,6 +25,8 @@ AlpineClubBookingsNZ.
 - `ONGOING-DEVELOPMENT-WORKFLOW.md` explains how generic public changes and
   private deployment-fork changes should flow.
 - `MAINTENANCE.md` records the public validation and release checklist.
+- `E2E_PLAYWRIGHT.md` covers the Playwright browser E2E suite that drives the
+  Critical journeys against the staging compose stack.
 - `STAGING_ACCESSIBILITY.md` covers non-production browser and Lighthouse
   checks.
 

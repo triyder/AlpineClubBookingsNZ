@@ -407,6 +407,15 @@ through `PaymentRecoveryOperation`. The recovery worker cancels still-open
 intents, treats already-cancelled intents as complete, and queues/refunds late
 captures without running the normal booking-confirmation path.
 
+Refund recovery is exactly-once across multi-transaction payments (#1097): a
+failed refund reports how much was refunded-and-recorded so the recovery row
+is enqueued for only the remainder, and the worker freezes its
+per-transaction allocation on the row (`allocationPlan`) before the first
+Stripe call. Retries replay those exact slices with their original
+idempotency keys — Stripe answers repeats with the original refund and the
+`PaymentRefund` ledger dedupes by refund id — instead of re-deriving a
+shifted allocation from whatever progress happens to be recorded.
+
 Group-settlement PaymentIntents get the same safety net: switching a group
 settlement to Internet Banking or re-attempting a card settlement voids the
 superseded intent in Stripe, and if a stale intent still captures, the webhook
@@ -481,7 +490,7 @@ disable cron with `CRON_ENABLED=false`.
 | Job | Schedule | Purpose |
 | --- | --- | --- |
 | `confirm-pending` | Every 3 hours | Confirm pending bookings after hold deadlines |
-| `group-settlement-reaper` | Every 3 hours | Release CONFIRMED-unpaid group children when an organiser-pays settlement stays unpaid past its window (default 48h, clamped to check-in); voids the open intent and notifies the group |
+| `group-settlement-reaper` | Every 3 hours | Release CONFIRMED-unpaid group children when an organiser-pays settlement stays unpaid past its window (default 48h, clamped to check-in); voids the open intent and notifies the group. Second phase (#1094): cancels the reverted PAYMENT_PENDING children, with a joiner notice, once the FAILED settlement sits unretried through another full window |
 | `pre-arrival-reminders` | Every 3 hours | Send current directions and door-code reminders before check-in |
 | `purge-booking-requests` | Every 3 hours | Delete expired declined and never-verified public booking requests after the retention window |
 | `quote-expiry-reminders` | Every 3 hours | Remind public booking-request quote recipients before their quote link expires (sends a fresh working link) |

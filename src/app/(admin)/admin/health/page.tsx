@@ -54,6 +54,13 @@ export default function AdminHealthPage() {
     stripe: CreditCard,
     xero: RefreshCw,
     smtp: Mail,
+    paymentRecovery: CreditCard,
+  };
+  // Friendly names for check keys the backend reports in camelCase.
+  const checkLabels: Record<string, string> = {
+    db: "Database",
+    smtp: "SMTP",
+    paymentRecovery: "Payment recovery",
   };
 
   return (
@@ -102,7 +109,9 @@ export default function AdminHealthPage() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <Icon className="h-4 w-4 text-slate-500" />
-                    <span className="font-medium text-slate-900 capitalize">{name}</span>
+                    <span className="font-medium text-slate-900 capitalize">
+                      {checkLabels[name] ?? name}
+                    </span>
                   </div>
                   <StatusBadge status={check.status} />
                 </div>

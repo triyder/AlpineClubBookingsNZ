@@ -99,6 +99,9 @@ vi.mock("@/lib/stripe", () => ({
   findOrCreateCustomer: (...args: unknown[]) => mockFindOrCreateCustomer(...args),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
@@ -207,6 +210,10 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       create: vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new-g", ...data })),
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
+    },
+    bookingGuestNight: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),

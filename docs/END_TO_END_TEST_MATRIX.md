@@ -4,18 +4,23 @@ This first-pass matrix links personas, journeys, risks, test types, and likely
 validation commands. Use it to plan focused issues and avoid claiming coverage
 that does not exist yet.
 
+The Critical rows marked "Playwright E2E" below now have automated browser
+coverage in `e2e/` run against the staging compose stack — see
+[`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md). The Stripe payment specs skip unless
+genuine Stripe test-mode keys are configured.
+
 | Area | Persona or actor | Journey or behavior | Risk | Test type | Suggested validation |
 | --- | --- | --- | --- | --- | --- |
 | Auth/access control | Anonymous | Public pages, login, token routes, public API exceptions | High | Route/static tests plus manual public smoke | Locate and run targeted route/security suites |
-| Auth/access control | Member/admin/finance/lodge | Global two-factor enforcement: enrollment, authenticator app, email code, recovery code, lockout, and protected-route/API gating | Critical | Auth service, route, guard, and manual login-flow tests | Targeted two-factor, session-guard, module, and auth-flow tests; manual browser check for both enrollment methods |
+| Auth/access control | Member/admin/finance/lodge | Global two-factor enforcement: enrollment, authenticator app, email code, recovery code, lockout, and protected-route/API gating | Critical | Auth service, route, guard, and manual login-flow tests | Targeted two-factor, session-guard, module, and auth-flow tests; Playwright E2E `e2e/two-factor-login.spec.ts` (TOTP enrollment, verify, recovery, gating); manual browser check for email-code enrollment |
 | Auth/access control | Anonymous | Optional public Addy address-autocomplete proxy is unavailable when its module is off and manual entry still works | High | Feature-route/proxy tests plus address component fallback tests | Targeted feature-route, proxy, public endpoint, and address component tests; no live Addy calls |
 | Privacy/analytics | Anonymous visitor | Google Analytics remains off until the admin Analytics module is enabled, a GA4 measurement id is configured, and the visitor accepts the consent banner | Medium | Component, CSP, module-readiness, and manual browser/network checks | Targeted analytics consent, Admin Modules, CSP tests; manual public website and public account-page check for no GA calls before consent and collect calls only after accept |
 | Auth/access control | Member | Member cannot access other member booking/family/payment data | High | API route tests and service ownership tests | Targeted Vitest route/service suites |
 | Auth/access control | Admin/finance/lodge | Role boundaries for full admin, read-only admin, booking office, membership officer, Treasurer, content manager, finance viewer, and lodge kiosk | High | Permission-matrix, API route, page guard, and navigation tests | Targeted admin-permissions, session-guard, access-role UI, finance-auth, and sidebar/nav tests; manual role checks on staging |
-| Booking/capacity | Member | Create booking with capacity lock and per-guest stay ranges | Critical | Service tests, concurrency tests, manual booking flow | Targeted booking/capacity suites |
+| Booking/capacity | Member | Create booking with capacity lock and per-guest stay ranges | Critical | Service tests, concurrency tests, manual booking flow | Targeted booking/capacity suites; Playwright E2E `e2e/booking.spec.ts` (`/book` journey, payment-owed booking holds no bed per #737, duplicate member-night block) and `e2e/stripe-payment.spec.ts` (paid booking occupies its beds) |
 | Booking/capacity | Member | Prevent the same linked member from being booked on the same lodge night in multiple live bookings, with open-existing-booking and future self-removal recovery paths | High | Service, route, and booking-flow UI tests | Targeted member-night conflict helper, booking quote/create, and guest-removal route tests; manual `/book` duplicate-member flow |
 | Booking/capacity | Member/admin | Waitlist, offer expiry, force-confirm, bump/cancel | High | Service tests and cron tests | Targeted waitlist tests plus safe cron unit tests |
-| Payment/refund/credit | Member/admin | Stripe payment success/failure, saved card, refund, member credit | Critical | Unit/service tests with Stripe mocked | Targeted payment, refund, credit suites |
+| Payment/refund/credit | Member/admin | Stripe payment success/failure, saved card, refund, member credit | Critical | Unit/service tests with Stripe mocked | Targeted payment, refund, credit suites; Playwright E2E `e2e/stripe-payment.spec.ts` (test-mode success/decline; skips without test-mode keys) |
 | Payment/refund/credit | Member/admin | Internet Banking/Xero invoice settlement distinct from Stripe | Critical | Service tests with Xero mocked | Targeted Xero booking invoice/reconciliation tests |
 | Webhook replay/idempotency | Stripe/Xero/SES | Valid, duplicate, malformed, oversized, and wrong-signature payloads | Critical | Route tests with fake signed payloads | Targeted webhook route tests, no live provider calls |
 | Cron rerun/recovery | Scheduler | Payment recovery, pending confirmation, waitlist, Xero retry, email retry | High | Unit/route tests with local DB or mocks | Targeted cron tests; never use production `CRON_SECRET` |

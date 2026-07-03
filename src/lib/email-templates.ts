@@ -2340,6 +2340,29 @@ export function groupJoinReleasedTemplate(data: {
   `);
 }
 
+/**
+ * Final notice after a reaped organiser-pays place is cancelled (#1094): the
+ * organiser never restarted the combined payment, so the joiner's pending
+ * booking reached its terminal state.
+ */
+export function groupJoinCancelledTemplate(data: {
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  return layout(`
+    ${heading("Your Group Booking Has Been Cancelled")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the combined group payment " + escapeHtml(data.organiserName) + " started for your stay at " + escapeHtml(CLUB_NAME) + "'s lodge was never completed, so your pending booking has now been cancelled. Nothing has been charged to you.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+    ])}
+    ${paragraph("If you still want to come, you can make your own booking for these dates — or talk to the organiser about starting a fresh group trip.")}
+    ${supportContactSentence("If you have any questions, contact the club at ")}
+  `);
+}
+
 export function bookingRequestApprovedTemplate(data: {
   firstName: string;
   payUrl: string;

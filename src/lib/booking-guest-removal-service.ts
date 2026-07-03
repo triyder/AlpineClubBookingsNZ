@@ -368,6 +368,13 @@ export async function removeBookingGuestInTransaction({
     ageTier: guest.ageTier as AgeTier,
     isMember: guest.isMember,
     memberId: guest.memberId ?? null,
+    // Price remaining guests over exactly the nights they hold (#1093):
+    // their stored night set (or stay envelope for pre-#713 guests without
+    // rows), never the full booking range — removing one guest must not grow
+    // phantom nights on a partial-stay guest who stays behind.
+    stayStart: guest.stayStart,
+    stayEnd: guest.stayEnd,
+    nights: guest.nights && guest.nights.length > 0 ? guest.nights : null,
     // Remaining guests keep their booked nightly prices (#1036): removing a
     // guest must return exactly that guest's own price, policy permitting.
     lockedNightPrices: lockedNightPricesForGuest(guest),
@@ -393,9 +400,9 @@ export async function removeBookingGuestInTransaction({
     isMember: guest.isMember,
     perNightRates: priceBreakdown.guests[index].perNightCents,
     nightDates: priceBreakdown.guests[index].nightDates,
-    // Guests are priced over the full booking range here, so the first
-    // rate is the check-in night. Dates the rates so internal work-party
-    // promos restrict the discount to the event's night window.
+    // nightDates carry each guest's actual priced nights (partial stays
+    // included); firstNight remains the booking's check-in so internal
+    // work-party promos date their window from the stay start.
     firstNight: booking.checkIn,
   }));
 

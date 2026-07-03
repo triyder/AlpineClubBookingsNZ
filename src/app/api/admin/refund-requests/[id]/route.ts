@@ -12,7 +12,10 @@ import { sendEmail } from "@/lib/email";
 import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
-import { refundPaymentTransactions } from "@/lib/payment-transactions";
+import {
+  PartialRefundError,
+  refundPaymentTransactions,
+} from "@/lib/payment-transactions";
 import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatNZDate } from "@/lib/nzst-date";
@@ -136,13 +139,22 @@ export async function PUT(
         { err, refundRequestId: id },
         "Stripe refund failed for approved appeal - enqueueing durable recovery"
       );
+      // Enqueue only what is still owed (#1097): slices already refunded and
+      // recorded before the failure stay out of the recovery amount so a
+      // multi-transaction retry cannot re-derive a shifted allocation over
+      // the full approved amount.
+      const completedRefundCents =
+        err instanceof PartialRefundError ? err.completedRefundCents : 0;
+      const remainingRefundCents = approvedAmountCents - completedRefundCents;
       try {
-        await enqueueRefundRequestRefundRecovery({
-          bookingId: booking.id,
-          paymentId: payment.id,
-          refundRequestId: id,
-          amountCents: approvedAmountCents,
-        });
+        if (remainingRefundCents > 0) {
+          await enqueueRefundRequestRefundRecovery({
+            bookingId: booking.id,
+            paymentId: payment.id,
+            refundRequestId: id,
+            amountCents: remainingRefundCents,
+          });
+        }
       } catch (enqueueErr) {
         // No durable row could be written: fall back to the pre-#1039
         // behaviour and release the claim so an admin can retry manually.

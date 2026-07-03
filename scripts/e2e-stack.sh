@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Orchestrates the staging Docker Compose stack for the Playwright E2E suite.
+#
+#   scripts/e2e-stack.sh prepare   # up postgres, reset schema, migrate, seed, up app
+#   scripts/e2e-stack.sh run       # run the Playwright suite against the stack
+#   scripts/e2e-stack.sh test      # prepare + run
+#   scripts/e2e-stack.sh down      # stop the stack and remove its volumes
+#
+# Configuration comes from an env file (default .env.staging; override with
+# E2E_ENV_FILE). Copy .env.staging.example and keep placeholder provider keys —
+# the suite never needs live providers. Real Stripe *test-mode* keys are only
+# required for the payment specs, which otherwise skip.
+#
+# Safety: this only ever talks to the isolated tacbookings-staging compose
+# project. It never touches the production compose project or port 5432.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+ENV_FILE="${E2E_ENV_FILE:-.env.staging}"
+COMPOSE_PROJECT="${E2E_COMPOSE_PROJECT:-tacbookings-staging}"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Missing $ENV_FILE — copy .env.staging.example and adjust (see docs/E2E_PLAYWRIGHT.md)." >&2
+  exit 1
+fi
+
+# Parse the compose-style env file (KEY=VALUE, no shell quoting): values may
+# contain spaces (e.g. cron schedules), and unquoted values may carry trailing
+# "  # comment" annotations, so plain `source` is not safe.
+while IFS= read -r line; do
+  [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+  [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+  key="${line%%=*}"
+  value="${line#*=}"
+  value="${value%%[[:space:]]\#*}" # strip inline comment
+  value="${value%"${value##*[![:space:]]}"}" # trim trailing whitespace
+  export "$key=$value"
+done < "$ENV_FILE"
+
+if [[ "${STRIPE_SECRET_KEY:-}" == sk_live* || "${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}" == pk_live* ]]; then
+  echo "Refusing to run: live Stripe keys found in $ENV_FILE. E2E is test-mode only." >&2
+  exit 1
+fi
+
+STAGING_POSTGRES_PORT="${STAGING_POSTGRES_PORT:-5433}"
+STAGING_HTTP_PORT="${STAGING_HTTP_PORT:-3001}"
+export E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${STAGING_HTTP_PORT}}"
+# Host-side view of the compose-internal database, for migrate + seeds.
+HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_PORT}/tacbookings"
+
+compose() {
+  docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
+    -f docker-compose.yml -f docker-compose.staging.yml "$@"
+}
+
+prepare() {
+  echo "==> Starting staging postgres (host port ${STAGING_POSTGRES_PORT})"
+  compose up -d --wait postgres
+
+  echo "==> Resetting database schema"
+  compose exec -T postgres psql -U tac -d tacbookings -v ON_ERROR_STOP=1 \
+    -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+  echo "==> Generating Prisma client"
+  DATABASE_URL="$HOST_DATABASE_URL" npx prisma generate
+
+  echo "==> Applying migrations"
+  DATABASE_URL="$HOST_DATABASE_URL" npx prisma migrate deploy
+
+  echo "==> Seeding base data"
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/seed.ts
+
+  echo "==> Seeding demo data"
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/demo-seed.ts
+
+  echo "==> Enabling two-factor module for the E2E journeys"
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-two-factor-module.ts
+
+  echo "==> Starting app (http://localhost:${STAGING_HTTP_PORT})"
+  if [[ "${E2E_SKIP_APP_BUILD:-}" == "1" ]]; then
+    compose up -d --wait app
+  else
+    compose up -d --build --wait app
+  fi
+  echo "==> Stack ready"
+}
+
+run() {
+  rm -rf e2e/.auth
+  npx playwright test "$@"
+}
+
+case "${1:-}" in
+  prepare)
+    prepare
+    ;;
+  run)
+    shift
+    run "$@"
+    ;;
+  test)
+    shift
+    prepare
+    run "$@"
+    ;;
+  down)
+    compose down -v
+    ;;
+  *)
+    echo "Usage: $0 {prepare|run|test|down} [playwright args]" >&2
+    exit 1
+    ;;
+esac

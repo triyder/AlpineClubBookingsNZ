@@ -372,7 +372,10 @@ export async function POST(
         );
       }
 
-      // Create BookingGuest records
+      // Create BookingGuest records, persisting one BookingGuestNight row per
+      // priced night (#1093) so added guests join the uniform night-row model:
+      // without rows, a later edit would reprice their whole stay at current
+      // season rates instead of honouring the prices they booked at (#1036).
       const createdGuests: BookingGuest[] = [];
       for (let i = 0; i < normalizedNewGuests.length; i++) {
         const guest = await tx.bookingGuest.create({
@@ -386,6 +389,14 @@ export async function POST(
             stayStart: booking.checkIn,
             stayEnd: booking.checkOut,
             priceCents: newGuestPrice.guests[i].priceCents,
+            nights: {
+              create: (newGuestPrice.guests[i].nightDates ?? []).map(
+                (stayDate, k) => ({
+                  stayDate,
+                  priceCents: newGuestPrice.guests[i].perNightCents[k] ?? 0,
+                }),
+              ),
+            },
           },
         });
         createdGuests.push(guest);
@@ -398,6 +409,13 @@ export async function POST(
           ageTier: g.ageTier as AgeTier,
           isMember: g.isMember,
           memberId: g.memberId ?? null,
+          // Price existing guests over exactly the nights they hold (#1093):
+          // their stored night set (or stay envelope for pre-#713 guests
+          // without rows), never the full booking range — a partial-stay
+          // guest must not grow phantom nights because someone else was added.
+          stayStart: g.stayStart,
+          stayEnd: g.stayEnd,
+          nights: g.nights && g.nights.length > 0 ? g.nights : null,
           // Existing guests keep their booked nightly prices (#1036): adding
           // a guest must cost exactly the added guest's own price.
           lockedNightPrices: lockedNightPricesForGuest(g),
@@ -426,9 +444,9 @@ export async function POST(
         isMember: guest.isMember,
         perNightRates: fullPriceBreakdown.guests[index].perNightCents,
         nightDates: fullPriceBreakdown.guests[index].nightDates,
-        // Guests are priced over the full booking range here, so the first
-        // rate is the check-in night. Dates the rates so internal
-        // work-party promos restrict the discount to the event's window.
+        // nightDates carry each guest's actual priced nights (partial stays
+        // included); firstNight remains the booking's check-in so internal
+        // work-party promos date their window from the stay start.
         firstNight: booking.checkIn,
       }));
 

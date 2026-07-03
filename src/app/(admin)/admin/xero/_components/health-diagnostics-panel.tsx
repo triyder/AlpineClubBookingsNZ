@@ -213,8 +213,8 @@ export function HealthAndDiagnosticsPanels({
               <HealthStatCard
                 label="Pending operations"
                 value={health.pendingOperations.count}
-                subtitle="Queued or running work that has not completed yet."
-                badge={<Badge className={health.pendingOperations.count > 0 ? "bg-slate-600" : "bg-green-600"}>{health.pendingOperations.count > 0 ? "In flight" : "Idle"}</Badge>}
+                subtitle="Outbox operations waiting for the next cron pick-up. Nothing is executing yet; running work is tracked separately and flagged only when stale."
+                badge={<Badge className={health.pendingOperations.count > 0 ? "bg-slate-600" : "bg-green-600"}>{health.pendingOperations.count > 0 ? "Waiting" : "Idle"}</Badge>}
                 onClick={() => scrollToSection("operations")}
               />
               <HealthStatCard
@@ -253,7 +253,7 @@ export function HealthAndDiagnosticsPanels({
                     <h3 className="text-sm font-semibold">Missing invoice detector</h3>
                     <Badge className={health.missingInvoices.count > 0 ? "bg-amber-500" : "bg-green-600"}>{health.missingInvoices.count}</Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">Bookings with a payment but no successful Xero invoice sync on record.</p>
+                  <p className="text-sm text-muted-foreground">Paid bookings with no successful Xero invoice sync on record.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => void toggleMissingInvoices()}>
@@ -307,7 +307,7 @@ function MissingInvoicesList({
 }) {
   if (loading && !details) return <p className="mt-4 text-sm text-muted-foreground">Loading missing invoice details...</p>
   if (!details) return <p className="mt-4 text-sm text-muted-foreground">No missing invoice details loaded yet.</p>
-  if (details.count === 0) return <p className="mt-4 text-sm text-green-700">No paid or confirmed bookings are currently missing a Xero invoice.</p>
+  if (details.count === 0) return <p className="mt-4 text-sm text-green-700">No paid bookings are currently missing a Xero invoice.</p>
   return (
     <div className="mt-4 space-y-3 border-t pt-4">
       <p className="text-sm text-muted-foreground">

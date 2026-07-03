@@ -4,6 +4,8 @@ import path from "node:path";
 import { Client } from "pg";
 import { describe, expect, it } from "vitest";
 
+import { FLUSH_BOOKING_ENVELOPE_CONSTRAINTS_SQL } from "@/lib/booking-envelope-invariants";
+
 const databaseUrl = process.env.BOOKING_GUEST_RANGE_TRIGGER_TEST_DATABASE_URL;
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
 
@@ -129,6 +131,47 @@ describeWithDatabase("BookingGuest stay range database triggers", () => {
         code: "23514",
         constraint: "BookingGuest_stay_range_within_booking",
       });
+    });
+  });
+
+  it("surfaces a violation at the SET CONSTRAINTS flush instead of COMMIT", async () => {
+    // assertBookingEnvelopeInvariants runs this statement at the end of the
+    // modification transactions so a write-path bug is attributed to the
+    // service, not to prisma.$transaction's COMMIT.
+    await withTriggerSchema(async (client) => {
+      await client.query("BEGIN");
+      await client.query(`
+        UPDATE "BookingGuest"
+        SET "stayEnd" = DATE '2026-06-17'
+        WHERE "id" = 'guest-valid'
+      `);
+      await expect(
+        client.query(FLUSH_BOOKING_ENVELOPE_CONSTRAINTS_SQL),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: "BookingGuest_stay_range_within_booking",
+      });
+      await client.query("ROLLBACK");
+    });
+  });
+
+  it("passes the SET CONSTRAINTS flush and commits when the envelope is consistent", async () => {
+    await withTriggerSchema(async (client) => {
+      await client.query("BEGIN");
+      await client.query(`
+        UPDATE "BookingGuest"
+        SET "stayEnd" = DATE '2026-06-17'
+        WHERE "id" = 'guest-valid'
+      `);
+      await client.query(`
+        UPDATE "Booking"
+        SET "checkOut" = DATE '2026-06-17'
+        WHERE "id" = 'booking-1'
+      `);
+      await expect(
+        client.query(FLUSH_BOOKING_ENVELOPE_CONSTRAINTS_SQL),
+      ).resolves.toBeDefined();
+      await expect(client.query("COMMIT")).resolves.toBeDefined();
     });
   });
 });

@@ -76,6 +76,7 @@ import {
   groupJoinSettledTemplate,
   groupSettlementExpiredTemplate,
   groupJoinReleasedTemplate,
+  groupJoinCancelledTemplate,
   type XeroReconciliationReportEmail,
 } from "./email-templates";
 import {
@@ -2547,6 +2548,37 @@ export async function sendGroupJoinReleasedEmail(params: {
       checkOut: params.checkOut,
     }),
     templateName: "group-join-released",
+    templateData: {
+      firstName: params.firstName,
+      organiserName: params.organiserName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+    },
+  });
+}
+
+/**
+ * Joiner notice that their reaped organiser-pays place reached its terminal
+ * state (#1094): the group settlement was never retried, so the pending
+ * booking has been cancelled.
+ */
+export async function sendGroupJoinCancelledEmail(params: {
+  email: string;
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Your group booking has been cancelled — ${CLUB_NAME}`,
+    html: groupJoinCancelledTemplate({
+      firstName: params.firstName,
+      organiserName: params.organiserName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+    }),
+    templateName: "group-join-cancelled",
     templateData: {
       firstName: params.firstName,
       organiserName: params.organiserName,
