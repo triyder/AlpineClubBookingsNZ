@@ -31,16 +31,40 @@ export function MemberAccessRolePicker({
   canLogin,
   disabled = false,
   disabledMessage,
+  actorIsFullAdmin = true,
+  memberPrivilege = null,
   onToggleRole,
 }: {
   accessRoles: readonly AppAccessRole[];
   canLogin: boolean;
   disabled?: boolean;
   disabledMessage?: string;
+  /**
+   * When false, the actor is a scoped admin: privileged role checkboxes are
+   * disabled (the server 403s such writes, issue #1012), and if the member
+   * already holds a privileged role (`memberPrivilege`) the whole picker is
+   * disabled — any reclassification of such a member requires Full Admin.
+   */
+  actorIsFullAdmin?: boolean;
+  /**
+   * Whether the member being edited holds a privileged role: "live" on their
+   * effective access roles, or "dormant" only via stored legacy role fields
+   * (archive/cancel clears canLogin but not the role fields; see #1027/#1038).
+   */
+  memberPrivilege?: "live" | "dormant" | null;
   onToggleRole: (role: AppAccessRole, checked: boolean) => void;
 }) {
   const matrix = getAdminPermissionMatrix({ accessRoles, canLogin });
-  const controlsDisabled = disabled || !canLogin;
+  const scopedActor = !actorIsFullAdmin;
+  const lockedForScopedAdmin = scopedActor && memberPrivilege !== null;
+  const controlsDisabled = disabled || !canLogin || lockedForScopedAdmin;
+  const scopedAdminMessage = lockedForScopedAdmin
+    ? memberPrivilege === "live"
+      ? "Only a Full Admin can change this member's access roles."
+      : "This member holds a dormant privileged legacy role, so any reclassification (including User/Org) requires Full Admin."
+    : scopedActor && !disabled
+      ? "Granting or revoking privileged roles requires Full Admin; you can still manage User and Organisation classification."
+      : null;
 
   return (
     <fieldset className="space-y-4 rounded-md border border-slate-200 p-4">
@@ -53,7 +77,10 @@ export function MemberAccessRolePicker({
           >
             <Checkbox
               checked={accessRoles.includes(role)}
-              disabled={controlsDisabled}
+              disabled={
+                controlsDisabled ||
+                (scopedActor && role !== "USER" && role !== "ORG")
+              }
               onCheckedChange={(checked) =>
                 onToggleRole(role, checked === true)
               }
@@ -107,6 +134,9 @@ export function MemberAccessRolePicker({
 
       {disabledMessage && (
         <p className="text-xs text-muted-foreground">{disabledMessage}</p>
+      )}
+      {scopedAdminMessage && (
+        <p className="text-xs text-muted-foreground">{scopedAdminMessage}</p>
       )}
       {!canLogin && (
         <p className="text-xs text-muted-foreground">

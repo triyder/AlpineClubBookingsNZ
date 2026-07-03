@@ -10,6 +10,7 @@ import { MemberBulkDialog } from "../member-bulk-dialog";
 import { MemberEditorDialog } from "../member-editor-dialog";
 import { MemberFilterToolbar } from "../member-filter-toolbar";
 import { MemberTable } from "../member-table";
+import { MemberAccessRolePicker } from "@/components/member-access-role-picker";
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -367,3 +368,79 @@ describe("admin member access-role UI", () => {
     expect(roleCheckbox("Treasurer")).not.toBeChecked();
   });
 });
+
+describe("scoped-admin gated access-role picker (#1038)", () => {
+  afterEach(() => cleanup());
+
+  it("disables privileged roles for scoped admins but leaves User/Org usable", () => {
+    render(
+      <MemberAccessRolePicker
+        accessRoles={["USER"]}
+        canLogin
+        actorIsFullAdmin={false}
+        onToggleRole={vi.fn()}
+      />,
+    );
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    const enabled = checkboxes.filter((box) => !box.hasAttribute("disabled"));
+    // Only the two unprivileged classifications stay editable.
+    expect(enabled).toHaveLength(2);
+    expect(
+      screen.getByText(/Granting or revoking privileged roles requires Full Admin/),
+    ).toBeInTheDocument();
+  });
+
+  it("locks the whole picker when the member holds a live privileged role", () => {
+    render(
+      <MemberAccessRolePicker
+        accessRoles={["ADMIN"]}
+        canLogin
+        actorIsFullAdmin={false}
+        memberPrivilege="live"
+        onToggleRole={vi.fn()}
+      />,
+    );
+
+    for (const box of screen.getAllByRole("checkbox")) {
+      expect(box).toBeDisabled();
+    }
+    expect(
+      screen.getByText(/Only a Full Admin can change this member's access roles/),
+    ).toBeInTheDocument();
+  });
+
+  it("explains the dormant legacy-role case", () => {
+    render(
+      <MemberAccessRolePicker
+        accessRoles={["USER"]}
+        canLogin
+        actorIsFullAdmin={false}
+        memberPrivilege="dormant"
+        onToggleRole={vi.fn()}
+      />,
+    );
+
+    for (const box of screen.getAllByRole("checkbox")) {
+      expect(box).toBeDisabled();
+    }
+    expect(
+      screen.getByText(/dormant privileged legacy role.*requires Full Admin/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps every control enabled for Full Admins (default)", () => {
+    render(
+      <MemberAccessRolePicker
+        accessRoles={["USER"]}
+        canLogin
+        onToggleRole={vi.fn()}
+      />,
+    );
+
+    for (const box of screen.getAllByRole("checkbox")) {
+      expect(box).not.toBeDisabled();
+    }
+  });
+});
+

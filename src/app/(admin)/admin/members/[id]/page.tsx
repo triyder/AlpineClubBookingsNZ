@@ -29,7 +29,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address";
-import { hasAccessRole } from "@/lib/access-roles";
+import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { MemberDetailHeader } from "./_components/member-detail-header";
 import { MemberStatsCards } from "./_components/member-stats-cards";
@@ -1612,6 +1612,9 @@ export default function MemberDetailPage({
   };
 
   const isSelf = session?.user?.id === id;
+  const actorIsFullAdmin = isFullAdmin({
+    accessRoles: session?.user?.accessRoles ?? [],
+  });
 
   if (loading) {
     return (
@@ -2025,6 +2028,7 @@ export default function MemberDetailPage({
         formError={formError}
         saving={saving}
         isSelf={isSelf}
+        actorIsFullAdmin={actorIsFullAdmin}
         memberLifecycleLocked={memberLifecycleLocked}
         postalSameAsPhysical={editPostalSameAsPhysical}
         selectedInheritEmailSource={selectedInheritEmailSource}

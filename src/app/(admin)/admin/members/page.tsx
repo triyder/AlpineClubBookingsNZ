@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
+import { useSession } from "next-auth/react"
+import { isFullAdmin } from "@/lib/access-roles"
 import { Download, RefreshCw, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -30,6 +32,10 @@ interface MembersResponse {
 
 export default function MembersPage() {
   const router = useRouter()
+  const { data: session } = useSession()
+  const actorIsFullAdmin = isFullAdmin({
+    accessRoles: session?.user?.accessRoles ?? [],
+  })
   const {
     search,
     setSearch,
@@ -353,6 +359,7 @@ export default function MembersPage() {
 
       <MemberEditorDialog
         open={createDialogOpen}
+        actorIsFullAdmin={actorIsFullAdmin}
         xeroConnected={xeroConnected}
         onOpenChange={setCreateDialogOpen}
         onSaved={() => void fetchMembers()}

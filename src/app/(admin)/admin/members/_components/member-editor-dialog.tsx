@@ -32,6 +32,8 @@ import {
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
   type AppAccessRole,
+  hasPrivilegedAccess,
+  storedAccessRolesForFullAdminGate,
 } from "@/lib/access-roles";
 import {
   shouldDefaultPostalSameAsPhysical,
@@ -59,6 +61,7 @@ import { MemberXeroDuplicateDecisionDialog } from "./member-xero-duplicate-decis
 interface MemberEditorDialogProps {
   open: boolean;
   editingMember?: Member | null;
+  actorIsFullAdmin?: boolean;
   xeroConnected: boolean | null;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
@@ -127,6 +130,7 @@ function buildAccessRolePatch(accessRoles: AppAccessRole[]) {
 export function MemberEditorDialog({
   open,
   editingMember = null,
+  actorIsFullAdmin = true,
   xeroConnected,
   onOpenChange,
   onSaved,
@@ -879,6 +883,17 @@ export function MemberEditorDialog({
               <MemberAccessRolePicker
                 accessRoles={form.accessRoles}
                 canLogin={form.canLogin}
+                actorIsFullAdmin={actorIsFullAdmin}
+                memberPrivilege={
+                  currentEditingMember && hasPrivilegedAccess(currentEditingMember)
+                    ? "live"
+                    : currentEditingMember &&
+                        storedAccessRolesForFullAdminGate(
+                          currentEditingMember,
+                        ).some((role) => role !== "USER" && role !== "ORG")
+                      ? "dormant"
+                      : null
+                }
                 onToggleRole={toggleAccessRole}
               />
               <div className="space-y-2">

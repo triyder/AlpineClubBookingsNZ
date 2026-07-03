@@ -32,8 +32,10 @@ import type { MemberAddressValues } from "@/lib/member-address";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import {
   financeAccessLevelFromAccessRoles,
+  hasPrivilegedAccess,
   legacyRoleFromAccessRoles,
   normalizeAssignableAccessRoles,
+  storedAccessRolesForFullAdminGate,
   type AppAccessRole,
 } from "@/lib/access-roles";
 import type {
@@ -58,6 +60,7 @@ interface MemberEditDialogProps {
   formError: string;
   saving: boolean;
   isSelf: boolean;
+  actorIsFullAdmin: boolean;
   memberLifecycleLocked: boolean;
   postalSameAsPhysical: boolean;
   // inherit email search
@@ -102,6 +105,7 @@ export function MemberEditDialog({
   formError,
   saving,
   isSelf,
+  actorIsFullAdmin,
   memberLifecycleLocked,
   postalSameAsPhysical,
   selectedInheritEmailSource,
@@ -136,6 +140,19 @@ export function MemberEditDialog({
   onSubmit,
 }: MemberEditDialogProps) {
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
+  // Mirror the server-side Full Admin gates (#1012/#1026/#1038) so scoped
+  // admins see disabled controls instead of a 403 after the fact. "live" =
+  // the member's effective roles are privileged; "dormant" = only the stored
+  // legacy role fields are (archive/cancel clears canLogin, not the roles).
+  const memberPrivilege: "live" | "dormant" | null = hasPrivilegedAccess(member)
+    ? "live"
+    : storedAccessRolesForFullAdminGate(member).some(
+          (role) => role !== "USER" && role !== "ORG",
+        )
+      ? "dormant"
+      : null;
+  const emailLockedForActor =
+    !actorIsFullAdmin && !isSelf && hasPrivilegedAccess(member);
   const formErrorRef = useRef<HTMLDivElement>(null);
   const { scrollToError } = useScrollToFeedback();
 
@@ -309,10 +326,17 @@ export function MemberEditDialog({
               id="edit-email"
               type="email"
               value={form.email}
+              disabled={emailLockedForActor}
               onChange={(e) =>
                 onChangeForm((f) => ({ ...f, email: e.target.value }))
               }
             />
+            {emailLockedForActor && (
+              <p className="text-xs text-muted-foreground">
+                Only a Full Admin can change a privileged member&apos;s login
+                email.
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label>Phone</Label>
@@ -586,6 +610,8 @@ export function MemberEditDialog({
               disabledMessage={
                 isSelf ? "You cannot change your own access roles." : undefined
               }
+              actorIsFullAdmin={actorIsFullAdmin}
+              memberPrivilege={memberPrivilege}
               onToggleRole={toggleAccessRole}
             />
             <div className="space-y-2">
