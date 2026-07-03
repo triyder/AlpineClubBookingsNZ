@@ -73,7 +73,12 @@ export async function executeBookingModificationRefund({
       paymentId: result.paymentId,
       amountCents: result.pendingRefundAmountCents,
       metadata: { bookingId, reason: metadataReason },
-      idempotencyKeyPrefix,
+      // Scope the Stripe idempotency key to this modification. Without it two
+      // reductions on the same booking that resolve to the same refund amount
+      // (e.g. removing two identically-priced guests) produce an identical key
+      // and Stripe replays the first refund, silently under-refunding the
+      // member while the ledger records a second refund that never happened.
+      idempotencyKeyPrefix: `${idempotencyKeyPrefix}_${result.bookingModificationId}`,
     });
     return refundResult.refunds[0]?.refundId;
   } catch (refundErr) {

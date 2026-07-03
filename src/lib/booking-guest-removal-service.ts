@@ -16,7 +16,13 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
-import { calculateGuestRemovalPaymentImpact } from "@/lib/booking-guest-removal-payment";
+import {
+  applyPaymentAdjustments,
+  calculateModificationSettlementOptions,
+  type BookingModificationSettlementMethod,
+  type LoadedBookingForModify,
+} from "@/lib/booking-modify";
+import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getSeasonYear } from "@/lib/utils";
 import {
@@ -38,10 +44,20 @@ export type RemoveBookingGuestResult = {
   removedGuest: Prisma.BookingGuestGetPayload<Record<string, never>>;
   priceDiffCents: number;
   refundAmountCents: number;
+  accountCreditAmountCents: number;
+  pendingRefundAmountCents: number;
+  additionalAmountCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
+  policyRetainedAmountCents: number;
   xeroRefundAmountCents: number;
+  hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
   paymentStatus: string | null;
   paymentId: string | null;
+  paymentCustomerId: string | null;
+  memberEmail: string;
+  memberName: string;
+  memberId: string;
   promoRemoved: boolean;
   choreWarnings: string[];
   oldGuestCount: number;
@@ -108,12 +124,14 @@ export async function removeBookingGuestInTransaction({
   guestId,
   actorMemberId,
   actorRole,
+  settlementMethod,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
   guestId: string;
   actorMemberId: string;
   actorRole: string;
+  settlementMethod?: BookingModificationSettlementMethod;
 }): Promise<RemoveBookingGuestResult> {
   await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
 
@@ -270,12 +288,33 @@ export async function removeBookingGuestInTransaction({
     ? ADULT_SUPERVISION_REVIEW_REASON
     : null;
 
-  const paymentImpact = calculateGuestRemovalPaymentImpact({
-    bookingStatus: booking.status,
-    paymentStatus: booking.payment?.status ?? null,
-    hasXeroInvoice: Boolean(booking.payment?.xeroInvoiceId),
+  // Settle the reduction through the same policy-based machinery the batch
+  // modify path uses (#1014): a captured payment is refunded/credited only up
+  // to the cancellation-policy tier for the days until check-in, and the
+  // member must choose card vs credit. Previously this path refunded the full
+  // guest cost with no policy tier, bypassing the cancellation window that the
+  // batch endpoint enforces for the identical economic change.
+  const settlementOptions = await calculateModificationSettlementOptions({
+    booking: booking as unknown as LoadedBookingForModify,
+    netChargeCents: priceDiffCents,
+  });
+  if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
+    // A settled booking needs an explicit card/credit election. The only
+    // body-less caller is a linked guest self-removing to resolve a night
+    // conflict; for an already-paid target the owner's funds must not be
+    // settled without their choice, so block and defer to the owner/admin
+    // (who edit through the batch flow's chooser).
+    throw new BookingGuestRemovalError(
+      "This booking has a settled payment, so a refund or account credit must be chosen. Ask the booking owner or an admin to remove this guest.",
+      400,
+    );
+  }
+  const paymentImpact = await applyPaymentAdjustments(tx, {
+    booking: booking as unknown as LoadedBookingForModify,
     priceDiffCents,
-    hasPaymentRecord: Boolean(booking.payment),
+    changeFeeCents: 0,
+    settlementOptions,
+    settlementMethod,
   });
 
   const wasOnlyNonMember =
@@ -340,21 +379,45 @@ export async function removeBookingGuestInTransaction({
         discountCents: promoResult.newDiscountCents,
         promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
         finalPriceCents: newFinalPriceCents,
+        settlementMethod: paymentImpact.settlementMethod,
+        accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
+        policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
       },
       priceDiffCents,
       changeFeeCents: 0,
     },
   });
 
+  if (paymentImpact.accountCreditAmountCents > 0) {
+    await createBookingModificationCredit(
+      booking.memberId,
+      paymentImpact.accountCreditAmountCents,
+      bookingId,
+      bookingModification.id,
+      undefined,
+      tx,
+    );
+  }
+
   return {
     booking: updatedBooking,
     removedGuest: guestToRemove,
     priceDiffCents,
     refundAmountCents: paymentImpact.refundAmountCents,
+    accountCreditAmountCents: paymentImpact.accountCreditAmountCents,
+    pendingRefundAmountCents: paymentImpact.pendingRefundAmountCents,
+    additionalAmountCents: paymentImpact.additionalAmountCents,
+    settlementMethod: paymentImpact.settlementMethod,
+    policyRetainedAmountCents: paymentImpact.policyRetainedAmountCents,
     xeroRefundAmountCents: paymentImpact.xeroRefundAmountCents,
+    hasSucceededPayment: paymentImpact.hasSucceededPayment,
     hasIssuedXeroInvoice: paymentImpact.hasIssuedXeroInvoice,
     paymentStatus: booking.payment?.status ?? null,
     paymentId: booking.payment?.id ?? null,
+    paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
+    memberEmail: booking.member.email,
+    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    memberId: booking.memberId,
     promoRemoved: promoResult.promoRemoved,
     choreWarnings,
     oldGuestCount: booking.guests.length,

@@ -58,6 +58,17 @@ Booking changes must not orphan or desynchronize:
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
 
+Every booking-reduction path — batch modify (`removeGuestIds`/date change),
+single-guest removal (`DELETE …/guests/[guestId]`), and date change
+(`modify-dates`) — returns member money limited by the same cancellation-policy
+tier for the days until check-in, folding any change fee into the net delta, and
+requires the member to elect a card refund or account credit whenever a captured
+payment makes a settlement returnable. No reduction path refunds the full price
+delta outside the policy. A request against a booking with a captured payment
+that omits the settlement election is rejected rather than defaulted, so a
+body-less self-removal cannot silently settle the booking owner's money; the
+owner or an admin makes the election through the batch edit flow.
+
 A price reduction against an issued-but-unpaid Xero invoice (pay-on-account,
 no captured payment) is corrected for the full net delta — there is no captured
 money and therefore no cancellation-policy tier to apply — via a modification

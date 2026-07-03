@@ -19,6 +19,13 @@ import {
   executeBookingModificationRefund,
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
+import {
+  applyPaymentAdjustments,
+  calculateModificationSettlementOptions,
+  type BookingModificationSettlementMethod,
+  type LoadedBookingForModify,
+} from "@/lib/booking-modify";
+import { createBookingModificationCredit } from "@/lib/member-credit";
 import { checkCapacity } from "@/lib/capacity";
 import {
   daysUntilDate,
@@ -55,6 +62,7 @@ import { getSeasonYear } from "@/lib/utils";
 export type ModifyBookingDatesInput = {
   checkIn?: string;
   checkOut?: string;
+  settlementMethod?: BookingModificationSettlementMethod;
 };
 
 type ModifiedBooking = Booking & {
@@ -68,6 +76,9 @@ type DateModificationTransactionResult =
     priceDiffCents: number;
     changeFeeCents: number;
     refundAmountCents: number;
+    accountCreditAmountCents: number;
+    settlementMethod: BookingModificationSettlementMethod | null;
+    policyRetainedAmountCents: number;
     promoRemoved: boolean;
     choreWarnings: string[];
     datesChanged: boolean;
@@ -78,6 +89,7 @@ type DateModificationTransactionResult =
     paymentSource: PaymentSource | null;
     paymentReference: string | null;
     xeroInvoiceNumber: string | null;
+    xeroRefundAmountCents: number;
     xeroAdditionalAmountCents: number;
   };
 
@@ -129,6 +141,9 @@ export type DateModificationResponse = {
   priceDiffCents: number;
   changeFeeCents: number;
   refundAmountCents: number;
+  accountCreditAmountCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
+  policyRetainedAmountCents: number;
   additionalAmountCents: number;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;
@@ -147,7 +162,11 @@ export async function modifyBookingDates({
   input: ModifyBookingDatesInput;
   ipAddress: string;
 }): Promise<DateModificationResponse> {
-  const { checkIn: newCheckInStr, checkOut: newCheckOutStr } = input;
+  const {
+    checkIn: newCheckInStr,
+    checkOut: newCheckOutStr,
+    settlementMethod,
+  } = input;
 
   const result = await prisma.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
@@ -386,50 +405,41 @@ export async function modifyBookingDates({
       changeFeeCents = feeResult.feeCents;
     }
 
-    let refundAmountCents = 0;
-    let additionalAmountCents = 0;
-
-    const hasSettledPayment =
-      ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
-      booking.payment?.status === "SUCCEEDED";
-    const hasSucceededPayment =
-      hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
-    const hasIssuedXeroInvoice =
-      ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
-      !!booking.payment?.xeroInvoiceId;
-    const xeroNetAmountCents = hasIssuedXeroInvoice
-      ? priceDiffCents + changeFeeCents
-      : 0;
-    const xeroAdditionalAmountCents =
-      xeroNetAmountCents > 0 ? xeroNetAmountCents : 0;
-
-    let pendingRefundAmountCents = 0;
-
-    if (hasSettledPayment && booking.payment) {
-      const netAmountCents = priceDiffCents + changeFeeCents;
-
-      if (netAmountCents < 0) {
-        refundAmountCents = Math.abs(netAmountCents);
-        pendingRefundAmountCents = hasSucceededPayment ? refundAmountCents : 0;
-      } else if (netAmountCents > 0) {
-        additionalAmountCents = hasSucceededPayment
-          ? netAmountCents
-          : xeroAdditionalAmountCents;
-      }
-
-      if (changeFeeCents > 0) {
-        await tx.payment.update({
-          where: { id: booking.payment.id },
-          data: {
-            changeFeeCents: {
-              increment: changeFeeCents,
-            },
-          },
-        });
-      }
-    } else if (xeroAdditionalAmountCents > 0) {
-      additionalAmountCents = xeroAdditionalAmountCents;
+    // Settle the date change through the same policy-based machinery the batch
+    // modify path uses (#1024). netCharge folds the change fee into the price
+    // delta, so the cancellation-policy tier is applied to the fee-adjusted
+    // reduction and the member must choose card vs credit. Previously this
+    // path refunded the full Math.abs(netAmount) with no policy tier, letting a
+    // member shorten a booking inside the cancellation window and recover more
+    // than cancelling or removing guests for the same nights would return.
+    const netChargeCents = priceDiffCents + changeFeeCents;
+    const settlementOptions = await calculateModificationSettlementOptions({
+      booking: booking as unknown as LoadedBookingForModify,
+      netChargeCents,
+    });
+    if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
+      throw new ApiError(
+        "Choose a refund or account credit before saving",
+        400,
+      );
     }
+    const payments = await applyPaymentAdjustments(tx, {
+      booking: booking as unknown as LoadedBookingForModify,
+      priceDiffCents,
+      changeFeeCents,
+      settlementOptions,
+      settlementMethod,
+    });
+    const {
+      refundAmountCents,
+      accountCreditAmountCents,
+      additionalAmountCents,
+      pendingRefundAmountCents,
+      hasSucceededPayment,
+      hasIssuedXeroInvoice,
+      xeroRefundAmountCents,
+      xeroAdditionalAmountCents,
+    } = payments;
 
     const hasNonMembers = booking.guests.some((g) => !g.isMember);
     let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
@@ -540,17 +550,34 @@ export async function modifyBookingDates({
           discountCents: newDiscountCents,
           promoAdjustmentCents: newPromoAdjustmentCents,
           finalPriceCents: newFinalPriceCents,
+          settlementMethod: payments.settlementMethod,
+          accountCreditAmountCents: payments.accountCreditAmountCents,
+          policyRetainedAmountCents: payments.policyRetainedAmountCents,
         },
         priceDiffCents,
         changeFeeCents,
       },
     });
 
+    if (accountCreditAmountCents > 0) {
+      await createBookingModificationCredit(
+        booking.memberId,
+        accountCreditAmountCents,
+        bookingId,
+        bookingModification.id,
+        undefined,
+        tx,
+      );
+    }
+
     return {
       booking: updatedBooking,
       priceDiffCents,
       changeFeeCents,
       refundAmountCents,
+      accountCreditAmountCents,
+      settlementMethod: payments.settlementMethod,
+      policyRetainedAmountCents: payments.policyRetainedAmountCents,
       additionalAmountCents,
       pendingRefundAmountCents,
       promoRemoved,
@@ -564,6 +591,7 @@ export async function modifyBookingDates({
       paymentSource: booking.payment?.source ?? null,
       paymentReference: booking.payment?.reference ?? null,
       xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
+      xeroRefundAmountCents,
       xeroAdditionalAmountCents,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
@@ -606,6 +634,9 @@ export async function modifyBookingDates({
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
+    accountCreditAmountCents: result.accountCreditAmountCents,
+    settlementMethod: result.settlementMethod,
+    policyRetainedAmountCents: result.policyRetainedAmountCents,
     additionalAmountCents: result.additionalAmountCents,
     additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
     stripeRefundId: stripeRefundId ?? null,
@@ -645,6 +676,9 @@ async function dispatchDatePostTransactionSideEffects({
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
+      accountCreditAmountCents: result.accountCreditAmountCents,
+      settlementMethod: result.settlementMethod,
+      policyRetainedAmountCents: result.policyRetainedAmountCents,
       promoRemoved: result.promoRemoved,
     }),
     metadata: {
@@ -656,6 +690,9 @@ async function dispatchDatePostTransactionSideEffects({
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
+      accountCreditAmountCents: result.accountCreditAmountCents,
+      settlementMethod: result.settlementMethod,
+      policyRetainedAmountCents: result.policyRetainedAmountCents,
       promoRemoved: result.promoRemoved,
     },
     ipAddress,
@@ -670,6 +707,11 @@ async function dispatchDatePostTransactionSideEffects({
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
     datesChanged: result.datesChanged,
+    // Policy-limited settlement amount + method so a captured-payment reduction
+    // issues the correct (card vs credit) modification credit note; an unpaid
+    // issued invoice falls back to the full delta inside classify when null.
+    settlementAmountCents: result.xeroRefundAmountCents,
+    settlementMethod: result.settlementMethod,
     requiresAdditionalStripePayment:
       result.xeroAdditionalAmountCents > 0 && result.hasSucceededPayment,
     additionalPaymentIntentId,
@@ -695,6 +737,7 @@ async function dispatchDatePostTransactionSideEffects({
       newFinalPriceCents: result.booking.finalPriceCents,
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
+      accountCreditAmountCents: result.accountCreditAmountCents,
       additionalAmountCents: result.additionalAmountCents,
       additionalPaymentMethod:
         result.additionalAmountCents > 0 &&
