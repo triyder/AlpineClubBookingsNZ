@@ -276,7 +276,7 @@ describe("booking profile gate route integration", () => {
   });
 
   it("batch modify route validates linked member profiles before pricing and writing guests", () => {
-    const helperSource = readRepoFile("src/lib/booking-modify.ts");
+    const helperSource = readRepoFile("src/lib/booking-modify-plan.ts");
     const routeSource = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
     const gateIndex = helperSource.indexOf(
       "await assertLinkedBookingMembersCanBeBooked"
