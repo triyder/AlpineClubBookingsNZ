@@ -208,6 +208,10 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
     },
+    bookingGuestNight: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),
     },
