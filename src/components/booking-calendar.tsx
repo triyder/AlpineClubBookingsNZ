@@ -203,7 +203,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
             >
               <span aria-hidden="true" className="leading-none">{day}</span>
               {!isPast && (
-                <span aria-hidden="true" className="text-xs leading-none mt-0.5 opacity-70">
+                <span aria-hidden="true" className="text-xs leading-none mt-0.5">
                   {available}
                 </span>
               )}

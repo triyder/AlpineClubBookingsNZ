@@ -266,24 +266,27 @@ export default function BookingRequestPage() {
             {guests.map((guest, index) => (
               <div key={index} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
                 <div className="space-y-1">
-                  <Label>First name</Label>
+                  <Label htmlFor={`guest-${index}-firstName`}>First name</Label>
                   <Input
+                    id={`guest-${index}-firstName`}
                     value={guest.firstName}
                     onChange={(e) => updateGuest(index, "firstName", e.target.value)}
                     maxLength={100}
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label>Last name</Label>
+                  <Label htmlFor={`guest-${index}-lastName`}>Last name</Label>
                   <Input
+                    id={`guest-${index}-lastName`}
                     value={guest.lastName}
                     onChange={(e) => updateGuest(index, "lastName", e.target.value)}
                     maxLength={100}
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label>Age category</Label>
+                  <Label htmlFor={`guest-${index}-ageTier`}>Age category</Label>
                   <select
+                    id={`guest-${index}-ageTier`}
                     value={guest.ageTier}
                     onChange={(e) => updateGuest(index, "ageTier", e.target.value)}
                     className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"

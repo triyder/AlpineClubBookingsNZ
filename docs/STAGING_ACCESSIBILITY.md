@@ -149,3 +149,24 @@ and admin sidebar `nav` landmarks are labelled ("Primary" / "Admin
 sections"). `/admin/bookings` select names and chip contrast were fixed by
 the PR #1102 Radix conversion. The full manual pass described above remains
 outstanding.
+
+## Manual Staging Pass (2026-07-04)
+
+Run against the local staging compose stack at latest `main` (post-#1123):
+axe-core (WCAG 2.1 AA + best-practice) across 17 pages — public (`/`,
+`/login`, `/register`, `/forgot-password`, `/booking-requests`), the
+two-factor enrolment flow, member (`/dashboard`, `/book`, `/profile`,
+`/bookings`), and admin (members, bookings, booking-requests, health,
+stuck-states, booking-policies) — plus keyboard spot checks on `/login`.
+
+Fixed in this pass (#1170): public request form guest labels/select
+association, invalid `autocomplete` token in the address autocomplete,
+theme-switcher inactive-label contrast, `.website-eyebrow` contrast under
+themable brand colours, booking-calendar availability-count contrast, a
+skip-to-content link on both website layouts (the `/login` form sat 28 tab
+stops deep), and a `/forgot-password` h1.
+
+Remaining (moderate/best-practice) — handed to the #1149 deep pass with
+full axe data: missing h1 on `/login/enroll` and the admin pages, and
+website-footer h3 heading order on sparse pages. Screen-reader (NVDA/
+VoiceOver) walkthroughs remain a human task.

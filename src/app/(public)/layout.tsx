@@ -46,9 +46,15 @@ export default async function PublicLayout({
       <div
         className={`${websiteBodyFont.variable} ${websiteHeadingFont.variable} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
       >
+      <a
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
+          href="#main-content"
+        >
+          Skip to main content
+        </a>
         <SiteBanners banners={siteBanners} />
         <WebsiteHeader isAuthenticated={!!session?.user} />
-        <main className="flex-1">
+        <main className="flex-1" id="main-content">
           <div className="mx-auto flex w-full max-w-7xl justify-end px-4 pt-4 sm:px-6 lg:px-8">
             <ThemeSwitcher className="w-full max-w-sm" />
           </div>

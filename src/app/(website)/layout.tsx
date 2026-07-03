@@ -72,12 +72,18 @@ export default async function WebsiteLayout({
       className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
     >
       {themeStyle}
+      <a
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
+        href="#main-content"
+      >
+        Skip to main content
+      </a>
       <SiteBanners banners={siteBanners} />
       <WebsiteHeader
         isAuthenticated={!!session?.user}
         logoDataUrl={theme.logoDataUrl}
       />
-      <main className="flex-1">{children}</main>
+      <main className="flex-1" id="main-content">{children}</main>
       <WebsiteFooter logoDataUrl={theme.logoDataUrl} pageSlug={pageSlug} />
       <AnalyticsConsent
         enabled={modules.analytics}
