@@ -13,6 +13,7 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -138,6 +139,21 @@ export async function PUT(
     }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    if (isBookingEnvelopeInvariantViolation(err)) {
+      // A write-path bug produced a guest stay range outside the booking
+      // envelope; the deferred DB triggers caught it and rolled back.
+      logger.error(
+        { err, bookingId },
+        "Booking envelope invariant violated during batch modify — write-path bug",
+      );
+      return NextResponse.json(
+        {
+          error:
+            "The booking update failed an internal consistency check and no changes were saved. Please report this to an administrator.",
+        },
+        { status: 500 },
+      );
     }
     const message = err instanceof Error ? err.message : "Failed to modify booking";
     logger.error({ err, bookingId }, "Batch modify failed");

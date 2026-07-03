@@ -31,6 +31,7 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
   createModificationAdditionalPaymentIntent,
   drainSupersededPrimaryIntents,
@@ -395,6 +396,10 @@ export async function modifyBookingBatch({
         booking.payment?.id,
       );
     }
+
+    // Fire the deferred envelope constraint triggers here so a violation is
+    // attributed to this service instead of the transaction's COMMIT.
+    await assertBookingEnvelopeInvariants(tx);
 
     return {
       booking: updatedBooking,

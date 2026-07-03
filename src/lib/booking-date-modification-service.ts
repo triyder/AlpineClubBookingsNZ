@@ -14,6 +14,7 @@ import {
   queueSupersededPrimaryIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
   createModificationAdditionalPaymentIntent,
   executeBookingModificationRefund,
@@ -580,6 +581,10 @@ export async function modifyBookingDates({
         booking.payment?.id,
       );
     }
+
+    // Fire the deferred envelope constraint triggers here so a violation is
+    // attributed to this service instead of the transaction's COMMIT.
+    await assertBookingEnvelopeInvariants(tx);
 
     return {
       booking: updatedBooking,

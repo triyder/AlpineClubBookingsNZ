@@ -94,7 +94,13 @@ envelope as a safety net with deferred constraint triggers
 (`BookingGuest_stay_range_within_booking`,
 `Booking_dates_consistent_with_guests`) that validate at COMMIT, so a
 transaction may widen guest rows before the parent booking row; only the
-committed state must satisfy the invariant.
+committed state must satisfy the invariant. The modification services call
+`assertBookingEnvelopeInvariants` (`SET CONSTRAINTS … IMMEDIATE`) as the last
+statement of their transactions so a violation is attributed to the calling
+service rather than surfacing as an anonymous commit failure; the modify
+routes recognise the constraint errors via
+`isBookingEnvelopeInvariantViolation` and return a clean 500 instead of
+leaking raw trigger text to the client.
 
 Nightly prices lock at booking time: every edit path — batch modify, date
 change, guest add, single-guest removal, and the modify-quote preview — prices

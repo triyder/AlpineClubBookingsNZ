@@ -4,6 +4,8 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { modifyBookingDates } from "@/lib/booking-date-modification-service";
+import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
+import logger from "@/lib/logger";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -82,6 +84,21 @@ export async function PUT(
     }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    if (isBookingEnvelopeInvariantViolation(err)) {
+      // A write-path bug produced a guest stay range outside the booking
+      // envelope; the deferred DB triggers caught it and rolled back.
+      logger.error(
+        { err, bookingId },
+        "Booking envelope invariant violated during date modification — write-path bug",
+      );
+      return NextResponse.json(
+        {
+          error:
+            "The booking update failed an internal consistency check and no changes were saved. Please report this to an administrator.",
+        },
+        { status: 500 },
+      );
     }
     const message =
       err instanceof Error ? err.message : "Failed to modify booking dates";
