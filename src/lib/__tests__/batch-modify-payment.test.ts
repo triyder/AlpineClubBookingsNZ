@@ -1190,7 +1190,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         source: "STRIPE",
         status: { in: ["PENDING", "PROCESSING"] },
         stripePaymentIntentId: { not: null },
-        amountCents: { gt: 0 },
+        amountCents: { gt: 0, not: 0 },
       },
       select: {
         id: true,
@@ -1759,6 +1759,16 @@ describe("PUT /api/bookings/[id]/modify", () => {
       // so retries replay identical keys.
       stripeKeyPrefix: "mod_batch_refund_bk1_mod_1",
     });
+    // Nonzero price changes supersede pending primary intents stranded at
+    // any other amount (#1161).
+    expect(tx.paymentTransaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          kind: "PRIMARY",
+          amountCents: { gt: 0, not: 5000 },
+        }),
+      }),
+    );
   });
 
   it("keeps paid Internet Banking reductions out of Stripe refund recovery", async () => {

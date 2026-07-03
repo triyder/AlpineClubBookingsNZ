@@ -4,6 +4,10 @@ import { z } from "zod";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
 import { modifyBookingDates } from "@/lib/booking-date-modification-service";
+import {
+  BookingMemberNightConflictError,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
 import logger from "@/lib/logger";
 import {
@@ -80,6 +84,12 @@ export async function PUT(
       return NextResponse.json(
         getMembershipTypeBookingPolicyErrorBody(err),
         { status: err.status },
+      );
+    }
+    if (err instanceof BookingMemberNightConflictError) {
+      return NextResponse.json(
+        getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
       );
     }
     if (err instanceof ApiError) {

@@ -826,27 +826,31 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     });
   });
 
-  it("rate limits PIN login after 5 failed attempts per minute", async () => {
+  it("rate limits PIN login once the degraded per-process budget is spent", async () => {
+    // Tests run with an unreachable DATABASE_URL, so the shared limiter store
+    // is down and the limiter runs in degraded mode. lodgePinLogin is
+    // authSensitive (issue #1142): its degraded budget is
+    // floor(5 / DEGRADED_AUTH_LIMIT_DIVISOR) = 1 attempt, after which the
+    // route returns 429. (Healthy-store behavior stays 5/minute — covered by
+    // rate-limit.test.ts.)
     mockAuth.mockResolvedValue({
       user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }], email: "lodge@example.org" },
     });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     const { POST } = await import("@/app/api/lodge/pin-login/route");
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const res = await POST(
-        new Request("http://localhost/api/lodge/pin-login", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-forwarded-for": "10.0.0.2",
-          },
-          body: JSON.stringify({ pin: "111111" }),
-        }) as any
-      );
+    const res = await POST(
+      new Request("http://localhost/api/lodge/pin-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-forwarded-for": "10.0.0.2",
+        },
+        body: JSON.stringify({ pin: "111111" }),
+      }) as any
+    );
 
-      expect(res.status).toBe(401);
-    }
+    expect(res.status).toBe(401);
 
     const limited = await POST(
       new Request("http://localhost/api/lodge/pin-login", {

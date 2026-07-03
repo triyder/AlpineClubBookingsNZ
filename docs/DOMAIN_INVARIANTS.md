@@ -157,7 +157,12 @@ owner or an admin makes the election through the batch edit flow.
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose price drops to zero auto-pays with a zero-dollar
 payment (superseding and cancelling any outstanding primary PaymentIntents so a
-stale checkout tab cannot capture the pre-change amount), and the non-member
+stale checkout tab cannot capture the pre-change amount), any *other* price
+change supersedes pending primary intents stranded at the old amount (#1161 —
+and belt-and-braces, both intent-issuing endpoints refuse to hand out a
+client_secret whose amount no longer matches `finalPriceCents`, and the
+Stripe webhook alerts admins before refusing a capture that mismatches the
+booking's current total), and the non-member
 hold is recalculated from the remaining guests (all-member bookings clear the
 hold; bookings inside the hold window move PENDING → PAYMENT_PENDING). The same
 change must produce the same booking state regardless of which endpoint made

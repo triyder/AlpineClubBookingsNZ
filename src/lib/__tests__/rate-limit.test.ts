@@ -4,6 +4,7 @@ import {
   checkRateLimitInMemory as checkRateLimit,
   getClientIp,
   applyRateLimit,
+  rateLimiters,
   _testStore,
   type RateLimitConfig,
 } from "../rate-limit";
@@ -224,5 +225,112 @@ describe("shared rate-limit store (#1039)", () => {
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
     expect(r3.success).toBe(false);
+  });
+});
+
+describe("degraded-mode policy for auth-sensitive limiters (#1142)", () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+  });
+
+  it("shrinks the fallback budget to limit/4 for auth-sensitive limiters", async () => {
+    mockQueryRaw.mockRejectedValue(new Error("connection refused"));
+    const config = {
+      id: "degraded-auth-test",
+      limit: 8,
+      windowSeconds: 60,
+      authSensitive: true,
+    };
+
+    // floor(8 / 4) = 2 allowed, third rejected.
+    const r1 = await checkSharedRateLimit(config, "attacker-ip");
+    const r2 = await checkSharedRateLimit(config, "attacker-ip");
+    const r3 = await checkSharedRateLimit(config, "attacker-ip");
+
+    expect(r1.success).toBe(true);
+    expect(r2.success).toBe(true);
+    expect(r3.success).toBe(false);
+    expect(r3.limit).toBe(2);
+  });
+
+  it("never shrinks the degraded budget below one request", async () => {
+    mockQueryRaw.mockRejectedValue(new Error("connection refused"));
+    const config = {
+      id: "degraded-floor-test",
+      limit: 3,
+      windowSeconds: 60,
+      authSensitive: true,
+    };
+
+    // floor(3 / 4) = 0, floored to 1 so legitimate users are not locked out.
+    const r1 = await checkSharedRateLimit(config, "member-ip");
+    const r2 = await checkSharedRateLimit(config, "member-ip");
+
+    expect(r1.success).toBe(true);
+    expect(r1.limit).toBe(1);
+    expect(r2.success).toBe(false);
+  });
+
+  it("keeps the full budget for non-sensitive limiters in degraded mode", async () => {
+    mockQueryRaw.mockRejectedValue(new Error("connection refused"));
+    const config = { id: "degraded-plain-test", limit: 8, windowSeconds: 60 };
+
+    for (let i = 0; i < 8; i += 1) {
+      const r = await checkSharedRateLimit(config, "reader-ip");
+      expect(r.success).toBe(true);
+    }
+    const r9 = await checkSharedRateLimit(config, "reader-ip");
+    expect(r9.success).toBe(false);
+    expect(r9.limit).toBe(8);
+  });
+
+  it("applies the full budget when the shared store is healthy, even for auth-sensitive limiters", async () => {
+    const resetAt = new Date(Date.now() + 60_000);
+    mockQueryRaw.mockResolvedValueOnce([{ count: 8, resetAt }]);
+    const config = {
+      id: "healthy-auth-test",
+      limit: 8,
+      windowSeconds: 60,
+      authSensitive: true,
+    };
+
+    const result = await checkSharedRateLimit(config, "ip1");
+
+    expect(result.success).toBe(true);
+    expect(result.remaining).toBe(0);
+  });
+
+  it("does not shrink direct in-memory checks that are not degraded fallbacks", () => {
+    const config = {
+      id: "direct-memory-auth-test",
+      limit: 8,
+      windowSeconds: 60,
+      authSensitive: true,
+    };
+
+    for (let i = 0; i < 8; i += 1) {
+      expect(checkRateLimit(config, "ip1").success).toBe(true);
+    }
+    expect(checkRateLimit(config, "ip1").success).toBe(false);
+  });
+
+  it("marks every credential-guessing and public-form limiter as auth-sensitive", () => {
+    const expected = [
+      "login",
+      "register",
+      "membershipApplication",
+      "forgotPassword",
+      "resetPassword",
+      "lodgePinLogin",
+      "twoFactorVerify",
+      "contact",
+    ].sort();
+
+    const marked = Object.entries(rateLimiters)
+      .filter(([, config]) => (config as { authSensitive?: boolean }).authSensitive)
+      .map(([name]) => name)
+      .sort();
+
+    expect(marked).toEqual(expected);
   });
 });

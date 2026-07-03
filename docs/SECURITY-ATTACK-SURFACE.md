@@ -46,6 +46,21 @@ now uses the shared `requireAdmin()` guard, and `src/app/api/deploy/runtime-stat
 now uses the shared `requireCronSecret()` helper. Issue #613 (guard
 standardisation and the explicit public-route allowlist) is closed.
 
+### Rate limiting degraded mode (issue #1142)
+
+Rate-limit counters are shared through Postgres (`RateLimitCounter`). When
+that store is unreachable, `src/lib/rate-limit.ts` falls back to per-process
+in-memory counters rather than failing requests. Limiters marked
+`authSensitive` (login, register, membership application, forgot/reset
+password, lodge PIN login, two-factor verify, contact form) fall back at a
+reduced budget — `limit / DEGRADED_AUTH_LIMIT_DIVISOR` (currently 4, floored
+at 1) — so degrading the store cannot be used to multiply a brute-force or
+form-abuse budget across replicas or process restarts. Fail-closed was
+rejected because a limiter-store-local fault (table lock, migration drift)
+must not become a full login outage while ordinary auth queries still work.
+The policy is frozen by tests in `src/lib/__tests__/rate-limit.test.ts`,
+including the exact set of limiters marked auth-sensitive.
+
 ## Route And Surface Inventory
 
 `External calls` means direct provider/network interaction or provider-backed

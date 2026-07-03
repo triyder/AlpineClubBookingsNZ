@@ -392,6 +392,54 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  it("alerts and refuses a capture whose amount no longer matches the booking total (#1161)", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_stale_capture",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_stale",
+          amount: 10000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    // Transaction mirrors the intent (both 10000), so the tx-vs-intent check
+    // passes; only the booking's CURRENT price reveals the staleness.
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      bookingId: "booking-1",
+      kind: "PRIMARY",
+      amountCents: 10000,
+      status: "PENDING",
+    });
+    mockBookingFindUnique.mockResolvedValue({
+      id: "booking-1",
+      status: "PAYMENT_PENDING",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      finalPriceCents: 15000,
+      discountCents: 0,
+      guests: [{ id: "g1" }],
+      member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
+      promoRedemption: null,
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(500);
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentIntentId: "pi_stale",
+        amountCents: 10000,
+        errorMessage: expect.stringContaining("stale intent"),
+      }),
+    );
+  });
+
   it("uses the deduplicated notifier when credit note creation fails after a refund webhook", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_refund",

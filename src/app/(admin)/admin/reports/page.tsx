@@ -1,24 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import { format, subMonths, startOfMonth, endOfMonth } from "date-fns";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
@@ -40,6 +24,31 @@ import { formatCents } from "@/lib/utils";
 import { bookingStatusLabel } from "@/lib/status-colors";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
+
+// Charts load on demand (#1147): recharts is ~139kB gz, so the trees live in
+// _components/report-charts and mount after the page shell. The placeholders
+// render inside the existing fixed-height wrappers, so layout is stable.
+const chartLoading = () => <div className="h-full" />;
+const OccupancyAreaChart = dynamic(
+  () => import("./_components/report-charts").then((m) => m.OccupancyAreaChart),
+  { ssr: false, loading: chartLoading }
+);
+const RevenueBarChart = dynamic(
+  () => import("./_components/report-charts").then((m) => m.RevenueBarChart),
+  { ssr: false, loading: chartLoading }
+);
+const TrendsLineChart = dynamic(
+  () => import("./_components/report-charts").then((m) => m.TrendsLineChart),
+  { ssr: false, loading: chartLoading }
+);
+const MemberSplitPieChart = dynamic(
+  () => import("./_components/report-charts").then((m) => m.MemberSplitPieChart),
+  { ssr: false, loading: chartLoading }
+);
+const StatusPieChart = dynamic(
+  () => import("./_components/report-charts").then((m) => m.StatusPieChart),
+  { ssr: false, loading: chartLoading }
+);
 
 interface ReportData {
   summary: {
@@ -92,8 +101,6 @@ interface ReportData {
   }>;
 }
 
-const PIE_COLORS = ["#3b82f6", "#ef4444"];
-const STATUS_COLORS = ["#22c55e", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#f97316"];
 
 function getRevenueDescription(granularity: RevenueGranularity): string {
   if (granularity === "daily") {
@@ -429,34 +436,7 @@ export default function ReportsPage() {
               <CardContent>
                 {sampledOccupancy.length > 0 ? (
                   <div className="h-[300px] print:h-[220px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={sampledOccupancy}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="date"
-                          tick={{ fontSize: 12 }}
-                          tickFormatter={(date) => format(new Date(date + "T00:00:00"), "MMM d")}
-                        />
-                        <YAxis
-                          domain={[0, 100]}
-                          tick={{ fontSize: 12 }}
-                          tickFormatter={(value) => `${value}%`}
-                        />
-                        <Tooltip
-                          formatter={(value) => [`${value}%`, "Occupancy"]}
-                          labelFormatter={(date) =>
-                            format(new Date(date + "T00:00:00"), "EEE, MMM d yyyy")
-                          }
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="occupancyRate"
-                          stroke="#3b82f6"
-                          fill="#3b82f6"
-                          fillOpacity={0.2}
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                    <OccupancyAreaChart data={sampledOccupancy} />
                   </div>
                 ) : (
                   <p className="py-8 text-center text-slate-500">No occupancy data for this period</p>
@@ -479,30 +459,10 @@ export default function ReportsPage() {
               <CardContent>
                 {data.revenue.length > 0 ? (
                   <div className="h-[300px] print:h-[220px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={data.revenue}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="label"
-                          tick={{ fontSize: 12 }}
-                          interval="preserveStartEnd"
-                          angle={data.revenueGranularity === "daily" ? -20 : 0}
-                          textAnchor={data.revenueGranularity === "daily" ? "end" : "middle"}
-                          height={data.revenueGranularity === "daily" ? 56 : 30}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 12 }}
-                          tickFormatter={(value) => `$${(value / 100).toFixed(0)}`}
-                        />
-                        <Tooltip
-                          labelFormatter={(_value, payload) =>
-                            payload?.[0]?.payload?.tooltipLabel ?? ""
-                          }
-                          formatter={(value) => [formatCents(Number(value)), "Revenue"]}
-                        />
-                        <Bar dataKey="revenueCents" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <RevenueBarChart
+                      data={data.revenue}
+                      granularity={data.revenueGranularity}
+                    />
                   </div>
                 ) : (
                   <p className="py-8 text-center text-slate-500">No revenue data for this period</p>
@@ -520,47 +480,7 @@ export default function ReportsPage() {
               <CardContent>
                 {data.trends.length > 0 ? (
                   <div className="h-[300px] print:h-[220px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={data.trends}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="week"
-                          tick={{ fontSize: 12 }}
-                          tickFormatter={(week) =>
-                            format(new Date(week + "T00:00:00"), "MMM d")
-                          }
-                        />
-                        <YAxis tick={{ fontSize: 12 }} />
-                        <Tooltip
-                          labelFormatter={(week) =>
-                            `Week of ${format(new Date(week + "T00:00:00"), "MMM d, yyyy")}`
-                          }
-                        />
-                        <Legend />
-                        <Line
-                          type="monotone"
-                          dataKey="total"
-                          stroke="#3b82f6"
-                          strokeWidth={2}
-                          name="Total"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="confirmed"
-                          stroke="#22c55e"
-                          strokeWidth={2}
-                          name={bookingStatusLabel("CONFIRMED")}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="cancelled"
-                          stroke="#ef4444"
-                          strokeWidth={1}
-                          strokeDasharray="5 5"
-                          name="Cancelled"
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <TrendsLineChart data={data.trends} />
                   </div>
                 ) : (
                   <p className="py-8 text-center text-slate-500">No trend data for this period</p>
@@ -578,30 +498,7 @@ export default function ReportsPage() {
                 <CardContent>
                   {data.summary.memberGuests + data.summary.nonMemberGuests > 0 ? (
                     <div className="h-[250px] print:h-[220px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={memberPieData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={80}
-                            paddingAngle={5}
-                            dataKey="value"
-                            label={({ name, percent }) =>
-                              `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`
-                            }
-                          >
-                            {memberPieData.map((_, index) => (
-                              <Cell
-                                key={`member-split-${index}`}
-                                fill={PIE_COLORS[index % PIE_COLORS.length]}
-                              />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                        </PieChart>
-                      </ResponsiveContainer>
+                      <MemberSplitPieChart data={memberPieData} />
                     </div>
                   ) : (
                     <p className="py-8 text-center text-slate-500">No guest data</p>
@@ -616,29 +513,7 @@ export default function ReportsPage() {
                 <CardContent>
                   {statusPieData.length > 0 ? (
                     <div className="h-[250px] print:h-[220px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={statusPieData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={80}
-                            paddingAngle={5}
-                            dataKey="value"
-                            label={({ name, value }) => `${name}: ${value}`}
-                          >
-                            {statusPieData.map((_, index) => (
-                              <Cell
-                                key={`status-split-${index}`}
-                                fill={STATUS_COLORS[index % STATUS_COLORS.length]}
-                              />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                          <Legend />
-                        </PieChart>
-                      </ResponsiveContainer>
+                      <StatusPieChart data={statusPieData} />
                     </div>
                   ) : (
                     <p className="py-8 text-center text-slate-500">No booking data</p>

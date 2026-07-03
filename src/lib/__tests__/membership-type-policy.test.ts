@@ -272,7 +272,7 @@ describe("membership type booking and subscription policy", () => {
 describe("membership type booking policy route integration", () => {
   it("preserves policy block errors through generic booking pricing failures", () => {
     const sources = [
-      "src/lib/booking-modify.ts",
+      "src/lib/booking-modify-plan.ts",
       "src/lib/booking-date-modification-service.ts",
       "src/app/api/bookings/[id]/guests/route.ts",
     ];

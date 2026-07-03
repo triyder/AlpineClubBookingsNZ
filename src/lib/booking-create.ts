@@ -18,16 +18,10 @@
  *     creation transactions to keep capacity checks safe
  */
 import {
-  AdminReviewStatus,
-  AgeTier,
   BookingEventType,
   BookingStatus,
   PaymentSource,
   PaymentStatus,
-  type FixedNightlyMode,
-  PromoCodeType,
-  type Booking,
-  type BookingGuest,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -43,7 +37,6 @@ import {
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
-import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   sendAdminNewBookingAlert,
@@ -59,564 +52,59 @@ import { applyCreditToBooking, getMemberCreditBalance } from "@/lib/member-credi
 import {
   buildInternetBankingPaymentReference,
   DEFAULT_BOOKING_PAYMENT_METHOD,
-  type BookingPaymentMethod,
 } from "@/lib/booking-payment-methods";
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
-import type { GroupDiscountConfig } from "@/lib/pricing";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
-import {
-  ADULT_SUPERVISION_REVIEW_REASON,
-  requiresAdultSupervisionReview,
-} from "@/lib/booking-review";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { buildInternetBankingHoldUntil } from "@/lib/internet-banking-settings";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  normalizeDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  type BookingWithGuests,
+  type BookingGuestInput,
+  type DraftBookingInput,
+  type ConfirmedBookingInput,
+  type ConfirmedBookingOutcome,
+  type WaitlistedBookingInput,
+  type WaitlistedBookingResult,
+  BookingPromoError,
+  BookingReviewJustificationRequiredError,
+  GroupJoinConflictError,
+} from "./booking-create-types";
 import {
-  buildInternetBankingHoldUntil,
-  type InternetBankingPaymentSettingsValues,
-} from "@/lib/internet-banking-settings";
-import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
+  type ResolvedPromo,
+  getPromoTargetBookingGuestIds,
+  remapPromoIndexesToSubset,
+  resolveEffectivePromoSource,
+  resolvePromoInTransaction,
+} from "./booking-create-promo";
+import {
+  buildGuestCreateData,
+  getCapacityFullNights,
+  getCapacityGuestRanges,
+  resolveAdminReviewFields,
+  resolveBookingDateEnvelope,
+} from "./booking-create-guests";
 
-type BookingWithGuests = Booking & { guests: BookingGuest[] };
-
-export interface BookingGuestInput {
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-  isMember: boolean;
-  memberId?: string;
-  stayStart?: Date | null;
-  stayEnd?: Date | null;
-  // Explicit included nights (issue #713). When present, the guest stays
-  // exactly these nights (which may be non-contiguous) and stayStart/stayEnd
-  // are the derived min/max envelope.
-  nights?: ReadonlyArray<GuestNightInput> | null;
-}
-
-interface BaseInput {
-  effectiveMemberId: string;
-  isOnBehalf: boolean;
-  sessionUserId: string;
-  checkIn: Date;
-  checkOut: Date;
-  guests: BookingGuestInput[];
-  notes?: string;
-  promoCodeStr?: string;
-  promoGuestIndexes?: number[];
-  // Work party (working bee) event the booker is attending. Mutually
-  // exclusive with promoCodeStr; resolves to the event's internal promo.
-  workPartyEventId?: string;
-  expectedArrivalTime?: string;
-  requestedRoomId?: string;
-  // "Only book if my guests can come": cancel the whole booking instead of the
-  // default partial bump when non-member guests lose capacity.
-  cancelIfGuestsBumped?: boolean;
-  groupDiscount?: GroupDiscountConfig;
-  memberReviewJustification?: string;
-  // Group booking (shareable join code): when set, the created (primary)
-  // booking is linked to the organiser's booking via parentBookingId, so a
-  // joiner's stay is grouped with the event. Existing callers leave this
-  // undefined, which persists null exactly as before.
-  parentBookingId?: string;
-  // Group booking, ORGANISER_PAYS mode: when true the created booking is
-  // flagged organiserSettled, so the joiner is never billed for it and cannot
-  // pay it themselves; the organiser settles the group total. Only the
-  // group-join path sets this; everyone else leaves it undefined (false).
-  organiserSettled?: boolean;
-}
-
-export type DraftBookingInput = BaseInput;
-
-export interface ConfirmedBookingInput extends BaseInput {
-  applyCreditCents?: number;
-  status: BookingStatus;
-  shouldBePending: boolean;
-  holdDays: number;
-  paymentMethod?: BookingPaymentMethod;
-  internetBankingSettings?: InternetBankingPaymentSettingsValues;
-  /**
-   * When set, the group roster row is written in the same transaction as the
-   * child booking (#1039 item 2): a concurrent duplicate join aborts here and
-   * rolls the booking back instead of leaving an orphaned booking or a
-   * duplicate roster row. A row left by a cancelled/bumped join is reused.
-   */
-  groupJoin?: { groupBookingId: string; joinerMemberId: string };
-}
-
-/**
- * Thrown inside the booking transaction when the joiner already has a live
- * join in this group; the group route maps it to a 409 and the transaction
- * rollback discards the duplicate child booking.
- */
-export class GroupJoinConflictError extends Error {
-  constructor() {
-    super("You have already joined this group");
-    this.name = "GroupJoinConflictError";
-  }
-}
-
-export type ConfirmedBookingOutcome =
-  | { type: "created"; booking: BookingWithGuests; bumpedBookingIds: string[]; isZeroDollarConfirmed: boolean }
-  | { type: "capacityExceeded"; fullNights: string[] };
-
-export type WaitlistedBookingInput = BaseInput;
-
-export interface WaitlistedBookingResult {
-  booking: BookingWithGuests;
-  position: number;
-}
-
-/**
- * Thrown when promo code validation fails inside the booking transaction.
- * The route handler turns this into a 400 response.
- */
-export class BookingPromoError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "BookingPromoError";
-  }
-}
-
-/**
- * Thrown when the no-adult rule trips for a member-created booking but the
- * caller did not supply `memberReviewJustification`. Members must explain
- * why they are booking minors without an adult before the booking can be
- * persisted for admin review.
- */
-export class BookingReviewJustificationRequiredError extends Error {
-  constructor() {
-    super(
-      "A reason is required when booking minors without an adult guest. Please explain so an admin can review."
-    );
-    this.name = "BookingReviewJustificationRequiredError";
-  }
-}
-
-/**
- * Resolve the admin-review fields for a booking based on guest mix and
- * whether the booking is being created by an admin on behalf of a member.
- *
- * Admin-created bookings auto-approve the review (no second pass on their
- * own work). Member-created bookings that trip the rule require a written
- * justification and land with adminReviewStatus = PENDING so an admin can
- * decide via the booking requests queue.
- */
-function resolveAdminReviewFields(args: {
-  guests: BookingGuestInput[];
-  isOnBehalf: boolean;
-  sessionUserId: string;
-  memberReviewJustification: string | undefined;
-}): {
-  requiresAdminReview: boolean;
-  adminReviewReason: string | null;
-  memberReviewJustification: string | null;
-  adminReviewStatus: AdminReviewStatus | null;
-  adminReviewNotes: string | null;
-  adminReviewedById: string | null;
-  adminReviewedAt: Date | null;
-  blockForReview: boolean;
-} {
-  const flagged = requiresAdultSupervisionReview(args.guests);
-  if (!flagged) {
-    return {
-      requiresAdminReview: false,
-      adminReviewReason: null,
-      memberReviewJustification: null,
-      adminReviewStatus: null,
-      adminReviewNotes: null,
-      adminReviewedById: null,
-      adminReviewedAt: null,
-      blockForReview: false,
-    };
-  }
-
-  if (args.isOnBehalf) {
-    return {
-      requiresAdminReview: true,
-      adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
-      memberReviewJustification: args.memberReviewJustification?.trim() || null,
-      adminReviewStatus: AdminReviewStatus.APPROVED,
-      adminReviewNotes: "Approved at creation by admin.",
-      adminReviewedById: args.sessionUserId,
-      adminReviewedAt: new Date(),
-      blockForReview: false,
-    };
-  }
-
-  const justification = args.memberReviewJustification?.trim();
-  if (!justification) {
-    throw new BookingReviewJustificationRequiredError();
-  }
-
-  return {
-    requiresAdminReview: true,
-    adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
-    memberReviewJustification: justification,
-    adminReviewStatus: AdminReviewStatus.PENDING,
-    adminReviewNotes: null,
-    adminReviewedById: null,
-    adminReviewedAt: null,
-    blockForReview: true,
-  };
-}
-
-interface ResolvedPromo {
-  discountCents: number;
-  promoAdjustmentCents: number;
-  promoFreeNightsUsed: number;
-  promoEligibleGuestCount: number;
-  promoAllocations: PromoBeneficiaryAllocation[];
-  promoSelectedGuestIndexes?: number[];
-  promoShouldPersist: boolean;
-  promoCodeRecord:
-    | {
-        id: string;
-        type: PromoCodeType;
-        valueCents: number | null;
-        percentOff: number | null;
-        freeNightsPerIndividual: number | null;
-        lifetimeFreeNightsCap: number | null;
-        fixedNightlyPriceCents: number | null;
-        fixedNightlyMode: FixedNightlyMode | null;
-        maxGuestsPerBooking: number | null;
-        maxNightlyValueCents: number | null;
-        memberGuestsOnly: boolean;
-        assignedMembersOnlyOwnNights?: boolean | null;
-      }
-    | null;
-}
-
-type LockedPromoRow = {
-  id: string;
-  active: boolean;
-  validFrom: Date | null;
-  validUntil: Date | null;
-  bookingStartFrom: Date | null;
-  bookingStartUntil: Date | null;
-  maxRedemptionsTotal: number | null;
-  maxUniqueMembersTotal: number | null;
-  maxUsesPerMember: number | null;
-  currentRedemptions: number;
-  membersOnly: boolean;
-  memberGuestsOnly: boolean;
-  type: PromoCodeType;
-  valueCents: number | null;
-  percentOff: number | null;
-  freeNightsPerIndividual: number | null;
-  lifetimeFreeNightsCap: number | null;
-  fixedNightlyPriceCents: number | null;
-  fixedNightlyMode: FixedNightlyMode | null;
-  maxGuestsPerBooking: number | null;
-  maxNightlyValueCents: number | null;
-  code: string;
-  assignedMembersOnlyOwnNights: boolean;
-  internal: boolean;
+// The helper types, errors, and pure functions that used to live here now live
+// in three cohesive sibling modules (types <- promo, types <- guests). Re-export
+// the public surface so `@/lib/booking-create` keeps its exact set of exports
+// for existing callers.
+export {
+  BookingPromoError,
+  BookingReviewJustificationRequiredError,
+  GroupJoinConflictError,
 };
-
-function getPromoTargetBookingGuestIds(
-  bookingGuests: BookingGuest[],
-  selectedGuestIndexes: number[] | undefined
-) {
-  if (!selectedGuestIndexes) return undefined;
-  return selectedGuestIndexes
-    .map((index) => bookingGuests[index]?.id)
-    .filter((id): id is string => Boolean(id));
-}
-
-/**
- * Resolve and validate a promo code inside the booking transaction.
- * Locks the row for update so concurrent bookings cannot over-redeem.
- * Throws BookingPromoError on validation failure so the caller can
- * roll back and return a 400.
- *
- * Internal promos (work party events) are rejected like unknown codes
- * unless allowInternal is set by the work-party resolution path.
- */
-async function resolvePromoInTransaction(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
-  options: {
-    promoCodeStr: string;
-    effectiveMemberId: string;
-    checkIn: Date;
-    guests: BookingGuestInput[];
-    totalPriceCents: number;
-    perNightCentsByGuest: number[][];
-    nightDatesByGuest?: Date[][];
-    promoGuestIndexes?: number[];
-    allowInternal?: boolean;
-  },
-): Promise<ResolvedPromo> {
-  const {
-    promoCodeStr,
-    effectiveMemberId,
-    checkIn,
-    guests,
-    totalPriceCents,
-    perNightCentsByGuest,
-    nightDatesByGuest,
-    promoGuestIndexes,
-    allowInternal,
-  } = options;
-  const normalizedCode = promoCodeStr.toUpperCase().trim();
-  const lockedRows = await tx.$queryRaw<LockedPromoRow[]>`
-    SELECT * FROM "PromoCode" WHERE "code" = ${normalizedCode} FOR UPDATE
-  `;
-  const promoCode = lockedRows.length > 0 ? lockedRows[0] : null;
-
-  if (promoCode?.internal && !allowInternal) {
-    throw new BookingPromoError("Promo code not found");
-  }
-
-  let assignedMemberIds: string[] | null = null;
-  if (promoCode) {
-    const assignments = await tx.promoCodeAssignment.findMany({
-      where: { promoCodeId: promoCode.id },
-      select: { memberId: true },
-    });
-    if (assignments.length > 0) {
-      assignedMemberIds = assignments.map((a) => a.memberId);
-    }
-  }
-
-  const guestNightRates = guests.map((guest, index) => ({
-    memberId: guest.memberId ?? null,
-    isMember: guest.isMember,
-    perNightRates: perNightCentsByGuest[index],
-    firstNight: guest.stayStart ?? checkIn,
-    nightDates: nightDatesByGuest?.[index],
-  }));
-  const application = await validateAndCalculatePromoDiscount(
-    promoCode,
-    {
-      memberId: effectiveMemberId,
-      bookingCheckIn: checkIn,
-      totalPriceCents,
-      guests: guestNightRates,
-    },
-    assignedMemberIds,
-    { db: tx, selectedGuestIndexes: promoGuestIndexes }
-  );
-  if (application.error || !application.discount) {
-    throw new BookingPromoError(application.error ?? "Promo code could not be applied");
-  }
-  const promoResult = application.discount;
-
-  return {
-    discountCents: promoResult.discountCents,
-    promoAdjustmentCents: promoResult.priceAdjustmentCents,
-    promoFreeNightsUsed: promoResult.freeNightsUsed,
-    promoEligibleGuestCount: promoResult.eligibleGuestCount,
-    promoAllocations: promoResult.allocations,
-    promoSelectedGuestIndexes: application.selectedGuestIndexes,
-    promoShouldPersist: shouldPersistPromoRedemption(promoResult),
-    promoCodeRecord: promoCode,
-  };
-}
-
-const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
-  "A promo code cannot be combined with a working bee discount. Please remove one of them and try again.";
-
-/**
- * Resolve the effective promo source for a booking: either the
- * member-entered code or the selected work party event's internal promo.
- * Only one PromoRedemption can exist per booking, so the two are mutually
- * exclusive. Throws BookingPromoError when both are supplied or the event
- * is not bookable for these dates.
- */
-async function resolveEffectivePromoSource(
-  db: Parameters<typeof resolveWorkPartyEventPromoForBooking>[0],
-  options: {
-    promoCodeStr?: string;
-    workPartyEventId?: string;
-    checkIn: Date;
-    checkOut: Date;
-  }
-): Promise<{ promoCodeStr: string; allowInternal: boolean } | null> {
-  if (!options.workPartyEventId && !options.promoCodeStr) {
-    return null;
-  }
-
-  // Honour the admin module toggles: when a feature is off, its input is ignored
-  // (no discount applied) rather than erroring, so a disabled module can never
-  // affect pricing even if an id/code reaches this far.
-  const modules = await loadEffectiveModuleFlags();
-  const workPartyEventId = modules.workParties
-    ? options.workPartyEventId
-    : undefined;
-  const promoCodeStr = modules.promoCodes ? options.promoCodeStr : undefined;
-
-  if (workPartyEventId && promoCodeStr) {
-    throw new BookingPromoError(PROMO_WORK_PARTY_EXCLUSION_MESSAGE);
-  }
-  if (workPartyEventId) {
-    const resolution = await resolveWorkPartyEventPromoForBooking(
-      db,
-      workPartyEventId,
-      options.checkIn,
-      options.checkOut
-    );
-    if (!resolution.ok) {
-      throw new BookingPromoError(resolution.error);
-    }
-    return { promoCodeStr: resolution.promoCodeStr, allowInternal: true };
-  }
-  if (promoCodeStr) {
-    return { promoCodeStr, allowInternal: false };
-  }
-  return null;
-}
-
-type PricedGuest = {
-  priceCents: number;
-  perNightCents: number[];
-  nightDates: Date[];
+export type {
+  BookingGuestInput,
+  DraftBookingInput,
+  ConfirmedBookingInput,
+  ConfirmedBookingOutcome,
+  WaitlistedBookingInput,
+  WaitlistedBookingResult,
 };
-
-/**
- * Build the nested guest create payload, including one BookingGuestNight row
- * per included night (issue #713). The guest's stayStart/stayEnd envelope is
- * derived from the priced nights (min night, last night + 1 day); a guest with
- * no priced nights falls back to the booking range. Every guest — contiguous or
- * not — gets per-night rows so the data model is uniform.
- */
-export function buildGuestCreateData(
-  guests: BookingGuestInput[],
-  price: { guests: PricedGuest[] },
-  checkIn: Date,
-  checkOut: Date
-) {
-  return guests.map((g, i) => {
-    const priced = price.guests[i];
-    const nightDates = priced.nightDates ?? [];
-    const hasNights = nightDates.length > 0;
-    const stayStart = hasNights ? nightDates[0] : (g.stayStart ?? checkIn);
-    const stayEnd = hasNights
-      ? addDaysDateOnly(nightDates[nightDates.length - 1], 1)
-      : (g.stayEnd ?? checkOut);
-    return {
-      firstName: g.firstName,
-      lastName: g.lastName,
-      ageTier: g.ageTier,
-      isMember: g.isMember,
-      memberId: g.memberId || null,
-      stayStart,
-      stayEnd,
-      priceCents: priced.priceCents,
-      nights: {
-        create: nightDates.map((stayDate, k) => ({
-          stayDate,
-          priceCents: priced.perNightCents[k] ?? 0,
-        })),
-      },
-    };
-  });
-}
-
-/**
- * Remap promo-target guest indexes (which point into the full party guest list)
- * onto a subset of that list. Used when a mixed party is split so the promo,
- * which is applied to the member booking, targets the right member guests.
- * Indexes pointing at guests outside the subset (e.g. non-members) are dropped.
- */
-function remapPromoIndexesToSubset(
-  indexes: number[] | undefined,
-  allGuests: BookingGuestInput[],
-  subset: BookingGuestInput[]
-): number[] | undefined {
-  if (!indexes) return undefined;
-  const subsetIndexByGuest = new Map(subset.map((guest, index) => [guest, index]));
-  const remapped = indexes
-    .map((index) => allGuests[index])
-    .map((guest) => (guest ? subsetIndexByGuest.get(guest) : undefined))
-    .filter((index): index is number => index !== undefined);
-  return remapped.length > 0 ? remapped : undefined;
-}
-
-function getCapacityGuestRanges(
-  guests: BookingGuestInput[],
-  checkIn: Date,
-  checkOut: Date
-) {
-  return guests.map((guest) => ({
-    stayStart: guest.stayStart ?? checkIn,
-    stayEnd: guest.stayEnd ?? checkOut,
-    // Pass the explicit night set through so capacity counts a non-contiguous
-    // guest only on the nights they actually stay (issue #713).
-    nights: guest.nights ?? undefined,
-  }));
-}
-
-/**
- * Resolve the booking's effective date envelope from its guests (issue #713).
- *
- * Creation is expand-only: the range never shrinks below the member's stated
- * checkIn/checkOut, but auto-expands to cover any guest night that falls
- * outside it. In single-range mode (no explicit night sets, guest dates within
- * the stated range) the result equals the stated range exactly, so existing
- * behaviour is unchanged. Manage-guests editing recomputes the envelope from
- * the night sets directly (allowing shrink) on its own path.
- */
-function resolveBookingDateEnvelope(
-  guests: BookingGuestInput[],
-  checkIn: Date,
-  checkOut: Date
-): { checkIn: Date; checkOut: Date } {
-  let minKey = formatDateOnly(checkIn);
-  let maxNightKey = formatDateOnly(addDaysDateOnly(checkOut, -1));
-
-  const consider = (start: Date, lastNight: Date) => {
-    const startKey = formatDateOnly(start);
-    const lastKey = formatDateOnly(lastNight);
-    if (startKey < minKey) minKey = startKey;
-    if (lastKey > maxNightKey) maxNightKey = lastKey;
-  };
-
-  for (const guest of guests) {
-    if (guest.nights && guest.nights.length > 0) {
-      for (const entry of guest.nights) {
-        const night = normalizeNightEntryDate(entry);
-        consider(night, night);
-      }
-    } else if (guest.stayStart && guest.stayEnd) {
-      consider(
-        normalizeDateOnlyForTimeZone(guest.stayStart),
-        addDaysDateOnly(normalizeDateOnlyForTimeZone(guest.stayEnd), -1)
-      );
-    }
-  }
-
-  return {
-    checkIn: normalizeDateOnlyForTimeZone(new Date(`${minKey}T00:00:00.000Z`)),
-    checkOut: addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(new Date(`${maxNightKey}T00:00:00.000Z`)),
-      1
-    ),
-  };
-}
-
-function normalizeNightEntryDate(entry: GuestNightInput): Date {
-  if (typeof entry === "string") {
-    return normalizeDateOnlyForTimeZone(new Date(`${entry}T00:00:00.000Z`));
-  }
-  if (entry instanceof Date) {
-    return normalizeDateOnlyForTimeZone(entry);
-  }
-  return normalizeNightEntryDate(entry.stayDate);
-}
-
-function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => night.date.toISOString().split("T")[0]);
-}
+export { buildGuestCreateData };
 
 /**
  * Create a DRAFT booking. Skips capacity locking, payment, Xero, and
