@@ -35,6 +35,15 @@ export interface GuestInput {
   // guest is priced for exactly these nights (which may be non-contiguous);
   // otherwise pricing falls back to the contiguous stayStart/stayEnd envelope.
   nights?: ReadonlyArray<GuestNightInput> | null;
+  // Nightly prices locked at booking time (#1036). An entry matching a priced
+  // night short-circuits the season-rate lookup for that night, so an edit
+  // never reprices a night the guest already bought: only nights without a
+  // locked entry — added nights, new guests — price at current season rates.
+  // Edit paths pass the guest's stored BookingGuestNight rows here.
+  lockedNightPrices?: ReadonlyArray<{
+    stayDate: Date | string;
+    priceCents: number;
+  }> | null;
 }
 
 export interface PriceBreakdown {
@@ -290,10 +299,27 @@ export function calculateBookingPrice(
 
   const guestBreakdowns = guests.map((guest) => {
     const nights = getGuestPricedNights(guest, bookingRange);
+    const lockedByKey = new Map<string, number>();
+    for (const entry of guest.lockedNightPrices ?? []) {
+      lockedByKey.set(
+        formatDateOnly(normalizeNightEntry(entry.stayDate)),
+        entry.priceCents
+      );
+    }
     const perNightCents: number[] = [];
     let guestTotal = 0;
 
     for (const night of nights) {
+      // A night the guest already bought keeps its locked price (#1036) —
+      // no season-rate lookup, no group-discount recomputation, and no
+      // "no rate found" failure for a night that was purchasable when booked.
+      const lockedRate = lockedByKey.get(formatDateOnly(night));
+      if (lockedRate !== undefined) {
+        perNightCents.push(lockedRate);
+        guestTotal += lockedRate;
+        continue;
+      }
+
       const activeGuestCount = countActiveGuestsForNight(guests, night, bookingRange);
       // Group discount: if applicable, treat all guests as members for rate lookup
       const effectiveIsMember =

@@ -23,6 +23,7 @@ import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
+  lockedNightPricesForGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
@@ -175,7 +176,11 @@ export async function modifyBookingDates({
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
-        guests: true,
+        guests: {
+          include: {
+            nights: { select: { stayDate: true, priceCents: true } },
+          },
+        },
         payment: true,
         member: true,
         promoRedemption: {
@@ -299,6 +304,9 @@ export async function modifyBookingDates({
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
+      // Nights kept across the date change keep their booked price (#1036);
+      // only the nights the new range adds price at current season rates.
+      lockedNightPrices: lockedNightPricesForGuest(g),
     }));
     const seasonYear = getSeasonYear(newCheckIn);
     await assertMembershipTypeBookingAllowed(tx, {

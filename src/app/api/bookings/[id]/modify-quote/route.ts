@@ -51,6 +51,7 @@ import {
 import {
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
+  lockedNightPricesForGuest,
   resolveGuestNameUpdates,
 } from "@/lib/booking-modify";
 import {
@@ -205,7 +206,7 @@ export async function POST(
     where: { id: bookingId },
     include: {
       // Per-night sets (issue #713): preserve unedited guests' gaps in the quote.
-      guests: { include: { nights: { select: { stayDate: true } } } },
+      guests: { include: { nights: { select: { stayDate: true, priceCents: true } } } },
       payment: true,
       promoRedemption: {
         include: {
@@ -527,6 +528,9 @@ export async function POST(
       stayStart: entry.stayStart,
       stayEnd: entry.stayEnd,
       nights: entry.nights,
+      // Preview with the same locked booked-night prices the mutating
+      // endpoints charge (#1036).
+      lockedNightPrices: lockedNightPricesForGuest(entry.guest),
     })),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
       bookingGuestId: null,

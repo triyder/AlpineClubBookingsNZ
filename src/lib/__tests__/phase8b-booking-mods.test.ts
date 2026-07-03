@@ -313,6 +313,60 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(res.status).toBe(404);
   });
 
+  it("locks kept nights' stored prices across a date change (#1036)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith",
+          ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 10000,
+          nights: [
+            { stayDate: new Date("2026-06-01"), priceCents: 5000 },
+            { stayDate: new Date("2026-06-02"), priceCents: 5000 },
+          ],
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as any);
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as any);
+    mockedCalcPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 15000,
+      guests: guests.map(() => ({
+        priceCents: 15000,
+        perNightCents: [5000, 5000, 5000],
+        nightDates: [],
+      })),
+    })) as any);
+    mockedCalcChangeFee.mockResolvedValue({ changeFeeCents: 0 } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkOut: "2026-06-04" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    const [, , pricedGuests] = mockedCalcPrice.mock.calls.at(-1) ?? [];
+    expect(pricedGuests[0]).toEqual(
+      expect.objectContaining({
+        lockedNightPrices: [
+          expect.objectContaining({ priceCents: 5000 }),
+          expect.objectContaining({ priceCents: 5000 }),
+        ],
+      }),
+    );
+  });
+
   it("blocks date changes on a quote-priced booking (#1032)", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
     const tx = makeTx(makeBooking());
@@ -749,6 +803,72 @@ describe("POST /api/bookings/[id]/guests", () => {
     });
     const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(400);
+  });
+
+  it("locks existing guests' stored night prices when adding a guest (#1036)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith",
+          ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000,
+          nights: [
+            { stayDate: new Date("2026-06-01"), priceCents: 2500 },
+            { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+          ],
+        },
+        {
+          id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith",
+          ageTier: "ADULT", isMember: true, memberId: null, priceCents: 5000,
+          nights: [
+            { stayDate: new Date("2026-06-01"), priceCents: 2500 },
+            { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+          ],
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as any);
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as any);
+    mockedCalcPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 5000,
+      guests: guests.map(() => ({
+        priceCents: 5000,
+        perNightCents: [2500, 2500],
+        nightDates: [],
+      })),
+    })) as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    // The full-party reprice carries the existing guests' locks; the new
+    // guest has none, so only they price at current rates.
+    const pricedGuestLists = mockedCalcPrice.mock.calls.map((call) => call[2]);
+    const fullPartyCall = pricedGuestLists.find((guests) => guests?.length === 3);
+    expect(fullPartyCall?.[0]).toEqual(
+      expect.objectContaining({
+        bookingGuestId: "g1",
+        lockedNightPrices: [
+          expect.objectContaining({ priceCents: 2500 }),
+          expect.objectContaining({ priceCents: 2500 }),
+        ],
+      }),
+    );
+    expect(fullPartyCall?.[2]?.lockedNightPrices ?? []).toEqual([]);
   });
 
   it("blocks adding guests to a quote-priced booking (#1032)", async () => {
@@ -1635,6 +1755,53 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     });
     expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
     expect(tx.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("passes stored night prices to the pricing engine so unchanged nights stay locked (#1036)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith",
+          ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000,
+          nights: [
+            { stayDate: new Date("2026-06-01"), priceCents: 2500 },
+            { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+          ],
+        },
+        {
+          id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith",
+          ageTier: "ADULT", isMember: true, memberId: null, priceCents: 5000,
+          nights: [
+            { stayDate: new Date("2026-06-01"), priceCents: 2500 },
+            { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+          ],
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    } as any);
+
+    const res = await DELETE(deleteWithMethod("g2"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+
+    // The remaining guest's stored per-night prices reach the engine as locks.
+    const [, , pricedGuests] = mockedCalcPrice.mock.calls.at(-1) ?? [];
+    expect(pricedGuests[0]).toEqual(
+      expect.objectContaining({
+        bookingGuestId: "g1",
+        lockedNightPrices: [
+          expect.objectContaining({ priceCents: 2500 }),
+          expect.objectContaining({ priceCents: 2500 }),
+        ],
+      }),
+    );
   });
 
   // --- #1041: lifecycle parity with the batch modify path ---

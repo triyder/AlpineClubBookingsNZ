@@ -24,6 +24,7 @@ import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
+  lockedNightPricesForGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
@@ -147,7 +148,11 @@ export async function removeBookingGuestInTransaction({
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
     include: {
-      guests: true,
+      guests: {
+        include: {
+          nights: { select: { stayDate: true, priceCents: true } },
+        },
+      },
       payment: true,
       member: true,
         promoRedemption: {
@@ -256,6 +261,9 @@ export async function removeBookingGuestInTransaction({
     ageTier: guest.ageTier as AgeTier,
     isMember: guest.isMember,
     memberId: guest.memberId ?? null,
+    // Remaining guests keep their booked nightly prices (#1036): removing a
+    // guest must return exactly that guest's own price, policy permitting.
+    lockedNightPrices: lockedNightPricesForGuest(guest),
   }));
   const seasonYear = getSeasonYear(booking.checkIn);
   await assertMembershipTypeBookingAllowed(tx, {
