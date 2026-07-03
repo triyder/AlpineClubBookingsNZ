@@ -140,6 +140,25 @@ export interface ConfirmedBookingInput extends BaseInput {
   holdDays: number;
   paymentMethod?: BookingPaymentMethod;
   internetBankingSettings?: InternetBankingPaymentSettingsValues;
+  /**
+   * When set, the group roster row is written in the same transaction as the
+   * child booking (#1039 item 2): a concurrent duplicate join aborts here and
+   * rolls the booking back instead of leaving an orphaned booking or a
+   * duplicate roster row. A row left by a cancelled/bumped join is reused.
+   */
+  groupJoin?: { groupBookingId: string; joinerMemberId: string };
+}
+
+/**
+ * Thrown inside the booking transaction when the joiner already has a live
+ * join in this group; the group route maps it to a 409 and the transaction
+ * rollback discards the duplicate child booking.
+ */
+export class GroupJoinConflictError extends Error {
+  constructor() {
+    super("You have already joined this group");
+    this.name = "GroupJoinConflictError";
+  }
 }
 
 export type ConfirmedBookingOutcome =
@@ -869,6 +888,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     memberReviewJustification,
     parentBookingId,
     organiserSettled,
+    groupJoin,
   } = input;
   // Auto-expand (issue #713): cover every guest night (members + non-members)
   // so the member booking and any linked non-member child share one range.
@@ -1248,6 +1268,52 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           id: childBooking.id,
           finalPriceCents: childBooking.finalPriceCents,
         };
+      }
+
+      if (groupJoin) {
+        // Roster write is atomic with the child booking (#1039 item 2). The
+        // advisory lock above serialises booking creation, so this
+        // check-then-write cannot race; the (groupBookingId, joinerMemberId)
+        // unique pair backs it at the database as well.
+        const existingJoin = await tx.groupBookingJoin.findUnique({
+          where: {
+            groupBookingId_joinerMemberId: {
+              groupBookingId: groupJoin.groupBookingId,
+              joinerMemberId: groupJoin.joinerMemberId,
+            },
+          },
+          include: {
+            booking: { select: { status: true, deletedAt: true } },
+          },
+        });
+        const existingJoinIsLive =
+          existingJoin?.booking &&
+          !existingJoin.booking.deletedAt &&
+          existingJoin.booking.status !== BookingStatus.CANCELLED &&
+          existingJoin.booking.status !== BookingStatus.BUMPED;
+        if (existingJoinIsLive) {
+          throw new GroupJoinConflictError();
+        }
+        if (existingJoin) {
+          await tx.groupBookingJoin.update({
+            where: { id: existingJoin.id },
+            data: {
+              bookingId: newBooking.id,
+              isMember: true,
+              verifiedAt: new Date(),
+            },
+          });
+        } else {
+          await tx.groupBookingJoin.create({
+            data: {
+              groupBookingId: groupJoin.groupBookingId,
+              bookingId: newBooking.id,
+              joinerMemberId: groupJoin.joinerMemberId,
+              isMember: true,
+              verifiedAt: new Date(),
+            },
+          });
+        }
       }
 
       return newBooking;

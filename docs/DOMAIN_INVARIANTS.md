@@ -31,6 +31,18 @@ Future reviews and issues should cite this file when proposing changes.
   This person-night guard is separate from bed capacity: it checks draft,
   pending, confirmed/paid/completed, waitlist, offered, and admin-review
   bookings, but ignores cancelled, bumped, deleted, and expired draft rows.
+- The person-night guard is app-level enforcement by design (#1039 item 3): a
+  database unique index cannot express it because liveness is booking-status
+  dependent and spans `BookingGuest` to `Booking`, which a Postgres partial
+  unique index cannot reference. It is race-free because every booking
+  creation/edit transaction takes the global booking advisory lock before
+  running the guard; that ordering is frozen by test.
+- A member holds at most one group-join roster row per group
+  (`GroupBookingJoin` unique on groupBookingId + joinerMemberId, #1039
+  item 2). The roster row is written inside the child booking's transaction:
+  a duplicate live join aborts the whole transaction, and a row left by a
+  cancelled or bumped join is reused on re-join. Non-member join requests
+  carry a NULL member id and sit outside the constraint.
 - Draft, pending, waitlist, payment-recovery, and review states must have
   expiry, retry, admin visibility, or repair paths.
 

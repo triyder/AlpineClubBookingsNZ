@@ -22,6 +22,9 @@ const h = vi.hoisted(() => ({
   checkCapacityForGuestRanges: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   logAudit: vi.fn(),
+  groupJoinFindUnique: vi.fn(),
+  groupJoinCreate: vi.fn(),
+  groupJoinUpdate: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -94,7 +97,11 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { createConfirmedBooking, type BookingGuestInput } from "@/lib/booking-create";
+import {
+  createConfirmedBooking,
+  GroupJoinConflictError,
+  type BookingGuestInput,
+} from "@/lib/booking-create";
 
 const checkIn = new Date("2026-09-10T00:00:00.000Z");
 const checkOut = new Date("2026-09-12T00:00:00.000Z");
@@ -127,6 +134,11 @@ const tx = {
     update: (...a: unknown[]) => h.bookingUpdate(...a),
   },
   payment: { create: (...a: unknown[]) => h.paymentCreate(...a) },
+  groupBookingJoin: {
+    findUnique: (...a: unknown[]) => h.groupJoinFindUnique(...a),
+    create: (...a: unknown[]) => h.groupJoinCreate(...a),
+    update: (...a: unknown[]) => h.groupJoinUpdate(...a),
+  },
 };
 
 function guest(isMember: boolean, firstName: string): BookingGuestInput {
@@ -252,5 +264,95 @@ describe("createConfirmedBooking split bookings (#738)", () => {
     expect((payloads[0].guests as { create: unknown[] }).create).toHaveLength(2);
     // No up-front payment is taken for the flagged provisional booking.
     expect(h.paymentCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("group join roster writes (#1039 items 2 and 3)", () => {
+  const groupJoin = { groupBookingId: "group-1", joinerMemberId: "member-1" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createdCount = 0;
+    h.transaction.mockImplementation(async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx));
+    h.executeRaw.mockResolvedValue(undefined);
+    h.seasonFindMany.mockResolvedValue(mockSeasons);
+    h.checkCapacityForGuestRanges.mockResolvedValue({ available: true, nightDetails: [] });
+    h.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
+    h.bookingUpdate.mockResolvedValue({});
+    h.memberFindUnique.mockResolvedValue({ id: "member-1", firstName: "Mem", lastName: "Ber", email: "m@example.com" });
+    h.bookingCreate.mockImplementation((args: { data: Record<string, unknown> }) => {
+      createdCount += 1;
+      const id = `booking-${createdCount}`;
+      const guestRows = (args.data.guests as { create: Array<Record<string, unknown>> }).create.map(
+        (g, i) => ({ ...g, id: `${id}-g${i}` })
+      );
+      return Promise.resolve({ ...args.data, id, guests: guestRows });
+    });
+    h.groupJoinFindUnique.mockResolvedValue(null);
+    h.groupJoinCreate.mockResolvedValue({ id: "join-1" });
+    h.groupJoinUpdate.mockResolvedValue({ id: "join-1" });
+  });
+
+  it("writes the roster row inside the booking transaction", async () => {
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], { groupJoin })
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.groupJoinCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        groupBookingId: "group-1",
+        joinerMemberId: "member-1",
+        bookingId: "booking-1",
+        isMember: true,
+      }),
+    });
+  });
+
+  it("reuses a roster row left by a cancelled join", async () => {
+    h.groupJoinFindUnique.mockResolvedValue({
+      id: "join-old",
+      booking: { status: BookingStatus.CANCELLED, deletedAt: null },
+    });
+
+    const outcome = await createConfirmedBooking(
+      baseInput([guest(true, "Alice")], { groupJoin })
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.groupJoinUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "join-old" },
+        data: expect.objectContaining({ bookingId: "booking-1" }),
+      })
+    );
+    expect(h.groupJoinCreate).not.toHaveBeenCalled();
+  });
+
+  it("aborts the transaction when the joiner already has a live join", async () => {
+    h.groupJoinFindUnique.mockResolvedValue({
+      id: "join-live",
+      booking: { status: BookingStatus.CONFIRMED, deletedAt: null },
+    });
+
+    await expect(
+      createConfirmedBooking(baseInput([guest(true, "Alice")], { groupJoin }))
+    ).rejects.toBeInstanceOf(GroupJoinConflictError);
+
+    expect(h.groupJoinCreate).not.toHaveBeenCalled();
+    expect(h.groupJoinUpdate).not.toHaveBeenCalled();
+  });
+
+  it("takes the serialising advisory lock before any duplicate checks (#1039 item 3)", async () => {
+    // The person-night guard and the roster duplicate check are app-level
+    // enforcement; they are race-free because every creation transaction
+    // first takes pg_advisory_xact_lock(1). Freeze that ordering.
+    await createConfirmedBooking(baseInput([guest(true, "Alice")], { groupJoin }));
+
+    const lockOrder = h.executeRaw.mock.invocationCallOrder[0];
+    const rosterCheckOrder = h.groupJoinFindUnique.mock.invocationCallOrder[0];
+    const bookingCreateOrder = h.bookingCreate.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(bookingCreateOrder);
+    expect(lockOrder).toBeLessThan(rosterCheckOrder);
   });
 });

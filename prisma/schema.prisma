@@ -1178,6 +1178,11 @@ model GroupBookingJoin {
   booking      Booking?     @relation("GroupBookingJoinBooking", fields: [bookingId], references: [id], onDelete: SetNull)
   joinerMember Member?      @relation(fields: [joinerMemberId], references: [id], onDelete: SetNull)
 
+  // One roster row per member per group (#1039 item 2). Non-member joins
+  // carry a NULL joinerMemberId and are unaffected (NULLs are distinct); a
+  // member re-joining after cancellation reuses their row inside the booking
+  // transaction rather than creating a duplicate.
+  @@unique([groupBookingId, joinerMemberId])
   @@index([groupBookingId])
   @@index([verificationTokenExpiresAt])
   @@index([contactEmail])
