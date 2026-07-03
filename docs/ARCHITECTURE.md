@@ -77,7 +77,7 @@ Use these ownership boundaries when adding new code:
 | Pages and route handlers | `src/app/` | Validate input and session state near the route boundary, then delegate decisions to `src/lib/`. |
 | Route-private page UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
-| Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts`, `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
+| Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
 | Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
@@ -121,7 +121,12 @@ and capacity checks) and re-exports the pure helpers now split into
 admin-review helpers), so `@/lib/booking-create` keeps its exact import surface.
 `src/lib/booking-modify.ts` owns
 the modification boundary for date/guest/promo changes and delegates reusable
-decisions to helpers and `src/lib/policies/`.
+decisions to helpers and `src/lib/policies/`. It is a barrel over three
+modules split out in issue #1138 — `booking-modify-validation.ts`
+(edit-eligibility gates and shared loaded types), `booking-modify-plan.ts`
+(the in-transaction guest/pricing/promo pipeline), and
+`booking-modify-settlement.ts` (settlement handoff and lifecycle
+transitions) — so importers keep using `@/lib/booking-modify` unchanged.
 
 `src/lib/booking-payment-cleanup.ts` queues superseded Stripe PaymentIntents
 when booking edits replace or zero out pending payment work.
