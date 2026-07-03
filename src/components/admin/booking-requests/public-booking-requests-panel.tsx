@@ -130,6 +130,7 @@ interface PublicBookingRequestData {
   reviewedByMemberName: string | null;
   declineReason: string | null;
   convertedBookingId: string | null;
+  attendeesConfirmedAt: string | null;
   convertedMemberId: string | null;
   heldBookingId: string | null;
   acceptedQuoteOptionId: string | null;
@@ -461,6 +462,29 @@ export function PublicBookingRequestsPanel({
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send quote");
+    } finally {
+      setActioningId(null);
+    }
+  }
+
+  async function handleResendAttendeeLink(request: PublicBookingRequestData) {
+    setActioningId(request.id);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/admin/booking-requests/${request.id}/resend-attendee-confirmation`,
+        { method: "POST" },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to re-send the attendee link");
+      }
+      toast.success(`Attendee confirmation link sent to ${data.sentTo}`);
+      await fetchRequests();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to re-send the attendee link",
+      );
     } finally {
       setActioningId(null);
     }
@@ -1110,6 +1134,31 @@ export function PublicBookingRequestsPanel({
                             Open booking
                           </Link>
                         </p>
+                      ) : null}
+                      {request.type === "SCHOOL" && request.convertedBookingId ? (
+                        request.attendeesConfirmedAt ? (
+                          <p className="mt-2 text-emerald-700">
+                            Attendee list confirmed{" "}
+                            {formatDateTime(request.attendeesConfirmedAt) ?? ""}
+                          </p>
+                        ) : (
+                          <div className="mt-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={actioningId === request.id}
+                              onClick={() => handleResendAttendeeLink(request)}
+                            >
+                              {actioningId === request.id
+                                ? "Sending…"
+                                : "Re-send attendee confirmation link"}
+                            </Button>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Rotates the secure link and emails it to the school
+                              contact now, outside the reminder cadence.
+                            </p>
+                          </div>
+                        )
                       ) : null}
                     </div>
                   ) : null}

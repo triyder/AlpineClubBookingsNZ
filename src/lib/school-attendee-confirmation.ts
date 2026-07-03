@@ -410,3 +410,108 @@ export async function countUnconfirmedSchoolAttendeeLists(
     },
   });
 }
+
+/**
+ * Admin action (#1153): rotate the attendee-confirmation token and send the
+ * email immediately, outside the cron cadence — e.g. the school lost the
+ * email or the link expired at check-in. Works after check-in with a short
+ * expiry so late roster fixes remain possible; blocked once confirmed.
+ */
+export async function resendSchoolAttendeeConfirmation({
+  bookingRequestId,
+  adminMemberId,
+  now = new Date(),
+}: {
+  bookingRequestId: string;
+  adminMemberId: string;
+  now?: Date;
+}): Promise<{ sentTo: string }> {
+  const request = await prisma.bookingRequest.findUnique({
+    where: { id: bookingRequestId },
+    include: {
+      convertedBooking: {
+        select: {
+          id: true,
+          status: true,
+          deletedAt: true,
+          checkIn: true,
+          checkOut: true,
+          guests: { select: { id: true } },
+        },
+      },
+    },
+  });
+
+  if (
+    !request ||
+    request.type !== BookingRequestType.SCHOOL ||
+    !request.convertedBooking
+  ) {
+    throw new SchoolAttendeeConfirmationError(
+      "This is not a converted school booking request.",
+      404,
+    );
+  }
+  const booking = request.convertedBooking;
+  if (booking.deletedAt || CLOSED_BOOKING_STATUSES.has(booking.status)) {
+    throw new SchoolAttendeeConfirmationError(
+      "This booking is no longer active.",
+      409,
+    );
+  }
+  if (request.attendeesConfirmedAt) {
+    throw new SchoolAttendeeConfirmationError(
+      "The attendee list has already been confirmed.",
+      409,
+    );
+  }
+
+  // Rotate before sending, like the cron. Pre-check-in links stay valid
+  // until check-in; after check-in a short window covers late roster fixes.
+  const { token, tokenHash } = issueActionToken();
+  const expiresAt =
+    booking.checkIn > now
+      ? booking.checkIn
+      : new Date(now.getTime() + 3 * DAY_MS);
+  await prisma.bookingRequest.update({
+    where: { id: request.id },
+    data: {
+      attendeeConfirmationTokenHash: tokenHash,
+      attendeeConfirmationTokenExpiresAt: expiresAt,
+    },
+  });
+
+  await sendSchoolAttendeeConfirmationEmail({
+    email: request.contactEmail,
+    firstName: request.contactFirstName,
+    schoolName: request.schoolName,
+    token,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    guestCount: booking.guests.length,
+    isReminder: Boolean(request.attendeeConfirmationLastSentAt),
+  });
+
+  await prisma.bookingRequest.update({
+    where: { id: request.id },
+    data: { attendeeConfirmationLastSentAt: now },
+  });
+
+  logAudit({
+    action: "booking_request.attendee_confirmation_resent",
+    memberId: adminMemberId,
+    actorMemberId: adminMemberId,
+    targetId: request.id,
+    entityType: "BookingRequest",
+    entityId: request.id,
+    category: "booking",
+    outcome: "success",
+    summary: "Admin re-sent the school attendee confirmation link",
+    metadata: {
+      bookingId: booking.id,
+      expiresAt: expiresAt.toISOString(),
+    },
+  });
+
+  return { sentTo: request.contactEmail };
+}
