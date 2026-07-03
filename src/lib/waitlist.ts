@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { checkCapacityForGuestRanges } from "./capacity";
 import { getNonMemberHoldDays } from "./cancellation";
 import {
@@ -10,6 +10,13 @@ import {
 import { logAudit } from "./audit";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
+import {
+  loadSeasonRateData,
+  recalculateBookingPromo,
+} from "@/lib/booking-guest-removal-service";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
+import { getSeasonYear } from "@/lib/utils";
 
 const WAITLIST_OFFER_HOURS = Number(process.env.WAITLIST_OFFER_HOURS) || 48;
 
@@ -57,6 +64,113 @@ export async function getWaitlistForDates(checkIn: Date, checkOut: Date) {
   });
 }
 
+type WaitlistCandidateForReprice = Prisma.BookingGetPayload<{
+  include: {
+    guests: { include: { nights: true } };
+    promoRedemption: {
+      include: {
+        guestTargets: { select: { bookingGuestId: true } };
+        promoCode: { include: { assignments: { select: { memberId: true } } } };
+      };
+    };
+  };
+}>;
+
+/**
+ * Reprice a waitlisted booking at current season rates, membership-type
+ * policy, group discount, and promo validity, persisting the new totals and
+ * per-guest prices (#1035). Returns the price the member will pay on
+ * confirmation. On failure the stored snapshot is kept and returned — an
+ * offer must never be blocked by a repricing edge case.
+ */
+async function repriceWaitlistCandidate(
+  tx: Prisma.TransactionClient,
+  candidate: WaitlistCandidateForReprice
+): Promise<number> {
+  try {
+    const seasonRateData = await loadSeasonRateData(tx);
+    const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
+      where: { id: "default" },
+    });
+    const guestsForPricing = candidate.guests.map((guest) => ({
+      bookingGuestId: guest.id,
+      ageTier: guest.ageTier as AgeTier,
+      isMember: guest.isMember,
+      memberId: guest.memberId ?? null,
+      stayStart: guest.stayStart,
+      stayEnd: guest.stayEnd,
+      nights: guest.nights,
+    }));
+
+    const priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+      ownerMemberId: candidate.memberId,
+      checkIn: candidate.checkIn,
+      checkOut: candidate.checkOut,
+      guests: guestsForPricing,
+      seasons: seasonRateData,
+      groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
+      seasonYear: getSeasonYear(candidate.checkIn),
+    });
+
+    const newTotalPriceCents = priceBreakdown.totalPriceCents;
+    const guestNightRates = guestsForPricing.map((guest, index) => ({
+      bookingGuestId: guest.bookingGuestId,
+      memberId: guest.memberId,
+      isMember: guest.isMember,
+      perNightRates: priceBreakdown.guests[index].perNightCents,
+      nightDates: priceBreakdown.guests[index].nightDates,
+      firstNight: candidate.checkIn,
+    }));
+    const promoResult = await recalculateBookingPromo({
+      tx,
+      bookingId: candidate.id,
+      booking: candidate,
+      newTotalPriceCents,
+      guestNightRates,
+    });
+    const newFinalPriceCents =
+      newTotalPriceCents + promoResult.newPromoAdjustmentCents;
+
+    await Promise.all(
+      candidate.guests.map((guest, index) =>
+        tx.bookingGuest.update({
+          where: { id: guest.id },
+          data: { priceCents: priceBreakdown.guests[index].priceCents },
+        })
+      )
+    );
+    await tx.booking.update({
+      where: { id: candidate.id },
+      data: {
+        totalPriceCents: newTotalPriceCents,
+        discountCents: promoResult.newDiscountCents,
+        promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
+        finalPriceCents: newFinalPriceCents,
+      },
+    });
+
+    if (newFinalPriceCents !== candidate.finalPriceCents) {
+      logger.info(
+        {
+          bookingId: candidate.id,
+          previousFinalPriceCents: candidate.finalPriceCents,
+          newFinalPriceCents,
+          promoRemoved: promoResult.promoRemoved,
+        },
+        "Repriced waitlisted booking at offer time"
+      );
+    }
+
+    return newFinalPriceCents;
+  } catch (err) {
+    logger.error(
+      { err, bookingId: candidate.id },
+      "Failed to reprice waitlisted booking at offer time; offering at the stored snapshot"
+    );
+    return candidate.finalPriceCents;
+  }
+}
+
 /**
  * Main orchestrator: when capacity is freed, find the top FIFO candidate
  * whose full date range has capacity and offer them the spot.
@@ -77,6 +191,7 @@ export async function processWaitlistForDates(freedDates: {
     memberId: string;
     memberName: string;
     position: number;
+    finalPriceCents: number;
   };
   let offerDetails = null as OfferDetails | null;
 
@@ -93,6 +208,14 @@ export async function processWaitlistForDates(freedDates: {
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
+          promoRedemption: {
+            include: {
+              guestTargets: { select: { bookingGuestId: true } },
+              promoCode: {
+                include: { assignments: { select: { memberId: true } } },
+              },
+            },
+          },
         },
         orderBy: { createdAt: "asc" },
       });
@@ -109,6 +232,15 @@ export async function processWaitlistForDates(freedDates: {
 
         if (available) {
           const expiresAt = new Date(Date.now() + WAITLIST_OFFER_HOURS * 60 * 60 * 1000);
+
+          // Reprice at current rates when the offer is issued (#1035): the
+          // booking's price was snapshotted at creation, and season rates,
+          // membership types, or the promo's validity may have changed while
+          // it waited. The offer email shows the price the member will
+          // actually pay, and an identical booking made directly today pays
+          // the same. A repricing failure falls back to the stored snapshot
+          // rather than blocking the offer.
+          const offerPriceCents = await repriceWaitlistCandidate(tx, candidate);
 
           await tx.booking.update({
             where: { id: candidate.id },
@@ -150,6 +282,7 @@ export async function processWaitlistForDates(freedDates: {
             memberId: candidate.memberId,
             memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
             position: position + 1,
+            finalPriceCents: offerPriceCents,
           };
 
           break; // Only offer to the top candidate
@@ -170,7 +303,8 @@ export async function processWaitlistForDates(freedDates: {
       offerDetails.checkOut,
       offerDetails.guestCount,
       offerDetails.expiresAt,
-      offerDetails.bookingId
+      offerDetails.bookingId,
+      offerDetails.finalPriceCents
     ).catch((err) => logger.error({ err }, "Failed to send waitlist offer email"));
 
     sendAdminWaitlistOfferAlert({

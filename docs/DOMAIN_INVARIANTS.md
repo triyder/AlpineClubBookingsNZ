@@ -21,6 +21,12 @@ Future reviews and issues should cite this file when proposing changes.
   source of truth is `CAPACITY_HOLDING_BOOKING_STATUSES` in
   `src/lib/booking-status.ts`.
 - Waitlisted and offered bookings do not consume capacity until confirmed.
+- A waitlist offer reprices the booking at current season rates,
+  membership-type policy, group discount, and promo validity at the moment the
+  offer is issued; the offer email states the price the member will pay on
+  confirmation. The creation-time price snapshot is not a price lock — an
+  identical booking made directly on the offer day pays the same. If repricing
+  fails, the offer proceeds at the stored snapshot rather than being blocked.
 - A linked `Member` may be present on only one live booking per lodge night.
   This person-night guard is separate from bed capacity: it checks draft,
   pending, confirmed/paid/completed, waitlist, offered, and admin-review

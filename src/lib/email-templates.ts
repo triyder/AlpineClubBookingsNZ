@@ -2057,7 +2057,8 @@ export function waitlistOfferTemplate(
   checkOut: Date,
   guestCount: number,
   expiresAt: Date,
-  bookingId: string
+  bookingId: string,
+  priceCents: number
 ): string {
   return layout(`
     ${heading("A Spot Has Opened Up!")}
@@ -2066,6 +2067,7 @@ export function waitlistOfferTemplate(
       { label: "Check-in", value: formatNZDate(checkIn) },
       { label: "Check-out", value: formatNZDate(checkOut) },
       { label: "Guests", value: String(guestCount) },
+      { label: "Price", value: formatCents(priceCents) },
     ])}
     ${alertBox("This offer expires on " + formatNZDateTime(expiresAt) + ". If you don't confirm in time, the spot will be offered to the next person in line.", "warning")}
     ${button("Confirm Booking", BASE_URL + "/bookings/" + bookingId)}

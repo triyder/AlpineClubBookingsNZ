@@ -26,6 +26,12 @@ const mockTx = {
     update: vi.fn(),
     count: vi.fn(),
   },
+  bookingGuest: {
+    update: vi.fn(),
+  },
+  groupDiscountSetting: {
+    findUnique: vi.fn(),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -66,6 +72,22 @@ vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
 }));
 
+// Offer-time repricing (#1035): the pricing/promo engines are unit-tested
+// where they live; these mocks let the tests drive the offered price and
+// assert the wiring (persisted totals, email price, snapshot fallback).
+const mockPriceWithPolicy = vi.fn();
+const mockLoadSeasonRateData = vi.fn();
+const mockRecalculateBookingPromo = vi.fn();
+vi.mock("@/lib/membership-type-policy", () => ({
+  priceBookingGuestsWithMembershipTypePolicy: (...args: unknown[]) =>
+    mockPriceWithPolicy(...args),
+}));
+vi.mock("@/lib/booking-guest-removal-service", () => ({
+  loadSeasonRateData: (...args: unknown[]) => mockLoadSeasonRateData(...args),
+  recalculateBookingPromo: (...args: unknown[]) =>
+    mockRecalculateBookingPromo(...args),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -92,6 +114,28 @@ beforeEach(() => {
   mockExecuteRaw.mockResolvedValue(undefined);
   // Default: transaction runs the callback with mockTx
   mockPrismaTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx));
+  mockTx.bookingGuest.update.mockReset();
+  mockTx.bookingGuest.update.mockResolvedValue({});
+  mockTx.groupDiscountSetting.findUnique.mockReset();
+  mockTx.groupDiscountSetting.findUnique.mockResolvedValue(null);
+  mockLoadSeasonRateData.mockReset();
+  mockLoadSeasonRateData.mockResolvedValue([]);
+  mockPriceWithPolicy.mockReset();
+  // Default: repricing lands on the stored snapshot (no rate change).
+  mockPriceWithPolicy.mockImplementation(async (_db: unknown, input: { guests: unknown[] }) => ({
+    totalPriceCents: 20000,
+    guests: (input.guests as unknown[]).map(() => ({
+      priceCents: 10000,
+      perNightCents: [5000, 5000],
+      nightDates: [],
+    })),
+  }));
+  mockRecalculateBookingPromo.mockReset();
+  mockRecalculateBookingPromo.mockResolvedValue({
+    newDiscountCents: 0,
+    newPromoAdjustmentCents: 0,
+    promoRemoved: false,
+  });
 });
 
 // ─── Core Logic Tests ───
@@ -191,6 +235,233 @@ describe("processWaitlistForDates", () => {
         where: { id: "booking1" },
         data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
       })
+    );
+  });
+
+  it("reprices the booking at current rates when issuing an offer (#1035)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+    const { sendWaitlistOfferEmail } = await import("@/lib/email");
+
+    // Snapshot 20000 at creation; season rates rose while it waited: 24000.
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [
+        { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
+        { id: "g2", ageTier: "ADULT", isMember: true, memberId: null, nights: [] },
+      ],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTx.booking.findMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 24000,
+      guests: [
+        { priceCents: 12000, perNightCents: [6000, 6000], nightDates: [] },
+        { priceCents: 12000, perNightCents: [6000, 6000], nightDates: [] },
+      ],
+    });
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(result.offeredBookingId).toBe("booking1");
+    // The policy engine prices with the booking owner's identity, so a
+    // membership-type or age-tier change during the wait is picked up.
+    expect(mockPriceWithPolicy).toHaveBeenCalledWith(
+      mockTx,
+      expect.objectContaining({
+        ownerMemberId: "m1",
+        guests: expect.arrayContaining([
+          expect.objectContaining({ bookingGuestId: "g1", memberId: "m1" }),
+        ]),
+      })
+    );
+    // New totals persisted on the booking and each guest.
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "booking1" },
+        data: expect.objectContaining({
+          totalPriceCents: 24000,
+          finalPriceCents: 24000,
+        }),
+      })
+    );
+    expect(mockTx.bookingGuest.update).toHaveBeenCalledTimes(2);
+    // The offer email states the price the member will pay on confirmation.
+    expect(sendWaitlistOfferEmail).toHaveBeenCalledWith(
+      "test@test.com",
+      "John",
+      candidate.checkIn,
+      candidate.checkOut,
+      2,
+      expect.any(Date),
+      "booking1",
+      24000
+    );
+  });
+
+  it("reprices downward when season rates dropped during the wait (#1035)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+    const { sendWaitlistOfferEmail } = await import("@/lib/email");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [
+        { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
+      ],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTx.booking.findMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 16000,
+      guests: [{ priceCents: 16000, perNightCents: [8000, 8000], nightDates: [] }],
+    });
+
+    await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ finalPriceCents: 16000 }),
+      })
+    );
+    expect(sendWaitlistOfferEmail).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "booking1",
+      16000
+    );
+  });
+
+  it("drops a promo invalidated during the wait and prices without it (#1035)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 18000,
+      guests: [
+        { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
+      ],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: {
+        id: "pr1",
+        guestTargets: [],
+        promoCode: { id: "promo1", assignments: [] },
+      },
+    };
+    mockTx.booking.findMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockResolvedValue({
+      totalPriceCents: 20000,
+      guests: [{ priceCents: 20000, perNightCents: [10000, 10000], nightDates: [] }],
+    });
+    mockRecalculateBookingPromo.mockResolvedValue({
+      newDiscountCents: 0,
+      newPromoAdjustmentCents: 0,
+      promoRemoved: true,
+    });
+
+    await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    expect(mockRecalculateBookingPromo).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking1" })
+    );
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          promoAdjustmentCents: 0,
+          finalPriceCents: 20000,
+        }),
+      })
+    );
+  });
+
+  it("falls back to the stored snapshot when repricing fails (#1035)", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+    const { sendWaitlistOfferEmail } = await import("@/lib/email");
+
+    const candidate = {
+      id: "booking1",
+      memberId: "m1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      totalPriceCents: 20000,
+      finalPriceCents: 20000,
+      guests: [
+        { id: "g1", ageTier: "ADULT", isMember: true, memberId: "m1", nights: [] },
+      ],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      promoRedemption: null,
+    };
+    mockTx.booking.findMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+    mockPriceWithPolicy.mockRejectedValue(new Error("no season rate for tier"));
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-05"),
+    });
+
+    // The offer is never blocked by a repricing edge case.
+    expect(result.offeredBookingId).toBe("booking1");
+    expect(mockTx.booking.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ finalPriceCents: expect.anything() }),
+      })
+    );
+    expect(sendWaitlistOfferEmail).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "booking1",
+      20000
     );
   });
 
