@@ -8,6 +8,7 @@ export const bookingStatusClasses: Record<string, string> = {
   PENDING:   "bg-yellow-100 text-yellow-800",
   PAYMENT_PENDING: "bg-amber-100 text-amber-800",
   CONFIRMED: "bg-green-100 text-green-800",
+  AWAITING_REVIEW: "bg-sky-100 text-sky-800",
   PAID:      "bg-blue-100 text-blue-800",
   COMPLETED: "bg-slate-100 text-slate-600",
   CANCELLED: "bg-red-100 text-red-800",
@@ -20,7 +21,10 @@ export const bookingStatusLabels: Record<string, string> = {
   DRAFT: "Draft",
   PENDING: "Pending",
   PAYMENT_PENDING: "Payment Pending",
-  CONFIRMED: "Payment Pending",
+  // CONFIRMED holds capacity for pay-on-account bookings (see
+  // booking-status.ts): the place is secured, the invoice is outstanding.
+  CONFIRMED: "Confirmed (Unpaid)",
+  AWAITING_REVIEW: "Awaiting Review",
   PAID: "Paid",
   COMPLETED: "Completed",
   CANCELLED: "Cancelled",
@@ -43,7 +47,12 @@ export function bookingStatusClass(status: string): string {
 }
 
 export function bookingStatusLabel(status: string): string {
-  return bookingStatusLabels[status] ?? status.replace(/_/g, " ");
+  return bookingStatusLabels[status] ?? humanizeStatus(status);
+}
+
+/** Render a raw enum value in sentence case, e.g. "PENDING_NOMINATORS" -> "Pending nominators". */
+export function humanizeStatus(status: string): string {
+  return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
 }
 
 export function paymentStatusClass(status: string): string {

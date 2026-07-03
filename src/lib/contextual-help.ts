@@ -379,6 +379,24 @@ const adminHelpEntries: HelpEntry[] = [
       [
         "Booking actions can affect capacity and money. Confirm the date range and payment source before changing state.",
       ],
+      [
+        {
+          title: "Booking status glossary",
+          details: [
+            "Draft — saved but not submitted; holds no beds.",
+            "Pending — provisional non-member hold; does not consume capacity.",
+            "Awaiting Review — waiting on an admin decision; keeps its beds so approval cannot overbook.",
+            "Payment Pending — awaiting payment; beds are not reserved until money is committed.",
+            "Confirmed (Unpaid) — pay-on-account booking; the lodge is reserved while the emailed Xero invoice is outstanding, and it flips to Paid on reconciliation.",
+            "Paid — paid in full; holds capacity.",
+            "Completed — the stay has started or finished; keeps consuming capacity until checkout.",
+            "Waitlisted — queued for a spot; no beds held.",
+            "Waitlist Offered — a spot opened; time-limited offer to confirm and pay.",
+            "Bumped — displaced when capacity changed; no beds held.",
+            "Cancelled — cancelled; no beds held.",
+          ],
+        },
+      ],
     ),
   ),
   entry(

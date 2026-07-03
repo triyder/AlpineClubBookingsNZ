@@ -18,7 +18,8 @@ import {
 import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import { getSeasonYear } from "@/lib/utils";
 
-const WAITLIST_OFFER_HOURS = Number(process.env.WAITLIST_OFFER_HOURS) || 48;
+export const WAITLIST_OFFER_HOURS =
+  Number(process.env.WAITLIST_OFFER_HOURS) || 48;
 
 /**
  * Get the FIFO position for a waitlisted booking.

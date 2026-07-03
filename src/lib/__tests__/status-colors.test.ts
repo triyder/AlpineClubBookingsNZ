@@ -5,6 +5,7 @@ import {
   bookingStatusClass,
   bookingStatusLabel,
   bookingStatusLabels,
+  humanizeStatus,
   paymentStatusClass,
   subscriptionStatusClasses,
   subscriptionStatusClass,
@@ -13,17 +14,16 @@ import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity"
 
 describe("bookingStatusClasses", () => {
   it("defines all booking statuses", () => {
-    const statuses = ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"];
+    const statuses = ["DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "AWAITING_REVIEW", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"];
     for (const s of statuses) {
       expect(bookingStatusClasses[s], `missing class for ${s}`).toBeTruthy();
     }
   });
 
   it("each booking status has a unique colour class", () => {
-    const statuses = ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"];
-    const classes = statuses.map((s) => bookingStatusClasses[s]);
+    const classes = Object.values(bookingStatusClasses);
     const unique = new Set(classes);
-    expect(unique.size).toBe(statuses.length);
+    expect(unique.size).toBe(classes.length);
   });
 
   it("CONFIRMED and PAID have different colours", () => {
@@ -67,13 +67,30 @@ describe("bookingStatusClass helper", () => {
 
 describe("bookingStatusLabel helper", () => {
   it("returns the expected labels for booking statuses", () => {
-    expect(bookingStatusLabels["CONFIRMED"]).toBe("Payment Pending");
-    expect(bookingStatusLabel("CONFIRMED")).toBe("Payment Pending");
+    expect(bookingStatusLabels["CONFIRMED"]).toBe("Confirmed (Unpaid)");
+    expect(bookingStatusLabel("CONFIRMED")).toBe("Confirmed (Unpaid)");
+    expect(bookingStatusLabel("PAYMENT_PENDING")).toBe("Payment Pending");
+    expect(bookingStatusLabel("AWAITING_REVIEW")).toBe("Awaiting Review");
     expect(bookingStatusLabel("WAITLIST_OFFERED")).toBe("Waitlist Offered");
   });
 
-  it("falls back to replacing underscores for unknown statuses", () => {
-    expect(bookingStatusLabel("CUSTOM_STATUS")).toBe("CUSTOM STATUS");
+  it("each booking status has a unique label", () => {
+    const labels = Object.values(bookingStatusLabels);
+    const unique = new Set(labels);
+    expect(unique.size).toBe(labels.length);
+  });
+
+  it("humanizes unknown statuses", () => {
+    expect(bookingStatusLabel("CUSTOM_STATUS")).toBe("Custom status");
+  });
+});
+
+describe("humanizeStatus helper", () => {
+  it("renders raw enum values in sentence case", () => {
+    expect(humanizeStatus("REQUESTED")).toBe("Requested");
+    expect(humanizeStatus("PENDING")).toBe("Pending");
+    expect(humanizeStatus("APPROVED")).toBe("Approved");
+    expect(humanizeStatus("PENDING_NOMINATORS")).toBe("Pending nominators");
   });
 });
 

@@ -12,6 +12,16 @@ describe("contextual help registry", () => {
     expect(help.fields?.map((field) => field.name)).toContain("Access role");
   });
 
+  it("includes the booking status glossary on the bookings page help", () => {
+    const help = getContextualHelp("/admin/bookings", "admin");
+
+    const glossary = help.sections?.find(
+      (section) => section.title === "Booking status glossary",
+    );
+    expect(glossary).toBeTruthy();
+    expect(glossary?.details.some((d) => d.startsWith("Confirmed (Unpaid)"))).toBe(true);
+  });
+
   it("uses the most specific parent route for nested admin pages", () => {
     const help = getContextualHelp("/admin/xero/setup/provider-test", "admin");
 

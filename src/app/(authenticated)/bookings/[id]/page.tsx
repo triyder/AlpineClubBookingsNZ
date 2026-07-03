@@ -22,7 +22,8 @@ import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
-import { paymentStatusClass } from "@/lib/status-colors";
+import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
+import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
 import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
@@ -746,7 +747,7 @@ export default async function BookingDetailPage({
                       {requested.requested?.summary ?? "Booking change request"}
                     </p>
                     <Badge variant={request.status === "REQUESTED" ? "outline" : "secondary"}>
-                      {request.status}
+                      {humanizeStatus(request.status)}
                     </Badge>
                   </div>
                   <p className="mt-1 text-slate-500">
@@ -897,7 +898,8 @@ export default async function BookingDetailPage({
               </p>
             )}
             <p className="text-sm text-purple-700">
-              We&apos;ll email you when a spot opens up. You&apos;ll have 48 hours to confirm your booking.
+              We&apos;ll email you when a spot opens up. You&apos;ll have{" "}
+              {WAITLIST_OFFER_HOURS} hours to confirm your booking.
             </p>
           </CardContent>
         </Card>
@@ -1178,7 +1180,7 @@ export default async function BookingDetailPage({
                     }
                     className="align-middle"
                   >
-                    {latestRefundAppeal.status}
+                    {humanizeStatus(latestRefundAppeal.status)}
                   </Badge>
                   {latestRefundAppeal.requestedAmountCents ? (
                     <span className="ml-2 text-slate-600">

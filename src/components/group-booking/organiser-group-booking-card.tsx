@@ -19,6 +19,7 @@ import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
 import { formatCents } from "@/lib/utils";
 import { formatNZDate } from "@/lib/nzst-date";
+import { bookingStatusLabel } from "@/lib/status-colors";
 
 type PaymentMode = "EACH_PAYS_OWN" | "ORGANISER_PAYS";
 type GroupStatus = "OPEN" | "CLOSED" | "CANCELLED";
@@ -440,11 +441,11 @@ export function OrganiserGroupBookingCard({
                     ) : null}
                     {j.status ? (
                       <Badge variant="outline" className="text-xs">
-                        {j.status === "PAYMENT_PENDING" ? "AWAITING" : j.status}
+                        {bookingStatusLabel(j.status)}
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="text-xs">
-                        UNCONFIRMED
+                        Awaiting Confirmation
                       </Badge>
                     )}
                   </span>
