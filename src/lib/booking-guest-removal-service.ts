@@ -15,13 +15,18 @@ import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import {
+  getBookingEditPolicy,
+  usesActiveBookingEditLifecycle,
+} from "@/lib/booking-edit-policy";
+import {
+  applyLifecycleTransitions,
   applyPaymentAdjustments,
   calculateModificationSettlementOptions,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getSeasonYear } from "@/lib/utils";
@@ -62,6 +67,8 @@ export type RemoveBookingGuestResult = {
   choreWarnings: string[];
   oldGuestCount: number;
   bookingModificationId: string;
+  zeroDollarAutoPaid: boolean;
+  supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
 };
 
 const SELF_REMOVABLE_GUEST_BOOKING_STATUSES = new Set<string>([
@@ -317,10 +324,22 @@ export async function removeBookingGuestInTransaction({
     settlementMethod,
   });
 
-  const wasOnlyNonMember =
-    !guestToRemove.isMember &&
-    remainingGuests.every((guest) => guest.isMember);
-  const hasNonMembers = wasOnlyNonMember ? false : booking.hasNonMembers;
+  // Run the same lifecycle transitions the batch path applies (#1041):
+  // non-member-hold recalculation (an all-member booking clears its hold),
+  // PENDING -> PAYMENT_PENDING inside the hold window, and zero-dollar
+  // auto-pay with superseded-PaymentIntent cancellation. `reviewUpdate` is
+  // deliberately not passed: the removal path keeps its lightweight
+  // requiresAdminReview flagging so linked-guest self-removal (which cannot
+  // supply a review justification) keeps working.
+  const lifecycle = await applyLifecycleTransitions(tx, {
+    booking: booking as unknown as LoadedBookingForModify,
+    bookingId,
+    newCheckIn: booking.checkIn,
+    newFinalPriceCents,
+    guestsForPricing,
+    skipBookingLifecycleRules:
+      actorRole === "ADMIN" && !usesActiveBookingEditLifecycle(booking.status),
+  });
 
   await Promise.all(
     remainingGuests.map((guest, index) =>
@@ -338,8 +357,9 @@ export async function removeBookingGuestInTransaction({
       discountCents: promoResult.newDiscountCents,
       promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       finalPriceCents: newFinalPriceCents,
-      hasNonMembers,
-      nonMemberHoldUntil: hasNonMembers ? booking.nonMemberHoldUntil : null,
+      hasNonMembers: lifecycle.hasNonMembers,
+      nonMemberHoldUntil: lifecycle.newNonMemberHoldUntil,
+      status: lifecycle.newStatus,
       requiresAdminReview,
       adminReviewReason,
     },
@@ -423,6 +443,8 @@ export async function removeBookingGuestInTransaction({
     choreWarnings,
     oldGuestCount: booking.guests.length,
     bookingModificationId: bookingModification.id,
+    zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
+    supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
   };
 }
 

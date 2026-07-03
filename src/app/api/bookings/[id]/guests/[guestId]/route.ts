@@ -14,7 +14,10 @@ import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
-import { executeBookingModificationRefund } from "@/lib/booking-modification-settlement";
+import {
+  drainSupersededPrimaryIntents,
+  executeBookingModificationRefund,
+} from "@/lib/booking-modification-settlement";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 
@@ -64,6 +67,14 @@ export async function DELETE(
         settlementMethod,
       })
     );
+
+    // A zero-dollar auto-pay supersedes any outstanding primary
+    // PaymentIntents inside the transaction; cancel them on Stripe now so a
+    // stale checkout tab cannot capture the pre-removal amount (#1041).
+    await drainSupersededPrimaryIntents({
+      bookingId,
+      supersededPrimaryPaymentIntents: result.supersededPrimaryPaymentIntents,
+    });
 
     // Process the Stripe refund outside the transaction (avoids holding the
     // advisory lock during the Stripe API call). Only the Stripe-refundable
@@ -131,6 +142,8 @@ export async function DELETE(
       // classifyXeroBookingEditSettlement when this is null.
       settlementAmountCents: result.xeroRefundAmountCents,
       settlementMethod: result.settlementMethod,
+      createPrimaryInvoiceWhenMissing:
+        result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );

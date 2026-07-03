@@ -19,6 +19,8 @@ const mockValidateAndCalculatePromoDiscount = vi.hoisted(() =>
 );
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
+const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
+const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
@@ -97,6 +99,13 @@ vi.mock("@/lib/payment-transactions", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendBookingModifiedEmail: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueuePaymentIntentCancellationRecovery: (...args: unknown[]) =>
+    mockEnqueuePaymentIntentCancellationRecovery(...args),
+  processPaymentRecoveryOperations: (...args: unknown[]) =>
+    mockProcessPaymentRecoveryOperations(...args),
+  enqueueBookingModificationRefundRecovery: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit_1" }),
 }));
@@ -197,6 +206,10 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     payment: {
       update: vi.fn().mockResolvedValue({}),
+      upsert: vi.fn().mockResolvedValue({ id: "p1" }),
+    },
+    paymentTransaction: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     member: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -1552,6 +1565,196 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       expect.anything(),
       "p1",
     );
+  });
+
+  // --- #1041: lifecycle parity with the batch modify path ---
+
+  function makeZeroDollarBooking(paymentOverrides: Record<string, unknown>) {
+    // PAYMENT_PENDING booking whose price drops to 0 when g2 is removed:
+    // remaining g1 reprices to 10000 and the promo adjustment covers it.
+    return makeBooking({
+      status: "PAYMENT_PENDING",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      payment: {
+        id: "p1",
+        bookingId: "bk1",
+        amountCents: 10000,
+        source: "STRIPE",
+        status: "PENDING",
+        stripePaymentIntentId: "pi_123",
+        xeroInvoiceId: null,
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+      promoRedemption: {
+        id: "pr1",
+        promoCodeId: "promo1",
+        guestTargets: [],
+        promoCode: { id: "promo1", assignments: [] },
+      },
+      ...paymentOverrides,
+    });
+  }
+
+  function mockFullCoverPromo() {
+    // Remaining guest reprices to 10000 and the promo covers all of it.
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 10000,
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+    } as any);
+    mockValidateAndCalculatePromoDiscount.mockResolvedValueOnce({
+      discount: {
+        discountCents: 0,
+        priceAdjustmentCents: -10000,
+        freeNightsUsed: 0,
+        eligibleGuestCount: 1,
+        allocations: [],
+      },
+      beneficiaryMemberIds: [],
+    } as any);
+  }
+
+  it("auto-pays a zero-dollar booking and cancels superseded intents on removal (Stripe, #1041)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeZeroDollarBooking({});
+    const tx = makeTx(booking);
+    tx.paymentTransaction.findMany.mockResolvedValue([
+      { id: "pt1", stripePaymentIntentId: "pi_123", amountCents: 10000 },
+    ]);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockFullCoverPromo();
+
+    const res = await DELETE(deleteWithMethod("g2"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+
+    // Batch parity: PAYMENT_PENDING + $0 => PAID with a zero-dollar payment.
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "PAID", finalPriceCents: 0 }),
+      }),
+    );
+    expect(tx.payment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { bookingId: "bk1" },
+        update: expect.objectContaining({ amountCents: 0, status: "SUCCEEDED" }),
+      }),
+    );
+    // The outstanding pre-removal intent is superseded and drained on Stripe.
+    expect(mockEnqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntentId: "pi_123" }),
+    );
+    expect(mockProcessPaymentRecoveryOperations).toHaveBeenCalledWith({ limit: 1 });
+  });
+
+  it("auto-pays a zero-dollar Internet Banking booking on removal (#1041)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeZeroDollarBooking({
+      payment: {
+        id: "p1",
+        bookingId: "bk1",
+        amountCents: 10000,
+        source: "INTERNET_BANKING",
+        status: "PENDING",
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_primary",
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockFullCoverPromo();
+
+    const res = await DELETE(deleteWithMethod("g2"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "PAID", finalPriceCents: 0 }),
+      }),
+    );
+    expect(tx.payment.upsert).toHaveBeenCalled();
+    // No Stripe intents to supersede on an Internet Banking booking.
+    expect(mockProcessPaymentRecoveryOperations).not.toHaveBeenCalled();
+  });
+
+  it("recalculates the non-member hold when non-members remain after removal (#1041)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    vi.mocked(getNonMemberHoldDays).mockResolvedValue(7);
+    const staleHold = new Date("2026-06-20");
+    const booking = makeBooking({
+      status: "PENDING",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      hasNonMembers: true,
+      nonMemberHoldUntil: staleHold,
+      payment: null,
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+        { id: "g3", bookingId: "bk1", firstName: "Cara", lastName: "Jones", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 24000,
+      guests: [
+        { priceCents: 10000, perNightCents: [5000, 5000] },
+        { priceCents: 14000, perNightCents: [7000, 7000] },
+      ],
+    } as any);
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g2" }) },
+    );
+    expect(res.status).toBe(200);
+
+    // Batch parity: the hold is recomputed from the current rules
+    // (checkIn - holdDays), not left at its stale pre-removal value.
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.hasNonMembers).toBe(true);
+    expect(updateData.nonMemberHoldUntil).toEqual(
+      new Date(new Date("2026-08-10").getTime() - 7 * 24 * 60 * 60 * 1000),
+    );
+  });
+
+  it("clears the non-member hold when the last non-member is removed (#1041)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking({
+      status: "PENDING",
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      hasNonMembers: true,
+      nonMemberHoldUntil: new Date("2026-08-03"),
+      payment: null,
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 10000,
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+    } as any);
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g2" }) },
+    );
+    expect(res.status).toBe(200);
+
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.hasNonMembers).toBe(false);
+    expect(updateData.nonMemberHoldUntil).toBeNull();
   });
 });
 

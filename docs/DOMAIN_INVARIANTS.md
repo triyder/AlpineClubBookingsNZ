@@ -69,6 +69,16 @@ that omits the settlement election is rejected rather than defaulted, so a
 body-less self-removal cannot silently settle the booking owner's money; the
 owner or an admin makes the election through the batch edit flow.
 
+Every modification path also applies the same lifecycle transitions: a
+PAYMENT_PENDING booking whose price drops to zero auto-pays with a zero-dollar
+payment (superseding and cancelling any outstanding primary PaymentIntents so a
+stale checkout tab cannot capture the pre-change amount), and the non-member
+hold is recalculated from the remaining guests (all-member bookings clear the
+hold; bookings inside the hold window move PENDING → PAYMENT_PENDING). The same
+change must produce the same booking state regardless of which endpoint made
+it. The single-guest removal path keeps its lightweight admin-review flagging
+(no review parking), preserving linked-guest self-removal eligibility.
+
 A price reduction against an issued-but-unpaid Xero invoice (pay-on-account,
 no captured payment) is corrected for the full net delta — there is no captured
 money and therefore no cancellation-policy tier to apply — via a modification

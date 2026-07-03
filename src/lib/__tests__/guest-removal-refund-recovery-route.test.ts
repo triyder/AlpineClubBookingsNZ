@@ -96,6 +96,8 @@ function makeResult(overrides: Record<string, unknown> = {}) {
     choreWarnings: [],
     oldGuestCount: 2,
     bookingModificationId: "mod_1",
+    zeroDollarAutoPaid: false,
+    supersededPrimaryPaymentIntents: [],
     ...overrides,
   };
 }
