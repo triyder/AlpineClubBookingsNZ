@@ -13,10 +13,17 @@ import {
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
-const reviewSchema = z.object({
-  status: z.enum(["APPROVED", "REJECTED"]),
-  adminNotes: z.string().trim().min(1).max(2000),
-});
+const reviewSchema = z
+  .object({
+    status: z.enum(["APPROVED", "REJECTED"]),
+    // Optional when approving; required when rejecting so the member always
+    // gets a reason.
+    adminNotes: z.string().trim().max(2000).optional().default(""),
+  })
+  .refine((data) => data.status === "APPROVED" || data.adminNotes.length > 0, {
+    message: "Admin notes are required when rejecting",
+    path: ["adminNotes"],
+  });
 
 export async function PATCH(
   req: NextRequest,
@@ -70,7 +77,7 @@ export async function PATCH(
       },
       data: {
         adminReviewStatus: AdminReviewStatus.APPROVED,
-        adminReviewNotes: parsed.data.adminNotes,
+        adminReviewNotes: parsed.data.adminNotes || null,
         adminReviewedById: session.user.id,
         adminReviewedAt: reviewedAt,
         status: BookingStatus.PAYMENT_PENDING,

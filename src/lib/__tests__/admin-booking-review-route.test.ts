@@ -71,7 +71,7 @@ beforeEach(() => {
 });
 
 describe("PATCH /api/admin/bookings/[id]/review", () => {
-  it("rejects requests missing adminNotes", async () => {
+  it("rejects a REJECTED decision missing adminNotes", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
       id: "b1",
       memberId: "m1",
@@ -81,8 +81,30 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
       checkIn: new Date(),
       checkOut: new Date(),
     });
-    const res = await PATCH(makeRequest({ status: "APPROVED", adminNotes: "" }), { params });
+    const res = await PATCH(makeRequest({ status: "REJECTED", adminNotes: "" }), { params });
     expect(res.status).toBe(400);
+  });
+
+  it("approves without adminNotes and stores null review notes", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "b1",
+      memberId: "m1",
+      adminReviewStatus: "PENDING",
+      status: "AWAITING_REVIEW",
+      member: { email: "a@b.co", firstName: "A" },
+      checkIn: new Date(),
+      checkOut: new Date(),
+    });
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await PATCH(makeRequest({ status: "APPROVED" }), { params });
+
+    expect(res.status).toBe(200);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ adminReviewNotes: null }),
+      }),
+    );
   });
 
   it("409s when booking is not pending review", async () => {

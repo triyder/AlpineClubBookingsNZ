@@ -135,8 +135,8 @@ export function BookingApprovalsPanel({
 
   async function decideReview(bookingId: string, decision: "APPROVED" | "REJECTED") {
     const adminNotes = notesById[bookingId]?.trim() ?? "";
-    if (!adminNotes) {
-      setError("Please add admin notes before approving or rejecting.");
+    if (decision === "REJECTED" && !adminNotes) {
+      setError("Please add admin notes before rejecting so the member gets a reason.");
       return;
     }
     setReviewingId(bookingId);
@@ -314,7 +314,7 @@ export function BookingApprovalsPanel({
                   ) : (
                     <div className="space-y-2">
                       <label className="text-sm font-medium" htmlFor={`notes-${booking.id}`}>
-                        Admin notes (required)
+                        Admin notes (required to reject; optional for approval)
                       </label>
                       <Textarea
                         id={`notes-${booking.id}`}
