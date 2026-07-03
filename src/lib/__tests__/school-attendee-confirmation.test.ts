@@ -57,6 +57,7 @@ import {
   applySchoolAttendeeConfirmation,
   countUnconfirmedSchoolAttendeeLists,
   getSchoolAttendeeConfirmation,
+  resendSchoolAttendeeConfirmation,
   SchoolAttendeeConfirmationError,
   sendSchoolAttendeeConfirmationPrompts,
 } from "@/lib/school-attendee-confirmation";
@@ -344,5 +345,84 @@ describe("countUnconfirmedSchoolAttendeeLists", () => {
     });
     await expect(countUnconfirmedSchoolAttendeeLists(NOW)).resolves.toBe(0);
     expect(mocks.requestCount).not.toHaveBeenCalled();
+  });
+});
+
+describe("resendSchoolAttendeeConfirmation (#1153)", () => {
+  it("rotates the token and sends immediately, valid until check-in", async () => {
+    mocks.requestFindUnique.mockResolvedValue(schoolRequest());
+
+    const result = await resendSchoolAttendeeConfirmation({
+      bookingRequestId: "req-1",
+      adminMemberId: "admin-1",
+      now: NOW,
+    });
+
+    expect(result).toEqual({ sentTo: "teacher@school.example" });
+    expect(mocks.requestUpdate).toHaveBeenCalledWith({
+      where: { id: "req-1" },
+      data: {
+        attendeeConfirmationTokenHash: "hashed-token",
+        attendeeConfirmationTokenExpiresAt: CHECK_IN,
+      },
+    });
+    expect(mocks.sendConfirmationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ token: "raw-token", isReminder: false }),
+    );
+    expect(mocks.requestUpdate).toHaveBeenCalledWith({
+      where: { id: "req-1" },
+      data: { attendeeConfirmationLastSentAt: NOW },
+    });
+  });
+
+  it("uses a short expiry after check-in so late roster fixes stay possible", async () => {
+    const request = schoolRequest();
+    (request.convertedBooking as { checkIn: Date }).checkIn = new Date(
+      NOW.getTime() - 1 * DAY_MS,
+    );
+    mocks.requestFindUnique.mockResolvedValue(request);
+
+    await resendSchoolAttendeeConfirmation({
+      bookingRequestId: "req-1",
+      adminMemberId: "admin-1",
+      now: NOW,
+    });
+
+    expect(mocks.requestUpdate).toHaveBeenCalledWith({
+      where: { id: "req-1" },
+      data: {
+        attendeeConfirmationTokenHash: "hashed-token",
+        attendeeConfirmationTokenExpiresAt: new Date(
+          NOW.getTime() + 3 * DAY_MS,
+        ),
+      },
+    });
+  });
+
+  it("refuses once the list is confirmed", async () => {
+    mocks.requestFindUnique.mockResolvedValue(
+      schoolRequest({ attendeesConfirmedAt: NOW }),
+    );
+    await expect(
+      resendSchoolAttendeeConfirmation({
+        bookingRequestId: "req-1",
+        adminMemberId: "admin-1",
+        now: NOW,
+      }),
+    ).rejects.toBeInstanceOf(SchoolAttendeeConfirmationError);
+    expect(mocks.sendConfirmationEmail).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-school or unconverted requests", async () => {
+    mocks.requestFindUnique.mockResolvedValue(
+      schoolRequest({ type: "GENERAL" }),
+    );
+    await expect(
+      resendSchoolAttendeeConfirmation({
+        bookingRequestId: "req-1",
+        adminMemberId: "admin-1",
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
   });
 });

@@ -104,6 +104,10 @@ export async function executeBookingModificationRefund({
         paymentId: result.paymentId,
         bookingModificationId: result.bookingModificationId,
         amountCents: remainingRefundCents,
+        // The exact prefix this route just used (#1152): recovery retries
+        // replay the identical Stripe keys, so a refund that succeeded on
+        // Stripe without being recorded is replayed, never re-minted.
+        stripeKeyPrefix: `${idempotencyKeyPrefix}_${result.bookingModificationId}`,
       }).catch((enqueueErr) =>
         logger.error(
           { err: enqueueErr, bookingId },

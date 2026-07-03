@@ -994,6 +994,7 @@ export function serializeBookingRequestForAdmin(request: BookingRequest) {
     reviewedByMemberId: request.reviewedByMemberId,
     declineReason: request.declineReason,
     convertedBookingId: request.convertedBookingId,
+    attendeesConfirmedAt: request.attendeesConfirmedAt?.toISOString() ?? null,
     convertedMemberId: request.convertedMemberId,
     heldBookingId: request.heldBookingId,
     acceptedQuoteId: request.acceptedQuoteId,

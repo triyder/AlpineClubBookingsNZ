@@ -149,6 +149,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     paymentIntentId: "pi_superseded",
     amountCents: 6000,
     allocationPlan: null,
+    stripeKeyPrefix: null,
     idempotencyKey: "payment_recovery_cancel_txn-1_pi_superseded",
     attempts: 1,
     nextRetryAt: new Date("2026-05-23T00:00:00.000Z"),
@@ -593,6 +594,37 @@ describe("payment recovery worker", () => {
     );
   });
 
+  it("replays the route's stored Stripe key prefix on modification refund recovery (#1152)", async () => {
+    const stored = makeOperation({
+      id: "recovery-mod-prefixed",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      idempotencyKey: "payment_recovery_modification_refund_mod-3",
+      stripeKeyPrefix: "mod_dates_refund_bk1_mod-3",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(stored);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...stored, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // The route's exact prefix is replayed: a refund Stripe already holds
+    // under these keys is returned, not re-minted.
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKeyPrefix: "mod_dates_refund_bk1_mod-3",
+      }),
+    );
+  });
+
   it("replays a refund-request recovery with the route's original Stripe key prefix (#1039)", async () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({
@@ -750,6 +782,7 @@ describe("payment recovery worker", () => {
       paymentId: "payment-1",
       bookingModificationId: "mod-7",
       amountCents: 4000,
+      stripeKeyPrefix: "mod_batch_refund_booking-1_mod-7",
     });
 
     expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
@@ -764,6 +797,7 @@ describe("payment recovery worker", () => {
           paymentId: "payment-1",
           paymentIntentId: "pi_additional",
           amountCents: 4000,
+          stripeKeyPrefix: "mod_batch_refund_booking-1_mod-7",
         }),
       }),
     );
