@@ -54,6 +54,22 @@ import {
 export interface CreateXeroRefundCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
+  /**
+   * Cumulative refunded-cents watermark this note settles up to (#1162). When
+   * set, the payment is refunded per-delta (Stripe): skip only when an active
+   * refund credit note already covers this watermark, and key the note/payment
+   * on the watermark so equal-amount deltas do not collide. Undefined keeps the
+   * legacy single-note behaviour for non-per-delta callers.
+   */
+  watermarkCents?: number;
+}
+
+function readLinkWatermarkCents(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const value = (metadata as Record<string, unknown>).watermarkCents;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 export interface CreateXeroUnappliedCreditNoteOptions
@@ -82,13 +98,51 @@ export async function createXeroCreditNote(
   }
   const originalInvoiceId = payment.xeroInvoiceId;
   const queuedOperationId = options?.syncOperationId ?? null;
-  const canonicalRefundCreditNote = await findCanonicalPaymentRefundCreditNote(paymentId);
-  const existingCreditNoteId =
-    payment.xeroRefundCreditNoteId ?? canonicalRefundCreditNote?.xeroObjectId ?? null;
-  const existingCreditNoteNumber =
-    canonicalRefundCreditNote?.xeroObjectNumber ?? null;
+  const watermarkCents = options?.watermarkCents;
+  const isDeltaMode =
+    typeof watermarkCents === "number" && Number.isFinite(watermarkCents);
 
-  // Idempotency guard: skip if credit note already created for this payment
+  let existingCreditNoteId: string | null = null;
+  let existingCreditNoteNumber: string | null = null;
+
+  if (isDeltaMode) {
+    // Per-delta refunds (#1162): a payment refunded in steps has one active note
+    // per delta. Skip only when an existing note already covers this watermark;
+    // a lower-watermark note is an earlier, smaller delta and must not block this
+    // one, so the canonical single-note lookup is deliberately bypassed here.
+    const activeLinks = await prisma.xeroObjectLink.findMany({
+      where: {
+        localModel: "Payment",
+        localId: paymentId,
+        xeroObjectType: "CREDIT_NOTE",
+        role: "REFUND_CREDIT_NOTE",
+        active: true,
+      },
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        xeroObjectId: true,
+        xeroObjectNumber: true,
+        metadata: true,
+      },
+    });
+    const coveringLink = activeLinks.find((link) => {
+      const linkWatermark = readLinkWatermarkCents(link.metadata);
+      return linkWatermark !== null && linkWatermark >= watermarkCents;
+    });
+    if (coveringLink) {
+      existingCreditNoteId = coveringLink.xeroObjectId;
+      existingCreditNoteNumber = coveringLink.xeroObjectNumber ?? null;
+    }
+  } else {
+    const canonicalRefundCreditNote =
+      await findCanonicalPaymentRefundCreditNote(paymentId);
+    existingCreditNoteId =
+      payment.xeroRefundCreditNoteId ?? canonicalRefundCreditNote?.xeroObjectId ?? null;
+    existingCreditNoteNumber =
+      canonicalRefundCreditNote?.xeroObjectNumber ?? null;
+  }
+
+  // Idempotency guard: skip if a credit note already covers this payment/delta
   if (existingCreditNoteId) {
     if (payment.xeroRefundCreditNoteId !== existingCreditNoteId) {
       await prisma.payment.update({
@@ -161,13 +215,21 @@ export async function createXeroCreditNote(
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 
-  const creditNoteIdempotencyKey = buildXeroIdempotencyKey(
-    "payment",
-    paymentId,
-    "refund-credit-note",
-    refundAmountCents,
-    "v1"
-  );
+  const creditNoteIdempotencyKey = isDeltaMode
+    ? buildXeroIdempotencyKey(
+        "payment",
+        paymentId,
+        "refund-credit-note",
+        watermarkCents,
+        "v2"
+      )
+    : buildXeroIdempotencyKey(
+        "payment",
+        paymentId,
+        "refund-credit-note",
+        refundAmountCents,
+        "v1"
+      );
   let operationId = queuedOperationId;
   const requestPayload = {
     creditNotes: [buildCreditNote(contactId)],
@@ -252,12 +314,15 @@ export async function createXeroCreditNote(
 
     try {
       const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+      // Key on the freshly created note id (#1162): this runs only for a
+      // brand-new note, so v1->v2 cannot replay historical payments, and equal
+      // amount refunds no longer collide onto one refund-payment key.
       const refundPaymentIdempotencyKey = buildXeroIdempotencyKey(
         "payment",
         paymentId,
         "refund-payment",
-        refundAmountCents,
-        "v1"
+        createdNote.creditNoteID,
+        "v2"
       );
       const refundPayment = buildRefundCreditNotePayment({
         paymentId,
@@ -316,6 +381,10 @@ export async function createXeroCreditNote(
           xeroObjectId: createdNote.creditNoteID,
           xeroObjectNumber: createdNote.creditNoteNumber ?? null,
           role: "REFUND_CREDIT_NOTE",
+          metadata: {
+            amountCents: refundAmountCents,
+            watermarkCents: options?.watermarkCents ?? refundAmountCents,
+          },
         },
         ...(refundPaymentResponseBody?.paymentID
           ? [

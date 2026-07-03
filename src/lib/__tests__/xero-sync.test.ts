@@ -63,8 +63,47 @@ import {
   findCanonicalPaymentRefundCreditNote,
   recordXeroInboundEvent,
   sanitizeForJson,
+  sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
+
+describe("sumCoveredRefundCreditNoteCents (#1162)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sums the recorded amounts of active refund credit note links", async () => {
+    mocks.linkFindMany.mockResolvedValue([
+      { xeroObjectId: "cn_1", metadata: { amountCents: 5000, watermarkCents: 5000 } },
+      { xeroObjectId: "cn_2", metadata: { amountCents: 3000, watermarkCents: 8000 } },
+    ]);
+
+    await expect(sumCoveredRefundCreditNoteCents("payment_1")).resolves.toBe(8000);
+    expect(mocks.operationFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the create operation's allocation amount for links without a recorded amount", async () => {
+    mocks.linkFindMany.mockResolvedValue([
+      { xeroObjectId: "cn_legacy", metadata: null },
+    ]);
+    mocks.operationFindFirst.mockResolvedValue({
+      requestPayload: { allocation: { amount: 50 } },
+    });
+
+    await expect(sumCoveredRefundCreditNoteCents("payment_1")).resolves.toBe(5000);
+    expect(mocks.operationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          xeroObjectId: "cn_legacy",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: "payment_1",
+        }),
+      })
+    );
+  });
+});
 
 describe("buildXeroPayloadHash", () => {
   it("hashes the unredacted outbound payload while stored JSON remains redacted", () => {
@@ -292,6 +331,33 @@ describe("upsertXeroObjectLink", () => {
           active: true,
           xeroObjectNumber: "CN-1",
         }),
+      })
+    );
+  });
+
+  it("keeps every Stripe refund credit note link active so per-delta notes coexist (#1162)", async () => {
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      source: "STRIPE",
+      xeroRefundCreditNoteId: "cn_2",
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_1",
+      xeroObjectNumber: "CN-1",
+      role: "REFUND_CREDIT_NOTE",
+      metadata: { amountCents: 5000, watermarkCents: 5000 },
+    });
+
+    // A different note is canonical (cn_2), but cn_1's link must stay active and
+    // its siblings must not be deactivated: each Stripe delta keeps its own note.
+    expect(mocks.txLinkUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ active: true }),
+        update: expect.objectContaining({ active: true }),
       })
     );
   });

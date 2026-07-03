@@ -43,6 +43,9 @@ export interface QueuedBookingInvoiceUpdateOutboxPayload {
 export interface QueuedRefundCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE;
   refundAmountCents: number;
+  // Cumulative refunded-cents watermark this note settles up to (#1162). Absent
+  // on payloads queued before per-delta refund notes existed.
+  watermarkCents?: number;
 }
 
 export interface QueuedAccountCreditNoteOutboxPayload {
@@ -221,6 +224,7 @@ export function readQueuedOutboxPayload(
     return {
       queueType,
       refundAmountCents,
+      watermarkCents: readNumber(payload.watermarkCents) ?? undefined,
     };
   }
 
