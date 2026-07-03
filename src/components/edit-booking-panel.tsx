@@ -435,6 +435,9 @@ export function EditBookingPanel({
 
   // Debounced quote fetch
   const quoteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Monotonic id per quote request so a slow, superseded response can never
+  // overwrite the quote for the user's latest edit.
+  const quoteRequestSeqRef = useRef(0);
 
   const buildModificationPayload = useCallback(() => {
     const body: Record<string, unknown> = {};
@@ -564,54 +567,66 @@ export function EditBookingPanel({
     removedGuestIds,
   ]);
 
-  const fetchQuote = useCallback(async () => {
-    if (!hasChanges) {
-      setQuote(null);
-      return;
-    }
+  const fetchQuote = useCallback(
+    async (payloadJson: string) => {
+      const seq = ++quoteRequestSeqRef.current;
+      setQuoteError("");
+      setQuoteLoading(true);
 
-    setQuoteError("");
-    setQuoteLoading(true);
+      try {
+        const res = await fetch(`/api/bookings/${booking.id}/modify-quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payloadJson,
+        });
 
-    try {
-      const body = buildModificationPayload();
-
-      const res = await fetch(`/api/bookings/${booking.id}/modify-quote`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setQuoteError(data.error || "Failed to get quote");
+        const data = await res.json();
+        // A newer edit superseded this request; drop the stale response.
+        if (seq !== quoteRequestSeqRef.current) return;
+        if (!res.ok) {
+          setQuoteError(data.error || "Failed to get quote");
+          setQuote(null);
+          return;
+        }
+        setQuote(data);
+        if (!data.settlementOptions?.requiresSettlementMethod) {
+          setSettlementMethod(null);
+        }
+      } catch {
+        if (seq !== quoteRequestSeqRef.current) return;
+        setQuoteError("Failed to get quote");
         setQuote(null);
-        return;
+      } finally {
+        if (seq === quoteRequestSeqRef.current) {
+          setQuoteLoading(false);
+        }
       }
-      setQuote(data);
-      if (!data.settlementOptions?.requiresSettlementMethod) {
-        setSettlementMethod(null);
-      }
-    } catch {
-      setQuoteError("Failed to get quote");
-      setQuote(null);
-    } finally {
-      setQuoteLoading(false);
-    }
-  }, [booking.id, buildModificationPayload, hasChanges]);
+    },
+    [booking.id],
+  );
 
-  // Auto-fetch quote when changes happen (debounced)
+  // Auto-fetch quote when changes happen (debounced). The effect is keyed on
+  // the serialized payload, not on callback identity: several payload inputs
+  // (e.g. remainingGuests) are recomputed objects, so a callback dependency
+  // changes on every render — including the render caused by a completed
+  // fetch — which re-armed the timer and refetched in an endless 500ms loop.
+  const modificationPayloadJson = hasChanges
+    ? JSON.stringify(buildModificationPayload())
+    : null;
   useEffect(() => {
     if (quoteTimeoutRef.current) clearTimeout(quoteTimeoutRef.current);
-    if (!hasChanges) {
+    if (!modificationPayloadJson) {
       setQuote(null);
       return;
     }
-    quoteTimeoutRef.current = setTimeout(fetchQuote, 500);
+    quoteTimeoutRef.current = setTimeout(
+      () => fetchQuote(modificationPayloadJson),
+      500,
+    );
     return () => {
       if (quoteTimeoutRef.current) clearTimeout(quoteTimeoutRef.current);
     };
-  }, [fetchQuote, hasChanges]);
+  }, [fetchQuote, modificationPayloadJson]);
 
   function handleRemoveGuest(guestId: string) {
     setRemovedGuestIds((prev) => new Set([...prev, guestId]));
@@ -1281,10 +1296,15 @@ export function EditBookingPanel({
       {hasChanges && (
         <Card>
           <CardHeader>
-            <CardTitle>Price Summary</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>Price Summary</CardTitle>
+              {quoteLoading && quote && (
+                <span className="text-sm font-normal text-gray-500">Updating…</span>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
-            {quoteLoading && (
+            {quoteLoading && !quote && (
               <p className="text-sm text-gray-500">Calculating price changes...</p>
             )}
 
