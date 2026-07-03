@@ -54,7 +54,7 @@ function isFrozenUntil(frozenUntil: Date | null): boolean {
 }
 
 export async function GET(request: Request) {
-  const rateLimited = applyRateLimit(rateLimiters.skifieldConditions, request);
+  const rateLimited = await applyRateLimit(rateLimiters.skifieldConditions, request);
   if (rateLimited) return rateLimited;
 
   const existing = await whakapapaReportCache.findUnique({

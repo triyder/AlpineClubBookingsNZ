@@ -19,7 +19,7 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const rateLimited = applyRateLimit(
+  const rateLimited = await applyRateLimit(
     rateLimiters.addressAutocomplete,
     request,
   );

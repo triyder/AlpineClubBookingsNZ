@@ -8,7 +8,7 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
  * indicative pricing) and "Request for Price" (no pricing shown).
  */
 export async function GET(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, request);
   if (rateLimited) return rateLimited;
 
   const settings = await getBookingRequestSettings();

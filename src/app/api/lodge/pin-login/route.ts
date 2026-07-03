@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const limited = applyRateLimit(rateLimiters.lodgePinLogin, req);
+  const limited = await applyRateLimit(rateLimiters.lodgePinLogin, req);
   if (limited) {
     return limited;
   }

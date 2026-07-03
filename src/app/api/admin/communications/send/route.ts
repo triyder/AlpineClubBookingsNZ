@@ -60,7 +60,7 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
   const session = guard.session;
   // Rate limit is keyed by "admin" since this is a global communication action.
-  const rlResult = checkRateLimit(bulkSendRateLimit, "admin-global");
+  const rlResult = await checkRateLimit(bulkSendRateLimit, "admin-global");
   if (!rlResult.success) {
     const retryAfter = Math.ceil((rlResult.resetAt - Date.now()) / 1000);
     return NextResponse.json(

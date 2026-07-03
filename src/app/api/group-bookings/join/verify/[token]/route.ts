@@ -18,7 +18,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
-  const rateLimited = applyRateLimit(rateLimiters.groupBookingToken, request);
+  const rateLimited = await applyRateLimit(rateLimiters.groupBookingToken, request);
   if (rateLimited) return rateLimited;
 
   const { token } = await params;

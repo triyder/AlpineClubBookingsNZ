@@ -6,7 +6,7 @@ import {
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 export async function GET(request: Request) {
-  const rateLimited = applyRateLimit(
+  const rateLimited = await applyRateLimit(
     rateLimiters.addressAutocomplete,
     request,
   );

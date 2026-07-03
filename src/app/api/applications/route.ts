@@ -53,7 +53,7 @@ const applicationSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.membershipApplication, req);
+  const rateLimited = await applyRateLimit(rateLimiters.membershipApplication, req);
   if (rateLimited) {
     return rateLimited;
   }

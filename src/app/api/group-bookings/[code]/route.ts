@@ -21,7 +21,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  const rateLimited = applyRateLimit(rateLimiters.groupBookingLookup, request);
+  const rateLimited = await applyRateLimit(rateLimiters.groupBookingLookup, request);
   if (rateLimited) return rateLimited;
 
   const { code } = await params;
@@ -54,7 +54,7 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  const rateLimited = applyRateLimit(rateLimiters.groupBookingCreate, request);
+  const rateLimited = await applyRateLimit(rateLimiters.groupBookingCreate, request);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

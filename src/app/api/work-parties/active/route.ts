@@ -20,7 +20,7 @@ const querySchema = z.object({
  * Drives the "I am attending a working bee" picker on the booking form.
  */
 export async function GET(req: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, req);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, req);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

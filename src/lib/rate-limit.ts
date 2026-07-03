@@ -1,8 +1,15 @@
 /**
- * In-memory rate limiter for Next.js API routes.
- * Uses a sliding window approach with automatic cleanup.
- * Acceptable for single-instance deployments (this app runs on one Lightsail instance).
+ * Rate limiter for Next.js API routes (fixed window with automatic cleanup).
+ *
+ * Counters live in Postgres (`RateLimitCounter`, one atomic upsert per check)
+ * so multiple replicas and blue/green slots share the same window (#1039
+ * item 4). When the database is unreachable the limiter falls back to the
+ * original per-process in-memory counters — degraded to per-instance limiting
+ * rather than failing the request.
  */
+
+import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 
 interface RateLimitEntry {
   count: number;
@@ -53,10 +60,11 @@ export interface RateLimitResult {
 }
 
 /**
- * Check rate limit for a given key (typically IP address).
- * Returns whether the request should be allowed.
+ * Per-process fallback limiter (the pre-#1039 behaviour). Exported for tests;
+ * production traffic goes through `checkRateLimit`, which only lands here
+ * when the shared Postgres counter is unavailable.
  */
-export function checkRateLimit(
+export function checkRateLimitInMemory(
   config: RateLimitConfig,
   key: string
 ): RateLimitResult {
@@ -98,6 +106,95 @@ export function checkRateLimit(
   };
 }
 
+let lastRateLimitDbErrorLogAt = 0;
+const RATE_LIMIT_DB_ERROR_LOG_INTERVAL_MS = 60 * 1000;
+
+/**
+ * Check the shared rate limit for a given key (typically IP address). One
+ * atomic upsert: expired windows restart, live windows increment. Falls back
+ * to the per-process in-memory limiter when the database is unavailable.
+ */
+export async function checkRateLimit(
+  config: RateLimitConfig,
+  key: string
+): Promise<RateLimitResult> {
+  const storeKey = `${config.id}:${key}`;
+  const now = new Date();
+  const newResetAt = new Date(now.getTime() + config.windowSeconds * 1000);
+
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{ count: number; resetAt: Date }>
+    >`
+      INSERT INTO "RateLimitCounter" ("id", "count", "resetAt")
+      VALUES (${storeKey}, 1, ${newResetAt})
+      ON CONFLICT ("id") DO UPDATE SET
+        "count" = CASE
+          WHEN "RateLimitCounter"."resetAt" <= ${now} THEN 1
+          ELSE "RateLimitCounter"."count" + 1
+        END,
+        "resetAt" = CASE
+          WHEN "RateLimitCounter"."resetAt" <= ${now} THEN ${newResetAt}
+          ELSE "RateLimitCounter"."resetAt"
+        END
+      RETURNING "count", "resetAt"
+    `;
+
+    const row = rows[0];
+    if (!row) {
+      throw new Error("Rate limit upsert returned no row");
+    }
+    const count = Number(row.count);
+    const resetAt = row.resetAt.getTime();
+    scheduleSharedCleanup();
+
+    if (count > config.limit) {
+      return { success: false, limit: config.limit, remaining: 0, resetAt };
+    }
+    return {
+      success: true,
+      limit: config.limit,
+      remaining: config.limit - count,
+      resetAt,
+    };
+  } catch (err) {
+    if (
+      Date.now() - lastRateLimitDbErrorLogAt >
+      RATE_LIMIT_DB_ERROR_LOG_INTERVAL_MS
+    ) {
+      lastRateLimitDbErrorLogAt = Date.now();
+      logger.error(
+        { err, limiterId: config.id },
+        "Shared rate-limit store unavailable; falling back to per-process limiting"
+      );
+    }
+    return checkRateLimitInMemory(config, key);
+  }
+}
+
+// Delete expired shared counters occasionally so the table stays small. The
+// timer mirrors the in-memory cleanup and never blocks a request.
+let sharedCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function scheduleSharedCleanup() {
+  if (sharedCleanupTimer) return;
+  sharedCleanupTimer = setInterval(() => {
+    prisma
+      .$executeRaw`DELETE FROM "RateLimitCounter" WHERE "resetAt" <= ${new Date()}`.catch(
+      () => {
+        // Cleanup is best-effort; expired rows are also overwritten in place.
+      }
+    );
+  }, CLEANUP_INTERVAL_MS);
+  if (
+    sharedCleanupTimer &&
+    typeof sharedCleanupTimer === "object" &&
+    "unref" in sharedCleanupTimer
+  ) {
+    sharedCleanupTimer.unref();
+  }
+}
+
 /**
  * Get the client IP from a request, considering common proxy headers.
  */
@@ -119,12 +216,12 @@ export function getClientIp(request: Request): string {
 /**
  * Apply rate limiting to a request. Returns a Response if rate limited, null if allowed.
  */
-export function applyRateLimit(
+export async function applyRateLimit(
   config: RateLimitConfig,
   request: Request
-): Response | null {
+): Promise<Response | null> {
   const ip = getClientIp(request);
-  const result = checkRateLimit(config, ip);
+  const result = await checkRateLimit(config, ip);
 
   if (!result.success) {
     const retryAfter = Math.ceil((result.resetAt - Date.now()) / 1000);

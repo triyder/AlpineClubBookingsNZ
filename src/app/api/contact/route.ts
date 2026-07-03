@@ -47,7 +47,7 @@ function buildRecipientLabel(roleName: string) {
 }
 
 export async function POST(request: Request) {
-  const rateLimited = applyRateLimit(rateLimiters.contact, request);
+  const rateLimited = await applyRateLimit(rateLimiters.contact, request);
   if (rateLimited) return rateLimited;
 
   let body: unknown;

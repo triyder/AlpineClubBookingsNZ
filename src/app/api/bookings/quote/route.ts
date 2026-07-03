@@ -62,7 +62,7 @@ const quoteSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, request);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

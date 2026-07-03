@@ -23,7 +23,7 @@ export async function GET() {
   }
 
   // Rate limit by member ID (not IP), 5 exports per day
-  const rl = checkRateLimit(rateLimiters.dataExport, session.user.id);
+  const rl = await checkRateLimit(rateLimiters.dataExport, session.user.id);
   if (!rl.success) {
     const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
     return NextResponse.json(

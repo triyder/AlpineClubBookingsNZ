@@ -59,7 +59,7 @@ const validateSchema = z
   });
 
 export async function POST(req: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, req);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, req);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

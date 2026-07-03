@@ -191,7 +191,7 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const rl = checkRateLimit(rateLimiters.bookingChangeRequest, session.user.id);
+  const rl = await checkRateLimit(rateLimiters.bookingChangeRequest, session.user.id);
   if (!rl.success) {
     const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
     return NextResponse.json(

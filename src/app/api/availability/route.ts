@@ -28,7 +28,7 @@ function getNextMonthStartDateOnly(year: number, month: number): Date {
 }
 
 export async function GET(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, request);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

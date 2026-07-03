@@ -213,7 +213,7 @@ describe("N-09: Bulk communication rate limiting", () => {
   });
 
   it("rate limiter enforces 1 per hour", async () => {
-    const { checkRateLimit } = await import("../rate-limit");
+    const { checkRateLimitInMemory: checkRateLimit } = await import("../rate-limit");
     const config = { id: "test-bulk", limit: 1, windowSeconds: 3600 };
 
     const first = checkRateLimit(config, "admin-global");
