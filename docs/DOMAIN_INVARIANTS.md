@@ -116,8 +116,18 @@ stale checkout tab cannot capture the pre-change amount), and the non-member
 hold is recalculated from the remaining guests (all-member bookings clear the
 hold; bookings inside the hold window move PENDING → PAYMENT_PENDING). The same
 change must produce the same booking state regardless of which endpoint made
-it. The single-guest removal path keeps its lightweight admin-review flagging
-(no review parking), preserving linked-guest self-removal eligibility.
+it.
+
+A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
+approval regardless of how it got there or whether it was already paid: every
+edit path — including single-guest self-removal, which is never blocked for a
+written justification — flags the booking (`adminReviewStatus: PENDING`, with
+an automatic note on the removal path) so it lands in the admin review queue.
+Review parking moves a booking to AWAITING_REVIEW only from the pre-payment
+statuses (PENDING/PAYMENT_PENDING); a paid or confirmed booking is flagged in
+place, and approving it clears the review without re-opening the payment
+lifecycle. Rejection cancels through the shared cancellation flow, which
+refunds captured payments per the policy.
 
 A booking converted from (or held for) a public/school booking request keeps
 its officer-negotiated price, flat-split across guest rows; the quote's

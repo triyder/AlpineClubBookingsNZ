@@ -1804,6 +1804,128 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     );
   });
 
+  // --- #1100: minors-only removals flag the booking for admin review ---
+
+  function minorsAfterRemovalBooking(overrides: Record<string, unknown> = {}) {
+    // Removing the adult g1 leaves only the CHILD g2.
+    return makeBooking({
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Kid", lastName: "Smith", ageTier: "CHILD", isMember: true, memberId: null, priceCents: 5000 },
+      ],
+      requiresAdminReview: false,
+      adminReviewStatus: null,
+      memberReviewJustification: null,
+      adminReviewNotes: null,
+      adminReviewedById: null,
+      adminReviewedAt: null,
+      ...overrides,
+    });
+  }
+
+  it("flags a paid booking for admin review when removal leaves minors only, without touching its status (#1100)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = minorsAfterRemovalBooking({ status: "PAID" });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    } as any);
+
+    const res = await DELETE(deleteWithMethod("g1", "card"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g1" }),
+    });
+    expect(res.status).toBe(200);
+
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.requiresAdminReview).toBe(true);
+    expect(updateData.adminReviewStatus).toBe("PENDING");
+    expect(updateData.memberReviewJustification).toContain("left no adult");
+    // Captured money never re-enters the payment lifecycle: status stays PAID.
+    expect(updateData.status).toBe("PAID");
+  });
+
+  it("parks a pre-payment booking to AWAITING_REVIEW when removal leaves minors only (#1100)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = minorsAfterRemovalBooking({
+      status: "PAYMENT_PENDING",
+      payment: {
+        id: "p1", bookingId: "bk1", amountCents: 10000, source: "STRIPE",
+        status: "PENDING", stripePaymentIntentId: "pi_123", xeroInvoiceId: null,
+        refundedAmountCents: 0, changeFeeCents: 0,
+      },
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    } as any);
+
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/bookings/bk1/guests/g1", { method: "DELETE" }),
+      { params: Promise.resolve({ id: "bk1", guestId: "g1" }) },
+    );
+    expect(res.status).toBe(200);
+
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.adminReviewStatus).toBe("PENDING");
+    expect(updateData.status).toBe("AWAITING_REVIEW");
+  });
+
+  it("auto-approves the minors-only flag when an admin performs the removal (#1100)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    const booking = minorsAfterRemovalBooking({ status: "PAID" });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    } as any);
+
+    const res = await DELETE(deleteWithMethod("g1", "card"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g1" }),
+    });
+    expect(res.status).toBe(200);
+
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.requiresAdminReview).toBe(true);
+    expect(updateData.adminReviewStatus).toBe("APPROVED");
+    expect(updateData.status).toBe("PAID");
+  });
+
+  it("clears stale review state when a removal restores an adult-supervised party (#1100)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    // Both remaining guests are adults after removing the child.
+    const booking = makeBooking({
+      status: "PAID",
+      requiresAdminReview: true,
+      adminReviewStatus: "PENDING",
+      memberReviewJustification: "Automatic: earlier removal left no adult on this booking.",
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Kid", lastName: "Smith", ageTier: "CHILD", isMember: true, memberId: null, priceCents: 5000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    } as any);
+
+    const res = await DELETE(deleteWithMethod("g2", "card"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.requiresAdminReview).toBe(false);
+    expect(updateData.adminReviewStatus).toBeNull();
+    expect(updateData.memberReviewJustification).toBeNull();
+  });
+
   // --- #1041: lifecycle parity with the batch modify path ---
 
   function makeZeroDollarBooking(paymentOverrides: Record<string, unknown>) {

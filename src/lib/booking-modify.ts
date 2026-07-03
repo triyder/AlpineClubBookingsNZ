@@ -1751,7 +1751,15 @@ export async function applyLifecycleTransitions(
   let zeroDollarAutoPaid = false;
   let supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[] = [];
 
-  if (reviewUpdate?.parkForReview && newStatus !== "AWAITING_REVIEW") {
+  // Parking moves a booking to AWAITING_REVIEW only from the pre-payment
+  // statuses that state was built for: approval releases AWAITING_REVIEW to
+  // PAYMENT_PENDING, which must never happen to captured money (#1100). A
+  // paid/confirmed booking that trips a review rule is flagged (the caller
+  // writes requiresAdminReview + adminReviewStatus PENDING, which drives the
+  // admin queue) but keeps its status.
+  const canParkForReview =
+    newStatus === "PENDING" || newStatus === "PAYMENT_PENDING";
+  if (reviewUpdate?.parkForReview && canParkForReview) {
     newStatus = "AWAITING_REVIEW";
   } else if (reviewUpdate?.releaseFromReview && newStatus === "AWAITING_REVIEW") {
     newStatus = "PAYMENT_PENDING";

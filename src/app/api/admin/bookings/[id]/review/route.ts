@@ -52,15 +52,16 @@ export async function PATCH(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (
-    booking.adminReviewStatus !== AdminReviewStatus.PENDING ||
-    booking.status !== BookingStatus.AWAITING_REVIEW
-  ) {
+  // A PENDING review can sit on a parked pre-payment booking
+  // (AWAITING_REVIEW) or on a live paid/confirmed booking flagged by an edit
+  // that left no adult (#1100) — both are decisioned here.
+  if (booking.adminReviewStatus !== AdminReviewStatus.PENDING) {
     return NextResponse.json(
       { error: "This booking is not awaiting admin review" },
       { status: 409 },
     );
   }
+  const parkedForReview = booking.status === BookingStatus.AWAITING_REVIEW;
 
   const reviewedAt = new Date();
   const ipAddress =
@@ -73,14 +74,17 @@ export async function PATCH(
       where: {
         id: bookingId,
         adminReviewStatus: AdminReviewStatus.PENDING,
-        status: BookingStatus.AWAITING_REVIEW,
+        status: booking.status,
       },
       data: {
         adminReviewStatus: AdminReviewStatus.APPROVED,
         adminReviewNotes: parsed.data.adminNotes || null,
         adminReviewedById: session.user.id,
         adminReviewedAt: reviewedAt,
-        status: BookingStatus.PAYMENT_PENDING,
+        // Only a parked pre-payment booking is released toward payment; a
+        // flagged paid/confirmed booking keeps its status (#1100) — the
+        // approval clears the review, never re-opens the payment lifecycle.
+        ...(parkedForReview ? { status: BookingStatus.PAYMENT_PENDING } : {}),
       },
     });
 
@@ -128,13 +132,14 @@ export async function PATCH(
   }
 
   // REJECTED — record the review fields and then cancel via the shared
-  // cancellation flow. AWAITING_REVIEW has no payment so cancelBooking
-  // short-circuits the refund branch.
+  // cancellation flow. A parked AWAITING_REVIEW booking has no payment so
+  // cancelBooking short-circuits the refund branch; a flagged paid booking
+  // (#1100) is refunded per the cancellation policy by the same shared flow.
   const claim = await prisma.booking.updateMany({
     where: {
       id: bookingId,
       adminReviewStatus: AdminReviewStatus.PENDING,
-      status: BookingStatus.AWAITING_REVIEW,
+      status: booking.status,
     },
     data: {
       adminReviewStatus: AdminReviewStatus.REJECTED,

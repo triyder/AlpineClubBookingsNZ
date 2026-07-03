@@ -1,4 +1,9 @@
-import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
+import {
+  AdminReviewStatus,
+  BookingStatus,
+  type AgeTier,
+  type Prisma,
+} from "@prisma/client";
 import {
   type SeasonRateData,
 } from "@/lib/pricing";
@@ -126,6 +131,108 @@ function targetBookingGuestIdsForSelectedIndexes(
   return selectedGuestIndexes
     .map((index) => guestNightRates[index]?.bookingGuestId)
     .filter((id): id is string => Boolean(id));
+}
+
+type RemovalReviewUpdate = {
+  requiresAdminReview: boolean;
+  adminReviewReason: string | null;
+  memberReviewJustification: string | null;
+  adminReviewStatus: AdminReviewStatus | null;
+  adminReviewNotes: string | null;
+  adminReviewedById: string | null;
+  adminReviewedAt: Date | null;
+  parkForReview: boolean;
+  releaseFromReview: boolean;
+};
+
+/**
+ * Review fields to write after a guest removal (#1100). Mirrors the batch
+ * path's resolveModifyReviewUpdate scenarios, with one deliberate difference:
+ * a member (or self-removing linked guest) who trips the no-adult rule is
+ * never blocked for a written justification — the removal proceeds and the
+ * booking is flagged with an automatic note so it lands in the admin review
+ * queue, even when the booking is already paid.
+ */
+function resolveRemovalReviewUpdate({
+  booking,
+  actorRole,
+  actorMemberId,
+  nowFlagged,
+  removedGuestName,
+}: {
+  booking: {
+    status: string;
+    requiresAdminReview: boolean;
+    adminReviewStatus: AdminReviewStatus | null;
+    memberReviewJustification: string | null;
+    adminReviewNotes: string | null;
+    adminReviewedById: string | null;
+    adminReviewedAt: Date | null;
+  };
+  actorRole: string;
+  actorMemberId: string;
+  nowFlagged: boolean;
+  removedGuestName: string;
+}): RemovalReviewUpdate {
+  if (!nowFlagged) {
+    // Rule cleared (or never tripped): wipe review state so the booking
+    // returns to the normal lifecycle; release a parked booking.
+    return {
+      requiresAdminReview: false,
+      adminReviewReason: null,
+      memberReviewJustification: null,
+      adminReviewStatus: null,
+      adminReviewNotes: null,
+      adminReviewedById: null,
+      adminReviewedAt: null,
+      parkForReview: false,
+      releaseFromReview: booking.status === BookingStatus.AWAITING_REVIEW,
+    };
+  }
+
+  // Still (or already) flagged with a recorded review: preserve it — admins
+  // are not re-prompted just because the guest list shuffled.
+  if (booking.requiresAdminReview && booking.adminReviewStatus !== null) {
+    return {
+      requiresAdminReview: true,
+      adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+      memberReviewJustification: booking.memberReviewJustification,
+      adminReviewStatus: booking.adminReviewStatus,
+      adminReviewNotes: booking.adminReviewNotes,
+      adminReviewedById: booking.adminReviewedById,
+      adminReviewedAt: booking.adminReviewedAt,
+      parkForReview: booking.adminReviewStatus === AdminReviewStatus.PENDING,
+      releaseFromReview: false,
+    };
+  }
+
+  // First trip. An admin performing the removal is the approval (batch
+  // parity); anyone else flags the booking for admin review.
+  if (actorRole === "ADMIN") {
+    return {
+      requiresAdminReview: true,
+      adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+      memberReviewJustification: null,
+      adminReviewStatus: AdminReviewStatus.APPROVED,
+      adminReviewNotes: "Approved at guest removal by admin.",
+      adminReviewedById: actorMemberId,
+      adminReviewedAt: new Date(),
+      parkForReview: false,
+      releaseFromReview: false,
+    };
+  }
+
+  return {
+    requiresAdminReview: true,
+    adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+    memberReviewJustification: `Automatic: removing ${removedGuestName} left no adult on this booking.`,
+    adminReviewStatus: AdminReviewStatus.PENDING,
+    adminReviewNotes: null,
+    adminReviewedById: null,
+    adminReviewedAt: null,
+    parkForReview: true,
+    releaseFromReview: false,
+  };
 }
 
 export async function removeBookingGuestInTransaction({
@@ -302,10 +409,18 @@ export async function removeBookingGuestInTransaction({
   });
   const newFinalPriceCents = newTotalPriceCents + promoResult.newPromoAdjustmentCents;
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
-  const requiresAdminReview = requiresAdultSupervisionReview(remainingGuests);
-  const adminReviewReason = requiresAdminReview
-    ? ADULT_SUPERVISION_REVIEW_REASON
-    : null;
+  // Owner rule (#1100): a booking left with only non-adults must go through
+  // admin approval, even if it was previously paid and approved for a
+  // different composition. The self-removing guest is never blocked — the
+  // removal proceeds and the booking is flagged with an automatic
+  // justification (no written reason can be demanded of someone leaving).
+  const reviewUpdate = resolveRemovalReviewUpdate({
+    booking,
+    actorRole,
+    actorMemberId,
+    nowFlagged: requiresAdultSupervisionReview(remainingGuests),
+    removedGuestName: `${guestToRemove.firstName} ${guestToRemove.lastName}`,
+  });
 
   // Settle the reduction through the same policy-based machinery the batch
   // modify path uses (#1014): a captured payment is refunded/credited only up
@@ -338,11 +453,11 @@ export async function removeBookingGuestInTransaction({
 
   // Run the same lifecycle transitions the batch path applies (#1041):
   // non-member-hold recalculation (an all-member booking clears its hold),
-  // PENDING -> PAYMENT_PENDING inside the hold window, and zero-dollar
-  // auto-pay with superseded-PaymentIntent cancellation. `reviewUpdate` is
-  // deliberately not passed: the removal path keeps its lightweight
-  // requiresAdminReview flagging so linked-guest self-removal (which cannot
-  // supply a review justification) keeps working.
+  // PENDING -> PAYMENT_PENDING inside the hold window, zero-dollar auto-pay
+  // with superseded-PaymentIntent cancellation, and review parking (#1100).
+  // Parking only ever moves pre-payment bookings to AWAITING_REVIEW; a
+  // paid/confirmed booking is flagged for the admin queue without a status
+  // change (applyLifecycleTransitions enforces that).
   const lifecycle = await applyLifecycleTransitions(tx, {
     booking: booking as unknown as LoadedBookingForModify,
     bookingId,
@@ -351,6 +466,7 @@ export async function removeBookingGuestInTransaction({
     guestsForPricing,
     skipBookingLifecycleRules:
       actorRole === "ADMIN" && !usesActiveBookingEditLifecycle(booking.status),
+    reviewUpdate,
   });
 
   await Promise.all(
@@ -372,8 +488,13 @@ export async function removeBookingGuestInTransaction({
       hasNonMembers: lifecycle.hasNonMembers,
       nonMemberHoldUntil: lifecycle.newNonMemberHoldUntil,
       status: lifecycle.newStatus,
-      requiresAdminReview,
-      adminReviewReason,
+      requiresAdminReview: reviewUpdate.requiresAdminReview,
+      adminReviewReason: reviewUpdate.adminReviewReason,
+      memberReviewJustification: reviewUpdate.memberReviewJustification,
+      adminReviewStatus: reviewUpdate.adminReviewStatus,
+      adminReviewNotes: reviewUpdate.adminReviewNotes,
+      adminReviewedById: reviewUpdate.adminReviewedById,
+      adminReviewedAt: reviewUpdate.adminReviewedAt,
     },
     include: { guests: true, payment: true },
   });

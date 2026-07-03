@@ -163,6 +163,65 @@ describe("PATCH /api/admin/bookings/[id]/review", () => {
     expect(mocks.cancelBooking).not.toHaveBeenCalled();
   });
 
+  it("approves a flagged paid booking without touching its status (#1100)", async () => {
+    // A removal left this PAID booking minors-only: it is flagged
+    // (adminReviewStatus PENDING) but not parked. Approval clears the review
+    // and must never release captured money into PAYMENT_PENDING.
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "b1",
+      memberId: "m1",
+      adminReviewStatus: "PENDING",
+      status: "PAID",
+      member: { email: "member@example.com", firstName: "Alex" },
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+    });
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await PATCH(
+      makeRequest({ status: "APPROVED", adminNotes: "Supervisor confirmed." }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+
+    const updateArgs = mocks.bookingUpdateMany.mock.calls[0][0];
+    expect(updateArgs.where).toMatchObject({
+      adminReviewStatus: "PENDING",
+      status: "PAID",
+    });
+    expect(updateArgs.data).toMatchObject({ adminReviewStatus: "APPROVED" });
+    expect(updateArgs.data.status).toBeUndefined();
+    expect(mocks.cancelBooking).not.toHaveBeenCalled();
+  });
+
+  it("rejects a flagged paid booking by cancelling through the shared flow (#1100)", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "b1",
+      memberId: "m1",
+      adminReviewStatus: "PENDING",
+      status: "PAID",
+      member: { email: "member@example.com", firstName: "Alex" },
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+    });
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.cancelBooking.mockResolvedValue({ status: 200, data: { success: true } });
+
+    const res = await PATCH(
+      makeRequest({ status: "REJECTED", adminNotes: "No adult attending." }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+    // The shared cancel flow handles the policy refund for the captured payment.
+    expect(mocks.cancelBooking).toHaveBeenCalledWith(
+      "b1",
+      "admin1",
+      "ADMIN",
+      expect.anything(),
+      "card",
+    );
+  });
+
   it("rejects: records decision, cancels booking, sends rejection email", async () => {
     mocks.bookingFindUnique.mockResolvedValue({
       id: "b1",
