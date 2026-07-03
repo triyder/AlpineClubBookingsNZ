@@ -67,6 +67,7 @@ import {
   MembershipCancellationRequestError,
   createAdminMembershipCancellationRequest,
   createMembershipCancellationRequest,
+  getMembershipCancellationConfirmationDetails,
   reissueParticipantConfirmationToken,
   respondToMembershipCancellationConfirmation,
 } from "@/lib/membership-cancellation-requests";
@@ -827,6 +828,42 @@ describe("membership cancellation request workflow", () => {
       expect(result.emailWarnings).toEqual([
         "Admin review alert could not be sent",
       ]);
+    });
+  });
+
+  describe("getMembershipCancellationConfirmationDetails", () => {
+    it("points an invalid link at admin reissue recovery", async () => {
+      mocks.participantFindUnique.mockResolvedValue(null);
+
+      const details = await getMembershipCancellationConfirmationDetails(
+        "raw-confirmation-token",
+        "adult-login",
+      );
+
+      expect(details.tokenStatus).toBe("invalid");
+      expect(details.canRespond).toBe(false);
+      expect(details.message).toMatch(
+        /contact the club office — an administrator can send you a fresh confirmation link/i,
+      );
+    });
+
+    it("points an expired link at admin reissue recovery", async () => {
+      mocks.participantFindUnique.mockResolvedValue(
+        participant({
+          confirmationTokenExpiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        }),
+      );
+
+      const details = await getMembershipCancellationConfirmationDetails(
+        "raw-confirmation-token",
+        "adult-login",
+      );
+
+      expect(details.tokenStatus).toBe("expired");
+      expect(details.canRespond).toBe(false);
+      expect(details.message).toMatch(
+        /contact the club office — an administrator can send you a fresh confirmation link/i,
+      );
     });
   });
 });

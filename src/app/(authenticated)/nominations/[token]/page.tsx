@@ -49,8 +49,13 @@ export default async function NominationPage({
         <CardHeader>
           <CardTitle>Nomination link not found</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          This nomination link is invalid or no longer exists.
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>This nomination link is invalid or no longer exists.</p>
+          <p>
+            If you reached this page from an older email, the link may have
+            been replaced by a newer one. Contact the club office and an
+            administrator can send you a fresh nomination link.
+          </p>
         </CardContent>
       </Card>
     );
@@ -82,7 +87,8 @@ export default async function NominationPage({
   if (nomination.confirmedAt) {
     initialMessage = "You have already confirmed this nomination.";
   } else if (expired) {
-    initialMessage = "This nomination link has expired.";
+    initialMessage =
+      "This nomination link has expired. Contact the club office and an administrator can send you a fresh link.";
   } else if (application.status === "PENDING_ADMIN") {
     initialMessage =
       "Both nominators have already confirmed. The application is now waiting for committee review.";

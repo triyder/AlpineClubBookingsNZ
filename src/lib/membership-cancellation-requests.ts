@@ -974,7 +974,8 @@ export async function getMembershipCancellationConfirmationDetails(
     return {
       tokenStatus: "invalid",
       canRespond: false,
-      message: "This cancellation confirmation link is invalid or has already been used.",
+      message:
+        "This cancellation confirmation link is invalid or has already been used. If you are still expecting to confirm, contact the club office — an administrator can send you a fresh confirmation link.",
       request: null,
       participant: null,
     };
@@ -1022,7 +1023,8 @@ export async function getMembershipCancellationConfirmationDetails(
     return {
       tokenStatus: "expired",
       canRespond: false,
-      message: "This cancellation confirmation link has expired.",
+      message:
+        "This cancellation confirmation link has expired. Contact the club office — an administrator can send you a fresh confirmation link.",
       request: serializedRequest,
       participant: serializedParticipant,
     };

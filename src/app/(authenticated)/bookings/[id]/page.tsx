@@ -1294,6 +1294,13 @@ export default async function BookingDetailPage({
           </div>
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground">
+        Waiting on a booking email? This page always shows the live status of
+        your booking — the confirmation, payment, and cancellation details
+        above are up to date even if an email hasn&apos;t arrived. Check your
+        spam folder, and contact the club if our emails keep going missing.
+      </p>
     </div>
   );
 }

@@ -111,6 +111,17 @@ function RequestStatusList({
               </div>
             ))}
           </div>
+          {request.status === "REQUESTED" &&
+          request.participants.some(
+            (participant) => participant.status === "PENDING_CONFIRMATION",
+          ) ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Participants confirm by an emailed link. If someone has not
+              received theirs, ask them to check their spam folder — or
+              contact the club office and an administrator can re-send the
+              confirmation email.
+            </p>
+          ) : null}
         </div>
       ))}
     </div>

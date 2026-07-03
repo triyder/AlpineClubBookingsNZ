@@ -302,6 +302,12 @@ export function JoinApplyPageClient({
                 Once both nominators approve, the application moves to the club
                 admin panel for committee consideration.
               </p>
+              <p>
+                Nomination emails occasionally go missing. If a nominator has
+                not received theirs, ask them to check their spam folder first
+                — then contact the club and an administrator can send them a
+                fresh nomination link.
+              </p>
               {warnings.length > 0 && (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
                   {warnings.join(". ")}
