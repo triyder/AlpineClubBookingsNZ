@@ -307,6 +307,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod_1" }),
     },
+    bookingRequest: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     promoRedemption: {
       delete: vi.fn().mockResolvedValue(undefined),
       update: vi.fn().mockResolvedValue(undefined),
@@ -440,6 +443,34 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockGetBookingGuestValidationErrorResponse.mockImplementation((error: { message: string }) => ({
       error: error.message,
     }));
+  });
+
+  it("blocks batch edits on a quote-priced booking (#1032)", async () => {
+    // A booking converted from a school/public booking request keeps its
+    // negotiated flat total; the batch edit path would reprice every guest
+    // at season rates, so it refuses with an actionable message instead.
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.bookingRequest.findFirst.mockResolvedValue({ id: "req_1" });
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ addGuests: [{ firstName: "New", lastName: "Student", ageTier: "CHILD", isMember: false }] }),
+    });
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("negotiated booking-request price"),
+    });
+    expect(tx.booking.update).not.toHaveBeenCalled();
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   });
 
   it("returns the shared profile-required shape when added linked member guests are blocked", async () => {

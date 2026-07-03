@@ -115,6 +115,12 @@ get role `SCHOOL`, and general public booking-request contacts get `NON_MEMBER`.
 Both non-member roles grant no access, are excluded from member rosters, and never
 owe a membership subscription (see Member roles in `docs/ARCHITECTURE.md`).
 
+After conversion (or while a hold booking exists), the resulting booking keeps
+the negotiated flat price and the standard edit endpoints refuse it — editing
+a quoted booking's dates or party is done by re-pricing or issuing a revised
+quote from the booking request, never by season-rate repricing
+(`docs/DOMAIN_INVARIANTS.md`, #1032).
+
 ## Payment Lifecycle
 
 Known statuses: `PENDING`, `PROCESSING`, `SUCCEEDED`, `FAILED`, `REFUNDED`,

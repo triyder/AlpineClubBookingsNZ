@@ -21,6 +21,7 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   applyPaymentAdjustments,
+  assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
@@ -195,6 +196,7 @@ export async function modifyBookingDates({
     if (booking.memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
     }
+    await assertBookingNotQuotePriced(tx, bookingId);
 
     if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
       throw new ApiError(

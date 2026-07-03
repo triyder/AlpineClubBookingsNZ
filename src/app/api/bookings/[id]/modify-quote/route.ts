@@ -49,6 +49,7 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 import {
+  assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   resolveGuestNameUpdates,
 } from "@/lib/booking-modify";
@@ -243,6 +244,18 @@ export async function POST(
       { error: editPolicy.reason ?? "This booking cannot be modified" },
       { status: 400 }
     );
+  }
+
+  // Quote-priced bookings are blocked at preview time too (#1032), so the
+  // admin sees the actionable message instead of a season-rate delta that the
+  // mutating endpoints would refuse anyway.
+  try {
+    await assertBookingNotQuotePriced(prisma, bookingId);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
   }
 
   const json = await parseJsonRequestBody(request);

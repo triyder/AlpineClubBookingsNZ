@@ -16,6 +16,7 @@ import {
   applyPaymentAdjustments,
   applyPromoCodeChanges,
   assertBookingModifiable,
+  assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   calculateModificationChangeFee,
   calculateModifiedPricing,
@@ -128,6 +129,7 @@ export async function modifyBookingBatch({
       role: actor.role,
       actorId: actor.id,
     });
+    await assertBookingNotQuotePriced(tx, bookingId);
 
     const dates = resolveTargetDates({
       booking,
