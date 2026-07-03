@@ -13,6 +13,12 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    accessRoleDefinition: {
+      // Empty definitions: permission resolution falls back to the legacy
+      // hardcoded bundles, matching this suite's pre-definitions behavior.
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn(),
+    },
     memberAccessRole: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -1129,6 +1135,7 @@ describe("Phase 3: Admin Member Management", () => {
           {
             memberId: "new-login",
             role: "USER",
+            roleDefinitionId: null,
             assignedByMemberId: "admin1",
           },
         ],
@@ -1663,10 +1670,16 @@ describe("Phase 3: Admin Member Management", () => {
       });
       expect(tx.memberAccessRole.createMany).toHaveBeenCalledWith({
         data: [
-          { memberId: "m2", role: "USER", assignedByMemberId: "admin1" },
+          {
+            memberId: "m2",
+            role: "USER",
+            roleDefinitionId: null,
+            assignedByMemberId: "admin1",
+          },
           {
             memberId: "m2",
             role: "FINANCE_ADMIN",
+            roleDefinitionId: null,
             assignedByMemberId: "admin1",
           },
         ],
@@ -2229,8 +2242,8 @@ describe("Phase 3: Admin Member Management", () => {
       expect(createArgs.data.financeAccessLevel).toBe("VIEWER");
       expect(accessRoleCreateArgs).toEqual({
         data: [
-          { memberId: "m1", role: "LODGE" },
-          { memberId: "m1", role: "FINANCE_USER" },
+          { memberId: "m1", role: "LODGE", roleDefinitionId: null },
+          { memberId: "m1", role: "FINANCE_USER", roleDefinitionId: null },
         ],
         skipDuplicates: true,
       });

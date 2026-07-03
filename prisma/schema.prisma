@@ -43,6 +43,12 @@ enum AccessRole {
   ORG
 }
 
+enum AdminPermissionLevel {
+  NONE
+  VIEW
+  EDIT
+}
+
 enum TwoFactorMethod {
   TOTP
   EMAIL
@@ -526,19 +532,53 @@ model Member {
 }
 
 model MemberAccessRole {
-  id                 String     @id @default(cuid())
+  id                 String      @id @default(cuid())
   memberId           String
-  role               AccessRole
+  // Enum value for system roles and the seeded default bundles; NULL for
+  // rows backed only by a custom AccessRoleDefinition. Seeded-bundle rows
+  // carry both the enum value and roleDefinitionId for compatibility.
+  role               AccessRole?
+  roleDefinitionId   String?
   assignedByMemberId String?
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 
-  member     Member  @relation("MemberAccessRoleMember", fields: [memberId], references: [id], onDelete: Cascade)
-  assignedBy Member? @relation("MemberAccessRoleAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
+  member         Member                @relation("MemberAccessRoleMember", fields: [memberId], references: [id], onDelete: Cascade)
+  assignedBy     Member?               @relation("MemberAccessRoleAssignedBy", fields: [assignedByMemberId], references: [id], onDelete: SetNull)
+  roleDefinition AccessRoleDefinition? @relation(fields: [roleDefinitionId], references: [id], onDelete: Restrict)
 
   @@unique([memberId, role])
+  @@unique([memberId, roleDefinitionId])
   @@index([role])
+  @@index([roleDefinitionId])
   @@index([assignedByMemberId])
+}
+
+// Editable admin access-role definitions (bundle label, description, and the
+// per-area permission matrix). Only editable/deletable roles are rows here;
+// the protected system roles (ADMIN, LODGE, USER, ORG) stay code-defined and
+// have no row. The six seeded defaults keep their legacy enum value in
+// systemRole so existing MemberAccessRole enum rows resolve to them.
+model AccessRoleDefinition {
+  id              String               @id @default(cuid())
+  key             String               @unique
+  systemRole      AccessRole?          @unique
+  label           String
+  description     String               @db.Text
+  overviewLevel   AdminPermissionLevel @default(NONE)
+  bookingsLevel   AdminPermissionLevel @default(NONE)
+  membershipLevel AdminPermissionLevel @default(NONE)
+  financeLevel    AdminPermissionLevel @default(NONE)
+  lodgeLevel      AdminPermissionLevel @default(NONE)
+  contentLevel    AdminPermissionLevel @default(NONE)
+  supportLevel    AdminPermissionLevel @default(NONE)
+  sortOrder       Int                  @default(0)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  memberAssignments MemberAccessRole[]
+
+  @@index([sortOrder])
 }
 
 model PasswordResetToken {

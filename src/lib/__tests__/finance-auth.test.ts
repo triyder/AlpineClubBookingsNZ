@@ -127,7 +127,13 @@ describe("finance auth helpers", () => {
         firstName: true,
         lastName: true,
         role: true,
-        accessRoles: { select: { role: true } },
+        accessRoles: {
+          select: {
+            role: true,
+            roleDefinitionId: true,
+            roleDefinition: { select: expect.any(Object) },
+          },
+        },
         active: true,
         forcePasswordChange: true,
         twoFactorEnabled: true,

@@ -35,10 +35,11 @@ function financeMember(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// Behavioral matrix for the /api/finance guard pair (issue #1132). The
-// finance API surface is deliberately separate from the admin portal: only
-// FINANCE_USER / FINANCE_ADMIN pass, and a full ADMIN with no finance role is
-// rejected — that separation is asserted here so it cannot regress silently.
+// Behavioral matrix for the /api/finance guard pair (issue #1132). Finance
+// access derives from the merged finance area level of the admin permission
+// matrix: any role granting finance view/edit (seeded Finance Viewer and
+// Treasurer, Full Admin, custom definitions) passes, and roles with no
+// finance level in their matrix are rejected.
 describe("finance API guards", () => {
   beforeEach(() => {
     mockFindUnique.mockReset();
@@ -98,10 +99,25 @@ describe("finance API guards", () => {
     }
   });
 
-  it("rejects a full admin without a finance role (separate surfaces)", async () => {
+  it("allows a full admin as matrix-derived finance manager", async () => {
+    // Finance access derives from the merged finance area level, so the
+    // full-edit ADMIN matrix includes it (intentional widening).
     mockAuth.mockResolvedValue({ user: { id: "admin-1" } });
     mockFindUnique.mockResolvedValue(
       financeMember({ role: "ADMIN", accessRoles: [{ role: "ADMIN" }] }),
+    );
+
+    const viewer = await requireFinanceViewerApiAccess();
+    const manager = await requireFinanceManagerApiAccess();
+
+    expect(viewer.ok).toBe(true);
+    expect(manager.ok).toBe(true);
+  });
+
+  it("rejects roles whose matrix has no finance access", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "content-1" } });
+    mockFindUnique.mockResolvedValue(
+      financeMember({ role: "USER", accessRoles: [{ role: "ADMIN_CONTENT" }] }),
     );
 
     const viewer = await requireFinanceViewerApiAccess();

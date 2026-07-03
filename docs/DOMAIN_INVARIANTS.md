@@ -245,14 +245,22 @@ contact/link history where required.
 
 Access role, seasonal membership type, age tier, Xero contact-group rule, and
 committee assignment are separate axes. `MemberAccessRole` controls application
-access (`USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
-`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`,
-`FINANCE_ADMIN`, `ORG`);
+access via the legacy enum values (`USER`, `ADMIN`, `ADMIN_READONLY`,
+`ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`,
+`FINANCE_USER`, `FINANCE_ADMIN`, `ORG`) and/or a link to a club-editable
+`AccessRoleDefinition` (label, description, per-area permission matrix).
+`ADMIN`, `LODGE`, `USER`, and `ORG` are protected system roles: code-defined,
+never editable or deletable, and Full Admin always keeps full permissions.
+Deleting a definition is blocked while any member holds it. Custom
+definition-backed roles are privileged for the Full-Admin
+separation-of-duties gate, exactly like the seeded bundles;
 `Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
 `SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
 be used as a runtime permission gate or for new membership-category semantics.
-Bundled `ADMIN_*` rows are composed by the central admin permission matrix; they
-must not be projected into legacy `Member.role = ADMIN`.
+Bundled and definition-backed rows are composed by the central admin
+permission matrix (maximum level per area); they must not be projected into
+legacy `Member.role = ADMIN`. Finance portal access derives from the merged
+`finance` area level, never from the enum values or `financeAccessLevel`.
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.

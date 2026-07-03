@@ -6,6 +6,7 @@ import {
   hasAdminAccess,
   type AppAccessRole,
 } from "@/lib/access-roles";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
   getAdminRouteRequirement,
   hasAdminAreaAccess,
@@ -115,7 +116,9 @@ export async function requireAdmin(
         active: true,
         forcePasswordChange: true,
         twoFactorEnabled: true,
-        accessRoles: { select: { role: true } },
+        // Joined definitions so area checks resolve definition-backed
+        // (custom or edited) access roles.
+        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
     }),
     inferAdminAccessRequirement(options),

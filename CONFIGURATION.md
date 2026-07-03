@@ -331,14 +331,19 @@ Seasonal membership type settings are database-backed and managed from
 `/admin/membership-types`. Access roles, seasonal membership type, age tier,
 Xero contact-group rules, and committee assignment are separate axes:
 
-- `MemberAccessRole` is the normalized access source for login permissions:
-  `USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`,
-  `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
-  Runtime authorization must read these rows only. `ADMIN` is the full-admin
-  bundle; the other `ADMIN_*` rows are read-only, booking officer, membership
-  officer, and content manager bundles. Multiple rows may be combined for a
-  custom role. `session.user.role` is kept only for display and older
-  serialized shapes.
+- `MemberAccessRole` is the normalized access source for login permissions.
+  Rows carry the legacy enum value (`USER`, `ADMIN`, `ADMIN_READONLY`,
+  `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`,
+  `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`) and/or a link to a club-editable
+  `AccessRoleDefinition` (managed at `/admin/access-roles`, Full Admin only).
+  Runtime authorization must read these rows (with the definition joined)
+  only. `ADMIN` is the protected full-admin bundle and is never editable;
+  the six seeded defaults — read-only admin, booking officer, membership
+  officer, content manager, finance viewer, and treasurer — are definition
+  rows that can be renamed, re-permissioned, or deleted, and new custom roles
+  can be created. Multiple rows may be combined for a custom mix; finance
+  portal access derives from the merged finance area level.
+  `session.user.role` is kept only for display and older serialized shapes.
   `Member.role` remains a compatibility/classification field with only
   `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
   club-created categories live in `MembershipType`. `financeAccessLevel`

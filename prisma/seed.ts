@@ -22,6 +22,7 @@ import { DEFAULT_FINANCE_REPORT_CATEGORIES } from "../src/lib/finance-report-map
 import {
   backfillCurrentSeasonMembershipAssignments,
 } from "../src/lib/membership-types";
+import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
 import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
@@ -318,6 +319,10 @@ async function main() {
   } else {
     console.log("Chore templates already present; skipping");
   }
+
+  // Seed the editable access-role definitions (create-if-missing; club edits
+  // are never overwritten) and re-link any enum-only assignment rows.
+  await ensureAccessRoleDefinitions(prisma);
 
   // Seed the first admin account (only if no admin exists). canLogin and
   // emailVerified are required for the credentials login flow to accept the

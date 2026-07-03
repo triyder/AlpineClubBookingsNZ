@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, ExternalLink, Link2, Pencil, Plus } from "lucide-react";
-import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
+import { accessRoleLabelForToken } from "@/lib/access-role-definitions";
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options";
 import type { MemberDetail, MemberLifecycleActionRequest } from "../_types";
 
 interface MemberDetailHeaderProps {
@@ -38,6 +39,7 @@ export function MemberDetailHeader({
   onUnlinkXero,
   onOpenEditDialog,
 }: MemberDetailHeaderProps) {
+  const roleOptions = useAccessRoleOptions();
   const router = useRouter();
   const accessRoles = member.accessRoles ?? [];
   return (
@@ -68,7 +70,7 @@ export function MemberDetailHeader({
                       : ""
                   }
                 >
-                  {ACCESS_ROLE_LABELS[role]}
+                  {accessRoleLabelForToken(role, roleOptions)}
                 </Badge>
               ))
             ) : (

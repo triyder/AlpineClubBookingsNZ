@@ -3,11 +3,14 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import {
   hasLodgeAccess,
-  hasFinanceManagerAccess as hasFinanceManagerRoleAccess,
-  hasFinanceViewerAccess as hasFinanceViewerRoleAccess,
+  type AccessRoleAssignmentInput,
   type AccessRoleInput,
-  type AppAccessRole,
 } from "@/lib/access-roles";
+import {
+  hasFinanceManagerAccess as hasFinanceManagerMatrixAccess,
+  hasFinanceViewerAccess as hasFinanceViewerMatrixAccess,
+} from "@/lib/admin-permissions";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { prisma } from "@/lib/prisma";
 import {
@@ -21,18 +24,25 @@ export type FinanceAccessMember = {
   firstName: string;
   lastName: string;
   role: Role;
-  accessRoles: Array<{ role: AppAccessRole }>;
+  accessRoles: Array<AccessRoleAssignmentInput>;
   active: boolean;
   forcePasswordChange: boolean;
   twoFactorEnabled: boolean;
 };
 
+/**
+ * Finance portal access derives from the merged finance area level of the
+ * admin permission matrix (view => viewer, edit => manager), so any role —
+ * seeded Treasurer/Finance Viewer, Full Admin, or a custom definition with
+ * finance access — participates. Requires the member's accessRoles rows to
+ * be selected with MEMBER_ACCESS_ROLE_SELECT so definitions resolve.
+ */
 export function hasFinanceViewerAccess(input: AccessRoleInput) {
-  return hasFinanceViewerRoleAccess(input);
+  return hasFinanceViewerMatrixAccess(input);
 }
 
 export function hasFinanceManagerAccess(input: AccessRoleInput) {
-  return hasFinanceManagerRoleAccess(input);
+  return hasFinanceManagerMatrixAccess(input);
 }
 
 export async function loadFinanceAccessMember(
@@ -46,7 +56,7 @@ export async function loadFinanceAccessMember(
       firstName: true,
       lastName: true,
       role: true,
-      accessRoles: { select: { role: true } },
+      accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       active: true,
       forcePasswordChange: true,
       twoFactorEnabled: true,
