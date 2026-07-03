@@ -148,6 +148,15 @@ preserves the booking row and no external money/Xero history needs to remain
 operator-visible by default. Balanced internal modification deltas that net to
 zero are not external financial history by themselves.
 
+## Analytics And Privacy
+
+Google Analytics must not load unless all three hold: the Analytics module is
+enabled, `NEXT_PUBLIC_GA_MEASUREMENT_ID` is configured, and the visitor has
+explicitly accepted the consent banner. Declining or dismissing the banner
+counts as denied, Google Consent Mode defaults every storage category to
+denied until an explicit accept, and the stored per-browser choice
+(`analytics-consent.v1`) is honoured on revisit.
+
 ## Membership Lifecycle
 
 Membership application, nomination, cancellation, archive, delete, family, and

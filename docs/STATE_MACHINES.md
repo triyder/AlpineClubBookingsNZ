@@ -382,3 +382,36 @@ To verify: Auth.js JWT callback claim handling, challenge-token single-use
 consumption, protected route-group layout redirects, API guard rejection,
 email-code expiry, TOTP skew window, recovery code single-use consumption, and
 lockout reset after successful verification.
+
+## Analytics Consent Lifecycle
+
+Client-side state machine for the GA4 consent banner (issue #975). The module
+must be enabled and `NEXT_PUBLIC_GA_MEASUREMENT_ID` configured before anything
+renders at all.
+
+```text
+unknown (null) -> banner shown, Google Consent Mode defaults ALL storage to denied
+visitor accepts -> choice "accepted" persisted (localStorage analytics-consent.v1) -> GA4 loader script renders + consent update granted
+visitor declines or dismisses -> choice "declined" persisted -> GA4 never loads, consent stays denied
+stored choice on revisit -> banner suppressed, prior choice honoured
+```
+
+To verify: the consent-mode bootstrap (`wait_for_update: 500`, default denied),
+the loader rendering only when module enabled + measurement id present +
+choice === "accepted", and decline/dismiss both mapping to denied.
+
+## Site Banner Display Lifecycle
+
+Site banners (issue #994) travel a date-window lifecycle plus a per-browser
+dismissal state.
+
+```text
+upcoming -> current -> past   (inclusive NZ date-only startDate..endDate window)
+active toggle off -> hidden regardless of window
+visitor dismisses -> hidden in that browser (localStorage site-banners.dismissed.v1)
+admin edits the banner -> updatedAt changes -> dismissal invalidated, banner re-shown
+```
+
+To verify: the admin page's current/upcoming/past split, the inclusive
+date-only comparison in NZ time, and dismissal invalidation keyed on
+`updatedAt`.
