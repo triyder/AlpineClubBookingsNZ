@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { CLUB_NAME } from "@/config/club-identity";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
@@ -280,13 +281,14 @@ export default async function AdminDashboardPage() {
         <Link href="/admin/members" className="group">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Members</CardTitle>
+              <CardTitle className="text-sm font-medium">Members</CardTitle>
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">{stats.totalMembers}</div>
+              <div className="text-3xl font-bold">{stats.activeMembers}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                {stats.activeMembers} active, {stats.inactiveMembers} inactive
+                active, of {stats.totalMembers} total ({stats.inactiveMembers}{" "}
+                inactive)
               </p>
             </CardContent>
           </Card>
@@ -362,22 +364,6 @@ export default async function AdminDashboardPage() {
           </Card>
         </Link>
 
-        <Link href="/admin/members?active=true" className="group">
-          <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Active Members
-              </CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{stats.activeMembers}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Currently active accounts
-              </p>
-            </CardContent>
-          </Card>
-        </Link>
       </div>
 
       {/* Recent Bookings */}
@@ -404,7 +390,10 @@ export default async function AdminDashboardPage() {
                 {stats.recentBookings.map((booking) => (
                   <Link
                     key={booking.id}
-                    href={`/admin/bookings`}
+                    href={buildHrefWithReturnTo(
+                      `/bookings/${booking.id}`,
+                      "/admin/dashboard",
+                    )}
                     className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
                   >
                     <div className="min-w-0">

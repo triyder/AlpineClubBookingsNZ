@@ -54,20 +54,19 @@ describe("Issue 9: Nav Bar Branding Link", () => {
 
 describe("Issue 15: KPI Card hrefs", () => {
   const kpiCards = [
-    { label: "Total Members", href: "/admin/members" },
+    { label: "Members", href: "/admin/members" },
     { label: "Total Bookings", href: "/admin/bookings" },
     { label: "Active Bookings", href: "/admin/bookings?status=PAYMENT_PENDING,CONFIRMED,PAID,PENDING" },
     { label: "Revenue This Month", href: "/admin/payments" },
     { label: "Upcoming Check-ins", href: "/admin/bookings?upcoming=7" },
-    { label: "Active Members", href: "/admin/members?active=true" },
   ];
 
-  it("should define all 6 KPI cards with correct hrefs", () => {
-    expect(kpiCards).toHaveLength(6);
+  it("should define all 5 KPI cards with correct hrefs", () => {
+    expect(kpiCards).toHaveLength(5);
   });
 
-  it("Total Members links to /admin/members", () => {
-    const card = kpiCards.find((c) => c.label === "Total Members");
+  it("Members links to /admin/members", () => {
+    const card = kpiCards.find((c) => c.label === "Members");
     expect(card?.href).toBe("/admin/members");
   });
 
@@ -94,12 +93,6 @@ describe("Issue 15: KPI Card hrefs", () => {
     const card = kpiCards.find((c) => c.label === "Upcoming Check-ins");
     expect(card?.href).toContain("/admin/bookings");
     expect(card?.href).toContain("upcoming=7");
-  });
-
-  it("Active Members links to /admin/members with active=true", () => {
-    const card = kpiCards.find((c) => c.label === "Active Members");
-    expect(card?.href).toContain("/admin/members");
-    expect(card?.href).toContain("active=true");
   });
 });
 
