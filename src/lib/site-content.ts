@@ -57,12 +57,6 @@ const STARTER_CONTENT_BY_KEY = new Map(
   starterSiteContent.map((section) => [section.key, section.contentHtml]),
 );
 
-export function isSiteContentKey(
-  value: string,
-): value is SiteContentKeyValue {
-  return (SITE_CONTENT_KEYS as readonly string[]).includes(value);
-}
-
 /**
  * Returns all sections in canonical order for the admin editor. Rows are
  * backfilled by the add_site_content migration, but missing rows still fall

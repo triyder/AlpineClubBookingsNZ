@@ -17,7 +17,6 @@ import {
   buildStructuredAuditLogCreateArgs,
   type StructuredAuditEvent,
 } from "@/lib/audit";
-import { membershipTypeOrderBy } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 
 export const SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION =
@@ -323,15 +322,6 @@ export function verifySeasonalMembershipPreviewToken(
     expectedBuffer.length === tokenBuffer.length &&
     timingSafeEqual(expectedBuffer, tokenBuffer)
   );
-}
-
-export async function listAssignableMembershipTypes(
-  db: SeasonalMembershipReadClient = prisma,
-) {
-  return db.membershipType.findMany({
-    orderBy: membershipTypeOrderBy(),
-    select: membershipTypeSelect,
-  });
 }
 
 export async function getSeasonalMembershipChangePreview(params: {

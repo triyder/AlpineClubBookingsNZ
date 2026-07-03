@@ -54,7 +54,7 @@ export type LinkedBookingMember = {
   postalPostalCode?: string | null;
   postalCountry?: string | null;
   role?: string | null;
-  accessRoles?: Array<{ role: string }>;
+  accessRoles?: Array<{ role: string | null }>;
   profileCompletedAt?: Date | null;
   detailsConfirmedAt?: Date | null;
   detailsConfirmedByMemberId?: string | null;

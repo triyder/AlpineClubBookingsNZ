@@ -3,6 +3,10 @@ const mockPrisma = vi.hoisted(() => {
   const countDelegate = () => ({ count: vi.fn().mockResolvedValue(0) });
 
   return {
+    accessRoleDefinition: {
+      // Empty definitions: resolution falls back to legacy bundles.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: {
       findUnique: vi.fn(),
       findMany: vi.fn(),

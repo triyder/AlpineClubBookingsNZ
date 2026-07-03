@@ -8,7 +8,6 @@
 import type {
   InductionKind,
   InductionSectionPriority,
-  InductionSignerRole,
 } from "@prisma/client";
 
 export const DEFAULT_INDUCTION_TEMPLATE_NAME = "Lodge Induction Checklist";
@@ -22,12 +21,6 @@ export const INDUCTION_SIGN_OFF_DECLARATION =
   "I confirm that I have explained and demonstrated, where necessary, each of " +
   "the above matters to the member and I am satisfied that they are " +
   "fully competent and familiar with the lodge system.";
-
-export const INDUCTION_SIGNER_ROLE_LABELS: Record<InductionSignerRole, string> = {
-  NOMINATOR: "Nominator",
-  HUT_LEADER: "Hut leader",
-  ADMIN: "Administrator",
-};
 
 export interface InductionTemplateItemSeed {
   /** Stable slug used as a logical key in code and tests (not the DB id). */

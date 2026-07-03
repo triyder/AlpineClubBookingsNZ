@@ -1,10 +1,6 @@
 import { normalizeCancellationRule } from "./cancellation-rules";
 import { prisma } from "./prisma";
-import {
-  calculateRefundAmount,
-  daysUntilDate,
-  type CancellationRule,
-} from "./policies/cancellation";
+import { type CancellationRule } from "./policies/cancellation";
 
 export {
   calculateDualRefundAmounts,
@@ -73,50 +69,4 @@ export async function loadCancellationPolicy(
   });
 
   return rules.map(normalizeCancellationRule);
-}
-
-/**
- * Calculate the refund for a booking cancellation.
- * Returns the refund amount and percentage, or null if booking can't be cancelled.
- */
-export async function calculateBookingRefund(
-  bookingId: string
-): Promise<{
-  refundAmountCents: number;
-  refundPercentage: number;
-  paidAmountCents: number;
-  daysUntilCheckIn: number;
-} | null> {
-  const booking = await prisma.booking.findUnique({
-    where: { id: bookingId },
-    include: { payment: true },
-  });
-
-  if (!booking || !booking.payment) {
-    return null;
-  }
-
-  if (
-    !["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) ||
-    booking.payment.status !== "SUCCEEDED"
-  ) {
-    return null;
-  }
-
-  const paidAmountCents =
-    booking.payment.amountCents - booking.payment.refundedAmountCents;
-  const days = daysUntilDate(booking.checkIn);
-  const policy = await loadCancellationPolicy(booking.checkIn);
-  const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-    paidAmountCents,
-    days,
-    policy
-  );
-
-  return {
-    refundAmountCents,
-    refundPercentage,
-    paidAmountCents,
-    daysUntilCheckIn: days,
-  };
 }

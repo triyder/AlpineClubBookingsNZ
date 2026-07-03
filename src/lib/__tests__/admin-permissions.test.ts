@@ -3,15 +3,29 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   canViewAdminHref,
+  canViewAdminHrefWithMatrix,
+  financeAccessLevelFromMatrix,
   getAdminPermissionLevel,
   getAdminPermissionMatrix,
   getAdminRouteRequirement,
   hasAdminAreaAccess,
   hasAdminPortalAccess,
+  hasFinanceManagerAccess,
+  hasFinanceViewerAccess,
   type AdminPermissionArea,
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
 import { type AppAccessRole } from "@/lib/access-roles";
+
+const LODGE_ONLY_DEFINITION = {
+  overviewLevel: "NONE",
+  bookingsLevel: "NONE",
+  membershipLevel: "NONE",
+  financeLevel: "NONE",
+  lodgeLevel: "EDIT",
+  contentLevel: "NONE",
+  supportLevel: "NONE",
+} as const;
 
 describe("admin permission bundles", () => {
   it("gives full admins edit access everywhere", () => {
@@ -119,6 +133,159 @@ describe("admin route requirements", () => {
   });
 });
 
+describe("definition-backed access roles", () => {
+  it("prefers a joined definition over the legacy bundle for the same enum role", () => {
+    // Club edited Booking Officer down to bookings: view.
+    const matrix = getAdminPermissionMatrix({
+      accessRoles: [
+        {
+          role: "ADMIN_BOOKINGS",
+          roleDefinitionId: "ardef_admin_bookings",
+          roleDefinition: {
+            overviewLevel: "VIEW",
+            bookingsLevel: "VIEW",
+            membershipLevel: "NONE",
+            financeLevel: "NONE",
+            lodgeLevel: "NONE",
+            contentLevel: "NONE",
+            supportLevel: "NONE",
+          },
+        },
+      ],
+      canLogin: true,
+    });
+    expect(matrix.bookings).toBe("view");
+    expect(matrix.lodge).toBe("none");
+  });
+
+  it("resolves custom definition-backed rows with no enum value", () => {
+    const subject = {
+      accessRoles: [
+        {
+          role: null,
+          roleDefinitionId: "ardef_custom",
+          roleDefinition: LODGE_ONLY_DEFINITION,
+        },
+      ],
+      canLogin: true,
+    };
+    expect(getAdminPermissionLevel(subject, "lodge")).toBe("edit");
+    expect(getAdminPermissionLevel(subject, "bookings")).toBe("none");
+  });
+
+  it("fails closed for custom rows selected without their definition", () => {
+    const matrix = getAdminPermissionMatrix({
+      accessRoles: [{ role: null, roleDefinitionId: "ardef_custom" }],
+      canLogin: true,
+    });
+    expect(Object.values(matrix).every((level) => level === "none")).toBe(
+      true,
+    );
+  });
+
+  it("always resolves ADMIN from the hardcoded bundle, never a definition", () => {
+    const matrix = getAdminPermissionMatrix({
+      accessRoles: [
+        {
+          role: "ADMIN",
+          roleDefinitionId: "ardef_rogue",
+          roleDefinition: LODGE_ONLY_DEFINITION,
+        },
+      ],
+      canLogin: true,
+    });
+    expect(Object.values(matrix).every((level) => level === "edit")).toBe(
+      true,
+    );
+  });
+
+  it("keeps the legacy bundle as fallback for bare enum rows", () => {
+    expect(
+      getAdminPermissionLevel({ accessRoles: ["ADMIN_BOOKINGS"] }, "bookings"),
+    ).toBe("edit");
+    expect(
+      getAdminPermissionLevel({ accessRoles: ["FINANCE_USER"] }, "finance"),
+    ).toBe("view");
+  });
+
+  it("supports matrix-based nav checks for client components", () => {
+    const matrix = getAdminPermissionMatrix({
+      accessRoles: ["ADMIN_CONTENT"],
+      canLogin: true,
+    });
+    expect(canViewAdminHrefWithMatrix(matrix, "/admin/page-content")).toBe(
+      true,
+    );
+    expect(canViewAdminHrefWithMatrix(matrix, "/admin/payments")).toBe(false);
+  });
+});
+
+describe("matrix-derived finance access", () => {
+  it("treats finance edit as manager and finance view as viewer", () => {
+    expect(hasFinanceManagerAccess({ accessRoles: ["FINANCE_ADMIN"] })).toBe(
+      true,
+    );
+    expect(hasFinanceViewerAccess({ accessRoles: ["FINANCE_USER"] })).toBe(
+      true,
+    );
+    expect(hasFinanceManagerAccess({ accessRoles: ["FINANCE_USER"] })).toBe(
+      false,
+    );
+    expect(hasFinanceViewerAccess({ accessRoles: ["USER"] })).toBe(false);
+  });
+
+  it("gives Full Admin manager access and scoped admins viewer access via their matrices", () => {
+    // Intentional widening vs the legacy enum-keyed helpers.
+    expect(hasFinanceManagerAccess({ accessRoles: ["ADMIN"] })).toBe(true);
+    expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_READONLY"] })).toBe(
+      true,
+    );
+    expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_BOOKINGS"] })).toBe(
+      true,
+    );
+    expect(hasFinanceViewerAccess({ accessRoles: ["ADMIN_CONTENT"] })).toBe(
+      false,
+    );
+  });
+
+  it("derives finance access from custom definitions", () => {
+    const financeViewRole = {
+      accessRoles: [
+        {
+          role: null,
+          roleDefinitionId: "ardef_custom_finance",
+          roleDefinition: {
+            ...LODGE_ONLY_DEFINITION,
+            lodgeLevel: "NONE",
+            financeLevel: "VIEW",
+          },
+        },
+      ],
+      canLogin: true,
+    } as const;
+    expect(hasFinanceViewerAccess(financeViewRole)).toBe(true);
+    expect(hasFinanceManagerAccess(financeViewRole)).toBe(false);
+  });
+
+  it("maps matrices to the legacy financeAccessLevel compatibility values", () => {
+    expect(
+      financeAccessLevelFromMatrix(
+        getAdminPermissionMatrix({ accessRoles: ["FINANCE_ADMIN"] }),
+      ),
+    ).toBe("MANAGER");
+    expect(
+      financeAccessLevelFromMatrix(
+        getAdminPermissionMatrix({ accessRoles: ["ADMIN_MEMBERSHIP"] }),
+      ),
+    ).toBe("VIEWER");
+    expect(
+      financeAccessLevelFromMatrix(
+        getAdminPermissionMatrix({ accessRoles: ["USER"] }),
+      ),
+    ).toBe("NONE");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Authorization matrix over every real admin API route (issue #1132).
 //
@@ -205,6 +372,11 @@ const EXPECTED_BUNDLE_LEVELS: Record<
     overview: "view",
     content: "edit",
   },
+  // Finance access is matrix-derived: the seeded Finance Viewer definition
+  // (and its fallback bundle) grants read-only finance admin access.
+  FINANCE_USER: {
+    finance: "view",
+  },
   FINANCE_ADMIN: {
     overview: "view",
     bookings: "view",
@@ -215,8 +387,10 @@ const EXPECTED_BUNDLE_LEVELS: Record<
 };
 
 // Roles that must never pass an admin API requirement, plus the anonymous /
-// empty-role identities. FINANCE_USER uses the separate /api/finance surface;
-// LODGE uses the lodge kiosk surface; ORG has no admin surface at all.
+// empty-role identities. LODGE uses the lodge kiosk surface; ORG has no
+// admin surface at all. FINANCE_USER is checked via the bundle truth table
+// instead: its matrix-derived finance view allows read-only finance-area
+// access.
 const ALWAYS_DENIED_IDENTITIES: Array<{
   label: string;
   accessRoles: AppAccessRole[];
@@ -224,7 +398,6 @@ const ALWAYS_DENIED_IDENTITIES: Array<{
   { label: "anonymous / no roles", accessRoles: [] },
   { label: "plain member", accessRoles: ["USER"] },
   { label: "lodge kiosk", accessRoles: ["LODGE"] },
-  { label: "finance viewer", accessRoles: ["FINANCE_USER"] },
   { label: "organisation", accessRoles: ["ORG"] },
 ];
 
@@ -287,7 +460,7 @@ describe("admin API authorization matrix (issue #1132)", () => {
     expect(overviewRoutes).toEqual([...OVERVIEW_CATCH_ALL_ALLOWLIST].sort());
   });
 
-  it("denies anonymous, plain member, lodge, finance-viewer, and org identities on every admin route", () => {
+  it("denies anonymous, plain member, lodge, and org identities on every admin route", () => {
     const violations = routeMethodPairs.flatMap(({ pathname, method }) => {
       const requirement = getAdminRouteRequirement(pathname, method);
       if (!requirement) return [];

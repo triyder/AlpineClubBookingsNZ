@@ -40,10 +40,8 @@ export {
   XeroDailyLimitError,
   XeroTransientOutageError,
 } from "./xero-api-client";
-export type { MeteredXeroCallOptions } from "./xero-api-client";
 
 export {
-  createXeroClient,
   disconnectXero,
   getXeroConsentUrl,
   handleXeroCallback,
@@ -62,17 +60,12 @@ export {
 
 export {
   buildEntranceFeeInvoiceIdempotencyKey,
-  determineEntranceFeeCategory,
   getAccountMapping,
   getEntranceFeeContext,
-  getEntranceFeeMapping,
-  getHutFeeItemCodeMap,
-  getItemCodeMapping,
   getResolvedAccountMapping,
 } from "./xero-mappings";
 export type {
   EntranceFeeContext,
-  ResolvedAccountMapping,
 } from "./xero-mappings";
 
 // ---------------------------------------------------------------------------
@@ -80,8 +73,6 @@ export type {
 // ---------------------------------------------------------------------------
 
 export {
-  buildMemberFullName,
-  buildXeroAddresses,
   createXeroContactForMember,
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
@@ -89,7 +80,6 @@ export {
   XeroContactValidationError,
 } from "./xero-contacts";
 export type {
-  FindOrCreateXeroContactOptions,
   XeroContactUpdateData,
 } from "./xero-contacts";
 
@@ -99,12 +89,6 @@ export type {
 
 export {
   refreshXeroContactCachesFromContact,
-  refreshXeroContactGroupMembershipCacheForContact,
-} from "./xero-contact-cache";
-export type {
-  CachedXeroContact,
-  RefreshXeroContactCachesFromContactResult,
-  RefreshXeroContactGroupMembershipCacheForContactResult,
 } from "./xero-contact-cache";
 
 export {
@@ -114,27 +98,18 @@ export {
   refreshXeroContactGroupCache,
   syncManagedXeroContactGroupForMember,
 } from "./xero-contact-groups";
-export type {
-  SyncManagedMemberXeroContactGroupResult,
-} from "./xero-contact-groups";
 
 // ---------------------------------------------------------------------------
 // Bulk sync + duplicate detection + import
 // ---------------------------------------------------------------------------
 
 export { syncContactsFromXero } from "./xero-bulk-contact-sync";
-export type { SyncReport } from "./xero-bulk-contact-sync";
 
 export { importMembersFromXeroGroups } from "./xero-member-import";
 
 export {
   findDuplicateContacts,
   findPotentialXeroContactsForMember,
-} from "./xero-duplicate-contacts";
-export type {
-  DuplicateContact,
-  DuplicateGroup,
-  PotentialXeroContactMatch,
 } from "./xero-duplicate-contacts";
 
 // ---------------------------------------------------------------------------
@@ -165,10 +140,6 @@ export {
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
 } from "./xero-booking-invoices";
-export type {
-  CreateXeroBookingInvoiceOptions,
-  UpdateXeroBookingInvoiceOptions,
-} from "./xero-booking-invoices";
 
 export {
   allocateCreditNoteToInvoice,
@@ -176,25 +147,12 @@ export {
   createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote,
 } from "./xero-credit-notes";
-export type {
-  CreateXeroRefundCreditNoteOptions,
-  CreateXeroUnappliedCreditNoteOptions,
-} from "./xero-credit-notes";
 
 export { createXeroSupplementaryInvoice } from "./xero-supplementary-invoices";
-export type {
-  CreateXeroSupplementaryInvoiceOptions,
-} from "./xero-supplementary-invoices";
 
 export { createXeroCreditNoteForModification } from "./xero-modification-credit-notes";
-export type {
-  CreateXeroModificationCreditNoteOptions,
-} from "./xero-modification-credit-notes";
 
 export {
   buildEntranceFeeLineItem,
   createXeroEntranceFeeInvoice,
-} from "./xero-entrance-fee-invoices";
-export type {
-  CreateXeroEntranceFeeInvoiceOptions,
 } from "./xero-entrance-fee-invoices";

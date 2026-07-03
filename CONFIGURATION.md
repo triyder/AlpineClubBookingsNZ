@@ -331,14 +331,19 @@ Seasonal membership type settings are database-backed and managed from
 `/admin/membership-types`. Access roles, seasonal membership type, age tier,
 Xero contact-group rules, and committee assignment are separate axes:
 
-- `MemberAccessRole` is the normalized access source for login permissions:
-  `USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`,
-  `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, and `ORG`.
-  Runtime authorization must read these rows only. `ADMIN` is the full-admin
-  bundle; the other `ADMIN_*` rows are read-only, booking officer, membership
-  officer, and content manager bundles. Multiple rows may be combined for a
-  custom role. `session.user.role` is kept only for display and older
-  serialized shapes.
+- `MemberAccessRole` is the normalized access source for login permissions.
+  Rows carry the legacy enum value (`USER`, `ADMIN`, `ADMIN_READONLY`,
+  `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`,
+  `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`) and/or a link to a club-editable
+  `AccessRoleDefinition` (managed at `/admin/access-roles`, Full Admin only).
+  Runtime authorization must read these rows (with the definition joined)
+  only. `ADMIN` is the protected full-admin bundle and is never editable;
+  the six seeded defaults — read-only admin, booking officer, membership
+  officer, content manager, finance viewer, and treasurer — are definition
+  rows that can be renamed, re-permissioned, or deleted, and new custom roles
+  can be created. Multiple rows may be combined for a custom mix; finance
+  portal access derives from the merged finance area level.
+  `session.user.role` is kept only for display and older serialized shapes.
   `Member.role` remains a compatibility/classification field with only
   `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
   club-created categories live in `MembershipType`. `financeAccessLevel`
@@ -602,6 +607,7 @@ read `MemberAccessRole` rows.
 | `SES_SNS_TOPIC_ARN`                      | SNS topic ARN for SES bounce/complaint webhooks (required for full SES feedback handling when `USE_AWS_SES=true`).                                           |
 | `SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN` | Local/dev escape hatch only; never enable for deployed SES feedback ingestion.                                                                               |
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
+| `BULK_SENDMAIL_LIMIT`                    | Admin bulk-communication sends allowed per hour (default `1`).                                                                                               |
 
 ## Address Autocomplete
 
@@ -634,6 +640,7 @@ rate-limited, or temporarily unavailable.
 | Variable                              | Description                                                                 |
 | ------------------------------------- | --------------------------------------------------------------------------- |
 | `CRON_ENABLED`                        | Enables scheduled jobs in a runtime. Blue/green web slots set this `false`. |
+| `CRON_LEADER_RUNTIME_STATUS_URL`      | Optional internal URL Admin > System Health uses to query the cron leader's runtime status (Compose defaults to the `app` service). |
 | `WAITLIST_OFFER_HOURS`                | Waitlist offer expiry window; defaults to 48 hours.                         |
 | `GROUP_SETTLEMENT_REAP_HOURS`         | Stale organiser-pays group settlement window; defaults to 48 hours (clamped to the group's check-in, 2-hour floor). |
 | `WAITLIST_TRANSACTION_RETRY_ATTEMPTS` | Optional waitlist transaction retry count.                                  |

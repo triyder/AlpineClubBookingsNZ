@@ -3,7 +3,11 @@ import {
   type MemberProfileCompletenessInput,
 } from "@/lib/member-profile-completeness";
 import { buildParentLinks } from "@/lib/member-parent-links";
-import { hasAccessRole } from "@/lib/access-roles";
+import {
+  hasAccessRole,
+  type AccessRoleAssignmentInput,
+} from "@/lib/access-roles";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 
 export const MEMBER_ONBOARDING_PROFILE_SELECT = {
   id: true,
@@ -67,7 +71,9 @@ export const MEMBER_ONBOARDING_GATE_SELECT = {
   forcePasswordChange: true,
   financeAccessLevel: true,
   twoFactorEnabled: true,
-  accessRoles: { select: { role: true } },
+  // Joined definitions so layout permission checks resolve definition-backed
+  // (custom or edited) access roles.
+  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
 } as const;
 
 export type MemberOnboardingProfile = MemberProfileCompletenessInput & {
@@ -85,7 +91,7 @@ export type MemberOnboardingProfile = MemberProfileCompletenessInput & {
   secondaryParent?: Parameters<typeof buildParentLinks>[0]["secondaryParent"];
   forcePasswordChange?: boolean | null;
   financeAccessLevel?: string | null;
-  accessRoles?: Array<{ role: string }> | null;
+  accessRoles?: Array<AccessRoleAssignmentInput> | null;
 };
 
 function toDateInputValue(value: Date | string | null | undefined) {

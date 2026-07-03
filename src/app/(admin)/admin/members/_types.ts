@@ -24,7 +24,8 @@ export interface Member {
   phoneNumber: string | null;
   dateOfBirth: string | null;
   role: MemberRole;
-  accessRoles: AppAccessRole[];
+  // Role tokens: enum values or AccessRoleDefinition ids.
+  accessRoles: string[];
   ageTier: AgeTier;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;
@@ -84,7 +85,8 @@ export interface MemberForm {
   phoneNumber: string;
   dateOfBirth: string;
   role: MemberRole;
-  accessRoles: AppAccessRole[];
+  // Role tokens: enum values or AccessRoleDefinition ids.
+  accessRoles: string[];
   ageTier: AgeTier;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;

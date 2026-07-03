@@ -509,25 +509,6 @@ export function bookingReviewRejectedTemplate(
   `);
 }
 
-export function creditAppliedToBookingTemplate(
-  firstName: string,
-  checkIn: Date,
-  checkOut: Date,
-  creditUsedCents: number,
-  remainingCreditCents: number
-): string {
-  return layout(`
-    ${heading("Account Credit Applied")}
-    ${paragraph("Hi " + escapeHtml(firstName) + ", account credit was applied to your booking.")}
-    ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
-      { label: "Credit applied", value: formatCents(creditUsedCents) },
-      { label: "Remaining credit", value: formatCents(remainingCreditCents) },
-    ])}
-  `);
-}
-
 export function emailVerificationTemplate(
   firstName: string,
   verifyUrl: string,

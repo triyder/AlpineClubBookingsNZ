@@ -15,6 +15,10 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    accessRoleDefinition: {
+      // Empty definitions: resolution falls back to legacy bundles.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: {
       count: vi.fn().mockResolvedValue(1),
       findUnique: vi.fn(),

@@ -1,6 +1,5 @@
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
-  addDaysDateOnly,
   formatDateOnly,
   getTodayDateOnly,
   isDateOnlyString,
@@ -464,50 +463,6 @@ export function resolveFinanceDashboardSelection(input: {
   };
 }
 
-export function buildFinanceDashboardQueryString(
-  selection: Pick<
-    FinanceDashboardSelection,
-    | "view"
-    | "range"
-    | "compare"
-    | "forward"
-    | "expenseCategoryId"
-    | "expenseLine"
-  > & {
-    primary?: Partial<FinanceDashboardDateWindow>;
-    comparison?: Partial<FinanceDashboardDateWindow>;
-    forwardWindow?: Partial<FinanceDashboardForwardWindow>;
-  }
-) {
-  const params = new URLSearchParams({
-    view: selection.view,
-    range: selection.range,
-    compare: selection.compare,
-    forward: selection.forward,
-  });
-
-  if (selection.range === "custom") {
-    if (selection.primary?.from) params.set("from", selection.primary.from);
-    if (selection.primary?.to) params.set("to", selection.primary.to);
-  }
-  if (selection.compare === "custom") {
-    if (selection.comparison?.from) params.set("compareFrom", selection.comparison.from);
-    if (selection.comparison?.to) params.set("compareTo", selection.comparison.to);
-  }
-  if (selection.forward === "custom") {
-    if (selection.forwardWindow?.from) params.set("forwardFrom", selection.forwardWindow.from);
-    if (selection.forwardWindow?.to) params.set("forwardTo", selection.forwardWindow.to);
-  }
-  if (selection.expenseCategoryId) {
-    params.set("expenseCategoryId", selection.expenseCategoryId);
-  }
-  if (selection.expenseLine) {
-    params.set("expenseLine", selection.expenseLine);
-  }
-
-  return params.toString();
-}
-
 function formatMonthLabel(date: Date) {
   return date.toLocaleDateString(APP_LOCALE, {
     month: "long",
@@ -542,8 +497,4 @@ export function financeDashboardDateRangeDayCount(window: {
   const from = parseDateOnly(window.from);
   const to = parseDateOnly(window.to);
   return Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
-}
-
-export function nextDateOnly(dateOnlyValue: string) {
-  return formatDateOnly(addDaysDateOnly(parseDateOnly(dateOnlyValue), 1));
 }

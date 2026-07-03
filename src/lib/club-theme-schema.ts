@@ -116,10 +116,6 @@ export function isValidThemeColour(value: string): boolean {
   return HEX_COLOUR_PATTERN.test(trimmed) || OKLCH_COLOUR_PATTERN.test(trimmed);
 }
 
-export function isHexColour(value: string): boolean {
-  return HEX_COLOUR_PATTERN.test(value.trim());
-}
-
 export function logoDataUrlByteLength(value: string): number | null {
   const match = value.trim().match(LOGO_DATA_URL_PATTERN);
   if (!match) {

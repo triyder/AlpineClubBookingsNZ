@@ -72,6 +72,12 @@ export async function submitLoginForm(
   password: string = DEMO_PASSWORD,
 ): Promise<void> {
   await page.goto("/login");
+  // Seen once in CI (#1154): the freshly-loaded page transiently resolved two
+  // #email nodes, breaking strict mode. 240 local probe iterations (including
+  // 8x CPU throttling) never reproduced it, so treat it as a renderer
+  // artefact: waiting for exactly one #email rides through any transient
+  // duplicate while a *persistent* duplicate — a real app bug — still fails.
+  await expect(page.locator("#email")).toHaveCount(1);
   await page.locator("#email").fill(email);
   await page.locator("#password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();

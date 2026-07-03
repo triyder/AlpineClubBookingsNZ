@@ -11,15 +11,14 @@ import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { isFullAdmin } from "@/lib/access-roles";
 import {
-  hasFinanceViewerAccess,
-  resolveAccessRoles,
-} from "@/lib/access-roles";
-import {
+  getAdminPermissionMatrix,
   getAdminRouteRequirement,
   getFirstAccessibleAdminHref,
   hasAdminAreaAccess,
   hasAdminPortalAccess,
+  hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { isClubThemeComplete } from "@/lib/club-theme";
@@ -95,7 +94,10 @@ export default async function AdminLayout({
     isHutLeader: false,
     isStayingGuest: false,
   };
-  const accessRoles = resolveAccessRoles(member);
+  // Precomputed server-side: the sidebar is a client component and cannot
+  // resolve database-backed role definitions itself.
+  const permissionMatrix = getAdminPermissionMatrix(member);
+  const actorIsFullAdmin = isFullAdmin(member);
   const canManageContent = hasAdminAreaAccess(member, {
     area: "content",
     level: "edit",
@@ -115,7 +117,11 @@ export default async function AdminLayout({
       <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
         <NavBar user={user} features={effectiveModules} />
         <div className="flex flex-1">
-          <AdminSidebar features={effectiveModules} accessRoles={accessRoles} />
+          <AdminSidebar
+            features={effectiveModules}
+            permissionMatrix={permissionMatrix}
+            isFullAdmin={actorIsFullAdmin}
+          />
           <div className="flex flex-1 flex-col md:overflow-hidden">
             <main className="flex-1 overflow-y-auto p-6 pb-24 print:overflow-visible print:p-0 md:p-8 md:pb-28">
               <div className="mb-4 flex justify-end print:hidden">

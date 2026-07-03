@@ -37,12 +37,6 @@ import {
   getNominationTokenExpiryDate,
 } from "@/lib/nomination-token-policy";
 
-export {
-  NOMINATION_AUTOMATIC_REMINDER_LIMIT,
-  NOMINATION_TOKEN_TTL_DAYS,
-  getNominationTokenExpiryDate,
-} from "@/lib/nomination-token-policy";
-
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
 

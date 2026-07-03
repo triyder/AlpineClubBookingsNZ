@@ -75,9 +75,12 @@ fork for another organisation. See `NOTICE.md`.
    authentication, and Google Analytics default off until an admin enables
    them. General-purpose modules default on and can be disabled there.
 6. Use **Admin > Members** to assign access roles. `Full Admin` keeps all
-   admin permissions; `Read-only Admin`, `Booking Officer`, `Membership Officer`,
-   `Treasurer`, and `Content Manager` are bundled permissions that can be
-   combined on one login-enabled member for custom access.
+   admin permissions and is never editable; `Read-only Admin`,
+   `Booking Officer`, `Membership Officer`, `Treasurer`, `Finance Viewer`, and
+   `Content Manager` are seeded permission bundles that can be combined on one
+   login-enabled member for custom access. Use **Admin > Access Roles**
+   (Full Admin only) to rename them, adjust their per-area permissions, delete
+   unused ones, or create brand-new roles.
 7. Use **Admin > Membership Types** to review the seeded seasonal membership
    types: Full, Associate, Life, School, Non-Member, and Family. Associate is
    the built-in Associate/Reserve-style type and can be renamed by the club.

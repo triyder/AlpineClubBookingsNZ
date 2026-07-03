@@ -59,8 +59,3 @@ export async function getXeroFinancialYearEndMonth(
     return cached?.month ?? null;
   }
 }
-
-/** Clear the in-process cache (used after a manual refresh / in tests). */
-export function clearXeroOrganisationCache(): void {
-  cached = null;
-}

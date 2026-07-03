@@ -1,20 +1,5 @@
 import { formatCents } from "@/lib/utils";
 
-/**
- * Shared palette and value formatters for the finance dashboard charts. Colours
- * follow the brand tokens in globals.css so charts sit consistently with the
- * rest of the app.
- */
-export const FINANCE_SERIES_COLORS = {
-  revenue: "#ffcb05", // brand gold
-  costs: "#ff7c12", // safety orange
-  bookings: "#6a6a63", // ridge
-  neutral: "#4d4d46", // charcoal
-  positive: "#16a34a",
-  negative: "#dc2626",
-  accent: "#2563eb",
-} as const;
-
 /** Ordered palette for mix/breakdown charts (pies, stacked bars). */
 export const FINANCE_MIX_COLORS = [
   "#ffcb05",

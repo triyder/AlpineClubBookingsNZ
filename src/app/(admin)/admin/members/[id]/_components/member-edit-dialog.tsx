@@ -31,24 +31,35 @@ import { getMissingFieldsForXeroCreate } from "@/lib/admin-member-detail-helpers
 import type { MemberAddressValues } from "@/lib/member-address";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import {
-  financeAccessLevelFromAccessRoles,
   hasPrivilegedAccess,
   legacyRoleFromAccessRoles,
-  normalizeAssignableAccessRoles,
+  normalizeAssignableAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
-  type AppAccessRole,
 } from "@/lib/access-roles";
+import { financeAccessLevelFromMatrix } from "@/lib/admin-permissions";
+import {
+  previewMatrixForTokens,
+  type AccessRoleOption,
+} from "@/lib/access-role-definitions";
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options";
 import type {
   EditForm,
   EmailInheritanceSearchResult,
   MemberDetail,
 } from "../_types";
 
-function buildAccessRolePatch(accessRoles: AppAccessRole[]) {
+function buildAccessRolePatch(
+  accessRoles: string[],
+  roleOptions: readonly AccessRoleOption[],
+) {
   return {
     accessRoles,
     role: legacyRoleFromAccessRoles(accessRoles),
-    financeAccessLevel: financeAccessLevelFromAccessRoles(accessRoles),
+    // Matrix-derived so definition-backed (custom or edited) roles are
+    // reflected; keeps unchanged echo submissions no-ops server-side.
+    financeAccessLevel: financeAccessLevelFromMatrix(
+      previewMatrixForTokens(accessRoles, roleOptions),
+    ),
   };
 }
 
@@ -139,6 +150,7 @@ export function MemberEditDialog({
   onXeroUnlink,
   onSubmit,
 }: MemberEditDialogProps) {
+  const roleOptions = useAccessRoleOptions();
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   // Mirror the server-side Full Admin gates (#1012/#1026/#1038) so scoped
   // admins see disabled controls instead of a 403 after the fact. "live" =
@@ -160,18 +172,18 @@ export function MemberEditDialog({
     if (formError) scrollToError(formErrorRef);
   }, [formError, scrollToError]);
 
-  const toggleAccessRole = (role: AppAccessRole, checked: boolean) => {
+  const toggleAccessRole = (token: string, checked: boolean) => {
     onChangeForm((current) => {
-      const nextRoles = normalizeAssignableAccessRoles(
+      const nextRoles = normalizeAssignableAccessRoleTokens(
         checked
-          ? [...current.accessRoles, role]
-          : current.accessRoles.filter((value) => value !== role),
+          ? [...current.accessRoles, token]
+          : current.accessRoles.filter((value) => value !== token),
         { canLogin: current.canLogin },
       );
 
       return {
         ...current,
-        ...buildAccessRolePatch(nextRoles),
+        ...buildAccessRolePatch(nextRoles, roleOptions),
       };
     });
   };
@@ -210,7 +222,7 @@ export function MemberEditDialog({
                   ...f,
                   canLogin: e.target.checked,
                   ...buildAccessRolePatch(
-                    normalizeAssignableAccessRoles(
+                    normalizeAssignableAccessRoleTokens(
                       e.target.checked
                         ? f.accessRoles.length > 0
                           ? f.accessRoles
@@ -218,6 +230,7 @@ export function MemberEditDialog({
                         : [],
                       { canLogin: e.target.checked },
                     ),
+                    roleOptions,
                   ),
                 }))
               }
@@ -604,6 +617,7 @@ export function MemberEditDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">
             <MemberAccessRolePicker
+              roleOptions={roleOptions}
               accessRoles={form.accessRoles}
               canLogin={form.canLogin}
               disabled={isSelf}

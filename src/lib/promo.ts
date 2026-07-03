@@ -401,13 +401,6 @@ export function shouldPersistPromoRedemption(result: PromoDiscountResult | null 
   );
 }
 
-export function formatSignedPromoAdjustmentCents(adjustmentCents: number) {
-  if (adjustmentCents === 0) return "$0.00";
-  const absolute = Math.abs(adjustmentCents);
-  const formatted = `$${(absolute / 100).toFixed(2)}`;
-  return adjustmentCents > 0 ? `+${formatted}` : `-${formatted}`;
-}
-
 /**
  * Get the total number of free nights a member has already consumed
  * from a specific promo code across all their redemptions.
