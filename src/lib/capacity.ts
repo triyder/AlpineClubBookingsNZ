@@ -42,34 +42,67 @@ function getNextMonthStartDateOnly(year: number, month: number): Date {
   return getMonthStartDateOnly(nextMonthYear, nextMonth);
 }
 
-export function getOccupiedBedsForNight(
-  night: Date,
-  bookings: Array<{
-    checkIn?: Date | null;
-    checkOut?: Date | null;
-    guests?: GuestStayRange[] | null;
-  }>
-): number {
-  const nightKey = formatDateOnly(night);
-  let occupiedBeds = 0;
+type OccupancyBooking = {
+  checkIn?: Date | null;
+  checkOut?: Date | null;
+  guests?: GuestStayRange[] | null;
+};
 
+type OccupancyIndexEntry = {
+  booking: OccupancyBooking;
+  checkIn: Date;
+  checkOut: Date;
+  checkInKey: string;
+  checkOutKey: string;
+};
+
+/**
+ * Precompute each booking's date-only keys once (#1146). The occupancy loops
+ * evaluate every (night, booking) pair, so formatting the booking range per
+ * pair made month availability and capacity checks O(nights x bookings)
+ * timezone conversions; the index makes each pair a string comparison.
+ */
+function buildOccupancyIndex(bookings: OccupancyBooking[]): OccupancyIndexEntry[] {
+  const index: OccupancyIndexEntry[] = [];
   for (const booking of bookings) {
     if (!booking.checkIn || !booking.checkOut) {
       continue;
     }
+    index.push({
+      booking,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      checkInKey: formatDateOnlyForTimeZone(booking.checkIn),
+      checkOutKey: formatDateOnlyForTimeZone(booking.checkOut),
+    });
+  }
+  return index;
+}
 
-    const bookingCheckInKey = formatDateOnlyForTimeZone(booking.checkIn);
-    const bookingCheckOutKey = formatDateOnlyForTimeZone(booking.checkOut);
+function getOccupiedBedsForNightFromIndex(
+  night: Date,
+  index: OccupancyIndexEntry[]
+): number {
+  const nightKey = formatDateOnly(night);
+  let occupiedBeds = 0;
 
-    if (nightKey >= bookingCheckInKey && nightKey < bookingCheckOutKey) {
-      occupiedBeds += countActiveGuestsForNight(booking.guests, night, {
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
+  for (const entry of index) {
+    if (nightKey >= entry.checkInKey && nightKey < entry.checkOutKey) {
+      occupiedBeds += countActiveGuestsForNight(entry.booking.guests, night, {
+        checkIn: entry.checkIn,
+        checkOut: entry.checkOut,
       });
     }
   }
 
   return occupiedBeds;
+}
+
+export function getOccupiedBedsForNight(
+  night: Date,
+  bookings: OccupancyBooking[]
+): number {
+  return getOccupiedBedsForNightFromIndex(night, buildOccupancyIndex(bookings));
 }
 
 /**
@@ -103,8 +136,9 @@ export async function checkCapacity(
     },
   });
 
+  const occupancyIndex = buildOccupancyIndex(overlappingBookings);
   const nightDetails: NightAvailability[] = nights.map((night) => {
-    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
+    const occupiedBeds = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
 
     return {
       date: night,
@@ -154,8 +188,9 @@ export async function checkCapacityForGuestRanges(
     },
   });
 
+  const occupancyIndex = buildOccupancyIndex(overlappingBookings);
   const nightDetails: NightAvailability[] = nights.map((night) => {
-    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
+    const occupiedBeds = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
     const proposedBeds = countActiveGuestsForNight(guests, night, {
       checkIn: start,
       checkOut: exclusiveEnd,
@@ -203,9 +238,10 @@ export async function getMonthAvailability(
 
   const availability = new Map<string, number>();
   const nights = eachDateOnlyInRange(startDate, endDate);
+  const occupancyIndex = buildOccupancyIndex(overlappingBookings);
 
   for (const night of nights) {
-    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
+    const occupiedBeds = getOccupiedBedsForNightFromIndex(night, occupancyIndex);
 
     const key = formatDateOnly(night);
     availability.set(key, occupiedBeds);

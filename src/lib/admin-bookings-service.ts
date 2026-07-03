@@ -267,6 +267,51 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   return where;
 }
 
+/**
+ * Lightweight first pass for the default list view (#1146): only the columns
+ * the sort comparator needs. The heavy relation load then happens for just
+ * the page of bookings actually returned, instead of every match.
+ */
+async function loadBookingSortRows(where: Prisma.BookingWhereInput) {
+  return prisma.booking.findMany({
+    where,
+    select: {
+      id: true,
+      checkIn: true,
+      updatedAt: true,
+      finalPriceCents: true,
+      status: true,
+      member: { select: { firstName: true, lastName: true } },
+      _count: { select: { guests: true } },
+    },
+  });
+}
+
+type BookingSortRow = Awaited<ReturnType<typeof loadBookingSortRows>>[number];
+
+/**
+ * Sort key for the lightweight rows. MUST stay semantically identical to
+ * sortValue() below — the fast path is only valid because the two comparators
+ * order the same bookings the same way.
+ */
+function sortRowValue(row: BookingSortRow, sortBy: BookingSortBy) {
+  switch (sortBy) {
+    case "member":
+      return `${row.member.lastName} ${row.member.firstName}`.toLowerCase();
+    case "checkIn":
+      return row.checkIn;
+    case "guests":
+      return row._count?.guests ?? 0;
+    case "total":
+      return row.finalPriceCents;
+    case "status":
+      return row.status;
+    case "lastUpdated":
+    default:
+      return row.updatedAt;
+  }
+}
+
 async function loadBookingCandidates(where: Prisma.BookingWhereInput) {
   return prisma.booking.findMany({
     where,
@@ -607,7 +652,58 @@ export async function listAdminBookings(
   const sortBy = getAdminBookingSortBy(query);
   const sortDir = query.sortDir ?? getDefaultAdminBookingSortDir(sortBy);
   const bedAllocationEnabled = options.bedAllocationEnabled ?? true;
-  const candidates = await loadBookingCandidates(buildBookingWhere(query));
+  const where = buildBookingWhere(query);
+
+  // Fast path (#1146): the payment-source/Xero/bed/change filters are derived
+  // from relations + Xero activity in JS, so they force loading every match.
+  // When they are all "all" (the default view) the filter step is a no-op, so
+  // sort on a lightweight projection first and load the heavy relations for
+  // only the page actually returned.
+  const derivedFiltersActive =
+    query.paymentSource !== "all" ||
+    query.xeroState !== "all" ||
+    (bedAllocationEnabled && query.bedState !== "all") ||
+    query.changeState !== "all";
+
+  if (!derivedFiltersActive) {
+    const direction = sortDir === "asc" ? 1 : -1;
+    const sortRows = await loadBookingSortRows(where);
+    sortRows.sort((left, right) => {
+      const primary =
+        compareValues(sortRowValue(left, sortBy), sortRowValue(right, sortBy)) *
+        direction;
+      if (primary !== 0) return primary;
+      return left.id.localeCompare(right.id);
+    });
+
+    const pageIds = sortRows.slice(0, 100).map((row) => row.id);
+    const pageCandidates = await loadBookingCandidates({ id: { in: pageIds } });
+    const { activityByRecord, invoiceLinkedPaymentIds } =
+      await loadXeroStateInputs(pageCandidates);
+    const rowsById = new Map(
+      pageCandidates.map((booking): [string, AdminBookingRow] => [
+        booking.id,
+        {
+          ...booking,
+          operational: deriveBookingOperationalState(
+            booking,
+            activityByRecord,
+            invoiceLinkedPaymentIds,
+            { bedAllocationEnabled }
+          ),
+        },
+      ])
+    );
+
+    return {
+      bookings: pageIds.flatMap((id) => rowsById.get(id) ?? []),
+      total: sortRows.length,
+      sortBy,
+      sortDir,
+    };
+  }
+
+  const candidates = await loadBookingCandidates(where);
   const { activityByRecord, invoiceLinkedPaymentIds } = await loadXeroStateInputs(candidates);
 
   const filtered = candidates
