@@ -1,14 +1,22 @@
 import type { FinanceAccessLevel, Prisma, Role } from "@prisma/client";
 import {
   accessRolesFromCompatibilityFields,
-  normalizeAssignableAccessRoles,
+  normalizeAssignableAccessRoleTokens,
   type AppAccessRole,
 } from "@/lib/access-roles";
+import {
+  accessRoleAssignmentRowsFromTokens,
+  loadAccessRoleDefinitions,
+} from "@/lib/access-role-definitions";
 
 type MemberAccessRoleWriter = {
   memberAccessRole: Pick<
     Prisma.TransactionClient["memberAccessRole"],
     "createMany"
+  >;
+  accessRoleDefinition: Pick<
+    Prisma.TransactionClient["accessRoleDefinition"],
+    "findMany"
   >;
 };
 
@@ -21,7 +29,7 @@ export async function ensureMemberAccessRoles(
     assignedByMemberId?: string | null;
   },
 ) {
-  const roles = normalizeAssignableAccessRoles(params.roles, {
+  const roles = normalizeAssignableAccessRoleTokens(params.roles, {
     canLogin: params.canLogin,
   });
 
@@ -29,11 +37,21 @@ export async function ensureMemberAccessRoles(
     return { count: 0, roles };
   }
 
+  // Dual-write: enum rows are linked to their seeded definition when it
+  // exists; definition-id tokens become definition-only rows. Unknown
+  // tokens are dropped by the row resolver (callers validate first).
+  const definitions = await loadAccessRoleDefinitions(db);
+  const assignmentRows = accessRoleAssignmentRowsFromTokens(
+    roles,
+    definitions,
+  );
+
   const assignedByMemberId = params.assignedByMemberId?.trim() || null;
   const result = await db.memberAccessRole.createMany({
-    data: roles.map((role) => ({
+    data: assignmentRows.map((row) => ({
       memberId: params.memberId,
-      role,
+      role: row.role,
+      roleDefinitionId: row.roleDefinitionId,
       ...(assignedByMemberId ? { assignedByMemberId } : {}),
     })),
     skipDuplicates: true,

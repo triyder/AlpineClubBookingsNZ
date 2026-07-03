@@ -161,6 +161,29 @@ export function normalizeAssignableAccessRoles(
   return deduped.filter((role) => role !== "FINANCE_USER");
 }
 
+/**
+ * Token-aware variant of normalizeAssignableAccessRoles: keeps definition-id
+ * tokens as-is and applies the same canLogin clearing and legacy
+ * Treasurer-supersedes-Finance-Viewer rule to the enum tokens. Callers must
+ * validate definition-id tokens against the definitions table before
+ * persisting.
+ */
+export function normalizeAssignableAccessRoleTokens(
+  tokens: ReadonlyArray<string | null | undefined>,
+  options: { canLogin?: boolean | null } = {},
+): string[] {
+  if (options.canLogin === false) return [];
+
+  const deduped: string[] = [];
+  for (const token of tokens) {
+    if (!token || deduped.includes(token)) continue;
+    deduped.push(token);
+  }
+
+  if (!deduped.includes("FINANCE_ADMIN")) return deduped;
+  return deduped.filter((token) => token !== "FINANCE_USER");
+}
+
 export function resolveAccessRoles(input: AccessRoleInput): AppAccessRole[] {
   const explicit = (input.accessRoles ?? [])
     .map((item) => (typeof item === "string" ? item : item.role))
