@@ -134,4 +134,24 @@ describe("payments options route", () => {
       unavailableReason: "Xero integration is not enabled.",
     });
   });
+
+  it("mirrors the groupBookings module flag for the booking wizard", async () => {
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      xeroIntegration: false,
+      internetBankingPayments: false,
+      groupBookings: true,
+    });
+
+    let body = await (await GET(request("/api/payments/options"))).json();
+    expect(body.groupBookingsEnabled).toBe(true);
+
+    mocks.loadEffectiveModuleFlags.mockResolvedValue({
+      xeroIntegration: false,
+      internetBankingPayments: false,
+      groupBookings: false,
+    });
+
+    body = await (await GET(request("/api/payments/options"))).json();
+    expect(body.groupBookingsEnabled).toBe(false);
+  });
 });

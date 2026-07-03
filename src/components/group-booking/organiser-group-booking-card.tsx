@@ -252,7 +252,7 @@ export function OrganiserGroupBookingCard({
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" /> Group booking
+            <Users className="h-5 w-5" /> Invite others to join this trip
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">

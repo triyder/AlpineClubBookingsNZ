@@ -129,17 +129,17 @@ export async function enqueuePaymentIntentCancellationRecovery({
   });
 }
 
-export async function enqueueBookingModificationRefundRecovery({
+async function enqueueLedgerRefundRecovery({
   bookingId,
   paymentId,
-  bookingModificationId,
   amountCents,
+  idempotencyKey,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
-  bookingModificationId: string;
   amountCents: number;
+  idempotencyKey: string;
   store?: PaymentRecoveryStore;
 }) {
   const payment = await store.payment.findUnique({
@@ -164,12 +164,9 @@ export async function enqueueBookingModificationRefundRecovery({
 
   if (!representativePaymentIntentId) {
     throw new Error(
-      "Cannot enqueue booking modification refund recovery without a payment intent",
+      "Cannot enqueue ledger refund recovery without a payment intent",
     );
   }
-
-  const idempotencyKey =
-    buildBookingModificationRefundIdempotencyKey(bookingModificationId);
 
   return store.paymentRecoveryOperation.upsert({
     where: { idempotencyKey },
@@ -189,6 +186,58 @@ export async function enqueueBookingModificationRefundRecovery({
       paymentIntentId: representativePaymentIntentId,
       amountCents,
     },
+  });
+}
+
+export async function enqueueBookingModificationRefundRecovery({
+  bookingId,
+  paymentId,
+  bookingModificationId,
+  amountCents,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  bookingModificationId: string;
+  amountCents: number;
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey:
+      buildBookingModificationRefundIdempotencyKey(bookingModificationId),
+    store,
+  });
+}
+
+/**
+ * Durable recovery for an approved refund appeal whose Stripe refund failed
+ * (#1039 item 1, PR #846 residual). The approval claim stands and the refund
+ * completes through the recovery cron; the processor refunds only what the
+ * ledger still shows outstanding, so a partial Stripe success cannot
+ * double-refund.
+ */
+export async function enqueueRefundRequestRefundRecovery({
+  bookingId,
+  paymentId,
+  refundRequestId,
+  amountCents,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  refundRequestId: string;
+  amountCents: number;
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey: `refund_request_refund_${refundRequestId}`,
+    store,
   });
 }
 
@@ -632,14 +681,30 @@ async function processBookingModificationRefundOperation(
     return;
   }
 
+  // Refund-request recoveries reuse the route's original Stripe idempotency
+  // key prefix (refund_request_<id>) so a retry after a refund that succeeded
+  // on Stripe but was never recorded replays the same refund instead of
+  // issuing a new one (#1039 item 1). Modification refunds keep their
+  // operation-scoped prefix.
+  const refundRequestId = operation.idempotencyKey.startsWith(
+    "refund_request_refund_",
+  )
+    ? operation.idempotencyKey.slice("refund_request_refund_".length)
+    : null;
+
   await refundPaymentTransactions({
     paymentId: operation.paymentId,
     amountCents: outstandingCents,
     metadata: {
       bookingId: operation.bookingId,
-      reason: "booking_modification_refund_recovery",
+      reason: refundRequestId
+        ? "refund_request_refund_recovery"
+        : "booking_modification_refund_recovery",
+      ...(refundRequestId ? { refundRequestId } : {}),
     },
-    idempotencyKeyPrefix: `payment_recovery_modification_refund_${operation.id}`,
+    idempotencyKeyPrefix: refundRequestId
+      ? `refund_request_${refundRequestId}`
+      : `payment_recovery_modification_refund_${operation.id}`,
   });
 
   await completePaymentRecoveryOperation(operation.id);

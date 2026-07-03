@@ -50,5 +50,8 @@ export async function GET(request: Request) {
       },
       internetBanking,
     },
+    // The booking wizard offers a "group trip" option; it needs the module
+    // flag client-side and this is the flags-aware route it already calls.
+    groupBookingsEnabled: modules.groupBookings,
   });
 }

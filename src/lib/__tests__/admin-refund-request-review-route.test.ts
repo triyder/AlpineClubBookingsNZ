@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  enqueueRefundRequestRefundRecovery: vi.fn(),
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   refundRequestFindUnique: vi.fn(),
@@ -72,6 +73,11 @@ vi.mock("@/lib/logger", () => ({
     info: vi.fn(),
     debug: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueueRefundRequestRefundRecovery: (...args: unknown[]) =>
+    mocks.enqueueRefundRequestRefundRecovery(...args),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
@@ -252,19 +258,45 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 
-  // Issue #818: if the Stripe refund fails after the claim, the claim is
-  // released back to PENDING so the appeal can be retried.
-  it("releases the claim back to PENDING when the Stripe refund fails", async () => {
+  // #1039 item 1 (PR #846 residual): a failed Stripe refund no longer bounces
+  // the claim back to PENDING — the approval stands and a durable payment
+  // recovery operation completes the refund without an operator.
+  it("keeps the approval and enqueues durable refund recovery when the Stripe refund fails", async () => {
     mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
     mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
     mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+    mocks.enqueueRefundRequestRefundRecovery.mockResolvedValue({ id: "op_1" });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    // Only the claiming updateMany runs; the claim is never reverted.
+    expect(mocks.refundRequestUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueRefundRequestRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        refundRequestId: "refund_1",
+        amountCents: expect.any(Number),
+      })
+    );
+    // The Xero credit note still queues: the refund will complete durably.
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalled();
+  });
+
+  it("falls back to releasing the claim when the recovery enqueue also fails", async () => {
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+    mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(
+      new Error("db unavailable")
+    );
 
     const response = await PUT(approveRequest(), {
       params: Promise.resolve({ id: "refund_1" }),
     });
 
     expect(response.status).toBe(500);
-    // First updateMany claims (PENDING -> APPROVED); second reverts to PENDING.
     expect(mocks.refundRequestUpdateMany).toHaveBeenCalledTimes(2);
     expect(mocks.refundRequestUpdateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
