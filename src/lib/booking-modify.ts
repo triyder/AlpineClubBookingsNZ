@@ -144,7 +144,7 @@ type ProposedGuestPricingInput = {
 };
 
 type ProposedRemainingGuest = {
-  guest: BookingGuest;
+  guest: BookingGuest & { nights?: { stayDate: Date; priceCents?: number }[] };
   stayStart: Date;
   stayEnd: Date;
   nights?: Date[];
@@ -232,11 +232,28 @@ export type LoadedPromoRedemption = PromoRedemption & {
 export type LoadedBookingForModify = Booking & {
   // Guests carry their explicit night set (issue #713) so an edit preserves the
   // gaps of guests that are not being changed and re-syncs only edited guests.
-  guests: Array<BookingGuest & { nights?: { stayDate: Date }[] }>;
+  guests: Array<
+    BookingGuest & { nights?: { stayDate: Date; priceCents?: number }[] }
+  >;
   payment: Payment | null;
   member: Member;
   promoRedemption: LoadedPromoRedemption | null;
 };
+
+/**
+ * The guest's stored per-night prices, usable as `lockedNightPrices` (#1036).
+ * Rows loaded without `priceCents` (or legacy guests without night rows)
+ * yield no locks, so those nights price at current season rates.
+ */
+export function lockedNightPricesForGuest(guest: {
+  nights?: { stayDate: Date; priceCents?: number }[];
+}): Array<{ stayDate: Date; priceCents: number }> {
+  return (guest.nights ?? []).flatMap((night) =>
+    typeof night.priceCents === "number"
+      ? [{ stayDate: night.stayDate, priceCents: night.priceCents }]
+      : [],
+  );
+}
 
 export type ResolvedGuestNameUpdate = {
   guestId: string;
@@ -659,6 +676,9 @@ export async function prepareGuestPlan(
       stayStart: entry.stayStart,
       stayEnd: entry.stayEnd,
       nights: entry.nights,
+      // Nights the guest already bought keep their booked price (#1036);
+      // only nights outside the stored set price at current season rates.
+      lockedNightPrices: lockedNightPricesForGuest(entry.guest),
     })),
     ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
       bookingGuestId: null,
@@ -920,6 +940,10 @@ export async function calculateModifiedPricing(
       stayStart?: Date | null;
       stayEnd?: Date | null;
       nights?: Date[];
+      lockedNightPrices?: ReadonlyArray<{
+        stayDate: Date | string;
+        priceCents: number;
+      }> | null;
     }>;
     skipBookingLifecycleRules: boolean;
     seasonRateData: SeasonRateData[];

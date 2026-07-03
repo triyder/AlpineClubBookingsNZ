@@ -75,6 +75,17 @@ Booking changes must not orphan or desynchronize:
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
 
+Nightly prices lock at booking time: every edit path — batch modify, date
+change, guest add, single-guest removal, and the modify-quote preview — prices
+only the changed guests/nights at current season rates. A night a guest
+already bought keeps the price stored on its `BookingGuestNight` row, so a
+season-rate change between booking and edit never rolls into unchanged nights
+(adding one guest costs exactly that guest's price; removing one returns
+exactly theirs, policy permitting). The waitlist offer reprice is the
+deliberate exception: an offer re-bases the whole booking at current rates
+before the member confirms, and the offer email states that price. Legacy
+guests without stored night rows price at current rates.
+
 Every booking-reduction path — batch modify (`removeGuestIds`/date change),
 single-guest removal (`DELETE …/guests/[guestId]`), and date change
 (`modify-dates`) — returns member money limited by the same cancellation-policy

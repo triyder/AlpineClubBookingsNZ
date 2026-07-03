@@ -111,7 +111,7 @@ export async function modifyBookingBatch({
       include: {
         // Per-night sets (issue #713): preserve unedited guests' gaps and
         // re-sync edited guests' nights.
-        guests: { include: { nights: { select: { stayDate: true } } } },
+        guests: { include: { nights: { select: { stayDate: true, priceCents: true } } } },
         payment: true,
         member: true,
         promoRedemption: {

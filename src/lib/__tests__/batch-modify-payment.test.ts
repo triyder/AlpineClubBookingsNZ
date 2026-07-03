@@ -445,6 +445,51 @@ describe("PUT /api/bookings/[id]/modify", () => {
     }));
   });
 
+  it("passes stored night prices to the pricing engine on batch edits (#1036)", async () => {
+    const booking = makeBooking();
+    (booking.guests as Array<Record<string, unknown>>)[0].nights = [
+      { stayDate: new Date("2026-06-01"), priceCents: 2500 },
+      { stayDate: new Date("2026-06-02"), priceCents: 2500 },
+    ];
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    mockCalculateBookingPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 5000,
+      guests: guests.map(() => ({
+        priceCents: 5000,
+        perNightCents: [2500, 2500],
+        nightDates: [],
+      })),
+    })) as any);
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ addGuests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: true }] }),
+    });
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+    expect(response.status).toBe(200);
+
+    const pricedGuestLists = mockCalculateBookingPrice.mock.calls.map(
+      (call) => call[2] as Array<Record<string, unknown>>,
+    );
+    const fullPartyCall = pricedGuestLists.find((guests) =>
+      guests?.some((guest) => guest.bookingGuestId === "g1"),
+    );
+    expect(fullPartyCall?.find((guest) => guest.bookingGuestId === "g1")).toEqual(
+      expect.objectContaining({
+        lockedNightPrices: [
+          expect.objectContaining({ priceCents: 2500 }),
+          expect.objectContaining({ priceCents: 2500 }),
+        ],
+      }),
+    );
+  });
+
   it("blocks batch edits on a quote-priced booking (#1032)", async () => {
     // A booking converted from a school/public booking request keeps its
     // negotiated flat total; the batch edit path would reprice every guest
