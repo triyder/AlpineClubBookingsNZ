@@ -7,6 +7,7 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import * as Sentry from "@sentry/nextjs";
 import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -159,6 +160,7 @@ export async function processStripeWebhookEvent(
     }
 
     logger.error({ err: error, eventType: event.type }, "Error processing webhook event");
+    Sentry.captureException(error);
 
     // OBS-08: Record failed webhook processing
     try {
