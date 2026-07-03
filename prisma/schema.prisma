@@ -1596,6 +1596,10 @@ model PaymentRecoveryOperation {
   // so retries re-request exactly the unfinished slices with their original
   // Stripe idempotency keys. Array of { paymentTransactionId, amountCents }.
   allocationPlan       Json?
+  // #1152: the originating route's Stripe idempotency key prefix, so a
+  // recovery replays the exact keys the route used — a refund that succeeded
+  // on Stripe but was never recorded locally is replayed, not re-minted.
+  stripeKeyPrefix      String?
   idempotencyKey       String                         @unique
   attempts             Int                            @default(0)
   nextRetryAt          DateTime?                      @default(now())

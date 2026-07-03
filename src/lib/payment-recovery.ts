@@ -146,10 +146,12 @@ async function enqueueLedgerRefundRecovery({
   paymentId,
   amountCents,
   idempotencyKey,
+  stripeKeyPrefix,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
+  stripeKeyPrefix?: string | null;
   amountCents: number;
   idempotencyKey: string;
   store?: PaymentRecoveryStore;
@@ -190,6 +192,7 @@ async function enqueueLedgerRefundRecovery({
       paymentIntentId: representativePaymentIntentId,
       amountCents,
       idempotencyKey,
+      stripeKeyPrefix: stripeKeyPrefix ?? null,
       nextRetryAt: new Date(),
     },
     update: {
@@ -197,6 +200,7 @@ async function enqueueLedgerRefundRecovery({
       paymentId,
       paymentIntentId: representativePaymentIntentId,
       amountCents,
+      stripeKeyPrefix: stripeKeyPrefix ?? null,
     },
   });
 }
@@ -206,12 +210,19 @@ export async function enqueueBookingModificationRefundRecovery({
   paymentId,
   bookingModificationId,
   amountCents,
+  stripeKeyPrefix,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
   bookingModificationId: string;
   amountCents: number;
+  /**
+   * The exact Stripe idempotency key prefix the originating route used
+   * (#1152). The recovery worker replays it so a refund that succeeded on
+   * Stripe but was never recorded locally is replayed, not re-minted.
+   */
+  stripeKeyPrefix?: string | null;
   store?: PaymentRecoveryStore;
 }) {
   return enqueueLedgerRefundRecovery({
@@ -220,6 +231,7 @@ export async function enqueueBookingModificationRefundRecovery({
     amountCents,
     idempotencyKey:
       buildBookingModificationRefundIdempotencyKey(bookingModificationId),
+    stripeKeyPrefix,
     store,
   });
 }
@@ -804,10 +816,12 @@ async function processBookingModificationRefundOperation(
     });
   }
 
-  // Refund-request recoveries reuse the route's original Stripe idempotency
-  // key prefix (refund_request_<id>) so a retry after a refund that succeeded
-  // on Stripe but was never recorded replays the same refund instead of
-  // issuing a new one (#1039 item 1). Modification refunds keep their
+  // Recoveries reuse the route's original Stripe idempotency key prefix so a
+  // retry after a refund that succeeded on Stripe but was never recorded
+  // replays the same refund instead of issuing a new one: refund-request
+  // recoveries reconstruct it (refund_request_<id>, #1039 item 1) and
+  // modification recoveries read the prefix stored at enqueue time (#1152).
+  // Legacy modification rows without a stored prefix keep their
   // operation-scoped prefix.
   const refundRequestId = operation.idempotencyKey.startsWith(
     "refund_request_refund_",
@@ -828,7 +842,8 @@ async function processBookingModificationRefundOperation(
     },
     idempotencyKeyPrefix: refundRequestId
       ? `refund_request_${refundRequestId}`
-      : `payment_recovery_modification_refund_${operation.id}`,
+      : (operation.stripeKeyPrefix ??
+        `payment_recovery_modification_refund_${operation.id}`),
   });
 
   await completePaymentRecoveryOperation(operation.id);

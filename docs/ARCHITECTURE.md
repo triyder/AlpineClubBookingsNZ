@@ -414,7 +414,12 @@ per-transaction allocation on the row (`allocationPlan`) before the first
 Stripe call. Retries replay those exact slices with their original
 idempotency keys — Stripe answers repeats with the original refund and the
 `PaymentRefund` ledger dedupes by refund id — instead of re-deriving a
-shifted allocation from whatever progress happens to be recorded.
+shifted allocation from whatever progress happens to be recorded. The
+recovery row also carries the originating route's Stripe key prefix
+(`stripeKeyPrefix`, #1152), so even a refund that succeeded on Stripe but was
+never recorded locally is replayed under its original keys rather than
+re-minted — the same guarantee refund-request recoveries have had since
+#1039.
 
 Additional PaymentIntent creation has the same durable safety net (#1096):
 every price-increasing edit path (batch modify, date change, guest add,

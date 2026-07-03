@@ -1755,6 +1755,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
       paymentId: "pay_1",
       bookingModificationId: "mod_1",
       amountCents: 5000,
+      // The recovery row carries the route's exact Stripe key prefix (#1152)
+      // so retries replay identical keys.
+      stripeKeyPrefix: "mod_batch_refund_bk1_mod_1",
     });
   });
 
