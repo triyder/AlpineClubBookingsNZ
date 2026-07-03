@@ -1809,3 +1809,31 @@ export function assertBookingModifiable(
     );
   }
 }
+
+/**
+ * Bookings converted from (or held for) a public/school booking request keep
+ * an officer-negotiated price that was flat-split across the guest rows; the
+ * quote's per-tier rates are not persisted on the booking. Every standard
+ * edit path reprices the whole booking at current season rates, which would
+ * silently replace the negotiated basis — a one-student addition can swing
+ * the total by the full quote-vs-season delta (#1032) — so those paths
+ * refuse instead and direct the admin to the booking-request re-quote /
+ * re-price flow.
+ */
+export async function assertBookingNotQuotePriced(
+  db: Prisma.TransactionClient,
+  bookingId: string,
+): Promise<void> {
+  const request = await db.bookingRequest.findFirst({
+    where: {
+      OR: [{ convertedBookingId: bookingId }, { heldBookingId: bookingId }],
+    },
+    select: { id: true },
+  });
+  if (request) {
+    throw new ApiError(
+      "This booking keeps a negotiated booking-request price, so standard edits are disabled — they would reprice every guest at season rates. Re-price or issue a revised quote from its booking request instead.",
+      400,
+    );
+  }
+}

@@ -49,6 +49,7 @@ import {
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { assertBookingNotQuotePriced } from "@/lib/booking-modify";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { queueSupersededAdditionalIntentCancellations } from "@/lib/booking-payment-cleanup";
 import { getSeasonYear } from "@/lib/utils";
@@ -220,6 +221,7 @@ export async function POST(
           400
         );
       }
+      await assertBookingNotQuotePriced(tx, bookingId);
       if (editPolicy.mode !== "future") {
         throw new ApiError(
           "Use the full booking edit flow for in-progress booking guest changes",

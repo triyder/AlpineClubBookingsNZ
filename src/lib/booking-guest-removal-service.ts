@@ -22,6 +22,7 @@ import {
 import {
   applyLifecycleTransitions,
   applyPaymentAdjustments,
+  assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
@@ -240,6 +241,8 @@ export async function removeBookingGuestInTransaction({
       400
     );
   }
+
+  await assertBookingNotQuotePriced(tx, bookingId);
 
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
 

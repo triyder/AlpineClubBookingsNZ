@@ -79,6 +79,14 @@ change must produce the same booking state regardless of which endpoint made
 it. The single-guest removal path keeps its lightweight admin-review flagging
 (no review parking), preserving linked-guest self-removal eligibility.
 
+A booking converted from (or held for) a public/school booking request keeps
+its officer-negotiated price, flat-split across guest rows; the quote's
+per-tier rates are not persisted on the booking. Standard edit paths (batch
+modify, date change, guest add, single-guest removal, and the modify-quote
+preview) refuse such bookings rather than silently repricing every guest at
+season rates — the change is made by re-pricing or issuing a revised quote
+from the booking request.
+
 A price reduction against an issued-but-unpaid Xero invoice (pay-on-account,
 no captured payment) is corrected for the full net delta — there is no captured
 money and therefore no cancellation-policy tier to apply — via a modification

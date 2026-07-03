@@ -50,6 +50,7 @@ vi.mock("@/lib/prisma", () => ({
       delete: mockDelete,
     },
     bookingModification: { create: mockCreate },
+    bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     promoRedemption: { delete: mockDelete },
     promoCode: { update: mockUpdate },
     choreAssignment: { findMany: mockFindMany, delete: mockDelete, deleteMany: mockDeleteMany },
@@ -210,6 +211,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),
     },
+    bookingRequest: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     payment: {
       update: vi.fn().mockResolvedValue({}),
       upsert: vi.fn().mockResolvedValue({ id: "p1" }),
@@ -307,6 +311,26 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(404);
+  });
+
+  it("blocks date changes on a quote-priced booking (#1032)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    const tx = makeTx(makeBooking());
+    // The booking was converted from (or held for) a booking request: its
+    // negotiated flat price must not be silently repriced at season rates.
+    tx.bookingRequest.findFirst.mockResolvedValue({ id: "req_1" });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("negotiated booking-request price"),
+    });
+    expect(tx.booking.update).not.toHaveBeenCalled();
   });
 
   it("returns 403 for deactivated members before modifying dates", async () => {
@@ -725,6 +749,28 @@ describe("POST /api/bookings/[id]/guests", () => {
     });
     const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(400);
+  });
+
+  it("blocks adding guests to a quote-priced booking (#1032)", async () => {
+    // The repro from the audit: adding one student to a school booking
+    // quoted at a negotiated flat total must not reprice all guests at
+    // season rates. The edit is refused with an actionable message.
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    const tx = makeTx(makeBooking());
+    tx.bookingRequest.findFirst.mockResolvedValue({ id: "req_1" });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Student", ageTier: "CHILD", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("negotiated booking-request price"),
+    });
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
   });
 
   it("returns 400 when the add-guests request exceeds lodge capacity in one payload", async () => {
@@ -1571,6 +1617,24 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       expect.anything(),
       "p1",
     );
+  });
+
+  it("blocks removing a guest from a quote-priced booking (#1032)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    tx.bookingRequest.findFirst.mockResolvedValue({ id: "req_1" });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+
+    const res = await DELETE(deleteWithMethod("g2"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("negotiated booking-request price"),
+    });
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
   });
 
   // --- #1041: lifecycle parity with the batch modify path ---

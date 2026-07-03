@@ -67,6 +67,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     bookingGuest: { create: mockBookingGuestCreate, update: mockBookingGuestUpdate },
     bookingModification: { create: mockBookingModCreate },
+    bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     season: { findMany: mockSeasonFindMany },
     choreAssignment: { findMany: mockChoreAssignFindMany, deleteMany: mockChoreAssignDeleteMany },
     processedWebhookEvent: {
@@ -273,6 +274,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       update: vi.fn().mockResolvedValue({}),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
+    bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     payment: { update: vi.fn().mockResolvedValue({}) },
     season: {
       findMany: vi.fn().mockResolvedValue([{
