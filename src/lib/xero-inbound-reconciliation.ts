@@ -1457,6 +1457,42 @@ async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
     if (applied.outcome === "settled") {
       result.settledGroupSettlements = 1;
       result.settledChildBookings = applied.settledBookingIds.length;
+    } else if (applied.outcome === "amount_mismatch") {
+      // A child booking changed while the combined invoice sat open (#1033):
+      // the bank transfer no longer matches what the children cost. Unlike
+      // Stripe there is nothing to auto-refund, so alert the operators; the
+      // settlement stays PENDING for manual reconciliation.
+      logger.error(
+        { invoiceId, settlementId: settlement.id },
+        "Paid group settlement invoice no longer matches its children - operator review required"
+      );
+      const settlementDetail = await prisma.groupBookingSettlement.findUnique({
+        where: { id: settlement.id },
+        select: {
+          amountCents: true,
+          groupBooking: {
+            select: {
+              organiserMember: { select: { firstName: true, lastName: true } },
+              organiserBooking: { select: { checkIn: true, checkOut: true } },
+            },
+          },
+        },
+      });
+      await sendAdminPaymentFailureAlert({
+        memberName: settlementDetail
+          ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
+          : "Unknown group organiser",
+        checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? new Date(),
+        checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? new Date(),
+        amountCents: settlementDetail?.amountCents ?? 0,
+        errorMessage: `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`,
+        paymentIntentId: invoiceId,
+      }).catch((alertErr) =>
+        logger.error(
+          { err: alertErr, invoiceId, settlementId: settlement.id },
+          "Failed to send admin alert for mismatched group settlement invoice"
+        )
+      );
     }
   } catch (err) {
     logger.error(

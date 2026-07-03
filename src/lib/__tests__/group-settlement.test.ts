@@ -471,6 +471,76 @@ describe("applyGroupSettlementSucceeded", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
+  it("refuses to apply when a child booking grew while the intent was open (#1033)", async () => {
+    // The intent amount matches the recorded settlement (30000 === 30000),
+    // but a joiner added a guest to their CONFIRMED child booking before the
+    // organiser paid, so the children now cost more than the payment.
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 9000,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      .mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+    mocks.bookingFindMany.mockResolvedValueOnce([
+      { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      { id: "child-2", finalPriceCents: 12500, checkIn: new Date(), checkOut: new Date() },
+    ]);
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+
+    expect(result.outcome).toBe("amount_mismatch");
+    expect(result.settledBookingIds).toEqual([]);
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendSettlementReceipt).not.toHaveBeenCalled();
+  });
+
+  it("refuses to apply when a child booking shrank while the intent was open (#1033)", async () => {
+    // Mirror case: a joiner reduced their child booking, so auto-applying
+    // would make the organiser over-pay with no refund path.
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce({
+        id: "s1",
+        status: PaymentStatus.PENDING,
+        amountCents: 9000,
+        stripeCustomerId: "cus_123",
+        groupBookingId: GROUP_ID,
+        groupBooking: {
+          organiserBookingId: ORG_BOOKING,
+          organiserMember: {
+            email: "org@example.com",
+            firstName: "Olive",
+            lastName: "Organiser",
+          },
+          organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+        },
+      })
+      .mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+    mocks.bookingFindMany.mockResolvedValueOnce([
+      { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      { id: "child-2", finalPriceCents: 2500, checkIn: new Date(), checkOut: new Date() },
+    ]);
+
+    const result = await applyGroupSettlementSucceeded({ id: "pi_1", amount: 9000 });
+
+    expect(result.outcome).toBe("amount_mismatch");
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
+  });
+
   it("flips every confirmed child to PAID and records the settlement", async () => {
     mocks.settlementFindUnique
       // First call: top-level lookup by intent id (with organiser + dates).
@@ -566,6 +636,41 @@ describe("applyGroupSettlementSucceededFromInvoice", () => {
     const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
     expect(result.outcome).toBe("already_settled");
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses to apply a paid invoice when a child booking changed while it was open (#1033)", async () => {
+    mocks.settlementFindFirst.mockResolvedValue({
+      id: "s1",
+      status: PaymentStatus.PENDING,
+      amountCents: 9000,
+      stripeCustomerId: null,
+      xeroInvoiceId: "xinv_1",
+      xeroInvoiceNumber: "INV-0042",
+      groupBookingId: GROUP_ID,
+      groupBooking: {
+        organiserBookingId: ORG_BOOKING,
+        organiserMember: {
+          email: "org@example.com",
+          firstName: "Olive",
+          lastName: "Organiser",
+        },
+        organiserBooking: { checkIn: new Date(), checkOut: new Date() },
+      },
+    });
+    mocks.settlementFindUnique.mockResolvedValueOnce({ status: PaymentStatus.PENDING });
+    // The children were repriced after the combined invoice was issued.
+    mocks.bookingFindMany.mockResolvedValueOnce([
+      { id: "child-1", finalPriceCents: 4500, checkIn: new Date(), checkOut: new Date() },
+      { id: "child-2", finalPriceCents: 9500, checkIn: new Date(), checkOut: new Date() },
+    ]);
+
+    const result = await applyGroupSettlementSucceededFromInvoice("xinv_1");
+
+    expect(result.outcome).toBe("amount_mismatch");
+    expect(result.settledBookingIds).toEqual([]);
+    expect(mocks.paymentUpsert).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
   });
 
   it("flips every confirmed child to PAID with Internet Banking payments and no per-child invoices", async () => {

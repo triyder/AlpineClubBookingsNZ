@@ -524,6 +524,30 @@ async function settleConfirmedChildrenAndNotify(
       select: { id: true, finalPriceCents: true, checkIn: true, checkOut: true },
     });
 
+    // Re-verify the settlement total against the children as they exist NOW,
+    // under the lock (#1033). A joiner can modify their CONFIRMED child
+    // booking while the combined intent/invoice sits open, so a payment that
+    // matches the *recorded* settlement amount can still mismatch what the
+    // children currently cost. Never auto-apply such a payment — hand it to
+    // the operator-review path instead.
+    const currentTotalCents = children.reduce(
+      (sum, child) => sum + child.finalPriceCents,
+      0
+    );
+    if (currentTotalCents !== settlement.amountCents) {
+      logger.error(
+        {
+          groupBookingId: settlement.groupBookingId,
+          settlementId: settlement.id,
+          recordedCents: settlement.amountCents,
+          currentChildrenCents: currentTotalCents,
+          childCount: children.length,
+        },
+        "Group settlement total no longer matches its children - refusing to auto-apply payment"
+      );
+      return null;
+    }
+
     const settledIds: string[] = [];
     for (const child of children) {
       await tx.payment.upsert({
@@ -562,6 +586,10 @@ async function settleConfirmedChildrenAndNotify(
 
     return settledIds;
   });
+
+  if (settled === null) {
+    return { outcome: "amount_mismatch", settledBookingIds: [] };
+  }
 
   // Side effects after commit: a durable "paid" booking event and (Stripe only)
   // a Xero invoice per child. Failures here are logged but never undo the

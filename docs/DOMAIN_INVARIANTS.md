@@ -41,6 +41,12 @@ Future reviews and issues should cite this file when proposing changes.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
 - External provider side effects require clear retry and idempotency behavior.
+- An organiser-pays group settlement applies only when the payment matches the
+  sum of the settleable children **at apply time**, re-verified under the lock
+  — a child booking edited while the combined intent/invoice was open must not
+  auto-settle at the stale total. Mismatches go to operator review: Stripe
+  captures are auto-refunded with an admin alert; paid Internet Banking
+  invoices stay PENDING with an admin alert.
 
 ## Booking Modifications
 
