@@ -268,6 +268,9 @@ function makeTx(
         Promise.resolve({ ...booking, ...data, guests: booking.guests, payment: booking.payment })),
     },
     bookingGuest: {
+      // Person-night guard (#1157) queries member-linked guests on the new
+      // range; no other live booking exists in these fixtures, so no conflict.
+      findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new-g", ...data })),
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
