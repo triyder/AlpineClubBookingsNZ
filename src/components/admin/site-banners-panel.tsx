@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Info, Pencil, Plus, Trash2, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -155,6 +156,7 @@ export function SiteBannersPanel() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [busyBannerId, setBusyBannerId] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
 
   const loadBanners = useCallback(async () => {
     setLoading(true);
@@ -266,7 +268,14 @@ export function SiteBannersPanel() {
   }
 
   async function deleteBanner(banner: ApiBanner) {
-    if (!window.confirm("Delete this banner? This cannot be undone.")) {
+    if (
+      !(await confirm({
+        title: "Delete this banner?",
+        description: "This cannot be undone.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    ) {
       return;
     }
     setBusyBannerId(banner.id);
@@ -308,6 +317,7 @@ export function SiteBannersPanel() {
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       <div className="flex justify-end">
         <Button type="button" onClick={openCreateDialog}>
           <Plus className="mr-2 h-4 w-4" />

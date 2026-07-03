@@ -1,5 +1,6 @@
 "use client"
 
+import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +15,8 @@ export function ConnectionStatusPanel({
   onConnect: () => void
   onDisconnect: () => void
 }) {
+  const { confirm, confirmDialog } = useConfirm()
+
   return (
     <Card className="mb-6">
       <CardHeader>
@@ -47,14 +50,19 @@ export function ConnectionStatusPanel({
                 <span className="ml-1 text-muted-foreground">(auto-refreshes)</span>
               </div>
             ) : null}
+            {confirmDialog}
             <Button
               variant="destructive"
               size="sm"
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  window.confirm(
-                    "Disconnect Xero?\n\nInvoicing, payment reconciliation, subscription (paid-status) detection, and finance syncs that rely on Xero will stop until you reconnect. Your data inside Xero is not changed.",
-                  )
+                  await confirm({
+                    title: "Disconnect Xero?",
+                    description:
+                      "Invoicing, payment reconciliation, subscription (paid-status) detection, and finance syncs that rely on Xero will stop until you reconnect. Your data inside Xero is not changed.",
+                    confirmLabel: "Disconnect",
+                    destructive: true,
+                  })
                 ) {
                   onDisconnect()
                 }

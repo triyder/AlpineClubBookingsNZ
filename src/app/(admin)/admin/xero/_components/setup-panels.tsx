@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -36,6 +37,7 @@ export function SetupPanels({
   onRefreshOperations: () => void
   onRefreshDiagnostics: () => void
 }) {
+  const { confirm, confirmDialog } = useConfirm()
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([])
   const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([])
   const [loadingGroups, setLoadingGroups] = useState(false)
@@ -104,7 +106,12 @@ export function SetupPanels({
       return
     }
     const groupNames = selectedMappings.map((mapping) => mapping.groupName).join(", ")
-    if (!window.confirm(`Import members from ${selectedMappings.length} group(s): ${groupNames}?\n\n${sendInvites ? "Invite emails will be sent to all new members." : "No invite emails will be sent."}`)) return
+    const confirmed = await confirm({
+      title: `Import members from ${selectedMappings.length} group(s)?`,
+      description: `${groupNames}. ${sendInvites ? "Invite emails will be sent to all new members." : "No invite emails will be sent."}`,
+      confirmLabel: "Import",
+    })
+    if (!confirmed) return
     setSyncing("import")
     setSyncResult(null)
     setError("")
@@ -187,6 +194,7 @@ export function SetupPanels({
       onToggle={(nextOpen) => onToggle("setup", nextOpen)}
     >
       <div className="space-y-6">
+        {confirmDialog}
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
         <div className="space-y-4">
           <div className="space-y-1">

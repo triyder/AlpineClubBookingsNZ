@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Mail, CheckCircle } from "lucide-react";
+import { useConfirm } from "@/components/confirm-dialog";
 import { StatusBadge, formatDate } from "./shared";
 import type { HealthData } from "./types";
 
@@ -23,9 +24,10 @@ export function EmailDeliverabilitySection({
   const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
   const [reviewingEmailFailureId, setReviewingEmailFailureId] = useState<string | null>(null);
   const [reissuingTokenEmailId, setReissuingTokenEmailId] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
 
   async function clearSuppression(id: string, email: string) {
-    if (!window.confirm(`Clear email suppression for ${email}?`)) {
+    if (!(await confirm({ title: `Clear email suppression for ${email}?` }))) {
       return;
     }
 
@@ -71,7 +73,12 @@ export function EmailDeliverabilitySection({
   }
 
   async function reissueTokenEmail(id: string, to: string) {
-    if (!window.confirm(`Reissue and resend token email for ${to}?`)) {
+    if (
+      !(await confirm({
+        title: `Reissue and resend token email for ${to}?`,
+        confirmLabel: "Reissue",
+      }))
+    ) {
       return;
     }
 
@@ -97,6 +104,7 @@ export function EmailDeliverabilitySection({
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       {/* Email Deliverability */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">

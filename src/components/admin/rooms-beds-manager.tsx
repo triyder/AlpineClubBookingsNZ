@@ -11,6 +11,7 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,6 +102,7 @@ function bedEditFromBed(bed: DashboardBed): BedDraft {
 }
 
 export function RoomsBedsManager() {
+  const { confirm, confirmDialog } = useConfirm();
   const [payload, setPayload] = useState<RoomsBedsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -289,7 +291,14 @@ export function RoomsBedsManager() {
   }
 
   async function deleteBed(bedId: string) {
-    if (!window.confirm("Delete this bed?")) return;
+    if (
+      !(await confirm({
+        title: "Delete this bed?",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    )
+      return;
 
     await mutate(
       `bed-delete-${bedId}`,
@@ -314,6 +323,7 @@ export function RoomsBedsManager() {
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Rooms & Beds</h1>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/confirm-dialog";
 
 type DeleteBookingMode = "draft" | "cancelled";
 
@@ -28,6 +29,7 @@ export function DeleteBookingButton({
     Array<{ code: string; label: string; count: number }>
   >([]);
   const [deleting, setDeleting] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
   const requiresReason = mode === "cancelled";
 
   async function handleDelete() {
@@ -41,7 +43,11 @@ export function DeleteBookingButton({
 
     if (
       mode === "draft" &&
-      !window.confirm("Delete this draft booking?")
+      !(await confirm({
+        title: "Delete this draft booking?",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
     ) {
       return;
     }
@@ -72,6 +78,7 @@ export function DeleteBookingButton({
 
   return (
     <div className="space-y-3 rounded-md border border-red-200 bg-red-50 p-4">
+      {confirmDialog}
       {requiresReason ? (
         <div className="space-y-1">
           <label

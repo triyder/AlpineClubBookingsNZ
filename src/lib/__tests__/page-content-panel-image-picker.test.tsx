@@ -134,14 +134,18 @@ describe("WysiwygEditor image picker", () => {
   });
 
   it("deletes an uploaded image from the picker", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     render(<WysiwygEditor value="" onChange={() => {}} />);
 
     openImagePicker();
     await waitFor(() => expect(screen.getByText("photo.png")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: "Delete photo.png" }));
+
+    // The styled confirm dialog replaces window.confirm.
+    await waitFor(() =>
+      expect(screen.getByText("Delete photo.png?")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(screen.queryByText("photo.png")).toBeNull();

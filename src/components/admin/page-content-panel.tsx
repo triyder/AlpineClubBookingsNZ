@@ -30,6 +30,7 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -212,6 +213,7 @@ export const WysiwygEditor = forwardRef<
   const [showHtmlFallback, setShowHtmlFallback] = useState(false);
   const [tokenHelpOpen, setTokenHelpOpen] = useState(false);
   const [imagePickerOpen, setImagePickerOpen] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
   const [loadingSiteImages, setLoadingSiteImages] = useState(false);
   const [siteImages, setSiteImages] = useState<string[]>([]);
   const [loadingUploadedImages, setLoadingUploadedImages] = useState(false);
@@ -687,7 +689,14 @@ export const WysiwygEditor = forwardRef<
     event: React.MouseEvent,
   ) {
     event.stopPropagation();
-    if (!window.confirm(`Delete ${image.filename}? This cannot be undone.`)) {
+    if (
+      !(await confirm({
+        title: `Delete ${image.filename}?`,
+        description: "This cannot be undone.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    ) {
       return;
     }
 
@@ -756,6 +765,7 @@ export const WysiwygEditor = forwardRef<
         wrapperClassName ? ` ${wrapperClassName}` : ""
       }`}
     >
+      {confirmDialog}
       <div className="sticky top-0 z-30 rounded-md border border-slate-200 bg-slate-50/95 px-3 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-slate-50/90">
         <p className="text-sm text-slate-600">
           {showHtmlFallback
