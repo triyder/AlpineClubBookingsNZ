@@ -15,8 +15,12 @@
 
 services:
   postgres:
-    ports:
-      - "${STAGING_POSTGRES_PORT:-5433}:5432"
+    # !override replaces the base port list instead of merging with it —
+    # otherwise the staging postgres also tries to bind the production
+    # 127.0.0.1:5432 mapping and cannot start next to a production stack on
+    # the same host.
+    ports: !override
+      - "127.0.0.1:${STAGING_POSTGRES_PORT:-5433}:5432"
 
   app:
     ports:

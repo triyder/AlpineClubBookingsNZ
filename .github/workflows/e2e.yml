@@ -1,0 +1,131 @@
+name: E2E
+
+# Playwright browser E2E suite for the Critical journeys in
+# docs/END_TO_END_TEST_MATRIX.md, run against the staging compose stack with
+# the base + demo seeds. Non-blocking while the suite beds in:
+# continue-on-error keeps a red run from failing the workflow. Promote it to a
+# required gate by removing continue-on-error once it has proven stable.
+#
+# The Stripe payment specs skip unless the STRIPE_TEST_SECRET_KEY and
+# STRIPE_TEST_PUBLISHABLE_KEY repository secrets hold genuine Stripe
+# *test-mode* keys (sk_test_… / pk_test_…). Never store live keys there.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright E2E (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+      APP_IMAGE: tacbookings-e2e-app:ci
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write staging env file
+        run: |
+          STRIPE_SK="${STRIPE_TEST_SECRET_KEY:-sk_test_e2e_placeholder}"
+          STRIPE_PK="${STRIPE_TEST_PUBLISHABLE_KEY:-pk_test_e2e_placeholder}"
+          case "$STRIPE_SK" in sk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
+          case "$STRIPE_PK" in pk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
+          cat > .env.staging <<EOF
+          STAGING_HTTP_PORT=3001
+          STAGING_POSTGRES_PORT=5433
+          NEXTAUTH_URL=http://localhost:3001
+          AUTH_TRUST_HOST=true
+          DB_PASSWORD=e2e-ci-db-password
+          AUTH_SECRET=e2e-ci-auth-secret
+          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          SEED_ADMIN_EMAIL=e2e-admin@example.org
+          SEED_ADMIN_PASSWORD=e2e-ci-seed-password
+          SEED_LODGE_PASSWORD=e2e-ci-lodge-password
+          STRIPE_SECRET_KEY=$STRIPE_SK
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$STRIPE_PK
+          STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder
+          XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false
+          XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false
+          XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
+          SMTP_PORT=587
+          EMAIL_FROM=e2e@example.org
+          CONTACT_EMAIL=e2e@example.org
+          NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
+          CRON_SECRET=e2e-ci-cron-secret
+          CRON_ENABLED=false
+          BACKUP_ENABLED=false
+          LOG_LEVEL=info
+          EOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Build the app image once with the same cache scope the publish job
+      # uses, so E2E runs reuse main's layers instead of rebuilding Next.js.
+      - name: Build app image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: tacbookings-e2e-app:ci
+          build-args: |
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.STRIPE_TEST_PUBLISHABLE_KEY || 'pk_test_e2e_placeholder' }}
+            NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
+            NEXT_PUBLIC_SENTRY_DSN=
+          cache-from: |
+            type=gha,scope=alpineclubbookingsnz-app
+            type=gha,scope=alpineclubbookingsnz-e2e
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
+
+      - name: Prepare staging stack (postgres, migrate, seed, app)
+        run: E2E_SKIP_APP_BUILD=1 bash scripts/e2e-stack.sh prepare
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        run: bash scripts/e2e-stack.sh run
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: playwright-report/
+          if-no-files-found: ignore
+
+      - name: Show app logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p tacbookings-staging \
+            -f docker-compose.yml -f docker-compose.staging.yml logs app | tail -200
+
+      - name: Tear down stack
+        if: always()
+        run: bash scripts/e2e-stack.sh down
