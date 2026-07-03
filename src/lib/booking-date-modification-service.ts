@@ -567,6 +567,7 @@ export async function modifyBookingDates({
         bookingModification.id,
         undefined,
         tx,
+        booking.payment?.id,
       );
     }
 

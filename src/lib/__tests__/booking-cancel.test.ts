@@ -111,6 +111,7 @@ describe("cancelBooking credit refunds", () => {
       id: "booking_1",
       memberId: "member_1",
       status: "PAID",
+      finalPriceCents: 10000,
       checkIn: new Date("2026-07-10"),
       checkOut: new Date("2026-07-12"),
       member: {
@@ -398,11 +399,64 @@ describe("cancelBooking credit refunds", () => {
     });
   });
 
+  it("caps the refundable base at the booking's current value (#1031)", async () => {
+    // A prior reduction left the Payment mirror stale: amountCents 30000,
+    // refundedAmountCents 0, but the booking is now worth 20000. The refund
+    // base must be 20000, not 30000.
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_5",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 20000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_5",
+        bookingId: "booking_5",
+        amountCents: 30000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_5",
+      },
+    });
+    mocks.calculateRefundAmount.mockReturnValueOnce({
+      refundAmountCents: 20000,
+      refundPercentage: 100,
+    });
+
+    const result = await cancelBooking(
+      "booking_5",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      20000,
+      expect.anything(),
+      expect.anything(),
+      "card"
+    );
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_5", amountCents: 20000 })
+    );
+  });
+
   it("cancels outstanding additional payment intents and marks them failed on credit refunds", async () => {
     mocks.bookingFindUnique.mockResolvedValueOnce({
       id: "booking_4",
       memberId: "member_1",
       status: "PAID",
+      finalPriceCents: 10000,
       checkIn: new Date("2026-07-10"),
       checkOut: new Date("2026-07-12"),
       member: {

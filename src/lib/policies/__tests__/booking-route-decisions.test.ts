@@ -124,6 +124,7 @@ describe("booking route policy decisions", () => {
           changeFeeCents: 1000,
           creditAppliedCents: 2000,
         },
+        finalPriceCents: 8000,
         checkIn: new Date("2026-07-15T00:00:00.000Z"),
         policyRules,
         now: new Date("2026-07-05T00:00:00.000Z"),
@@ -137,6 +138,33 @@ describe("booking route policy decisions", () => {
       creditRefundPercentage: 75,
       creditRestoredCents: 2000,
       totalPaidCents: 9000,
+    });
+  });
+
+  it("caps the preview refund base at the booking's current value (#1031)", () => {
+    const policyRules: CancellationRule[] = [
+      { daysBeforeStay: 7, refundPercentage: 100 },
+      { daysBeforeStay: 0, refundPercentage: 0 },
+    ];
+
+    // A prior reduction left the mirror stale: paid 30000, booking now worth
+    // 20000. The preview must promise at most the booking's current value.
+    expect(
+      calculateCancellationPreview({
+        payment: {
+          amountCents: 30000,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+          creditAppliedCents: 0,
+        },
+        finalPriceCents: 20000,
+        checkIn: new Date("2026-07-15T00:00:00.000Z"),
+        policyRules,
+        now: new Date("2026-07-05T00:00:00.000Z"),
+      })
+    ).toMatchObject({
+      refundAmountCents: 20000,
+      refundPercentage: 100,
     });
   });
 });

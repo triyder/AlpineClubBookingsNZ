@@ -1540,6 +1540,18 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     expect(body.settlementMethod).toBe("credit");
     // Credit is not a Stripe refund.
     expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    // #1031: the removal path passes the payment so the credit allocates
+    // against it in-transaction, keeping refundedAmountCents truthful.
+    const { createBookingModificationCredit } = await import("@/lib/member-credit");
+    expect(vi.mocked(createBookingModificationCredit)).toHaveBeenCalledWith(
+      "m1",
+      3750,
+      "bk1",
+      expect.anything(),
+      undefined,
+      expect.anything(),
+      "p1",
+    );
   });
 });
 

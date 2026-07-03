@@ -36,6 +36,12 @@ vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
 }));
 
+const mockApplyLocalRefundAllocation = vi.fn();
+
+vi.mock("@/lib/payment-transactions", () => ({
+  applyLocalRefundAllocation: mockApplyLocalRefundAllocation,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -216,6 +222,55 @@ describe("member-credit helpers", () => {
       );
 
       expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+    });
+
+    it("allocates the credit against the payment when paymentId is provided (#1031)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+
+      const { createBookingModificationCredit } = await import("@/lib/member-credit");
+      await createBookingModificationCredit(
+        "member-1",
+        3750,
+        "booking-abc12345",
+        "mod-1",
+        undefined,
+        undefined,
+        "payment-1"
+      );
+
+      expect(mockApplyLocalRefundAllocation).toHaveBeenCalledWith({
+        paymentId: "payment-1",
+        amountCents: 3750,
+        store: prisma,
+      });
+    });
+
+    it("skips allocation on an idempotent replay (#1031)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findUnique).mockResolvedValue({
+        id: "credit-1",
+        memberId: "member-1",
+        amountCents: 3750,
+        type: "BOOKING_MODIFICATION_REFUND",
+        sourceBookingId: "booking-abc12345",
+        sourceBookingModificationId: "mod-1",
+        xeroCreditNoteId: null,
+      } as any);
+
+      const { createBookingModificationCredit } = await import("@/lib/member-credit");
+      await createBookingModificationCredit(
+        "member-1",
+        3750,
+        "booking-abc12345",
+        "mod-1",
+        undefined,
+        undefined,
+        "payment-1"
+      );
+
+      expect(mockApplyLocalRefundAllocation).not.toHaveBeenCalled();
     });
 
     it("replays safely after a unique conflict", async () => {

@@ -80,6 +80,23 @@ must not read the captured-amount mirror (`payment.amountCents`), which stays at
 the original total until asynchronous Xero reconciliation folds the credit note
 into `refundedAmountCents`.
 
+The paid-path twin of that rule: cancellation of a booking with a captured
+payment computes its refundable base as
+`min(amountCents − refundedAmountCents, finalPrice + changeFee) − changeFee`,
+never from the raw Payment mirror alone. Prior reductions can leave the mirror
+stale (an Internet Banking invoice paid at its reduced amount, or a
+penalty-window retention), and an uncapped base pays out more than the booking
+is worth. The cancel preview applies the same cap so the member is never
+promised more than the cancel will pay.
+
+A credit-settled modification reduction allocates against the payment's
+captured transactions (`applyLocalRefundAllocation`) in the same transaction
+that writes the `MemberCredit`, exactly as a card-settled reduction does via
+the refund ledger. `refundedAmountCents` therefore reflects every settlement
+method, and no ordering of edit/cancel operations may produce a different
+total payout (refunds plus credits) than another ordering reaching the same
+final state.
+
 Cancelled-booking soft-delete may hide an operational duplicate only when it
 preserves the booking row and no external money/Xero history needs to remain
 operator-visible by default. Balanced internal modification deltas that net to

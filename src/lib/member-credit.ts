@@ -8,6 +8,7 @@ import {
 import { createAuditLog } from "./audit";
 import { recordBookingEvent } from "./booking-events";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
+import { applyLocalRefundAllocation } from "./payment-transactions";
 import logger from "@/lib/logger";
 import {
   assertMatchingIdempotentAdjustmentRequest,
@@ -147,6 +148,12 @@ export async function createCancellationCredit(
 
 /**
  * Create a credit entry for a booking modification refund held as account credit.
+ *
+ * When `paymentId` is provided, the credit is also allocated against the
+ * payment's captured transactions (`applyLocalRefundAllocation`), exactly as
+ * the cancellation credit path does (#1031): a credit-settled reduction
+ * consumes refundable value like a card refund, so `refundedAmountCents` must
+ * reflect it or a later cancel refunds the same cents twice.
  */
 export async function createBookingModificationCredit(
   memberId: string,
@@ -154,7 +161,8 @@ export async function createBookingModificationCredit(
   bookingId: string,
   bookingModificationId: string,
   xeroCreditNoteId?: string,
-  tx?: Prisma.TransactionClient
+  tx?: Prisma.TransactionClient,
+  paymentId?: string
 ): Promise<void> {
   const db = tx || prisma;
   const existingCredit = await findBookingModificationCredit(
@@ -202,6 +210,16 @@ export async function createBookingModificationCredit(
       bookingId,
       bookingModificationId,
       xeroCreditNoteId,
+    });
+    // Replay: the allocation happened atomically with the original credit.
+    return;
+  }
+
+  if (paymentId) {
+    await applyLocalRefundAllocation({
+      paymentId,
+      amountCents,
+      store: db,
     });
   }
 }

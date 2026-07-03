@@ -72,6 +72,7 @@ export async function GET(
     const policy = await loadCancellationPolicy(booking.checkIn);
     const preview = calculateCancellationPreview({
       payment: booking.payment,
+      finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,
     });

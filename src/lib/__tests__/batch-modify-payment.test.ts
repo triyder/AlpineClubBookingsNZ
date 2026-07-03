@@ -26,6 +26,7 @@ const mockValidateAndCalculatePromoDiscount = vi.fn(async () => {
 });
 const mockAuth = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
+const mockApplyLocalRefundAllocation = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
@@ -146,6 +147,8 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
+  applyLocalRefundAllocation: (...args: unknown[]) =>
+    mockApplyLocalRefundAllocation(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
 }));
@@ -1795,6 +1798,13 @@ describe("PUT /api/bookings/[id]/modify", () => {
         sourceBookingId: "bk1",
         sourceBookingModificationId: "mod_1",
       }),
+    });
+    // #1031: the credit settlement allocates against the payment in the same
+    // transaction, keeping refundedAmountCents truthful for a later cancel.
+    expect(mockApplyLocalRefundAllocation).toHaveBeenCalledWith({
+      paymentId: "pay_1",
+      amountCents: 3750,
+      store: tx,
     });
 
     await Promise.resolve();

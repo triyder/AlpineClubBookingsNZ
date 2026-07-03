@@ -331,6 +331,7 @@ export async function modifyBookingBatch({
         bookingModification.id,
         undefined,
         tx,
+        booking.payment?.id,
       );
     }
 

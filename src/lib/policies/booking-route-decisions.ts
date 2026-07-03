@@ -215,6 +215,7 @@ export function calculateCancellationPreview(input: {
     changeFeeCents: number;
     creditAppliedCents?: number | null;
   };
+  finalPriceCents: number;
   checkIn: Date;
   policyRules: CancellationRule[];
   now?: Date;
@@ -231,7 +232,11 @@ export function calculateCancellationPreview(input: {
   const paidAmountCents =
     input.payment.amountCents - input.payment.refundedAmountCents;
   const changeFeeCents = input.payment.changeFeeCents;
-  const refundableBaseCents = paidAmountCents - changeFeeCents;
+  // Same refundable-base cap as cancelBooking (#1031): the preview must not
+  // promise a refund the stale Payment mirror can no longer back.
+  const refundableBaseCents =
+    Math.min(paidAmountCents, input.finalPriceCents + changeFeeCents) -
+    changeFeeCents;
   const days = daysUntilDate(input.checkIn, input.now);
   const {
     cardRefundAmountCents,

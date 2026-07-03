@@ -507,7 +507,18 @@ async function performBookingCancellation(
   // Change fees (from prior booking modifications) are non-refundable per FEE-03
   const paidAmountCents =
     booking.payment.amountCents - booking.payment.refundedAmountCents;
-  const refundableBaseCents = paidAmountCents - booking.payment.changeFeeCents;
+  // Cap the refundable base at the booking's current value (#1031). Prior
+  // reductions can leave the Payment mirror stale — credit-settled reductions
+  // recorded before the local allocation existed, Internet Banking invoices
+  // paid at a reduced amount (reconciliation never rewrites amountCents), and
+  // penalty-window retentions persisted nowhere — and refunding from the stale
+  // mirror pays out more than the booking is worth. Paid-path twin of the
+  // #1015/#1029 unpaid-invoice clearing rule above.
+  const refundableBaseCents =
+    Math.min(
+      paidAmountCents,
+      booking.finalPriceCents + booking.payment.changeFeeCents
+    ) - booking.payment.changeFeeCents;
   const days = daysUntilDate(booking.checkIn);
   const policy = await loadCancellationPolicy(booking.checkIn);
   const { refundAmountCents, refundPercentage } = calculateRefundAmount(
