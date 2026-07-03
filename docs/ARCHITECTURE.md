@@ -243,6 +243,10 @@ record for lodge-wide operational defaults such as fallback capacity and the
 hut-leader lookahead window used by dashboard and Needs Attention warnings.
 The sidebar's Needs Attention Booking Requests badge sums pending internal
 booking reviews, requested change requests, and queued public booking requests.
+All sidebar badge counts come from the single `GET /api/admin/pending-counts`
+endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
+mirror the individual queue routes. Sidebar sections render expanded by
+default; a per-section collapse preference persists in localStorage.
 
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge

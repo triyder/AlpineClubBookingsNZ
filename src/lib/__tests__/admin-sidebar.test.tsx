@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
+import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
@@ -20,80 +21,29 @@ import {
   getVisibleAdminNavSections,
 } from "@/components/admin-sidebar";
 
-function mockJsonResponse(body: unknown) {
-  return {
-    ok: true,
-    json: async () => body,
-  };
-}
+const ZERO_COUNTS: AdminPendingCounts = {
+  familyRequests: 0,
+  memberApplications: 0,
+  refundAppeals: 0,
+  creditApprovals: 0,
+  bookingReviews: 0,
+  bookingChangeRequests: 0,
+  publicBookingRequests: 0,
+  membershipCancellations: 0,
+  archiveRequests: 0,
+  issueReports: 0,
+  unassignedHutLeaderDates: 0,
+};
 
-function buildFetchMock(
-  options: {
-    familyRequestCount?: number;
-    unassignedHutLeaderDates?: number;
-    bookingReviewCount?: number;
-    publicBookingQueueCount?: number;
-  } = {},
-) {
+function buildFetchMock(counts: Partial<AdminPendingCounts> = {}) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
 
-    if (url.includes("/api/admin/family-groups/requests")) {
-      return mockJsonResponse({
-        requests: Array.from(
-          { length: options.familyRequestCount ?? 0 },
-          (_, index) => ({
-            id: `family-request-${index + 1}`,
-          }),
-        ),
-      });
-    }
-    if (url.includes("/api/admin/member-applications")) {
-      return mockJsonResponse({ pendingCount: 0 });
-    }
-    if (url.includes("/api/admin/refund-requests")) {
-      return mockJsonResponse({ total: 0 });
-    }
-    if (url.includes("/api/admin/booking-reviews")) {
-      return mockJsonResponse({
-        pagination: { total: options.bookingReviewCount ?? 0 },
-      });
-    }
-    if (url.includes("/api/admin/booking-change-requests")) {
-      return mockJsonResponse({ total: 0 });
-    }
-    if (url.includes("/api/admin/booking-requests")) {
-      return mockJsonResponse({
-        data: [],
-        page: 1,
-        pageSize: 1,
-        total: options.publicBookingQueueCount ?? 0,
-      });
-    }
-    if (url.includes("/api/admin/credit-approvals")) {
-      return mockJsonResponse([]);
-    }
-    if (url.includes("/api/admin/membership-cancellation-requests")) {
-      return mockJsonResponse({ pendingCount: 0 });
-    }
-    if (url.includes("/api/admin/member-lifecycle-action-requests")) {
-      return mockJsonResponse({ pendingCount: 0 });
-    }
-    if (url.includes("/api/admin/issue-reports")) {
-      return mockJsonResponse({ total: 0 });
-    }
-    if (url.includes("/api/admin/hut-leaders/unassigned-dates")) {
-      return mockJsonResponse({
-        unassignedDates: Array.from(
-          { length: options.unassignedHutLeaderDates ?? 0 },
-          (_, index) => ({
-            date: `2026-07-${String(index + 1).padStart(2, "0")}`,
-          }),
-        ),
-      });
+    if (url.includes("/api/admin/pending-counts")) {
+      return { ok: true, json: async () => ({ ...ZERO_COUNTS, ...counts }) };
     }
 
-    return mockJsonResponse({});
+    return { ok: true, json: async () => ({}) };
   });
 }
 
@@ -104,39 +54,52 @@ describe("AdminSidebar", () => {
     vi.stubGlobal("fetch", buildFetchMock());
   });
 
-  it("collapses sections by default and persists expanded state", () => {
+  it("expands sections by default and persists collapsed state", () => {
     render(<AdminSidebar features={allOn} />);
 
     const sectionToggle = screen.getByRole("button", {
       name: "Bookings & Beds",
     });
-    expect(sectionToggle.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByRole("link", { name: "Bookings" })).toBeNull();
+    expect(sectionToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("link", { name: "Bookings" })).not.toBeNull();
 
     fireEvent.click(sectionToggle);
 
-    expect(sectionToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByRole("link", { name: "Bookings" })).not.toBeNull();
+    expect(sectionToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("link", { name: "Bookings" })).toBeNull();
     expect(
       JSON.parse(
         window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) ?? "{}",
       ),
-    ).toMatchObject({ "Bookings & Beds": true });
+    ).toMatchObject({ "Bookings & Beds": false });
   });
 
-  it("restores persisted expanded sections after mount", async () => {
+  it("restores persisted collapsed sections after mount", async () => {
     window.localStorage.setItem(
       SIDEBAR_COLLAPSE_STORAGE_KEY,
-      JSON.stringify({ Finance: true }),
+      JSON.stringify({ Finance: false }),
     );
 
     render(<AdminSidebar features={allOn} />);
 
     const financeToggle = screen.getByRole("button", { name: "Finance" });
     await waitFor(() =>
-      expect(financeToggle.getAttribute("aria-expanded")).toBe("true"),
+      expect(financeToggle.getAttribute("aria-expanded")).toBe("false"),
     );
-    expect(screen.getByRole("link", { name: "Payments" })).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Payments" })).toBeNull();
+  });
+
+  it("fetches all badge counts with a single request", async () => {
+    const fetchMock = buildFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "/api/admin/pending-counts",
+    );
   });
 
   it("shows membership type settings in setup and configuration", () => {
@@ -155,12 +118,18 @@ describe("AdminSidebar", () => {
   });
 
   it("keeps pending family group requests visible while Members is collapsed", async () => {
-    vi.stubGlobal("fetch", buildFetchMock({ familyRequestCount: 2 }));
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ Members: false }),
+    );
+    vi.stubGlobal("fetch", buildFetchMock({ familyRequests: 2 }));
 
     render(<AdminSidebar features={allOn} />);
 
     const membersToggle = screen.getByRole("button", { name: "Members" });
-    expect(membersToggle.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() =>
+      expect(membersToggle.getAttribute("aria-expanded")).toBe("false"),
+    );
 
     await waitFor(() =>
       expect(screen.getByText("Needs Attention")).not.toBeNull(),
@@ -172,7 +141,11 @@ describe("AdminSidebar", () => {
   });
 
   it("surfaces queued public booking requests in Needs Attention", async () => {
-    vi.stubGlobal("fetch", buildFetchMock({ publicBookingQueueCount: 3 }));
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ "Bookings & Beds": false }),
+    );
+    vi.stubGlobal("fetch", buildFetchMock({ publicBookingRequests: 3 }));
 
     render(<AdminSidebar features={allOn} />);
 
@@ -185,10 +158,18 @@ describe("AdminSidebar", () => {
     expect(screen.getByText("3")).not.toBeNull();
   });
 
-  it("combines internal review and public queue counts on the Booking Requests badge", async () => {
+  it("combines internal review, change request, and public queue counts on the Booking Requests badge", async () => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ "Bookings & Beds": false }),
+    );
     vi.stubGlobal(
       "fetch",
-      buildFetchMock({ bookingReviewCount: 2, publicBookingQueueCount: 3 }),
+      buildFetchMock({
+        bookingReviews: 2,
+        bookingChangeRequests: 1,
+        publicBookingRequests: 3,
+      }),
     );
 
     render(<AdminSidebar features={allOn} />);
@@ -199,10 +180,14 @@ describe("AdminSidebar", () => {
     expect(
       screen.getByRole("link", { name: /Booking Requests/ }),
     ).not.toBeNull();
-    expect(screen.getByText("5")).not.toBeNull();
+    expect(screen.getByText("6")).not.toBeNull();
   });
 
   it("shows unassigned hut leader dates in Needs Attention", async () => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ "Lodge Operations": false }),
+    );
     vi.stubGlobal("fetch", buildFetchMock({ unassignedHutLeaderDates: 4 }));
 
     render(<AdminSidebar features={allOn} />);
@@ -212,5 +197,20 @@ describe("AdminSidebar", () => {
     );
     expect(screen.getByRole("link", { name: /Hut Leaders/ })).not.toBeNull();
     expect(screen.getByText("4")).not.toBeNull();
+  });
+
+  it("labels the membership cancellation queue as Cancellation Requests", () => {
+    const section = getVisibleAdminNavSections(allOn).find(
+      (item) => item.label === "Members",
+    );
+
+    expect(section?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          href: "/admin/membership-cancellations",
+          label: "Cancellation Requests",
+        }),
+      ]),
+    );
   });
 });

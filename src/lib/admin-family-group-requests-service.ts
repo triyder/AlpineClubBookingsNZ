@@ -23,7 +23,7 @@ import {
   sendChildRequestRejectedEmail,
 } from "@/lib/email";
 
-const REVIEWED_REQUEST_TYPES = [
+export const REVIEWED_REQUEST_TYPES = [
   "JOIN_REQUEST",
   "CHILD_REQUEST",
   "ADULT_REQUEST",

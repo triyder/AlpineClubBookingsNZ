@@ -79,8 +79,8 @@ const NEEDS_ATTENTION_LABEL = "Needs Attention";
 
 /**
  * localStorage key holding the admin's per-section expand/collapse state, as a
- * `{ [sectionLabel]: boolean }` map. Sections default to collapsed; only the
- * labels the user has expanded are persisted as `true`.
+ * `{ [sectionLabel]: boolean }` map. Sections default to expanded; a label the
+ * user has collapsed is persisted as `false`.
  */
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
@@ -118,7 +118,7 @@ const navSections: NavSection[] = [
       },
       {
         href: "/admin/membership-cancellations",
-        label: "Cancellations",
+        label: "Cancellation Requests",
         icon: UserX,
       },
       { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
@@ -190,7 +190,7 @@ const navSections: NavSection[] = [
       },
       {
         href: "/admin/membership-cancellations",
-        label: "Cancellations",
+        label: "Cancellation Requests",
         icon: UserX,
       },
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
@@ -326,37 +326,34 @@ export function getRenderedAdminNavSections(
     .filter((section) => section.items.length > 0);
 }
 
-/** Fetch pending family group request count for sidebar badge. */
-function usePendingFamilyRequests(): number {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/admin/family-groups/requests")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!cancelled && data?.requests) {
-          setCount(data.requests.length);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return count;
-}
+import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
 
-function usePendingApplications(): number {
-  const [count, setCount] = useState(0);
+const ZERO_PENDING_COUNTS: AdminPendingCounts = {
+  familyRequests: 0,
+  memberApplications: 0,
+  refundAppeals: 0,
+  creditApprovals: 0,
+  bookingReviews: 0,
+  bookingChangeRequests: 0,
+  publicBookingRequests: 0,
+  membershipCancellations: 0,
+  archiveRequests: 0,
+  issueReports: 0,
+  unassignedHutLeaderDates: 0,
+};
+
+/** Fetch every queue count for the sidebar badges in a single request. */
+function usePendingCounts(): AdminPendingCounts {
+  const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_PENDING_COUNTS);
 
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/admin/member-applications?status=PENDING_ADMIN")
+    fetch("/api/admin/pending-counts")
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
-        if (!cancelled) {
-          setCount(data?.pendingCount ?? 0);
+        if (!cancelled && data) {
+          setCounts({ ...ZERO_PENDING_COUNTS, ...data });
         }
       })
       .catch(() => {});
@@ -366,198 +363,7 @@ function usePendingApplications(): number {
     };
   }, []);
 
-  return count;
-}
-
-function usePendingRefundAppeals(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/admin/refund-requests?status=PENDING")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled) {
-          if (typeof data?.total === "number") {
-            setCount(data.total);
-          } else if (Array.isArray(data)) {
-            setCount(data.length);
-          }
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
-
-/** Fetch pending internal booking review + change request counts. */
-function usePendingBookingRequests(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    Promise.all([
-      fetch("/api/admin/booking-reviews?status=PENDING&pageSize=1").then(
-        (response) => (response.ok ? response.json() : null),
-      ),
-      fetch(
-        "/api/admin/booking-change-requests?status=REQUESTED&pageSize=1",
-      ).then((response) => (response.ok ? response.json() : null)),
-    ])
-      .then(([reviewData, changeData]) => {
-        if (!cancelled) {
-          setCount(
-            (reviewData?.pagination?.total ?? 0) +
-              (typeof changeData?.total === "number" ? changeData.total : 0),
-          );
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
-
-/**
- * Fetch the count of public (non-member) booking requests waiting in the
- * admin queue (VERIFIED, PRICED, QUOTED, QUOTE_SENT, QUERY_PENDING,
- * MODIFICATION_REQUESTED). Summed with the internal review/change-request
- * count for the single Booking Requests badge, since /admin/booking-requests
- * covers both queues via its tabs.
- */
-function usePendingPublicBookingRequests(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/admin/booking-requests?status=QUEUE&pageSize=1")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && typeof data?.total === "number") {
-          setCount(data.total);
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
-
-function usePendingCreditApprovals(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/admin/credit-approvals?status=PENDING")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && Array.isArray(data)) {
-          setCount(data.length);
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
-
-function usePendingMembershipCancellations(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    Promise.all([
-      fetch(
-        "/api/admin/membership-cancellation-requests?status=REQUESTED&pageSize=1",
-      ).then((response) => (response.ok ? response.json() : null)),
-      fetch(
-        "/api/admin/member-lifecycle-action-requests?action=ARCHIVE&status=REQUESTED&pageSize=1",
-      ).then((response) => (response.ok ? response.json() : null)),
-    ])
-      .then(([cancellationData, archiveData]) => {
-        if (!cancelled) {
-          setCount(
-            (cancellationData?.pendingCount ?? 0) +
-              (archiveData?.pendingCount ?? 0),
-          );
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
-
-function usePendingIssueReports(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/admin/issue-reports?status=OPEN&pageSize=1")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && typeof data?.total === "number") {
-          setCount(data.total);
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
-}
-
-function useUnassignedHutLeaderDates(): number {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/admin/hut-leaders/unassigned-dates")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && Array.isArray(data?.unassignedDates)) {
-          setCount(data.unassignedDates.length);
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return count;
+  return counts;
 }
 
 function SidebarLinks({
@@ -570,19 +376,11 @@ function SidebarLinks({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const pendingFamilyRequests = usePendingFamilyRequests();
-  const pendingApplications = usePendingApplications();
-  const pendingRefundAppeals = usePendingRefundAppeals();
-  const pendingBookingRequests = usePendingBookingRequests();
-  const pendingPublicBookingRequests = usePendingPublicBookingRequests();
-  const pendingCreditApprovals = usePendingCreditApprovals();
-  const pendingMembershipCancellations = usePendingMembershipCancellations();
-  const pendingIssueReports = usePendingIssueReports();
-  const unassignedHutLeaderDates = useUnassignedHutLeaderDates();
+  const counts = usePendingCounts();
 
-  // Per-section expand state, keyed by label. Starts collapsed (empty map) so
-  // server and first client render match; the stored preference is applied
-  // after mount. "Needs Attention" is never collapsible.
+  // Per-section expand state, keyed by label. Starts as an empty map (every
+  // section open) so server and first client render match; the stored
+  // preference is applied after mount. "Needs Attention" is never collapsible.
   const [expandedSections, setExpandedSections] = useState<
     Record<string, boolean>
   >({});
@@ -597,13 +395,14 @@ function SidebarLinks({
         }
       }
     } catch {
-      // Unavailable or malformed storage; fall back to all collapsed.
+      // Unavailable or malformed storage; fall back to all expanded.
     }
   }, []);
 
   const toggleSection = (label: string) => {
     setExpandedSections((prev) => {
-      const next = { ...prev, [label]: !prev[label] };
+      // An absent entry means "open by default", so negate the effective state.
+      const next = { ...prev, [label]: !(prev[label] ?? true) };
       try {
         window.localStorage.setItem(
           SIDEBAR_COLLAPSE_STORAGE_KEY,
@@ -618,28 +417,32 @@ function SidebarLinks({
 
   // Map href -> badge count
   const badges: Record<string, number> = {};
-  if (pendingApplications > 0) {
-    badges["/admin/member-applications"] = pendingApplications;
+  if (counts.memberApplications > 0) {
+    badges["/admin/member-applications"] = counts.memberApplications;
   }
-  if (pendingFamilyRequests > 0) {
-    badges["/admin/family-groups"] = pendingFamilyRequests;
+  if (counts.familyRequests > 0) {
+    badges["/admin/family-groups"] = counts.familyRequests;
   }
-  if (pendingBookingRequests + pendingPublicBookingRequests > 0) {
-    badges["/admin/booking-requests"] =
-      pendingBookingRequests + pendingPublicBookingRequests;
+  const bookingRequestCount =
+    counts.bookingReviews +
+    counts.bookingChangeRequests +
+    counts.publicBookingRequests;
+  if (bookingRequestCount > 0) {
+    badges["/admin/booking-requests"] = bookingRequestCount;
   }
-  if (pendingRefundAppeals + pendingCreditApprovals > 0) {
+  if (counts.refundAppeals + counts.creditApprovals > 0) {
     badges["/admin/refund-requests"] =
-      pendingRefundAppeals + pendingCreditApprovals;
+      counts.refundAppeals + counts.creditApprovals;
   }
-  if (pendingMembershipCancellations > 0) {
-    badges["/admin/membership-cancellations"] = pendingMembershipCancellations;
+  if (counts.membershipCancellations + counts.archiveRequests > 0) {
+    badges["/admin/membership-cancellations"] =
+      counts.membershipCancellations + counts.archiveRequests;
   }
-  if (pendingIssueReports > 0) {
-    badges["/admin/issue-reports"] = pendingIssueReports;
+  if (counts.issueReports > 0) {
+    badges["/admin/issue-reports"] = counts.issueReports;
   }
-  if (unassignedHutLeaderDates > 0) {
-    badges["/admin/hut-leaders"] = unassignedHutLeaderDates;
+  if (counts.unassignedHutLeaderDates > 0) {
+    badges["/admin/hut-leaders"] = counts.unassignedHutLeaderDates;
   }
 
   const renderedNavSections = getRenderedAdminNavSections(
@@ -674,7 +477,7 @@ function SidebarLinks({
         const collapsible =
           Boolean(section.label) && section.label !== NEEDS_ATTENTION_LABEL;
         const open =
-          !collapsible || (expandedSections[section.label as string] ?? false);
+          !collapsible || (expandedSections[section.label as string] ?? true);
 
         return (
           <div key={sIdx}>
