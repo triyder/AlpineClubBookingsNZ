@@ -167,6 +167,9 @@ describe("getStuckStateDashboard", () => {
         booking: {
           findMany: vi.fn().mockResolvedValue(waitlistBookings),
         },
+        groupBookingSettlement: {
+          findMany: vi.fn().mockResolvedValue([]),
+        },
         issueReport: {
           count: vi.fn().mockResolvedValue(17),
         },

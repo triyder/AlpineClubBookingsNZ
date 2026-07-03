@@ -97,6 +97,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     requestPayload: null,
     responsePayload: null,
     xeroObjectId: null,
+    xeroObjectNumber: null,
     ...overrides,
   };
 }

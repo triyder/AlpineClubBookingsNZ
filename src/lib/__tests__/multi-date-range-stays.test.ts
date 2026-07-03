@@ -26,7 +26,6 @@ import {
 } from "@/lib/booking-guest-stay-range-input";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { parseDateOnly } from "@/lib/date-only";
-import type { FeatureFlags } from "@/config/schema";
 
 // June 2026 sits inside this single season.
 const SEASON: SeasonRateData = {
@@ -250,27 +249,6 @@ describe("promo maths over a sparse night set", () => {
 });
 
 describe("bed-allocation pruning by night set", () => {
-  const flags: FeatureFlags = {
-    kiosk: false,
-    chores: false,
-    financeDashboard: false,
-    waitlist: false,
-    xeroIntegration: false,
-    bedAllocation: true,
-    internetBankingPayments: false,
-    addressAutocomplete: false,
-    groupBookings: true,
-    lockers: true,
-    induction: true,
-    workParties: true,
-    promoCodes: true,
-    hutLeaders: true,
-    communications: true,
-    skifieldConditions: true,
-    twoFactor: false,
-    analytics: false,
-  };
-
   it("prunes allocations on nights a guest is not staying (gaps included)", async () => {
     const deleteMany = vi.fn().mockResolvedValue({ count: 1 });
     const db = {
@@ -309,7 +287,6 @@ describe("bed-allocation pruning by night set", () => {
     await reconcileBedAllocationsForBooking({
       bookingId: "b1",
       db,
-      envCapability: flags,
     });
 
     expect(deleteMany).toHaveBeenCalled();

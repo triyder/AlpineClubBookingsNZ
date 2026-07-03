@@ -847,7 +847,7 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assignmentId: "ca1", action: "complete" }),
       });
-      const res = await PUT(req as any, makeTokenParams());
+      const res = await (PUT as unknown as (req: Request, ctx: unknown) => ReturnType<typeof PUT>)(req, makeTokenParams());
       const data = await res.json();
 
       expect(res.status).toBe(405);

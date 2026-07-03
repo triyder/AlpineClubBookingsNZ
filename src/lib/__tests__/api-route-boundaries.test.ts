@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   explicitPublicApiRoutes,
   mixedMethodApiRoutes,
+  type MixedMethodApiRouteMetadata,
 } from "@/lib/api-route-security";
 
 function listRouteFiles(dir: string): string[] {
@@ -196,7 +197,9 @@ describe("API route boundary metadata", () => {
 
         for (const [method, methodMetadata] of Object.entries(
           metadata.methods,
-        )) {
+        ) as Array<
+          [string, NonNullable<MixedMethodApiRouteMetadata["methods"][keyof MixedMethodApiRouteMetadata["methods"]]>]
+        >) {
           const body = bodies[method];
           if (!body) {
             issues.push(`${routePath}#${method}: documented method is not exported`);

@@ -17,9 +17,6 @@ vi.mock("@/lib/prisma", () => ({
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
-    memberLifecycleActionRequest: {
-      findMany: vi.fn(),
-    },
     booking: {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn(),

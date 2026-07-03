@@ -32,7 +32,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () =>
     (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) => mockRequireActiveSessionUser(...args),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },

@@ -387,7 +387,7 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     expect(releaseCancellation).not.toBeNull();
 
-    releaseCancellation?.();
+    (releaseCancellation as (() => void) | null)?.();
     await resultPromise;
 
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({

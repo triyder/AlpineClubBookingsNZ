@@ -59,6 +59,7 @@ seeded database). Typical gate before opening a PR:
 ```bash
 npm run lint
 npm run db:generate
+npm run typecheck
 npm test
 npm run build
 ```

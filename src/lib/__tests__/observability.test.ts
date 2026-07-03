@@ -99,12 +99,12 @@ vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
 }));
 
-const mockRequireActiveSessionUser = vi.fn(async () => null);
+const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
 
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () =>
     (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
-  requireActiveSessionUser: (...args: unknown[]) =>
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) =>
     mockRequireActiveSessionUser(...args),
 }));
 
@@ -497,6 +497,7 @@ describe("OBS-07: GET /api/admin/health", () => {
           stripe: { status: "ok", latencyMs: 1 },
           xero: { status: "ok", latencyMs: 1 },
           smtp: { status: "ok", latencyMs: 1 },
+          paymentRecovery: { status: "ok", latencyMs: 1 },
         },
       },
     });
@@ -576,6 +577,7 @@ describe("OBS-07: GET /api/admin/health", () => {
           stripe: { status: "ok", latencyMs: 1 },
           xero: { status: "ok", latencyMs: 1 },
           smtp: { status: "ok", latencyMs: 1 },
+          paymentRecovery: { status: "ok", latencyMs: 1 },
         },
       },
     });
@@ -725,6 +727,7 @@ describe("OBS-07: GET /api/admin/health", () => {
           stripe: { status: "ok", latencyMs: 1 },
           xero: { status: "ok", latencyMs: 1 },
           smtp: { status: "ok", latencyMs: 1 },
+          paymentRecovery: { status: "ok", latencyMs: 1 },
         },
       },
     });
@@ -764,7 +767,7 @@ describe("OBS-07: GET /api/admin/health", () => {
       createdAt: new Date(baseTime - 60 * 60_000),
     };
 
-    vi.mocked(prisma.cronJobRun.findMany).mockImplementation(
+    vi.mocked(prisma.cronJobRun.findMany).mockImplementation((
       async (query?: any) => {
         const where = query?.where;
         if (!where) {
@@ -781,7 +784,7 @@ describe("OBS-07: GET /api/admin/health", () => {
 
         return [financeRun];
       }
-    );
+    ) as never);
 
     const { GET } = await import("@/app/api/admin/health/route");
     const response = await GET();

@@ -96,8 +96,7 @@ vi.mock("@/lib/induction", () => ({
   createMemberInduction: vi.fn().mockResolvedValue({ id: "induction-1" }),
 }));
 
-// @ts-expect-error Vitest supports virtual mocks for modules that only exist in Next.js runtime.
-vi.mock("server-only", () => ({}), { virtual: true });
+vi.mock("server-only", () => ({}));
 
 vi.mock("bcryptjs", () => ({
   hash: vi.fn().mockResolvedValue("hashed-secret"),
@@ -758,7 +757,7 @@ describe("membership nomination workflow", () => {
 
     await expect(
       assertLinkedBookingMembersCanBeBooked(
-        bookingDb as Parameters<typeof assertLinkedBookingMembersCanBeBooked>[0],
+        bookingDb as unknown as Parameters<typeof assertLinkedBookingMembersCanBeBooked>[0],
         linkedMembers,
         "member-1"
       )

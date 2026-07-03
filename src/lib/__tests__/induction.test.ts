@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("server-only", () => ({}), { virtual: true });
+vi.mock("server-only", () => ({}));
 
 const { prismaMock, txMock } = vi.hoisted(() => {
   const txMock = {
@@ -70,13 +70,14 @@ describe("resolveSignerRole", () => {
 });
 
 describe("canSignOff", () => {
+  type SignableInduction = Parameters<typeof canSignOff>[0];
   const signable = {
     status: "IN_PROGRESS" as const,
     memberId: "inductee",
     signOffs: [] as Array<{ signerMemberId: string | null }>,
     assignedSigners: [] as Array<{ memberId: string }>,
     application,
-  };
+  } as unknown as SignableInduction;
 
   it("allows an authorised, unsigned nominator", () => {
     const result = canSignOff(signable, ctxNominator);
@@ -102,7 +103,10 @@ describe("canSignOff", () => {
 
   it("rejects a duplicate signer", () => {
     const result = canSignOff(
-      { ...signable, signOffs: [{ signerMemberId: "nom1" }] },
+      {
+        ...signable,
+        signOffs: [{ signerMemberId: "nom1" }] as unknown as SignableInduction["signOffs"],
+      },
       ctxNominator
     );
     expect(result.allowed).toBe(false);

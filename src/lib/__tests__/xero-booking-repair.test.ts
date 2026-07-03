@@ -288,7 +288,7 @@ function createDependencies(state: {
           return booking?.payment ?? null;
         }),
       },
-    },
+    } as unknown as (typeof import("@/lib/prisma"))["prisma"],
     enqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_booking",
       message: "queued",

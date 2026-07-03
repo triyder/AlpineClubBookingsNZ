@@ -13,9 +13,13 @@ const DEFAULT_USER: SessionUser = {
   email: "test-user@example.org",
   name: "Test User",
   role: "USER",
-  accessRoles: [{ role: "USER" }],
+  accessRoles: ["USER"],
   forcePasswordChange: false,
   isEmailVerified: true,
+  twoFactorRequired: false,
+  twoFactorVerified: false,
+  twoFactorEnrolled: false,
+  twoFactorMethod: null,
 };
 
 export function makeSession(user: Partial<SessionUser> = {}): Session {
@@ -31,7 +35,7 @@ export function adminSession(overrides: Partial<SessionUser> = {}): Session {
     email: "admin@example.org",
     name: "Admin One",
     role: "ADMIN",
-    accessRoles: [{ role: "ADMIN" }],
+    accessRoles: ["ADMIN"],
     ...overrides,
   });
 }
@@ -42,7 +46,7 @@ export function memberSession(overrides: Partial<SessionUser> = {}): Session {
     email: "member@example.org",
     name: "Member One",
     role: "USER",
-    accessRoles: [{ role: "USER" }],
+    accessRoles: ["USER"],
     ...overrides,
   });
 }
@@ -53,7 +57,7 @@ export function lodgeSession(overrides: Partial<SessionUser> = {}): Session {
     email: "lodge@example.org",
     name: "Lodge Account",
     role: "LODGE",
-    accessRoles: [{ role: "LODGE" }],
+    accessRoles: ["LODGE"],
     ...overrides,
   });
 }

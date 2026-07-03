@@ -571,8 +571,8 @@ describe("P2.3: Guest subscription check", () => {
     mockedPrice.mockReturnValue({
       totalPriceCents: 7500,
       guests: [
-        { priceCents: 2500, perNightCents: [2500] },
-        { priceCents: 5000, perNightCents: [2500, 2500] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 2500, perNightCents: [2500], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] },
       ],
     });
     mockPrisma.booking.findUnique.mockResolvedValue({
@@ -676,7 +676,7 @@ describe("P2.3: Guest subscription check", () => {
 
     mockedPrice.mockReturnValue({
       totalPriceCents: 5000,
-      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [2500, 2500], nightDates: [] }],
     });
     mockPrisma.booking.findUnique.mockResolvedValue({
       id: "booking-1",

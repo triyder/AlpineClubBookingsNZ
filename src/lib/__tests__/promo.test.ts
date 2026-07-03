@@ -851,6 +851,9 @@ describe("validateAndCalculatePromoDiscount", () => {
         freeNightsPerIndividual: 3,
         maxGuestsPerBooking: null,
         maxNightlyValueCents: null,
+        lifetimeFreeNightsCap: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
         memberGuestsOnly: false,
       },
       {
@@ -910,6 +913,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         lifetimeFreeNightsCap: 3,
         maxGuestsPerBooking: null,
         maxNightlyValueCents: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
         memberGuestsOnly: false,
       },
       {
@@ -935,12 +940,12 @@ describe("validateAndCalculatePromoDiscount", () => {
     // member-1 has exhausted lifetime cap of 1; member-2 has 0 used.
     vi.mocked(prisma.promoRedemptionAllocation.count).mockResolvedValue(0);
     vi.mocked(prisma.promoRedemptionAllocation.aggregate).mockImplementation(
-      (args: any) =>
+      ((args: any) =>
         Promise.resolve({
           _sum: {
             freeNightsUsed: args.where.memberId === "member-1" ? 1 : 0,
           },
-        } as any)
+        } as any)) as never
     );
     vi.mocked(prisma.promoRedemptionAllocation.findMany).mockResolvedValue([]);
 
@@ -958,6 +963,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         lifetimeFreeNightsCap: 1,
         maxGuestsPerBooking: null,
         maxNightlyValueCents: 3500,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
         memberGuestsOnly: false,
       },
       {
@@ -1001,6 +1008,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         lifetimeFreeNightsCap: 1,
         maxGuestsPerBooking: null,
         maxNightlyValueCents: null,
+        fixedNightlyPriceCents: null,
+        fixedNightlyMode: null,
         memberGuestsOnly: false,
       },
       {

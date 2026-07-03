@@ -34,9 +34,11 @@ const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueBookingModificationRefundRecovery = vi.fn();
 const mockLoadCancellationPolicy = vi.fn();
 const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(undefined);
-const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
-  error: error.message,
-}));
+const mockGetBookingGuestValidationErrorResponse = vi.fn(
+  (error: { message: string }): Record<string, unknown> => ({
+    error: error.message,
+  })
+);
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
@@ -244,7 +246,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
         lastName: "Member",
         ageTier: "ADULT",
         isMember: true,
-        memberId: "m1",
+        memberId: "m1" as string | null,
         priceCents: 5000,
       },
     ],
@@ -254,7 +256,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       amountCents: 5000,
       source: "STRIPE",
       status: "SUCCEEDED",
-      stripePaymentIntentId: "pi_original",
+      stripePaymentIntentId: "pi_original" as string | null,
       xeroInvoiceId: "inv_primary",
       stripeCustomerId: null,
       refundedAmountCents: 0,

@@ -180,6 +180,7 @@ function makePendingBooking(
       lastName: "Test",
       ageTier: "ADULT",
       isMember: false,
+      memberId: null as string | null,
       stayStart,
       stayEnd,
       priceCents: 5000,

@@ -254,7 +254,7 @@ describe("GET /api/admin/runtime-status", () => {
       active: true,
       forcePasswordChange: false,
       accessRoles: [{ role: "ADMIN" }],
-    });
+    } as never);
   });
 
   it("requires an authenticated session", async () => {

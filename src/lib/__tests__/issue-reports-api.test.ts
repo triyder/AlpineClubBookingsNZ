@@ -19,9 +19,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
 }));
-const mockRequireActiveSessionUser = vi.fn(async () => null);
+const mockRequireActiveSessionUser = vi.fn<(...args: unknown[]) => Promise<Response | null>>(async () => null);
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: (...args: Parameters<typeof mockRequireActiveSessionUser>) => mockRequireActiveSessionUser(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({

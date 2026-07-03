@@ -159,6 +159,11 @@ jobs:
       - name: Generate Prisma client
         run: npm run db:generate
 
+      # Fails fast on type errors (app + test projects) before the slower
+      # test suite and next build steps.
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Test
         run: npm test
 

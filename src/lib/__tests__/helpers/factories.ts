@@ -69,7 +69,7 @@ const baseMember: Member = {
   postalCountry: null,
   createdAt: FIXED_NOW,
   updatedAt: FIXED_NOW,
-} as Member;
+} as unknown as Member;
 
 export function memberFactory(overrides: Partial<Member> = {}): Member {
   return { ...baseMember, ...overrides };
@@ -121,7 +121,7 @@ const baseBooking: Booking = {
   waitlistOfferExpiresAt: null,
   createdAt: FIXED_NOW,
   updatedAt: FIXED_NOW,
-} as Booking;
+} as unknown as Booking;
 
 export function bookingFactory(overrides: Partial<Booking> = {}): Booking {
   return { ...baseBooking, ...overrides };
@@ -169,7 +169,7 @@ const basePayment: Payment = {
   creditAppliedCents: 0,
   createdAt: FIXED_NOW,
   updatedAt: FIXED_NOW,
-} as Payment;
+} as unknown as Payment;
 
 export function paymentFactory(overrides: Partial<Payment> = {}): Payment {
   return { ...basePayment, ...overrides };
@@ -187,7 +187,7 @@ const basePaymentRefund: PaymentRefund = {
   errorMessage: null,
   createdAt: FIXED_NOW,
   updatedAt: FIXED_NOW,
-} as PaymentRefund;
+} as unknown as PaymentRefund;
 
 export function paymentRefundFactory(
   overrides: Partial<PaymentRefund> = {},
@@ -206,7 +206,7 @@ const baseMemberCredit: MemberCredit = {
   createdByMemberId: null,
   createdAt: FIXED_NOW,
   updatedAt: FIXED_NOW,
-} as MemberCredit;
+} as unknown as MemberCredit;
 
 export function memberCreditFactory(
   overrides: Partial<MemberCredit> = {},

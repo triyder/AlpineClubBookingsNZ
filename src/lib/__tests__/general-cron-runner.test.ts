@@ -31,10 +31,7 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-import {
-  GeneralCronCycleError,
-  runGeneralCronCycle,
-} from "@/lib/general-cron-runner";
+import { runGeneralCronCycle } from "@/lib/general-cron-runner";
 
 describe("general cron runner", () => {
   it("records every job in the shared general cron cycle", async () => {
@@ -159,7 +156,7 @@ describe("general cron runner", () => {
           sendQuoteExpiryReminders,
         },
       })
-    ).rejects.toMatchObject<Partial<GeneralCronCycleError>>({
+    ).rejects.toMatchObject({
       failures: [
         { jobName: "confirm-pending", message: "database unavailable" },
       ],

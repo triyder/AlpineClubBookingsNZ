@@ -64,7 +64,7 @@ describe("lodge layout authentication", () => {
     const layoutShell = (result as ReactElement<{ children: ReactElement }>).props
       .children;
 
-    expect(layoutShell.props.children).toBe("secure");
+    expect((layoutShell.props as { children: unknown }).children).toBe("secure");
   });
 
   it("redirects inactive authenticated users back to login", async () => {

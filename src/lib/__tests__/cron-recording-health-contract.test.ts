@@ -71,7 +71,7 @@ describe("cron recording vs admin cron-health contract (issue #814)", () => {
     const enabledDefinitionNames = getAdminCronJobDefinitions({
       CRON_ENABLED: "true",
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "true",
-    } as NodeJS.ProcessEnv)
+    } as unknown as NodeJS.ProcessEnv)
       .filter((definition) => definition.enabled && definition.recordsRuns)
       .map((definition) => definition.jobName);
     const recordedNames = new Set(recordedJobNames);
