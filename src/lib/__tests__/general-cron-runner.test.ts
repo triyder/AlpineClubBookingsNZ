@@ -8,6 +8,10 @@ vi.mock("@/lib/cron-confirm-pending", () => ({
   confirmPendingBookings: vi.fn(),
 }));
 
+vi.mock("@/lib/cron-group-settlement-reaper", () => ({
+  reapStaleGroupSettlements: vi.fn(),
+}));
+
 vi.mock("@/lib/cron-job-run", () => ({
   recordCronJobRunSafe: vi.fn(),
 }));
@@ -45,6 +49,11 @@ describe("general cron runner", () => {
           partialBumpedBookingIds: [],
           failedBookingIds: [],
         })),
+        reapStaleGroupSettlements: vi.fn(async () => ({
+          scanned: 1,
+          reaped: 1,
+          releasedChildBookings: 2,
+        })),
         sendPreArrivalReminders: vi.fn(async () => ({
           reminderDays: 3,
           windowStart: "2026-06-28",
@@ -74,7 +83,18 @@ describe("general cron runner", () => {
       remindedCount: 1,
       failedCount: 0,
     });
-    expect(recordCronRun).toHaveBeenCalledTimes(4);
+    expect(result.groupSettlementReap).toEqual({
+      scanned: 1,
+      reaped: 1,
+      releasedChildBookings: 2,
+    });
+    expect(recordCronRun).toHaveBeenCalledTimes(5);
+    expect(recordCronRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobName: "group-settlement-reaper",
+        status: "SUCCESS",
+      })
+    );
     expect(recordCronRun).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "confirm-pending",
@@ -119,6 +139,11 @@ describe("general cron runner", () => {
       remindedCount: 0,
       failedCount: 0,
     }));
+    const reapStaleGroupSettlements = vi.fn(async () => ({
+      scanned: 0,
+      reaped: 0,
+      releasedChildBookings: 0,
+    }));
 
     await expect(
       runGeneralCronCycle({
@@ -128,6 +153,7 @@ describe("general cron runner", () => {
           confirmPendingBookings: vi.fn(async () => {
             throw new Error("database unavailable");
           }),
+          reapStaleGroupSettlements,
           sendPreArrivalReminders,
           purgeExpiredBookingRequests,
           sendQuoteExpiryReminders,
@@ -139,6 +165,7 @@ describe("general cron runner", () => {
       ],
     });
 
+    expect(reapStaleGroupSettlements).toHaveBeenCalled();
     expect(sendPreArrivalReminders).toHaveBeenCalled();
     expect(purgeExpiredBookingRequests).toHaveBeenCalled();
     expect(sendQuoteExpiryReminders).toHaveBeenCalled();

@@ -2299,6 +2299,45 @@ export function groupJoinSettledTemplate(data: {
   `);
 }
 
+export function groupSettlementExpiredTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  joinerCount: number;
+  totalCents: number;
+}): string {
+  return layout(`
+    ${heading("Your Group Settlement Has Expired")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", the combined payment you started for your group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge was not completed in time, so the beds held for your joiners have been released.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Joiners affected", value: String(data.joinerCount) },
+      { label: "Amount not charged", value: formatCents(data.totalCents) },
+    ])}
+    ${paragraph("No money has been taken. If your group still plans to come, restart the payment from your group booking page — the beds are subject to availability.")}
+    ${supportContactSentence("If anything looks wrong, contact the club at ")}
+  `);
+}
+
+export function groupJoinReleasedTemplate(data: {
+  firstName: string;
+  organiserName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  return layout(`
+    ${heading("Your Held Spot Has Been Released")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + escapeHtml(data.organiserName) + " started a combined payment for your stay at " + escapeHtml(CLUB_NAME) + "'s lodge but it was not completed in time, so your held bed has been released.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+    ])}
+    ${paragraph("Your booking is back to awaiting payment. If the group still plans to come, the organiser can restart the payment — or check with them about what happens next.")}
+    ${supportContactSentence("If you have any questions, contact the club at ")}
+  `);
+}
+
 export function bookingRequestApprovedTemplate(data: {
   firstName: string;
   payUrl: string;

@@ -4,6 +4,7 @@ import {
   formatDateOnly,
   getTodayDateOnly,
 } from "@/lib/date-only";
+import { groupSettlementReapDeadline } from "@/lib/cron-group-settlement-reaper";
 import { getAdminAlertDeliveryEscalations } from "@/lib/email-admin-alert-escalation";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
@@ -86,6 +87,7 @@ type FindManyDelegate = {
 type StuckStateDashboardDb = {
   paymentRecoveryOperation: CountDelegate;
   booking: FindManyDelegate;
+  groupBookingSettlement: FindManyDelegate;
   issueReport: CountDelegate;
 };
 
@@ -225,6 +227,7 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
   exhaustedFailed: number;
   staleProcessing: number;
   overduePending: number;
+  staleSettlements: number;
 }) {
   addItem(items, {
     id: "payment-recovery-exhausted",
@@ -251,6 +254,19 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
       counts.staleProcessing,
       "operation",
     )} have been processing for more than ${PAYMENT_PROCESSING_STALE_MINUTES} minutes.`,
+  });
+  addItem(items, {
+    id: "payment-group-settlement-stale",
+    domain: "payment",
+    title: "Stale group settlements",
+    severity: "warning",
+    owner: "Admin",
+    count: counts.staleSettlements,
+    href: "/admin/bookings",
+    summary: `${counts.staleSettlements} organiser-pays group ${plural(
+      counts.staleSettlements,
+      "settlement",
+    )} are unpaid past the reap deadline and still hold (or recently held) beds; the group-settlement reaper releases them on its next run.`,
   });
   addItem(items, {
     id: "payment-recovery-overdue-pending",
@@ -625,6 +641,28 @@ async function getPaymentCounts(
     now.getTime() - PAYMENT_PENDING_OVERDUE_MINUTES * 60 * 1000,
   );
 
+  const staleSettlements = (
+    (await deps.db.groupBookingSettlement.findMany({
+      where: { status: { in: ["PENDING", "FAILED"] } },
+      select: {
+        updatedAt: true,
+        groupBooking: {
+          select: { organiserBooking: { select: { checkIn: true } } },
+        },
+      },
+    })) as Array<{
+      updatedAt: Date;
+      groupBooking: { organiserBooking: { checkIn: Date } };
+    }>
+  ).filter(
+    (settlement) =>
+      now >=
+      groupSettlementReapDeadline(
+        settlement.updatedAt,
+        settlement.groupBooking.organiserBooking.checkIn,
+      ),
+  ).length;
+
   const [exhaustedFailed, staleProcessing, overduePending] = await Promise.all([
     deps.db.paymentRecoveryOperation.count({
       where: {
@@ -646,7 +684,7 @@ async function getPaymentCounts(
     }),
   ]);
 
-  return { exhaustedFailed, staleProcessing, overduePending };
+  return { exhaustedFailed, staleProcessing, overduePending, staleSettlements };
 }
 
 function isModuleEnabled(modules: FeatureFlags, key: keyof FeatureFlags) {

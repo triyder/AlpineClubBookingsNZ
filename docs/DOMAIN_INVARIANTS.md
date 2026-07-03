@@ -41,6 +41,11 @@ Future reviews and issues should cite this file when proposing changes.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
 - External provider side effects require clear retry and idempotency behavior.
+- Committing organiser-pays group children to CONFIRMED before payment has an
+  expiry path: the `group-settlement-reaper` cron releases the beds when the
+  settlement stays unpaid past its window (never past check-in), voids the
+  open intent, and notifies the organiser and joiners — idempotently, and a
+  payment that lands first always wins under the shared lock.
 
 ## Booking Modifications
 

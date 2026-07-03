@@ -76,6 +76,9 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
       booking: {
         findMany: vi.fn().mockResolvedValue([]),
       },
+      groupBookingSettlement: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       issueReport: {
         count: vi.fn().mockResolvedValue(0),
       },
