@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -150,7 +151,6 @@ export function BookingChangeRequestsPanel({
   const [adminNotes, setAdminNotes] = useState("");
   const [linkedModificationIdInput, setLinkedModificationIdInput] = useState("");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const currentPath = buildBookingChangeRequestsPath(
     basePath,
     fixedSearchParams,
@@ -189,7 +189,6 @@ export function BookingChangeRequestsPanel({
   ) {
     setReviewingId(request.id);
     setError("");
-    setSuccess("");
 
     try {
       const trimmedModificationId = linkedModificationIdInput.trim();
@@ -212,7 +211,7 @@ export function BookingChangeRequestsPanel({
 
       setAdminNotes("");
       setLinkedModificationIdInput("");
-      setSuccess(
+      toast.success(
         status === "APPROVED"
           ? trimmedModificationId
             ? "Request approved and linked to the booking modification."
@@ -252,14 +251,6 @@ export function BookingChangeRequestsPanel({
         </div>
       )}
 
-      {success && (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800">
-          {success}
-          <button onClick={() => setSuccess("")} className="ml-2 underline">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       <div className="flex flex-wrap gap-2">
         {(["REQUESTED", "APPROVED", "REJECTED", "ALL"] as const).map((status) => (

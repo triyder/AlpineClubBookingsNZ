@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   getMemberPasswordActionKind,
 } from "@/components/admin/member-password-action-button"
+import { toast } from "sonner"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
@@ -59,7 +60,6 @@ export default function MembersPage() {
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -68,13 +68,11 @@ export default function MembersPage() {
   const [passwordActionDialogOpen, setPasswordActionDialogOpen] = useState(false)
   const [passwordActionTarget, setPasswordActionTarget] =
     useState<PasswordActionTarget | null>(null)
-  const pageRef = useRef<HTMLDivElement>(null)
   const errorRef = useRef<HTMLDivElement>(null)
-  const { scrollToError, scrollToTop } = useScrollToFeedback()
+  const { scrollToError } = useScrollToFeedback()
 
   const showSuccess = useCallback((message: string, durationMs = 3000) => {
-    setSuccess(message)
-    setTimeout(() => setSuccess(""), durationMs)
+    toast.success(message, { duration: durationMs })
   }, [])
 
   const showWarning = useCallback((message: string) => {
@@ -85,10 +83,6 @@ export default function MembersPage() {
   useEffect(() => {
     if (error) scrollToError(errorRef)
   }, [error, scrollToError])
-
-  useEffect(() => {
-    if (success) scrollToTop(pageRef)
-  }, [scrollToTop, success])
 
   const fetchMembers = useCallback(async () => {
     try {
@@ -206,7 +200,6 @@ export default function MembersPage() {
 
   const handleRefreshXeroGroups = () => {
     setError("")
-    setSuccess("")
     void refreshXeroGroups()
   }
 
@@ -243,7 +236,7 @@ export default function MembersPage() {
   }
 
   return (
-    <div ref={pageRef} className="space-y-6">
+    <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Members</h1>
@@ -291,11 +284,6 @@ export default function MembersPage() {
           <button onClick={() => setError("")} className="ml-2 underline">
             Dismiss
           </button>
-        </div>
-      )}
-      {success && (
-        <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
-          {success}
         </div>
       )}
       {xeroConnected && !xeroFeatures.liveMemberGroupLookups && (

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -100,7 +101,6 @@ export function BookingApprovalsPanel({
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [notesById, setNotesById] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const currentPath = buildBookingApprovalsPath(
     basePath,
     fixedSearchParams,
@@ -141,7 +141,6 @@ export function BookingApprovalsPanel({
     }
     setReviewingId(bookingId);
     setError("");
-    setSuccess("");
     try {
       const response = await fetch(`/api/admin/bookings/${bookingId}/review`, {
         method: "PATCH",
@@ -157,7 +156,7 @@ export function BookingApprovalsPanel({
         delete next[bookingId];
         return next;
       });
-      setSuccess(decision === "APPROVED" ? "Booking approved." : "Booking rejected and cancelled.");
+      toast.success(decision === "APPROVED" ? "Booking approved." : "Booking rejected and cancelled.");
       await fetchBookings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to record decision");
@@ -195,14 +194,6 @@ export function BookingApprovalsPanel({
         </div>
       )}
 
-      {success && (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-green-800">
-          {success}
-          <button onClick={() => setSuccess("")} className="ml-2 underline">
-            Dismiss
-          </button>
-        </div>
-      )}
 
       <div className="flex flex-wrap gap-2">
         {(["PENDING", "APPROVED", "REJECTED", "ALL"] as const).map((status) => (

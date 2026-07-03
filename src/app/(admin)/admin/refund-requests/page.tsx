@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -121,7 +122,6 @@ export default function RefundRequestsPage() {
   const [approvedAmount, setApprovedAmount] = useState("")
   const [processingRefund, setProcessingRefund] = useState(false)
   const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
   const currentRefundRequestsPath =
     filter === "PENDING" ? "/admin/refund-requests" : `/admin/refund-requests?status=${filter}`
 
@@ -170,7 +170,6 @@ export default function RefundRequestsPage() {
   async function handleRefundReview(id: string, status: "APPROVED" | "REJECTED") {
     setProcessingRefund(true)
     setError("")
-    setSuccess("")
 
     try {
       const body: Record<string, unknown> = {
@@ -202,7 +201,7 @@ export default function RefundRequestsPage() {
       setReviewingRefundId(null)
       setAdminNotes("")
       setApprovedAmount("")
-      setSuccess(
+      toast.success(
         status === "APPROVED"
           ? "Refund approved and processed"
           : "Appeal rejected"
@@ -221,7 +220,6 @@ export default function RefundRequestsPage() {
   ) {
     setReviewingCreditId(request.id)
     setError("")
-    setSuccess("")
 
     try {
       const res = await fetch(
@@ -238,7 +236,7 @@ export default function RefundRequestsPage() {
         throw new Error(data.error || "Failed to review credit adjustment")
       }
 
-      setSuccess(
+      toast.success(
         data.message ||
           (decision === "APPROVE"
             ? "Credit adjustment approved and applied"
@@ -287,12 +285,6 @@ export default function RefundRequestsPage() {
         </div>
       )}
 
-      {success && (
-        <div className="bg-green-50 text-green-800 px-4 py-3 rounded-md border border-green-200">
-          {success}
-          <button onClick={() => setSuccess("")} className="ml-2 underline">Dismiss</button>
-        </div>
-      )}
 
       <div className="flex gap-2">
         {(["PENDING", "APPROVED", "REJECTED", "ALL"] as const).map((status) => (
