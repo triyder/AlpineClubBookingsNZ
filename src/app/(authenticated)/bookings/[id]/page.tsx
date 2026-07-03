@@ -13,12 +13,11 @@ import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
-import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
+import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-card";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
-import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
@@ -601,19 +600,38 @@ export default async function BookingDetailPage({
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
-          {!isDeleted && isAdmin ? (
-            <CopyBookingButton
-              bookingId={booking.id}
-              sourceCheckIn={editorData.checkIn}
-              sourceCheckOut={editorData.checkOut}
-              minCheckIn={editorData.editPolicy.today}
-            />
-          ) : null}
           <Link href={backHref}>
             <Button variant="outline">Back to Bookings</Button>
           </Link>
         </div>
       </div>
+
+      {isAdmin && (
+        <AdminBookingToolsCard
+          bookingId={booking.id}
+          memberId={booking.memberId}
+          memberName={`${booking.member.firstName} ${booking.member.lastName}`}
+          checkIn={booking.checkIn}
+          checkOut={booking.checkOut}
+          copyProps={{
+            sourceCheckIn: editorData.checkIn,
+            sourceCheckOut: editorData.checkOut,
+            minCheckIn: editorData.editPolicy.today,
+          }}
+          isDeleted={isDeleted}
+          paymentId={booking.payment?.id ?? null}
+          showConfirmPendingGuests={Boolean(
+            !isDeleted &&
+              booking.status === "PENDING" &&
+              booking.hasNonMembers &&
+              booking.nonMemberHoldUntil,
+          )}
+          hasSavedPaymentMethod={Boolean(
+            booking.payment?.stripePaymentMethodId &&
+              booking.payment?.stripeCustomerId,
+          )}
+        />
+      )}
 
       {showCompletePaymentCard && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -861,21 +879,6 @@ export default async function BookingDetailPage({
           </CardContent>
         </Card>
       ) : null}
-
-      {/* Admin: force-confirm non-member guests still on hold (issue #708) */}
-      {!isDeleted &&
-        isAdmin &&
-        booking.status === "PENDING" &&
-        booking.hasNonMembers &&
-        booking.nonMemberHoldUntil && (
-          <ConfirmPendingGuestsButton
-            bookingId={booking.id}
-            hasSavedPaymentMethod={Boolean(
-              booking.payment?.stripePaymentMethodId &&
-                booking.payment?.stripeCustomerId
-            )}
-          />
-        )}
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {canManageBooking && !isDeleted && isDraft && booking.finalPriceCents === 0 && (
