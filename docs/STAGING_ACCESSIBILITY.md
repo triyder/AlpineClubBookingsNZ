@@ -135,3 +135,17 @@ When promoting this target from local staging to a shared host:
 5. Keep `BACKUP_ENABLED=false` unless the test explicitly covers backup behavior.
 6. Verify `/api/health` and `/api/health/ready` before starting browser checks.
 7. Record the staging origin and auth path in the review issue or release notes.
+
+## Automated Axe Findings (2026-07-04)
+
+The automated axe pass over the member flow and key admin pages (#1106) was
+resolved as follows: row-select checkboxes and filter selects on
+`/admin/members` carry accessible names, the booking wizard's working-bee
+select and the booking detail preferred-room select are labelled, the wizard
+step indicator and dashboard draft-expiry text meet AA contrast
+(`text-gray-600` / `text-amber-700`), `/login` has a screen-reader `h1`,
+wizard/profile heading levels descend without jumps, and the top navigation
+and admin sidebar `nav` landmarks are labelled ("Primary" / "Admin
+sections"). `/admin/bookings` select names and chip contrast were fixed by
+the PR #1102 Radix conversion. The full manual pass described above remains
+outstanding.

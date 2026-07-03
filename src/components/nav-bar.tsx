@@ -108,7 +108,7 @@ export function NavBar({ user, features }: NavBarProps) {
         </Link>
 
         {/* Desktop nav links */}
-        <nav className="hidden md:flex items-center gap-1">
+        <nav aria-label="Primary" className="hidden md:flex items-center gap-1">
           {links.map((link) => (
             <Link
               key={link.href}

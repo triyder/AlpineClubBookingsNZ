@@ -59,7 +59,7 @@ export function WebsiteMobileMenu({
             textClassName="text-brand-snow"
           />
         </div>
-        <nav className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+        <nav aria-label="Website menu" className="flex max-h-72 flex-col gap-1 overflow-y-auto">
           {navLinks.map((link) => (
             <Link
               key={link.href}

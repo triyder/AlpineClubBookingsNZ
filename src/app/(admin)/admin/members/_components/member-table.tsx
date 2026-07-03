@@ -96,8 +96,10 @@ export function MemberTable({
         <TableHeader>
           <TableRow>
             <TableHead className="w-10">
+              <span className="sr-only">Select</span>
               <input
                 type="checkbox"
+                aria-label="Select all members on this page"
                 checked={selectedIds.size === members.length && members.length > 0}
                 onChange={onToggleSelectAll}
                 className="h-4 w-4 rounded border-gray-300"
@@ -175,6 +177,7 @@ export function MemberTable({
                 <TableCell>
                   <input
                     type="checkbox"
+                    aria-label={`Select ${name}`}
                     checked={selectedIds.has(member.id)}
                     onChange={() => onToggleSelect(member.id)}
                     className="h-4 w-4 rounded border-gray-300"

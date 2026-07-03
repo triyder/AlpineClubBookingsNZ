@@ -123,7 +123,7 @@ export function NotificationPreferences() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-muted-foreground">Manage your email notification preferences</h3>
+        <h2 className="text-sm font-medium text-muted-foreground">Manage your email notification preferences</h2>
         {!editing && (
           <Button variant="outline" size="sm" onClick={handleEdit}>
             Edit

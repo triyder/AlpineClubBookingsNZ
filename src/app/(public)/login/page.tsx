@@ -109,6 +109,7 @@ function LoginForm() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 items-center">
+        <h1 className="sr-only">Sign in</h1>
         <WebsiteLogo
           label={club.name}
           className="mb-2 max-h-14 max-w-52"

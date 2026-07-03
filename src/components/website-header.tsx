@@ -50,7 +50,7 @@ export async function WebsiteHeader({
         </Link>
 
         {/* Desktop nav links */}
-        <nav className="hidden lg:flex items-center gap-1">
+        <nav aria-label="Website" className="hidden lg:flex items-center gap-1">
           {navLinks.map((link) => (
             <Link
               key={link.href}

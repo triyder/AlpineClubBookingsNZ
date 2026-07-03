@@ -253,9 +253,9 @@ export function MembershipCancellationPanel() {
 
       <div className="space-y-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">
+          <h2 className="text-sm font-semibold text-slate-900">
             Select memberships
-          </h3>
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Own-login adults must confirm from their own account before they are included.
           </p>
@@ -352,9 +352,9 @@ export function MembershipCancellationPanel() {
       </Button>
 
       <div className="border-t border-slate-200 pt-5">
-        <h3 className="mb-3 text-sm font-semibold text-slate-900">
+        <h2 className="mb-3 text-sm font-semibold text-slate-900">
           Request status
-        </h3>
+        </h2>
         <RequestStatusList requests={overview.requests} />
       </div>
     </div>

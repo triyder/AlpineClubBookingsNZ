@@ -1298,7 +1298,7 @@ export default function BookPage() {
                 </svg>
               </div>
               <div>
-                <h3 className="font-semibold text-purple-900">Lodge is fully booked</h3>
+                <h2 className="font-semibold text-purple-900">Lodge is fully booked</h2>
                 <p className="text-sm text-purple-700 mt-1">
                   The lodge is at capacity on{" "}
                   {waitlistFullNights.length === 1
@@ -1330,19 +1330,19 @@ export default function BookPage() {
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 text-sm">
-        <span className={step === "dates" ? "app-step-active" : "text-gray-400"}>
+        <span className={step === "dates" ? "app-step-active" : "text-gray-600"}>
           1. Select Dates
         </span>
         <span className="text-gray-300">&rarr;</span>
-        <span className={step === "guests" ? "app-step-active" : "text-gray-400"}>
+        <span className={step === "guests" ? "app-step-active" : "text-gray-600"}>
           2. Add Guests
         </span>
         <span className="text-gray-300">&rarr;</span>
-        <span className={step === "review" ? "app-step-active" : "text-gray-400"}>
+        <span className={step === "review" ? "app-step-active" : "text-gray-600"}>
           3. Review & Confirm
         </span>
         <span className="text-gray-300">&rarr;</span>
-        <span className={step === "pay" ? "app-step-active" : "text-gray-400"}>
+        <span className={step === "pay" ? "app-step-active" : "text-gray-600"}>
           {requiresAdminReviewLocal ? "4. Admin Review" : "4. Pay"}
         </span>
       </div>
@@ -1559,7 +1559,7 @@ export default function BookPage() {
               </div>
 
               <div className="border-t pt-4">
-                <h4 className="font-medium mb-2">Guests</h4>
+                <h2 className="font-medium mb-2 text-base">Guests</h2>
                 {reviewGuestPayload.map((g, i) => {
                   const stayStart = g.stayStart ?? bookingDateStrings?.checkIn;
                   const stayEnd = g.stayEnd ?? bookingDateStrings?.checkOut;
@@ -1818,6 +1818,7 @@ export default function BookPage() {
                     <div className="space-y-2">
                       {activeWorkPartyEvents.length > 1 && (
                         <select
+                          aria-label="Working bee event"
                           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                           value={selectedWorkPartyEventId ?? ""}
                           onChange={(e) =>
