@@ -15,6 +15,7 @@ const modifyDatesSchema = z
   .object({
     checkIn: z.string().optional(),
     checkOut: z.string().optional(),
+    settlementMethod: z.enum(["card", "credit"]).optional(),
   })
   .refine((d) => d.checkIn || d.checkOut, {
     message: "At least one of checkIn or checkOut is required",

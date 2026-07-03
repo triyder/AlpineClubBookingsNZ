@@ -78,10 +78,20 @@ function makeResult(overrides: Record<string, unknown> = {}) {
     removedGuest: { id: "g1", firstName: "Sam", lastName: "Lee" },
     priceDiffCents: -2000,
     refundAmountCents: 2000,
+    accountCreditAmountCents: 0,
+    // Only the Stripe-refundable slice drives the refund + recovery path.
+    pendingRefundAmountCents: 2000,
+    additionalAmountCents: 0,
+    settlementMethod: "card",
+    policyRetainedAmountCents: 0,
     xeroRefundAmountCents: 0,
+    hasSucceededPayment: true,
     hasIssuedXeroInvoice: false,
     paymentStatus: "PAID",
     paymentId: "pay_1",
+    paymentCustomerId: null,
+    memberEmail: "m@example.com",
+    memberName: "Sam Lee",
     promoRemoved: false,
     choreWarnings: [],
     oldGuestCount: 2,
@@ -152,7 +162,11 @@ describe("DELETE /api/bookings/[id]/guests/[guestId] refund recovery", () => {
 
   it("does not refund or enqueue recovery when there is nothing to refund", async () => {
     mocks.removeBookingGuestInTransaction.mockResolvedValue(
-      makeResult({ refundAmountCents: 0, priceDiffCents: 0 }),
+      makeResult({
+        refundAmountCents: 0,
+        pendingRefundAmountCents: 0,
+        priceDiffCents: 0,
+      }),
     );
 
     const res = await DELETE(makeRequest(), { params });

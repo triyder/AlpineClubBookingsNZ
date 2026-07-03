@@ -76,6 +76,7 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn(),
   loadCancellationPolicy: vi.fn(),
   getNonMemberHoldDays: vi.fn(),
+  calculateDualRefundAmounts: vi.fn(),
 }));
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
@@ -96,6 +97,9 @@ vi.mock("@/lib/payment-transactions", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendBookingModifiedEmail: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/member-credit", () => ({
+  createBookingModificationCredit: vi.fn().mockResolvedValue({ id: "credit_1" }),
+}));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
@@ -111,7 +115,12 @@ import { auth } from "@/lib/auth";
 import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { calculateBookingPrice } from "@/lib/pricing";
 import { calculateChangeFee } from "@/lib/change-fee";
-import { daysUntilDate, loadCancellationPolicy, getNonMemberHoldDays } from "@/lib/cancellation";
+import {
+  daysUntilDate,
+  loadCancellationPolicy,
+  getNonMemberHoldDays,
+  calculateDualRefundAmounts,
+} from "@/lib/cancellation";
 import { validateAndCalculatePromoDiscount, validatePromoCodeRules } from "@/lib/promo";
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
@@ -124,6 +133,7 @@ const mockedCalcPrice = vi.mocked(calculateBookingPrice);
 const mockedCalcChangeFee = vi.mocked(calculateChangeFee);
 const mockedDaysUntilDate = vi.mocked(daysUntilDate);
 const mockedLoadPolicy = vi.mocked(loadCancellationPolicy);
+const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
 const mockedProcessRefund = vi.mocked(processRefund);
 const mockedGetHoldDays = vi.mocked(getNonMemberHoldDays);
 const mockedValidatePromo = vi.mocked(validatePromoCodeRules);
@@ -400,7 +410,23 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     });
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
     mockedDaysUntilDate.mockReturnValue(30);
-    mockedLoadPolicy.mockResolvedValue([]);
+    mockedLoadPolicy.mockResolvedValue([
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 100,
+        creditRefundPercentage: 100,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ] as any);
+    // Date reductions now settle through the shared policy machinery (#1024);
+    // a 100% tier keeps the full 5000 refund.
+    mockedCalcDualRefund.mockReturnValue({
+      cardRefundAmountCents: 5000,
+      cardRefundPercentage: 100,
+      creditRefundAmountCents: 5000,
+      creditRefundPercentage: 100,
+    } as any);
     mockedGetHoldDays.mockResolvedValue(7);
     mockRefundPaymentTransactions.mockResolvedValue({
       refunds: [
@@ -416,7 +442,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
-      body: JSON.stringify({ checkOut: "2026-06-02" }),
+      body: JSON.stringify({ checkOut: "2026-06-02", settlementMethod: "card" }),
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(200);
@@ -1140,9 +1166,44 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       totalRefundedAmountCents: 0,
     });
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    // Removal reductions now settle through the shared policy machinery
+    // (#1014): default to a 100% card/credit tier so full-refund expectations
+    // hold, and let individual tests override for partial-policy cases.
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 100,
+        creditRefundPercentage: 100,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ] as any);
+    mockedCalcDualRefund.mockImplementation((basisAmountCents: number) => ({
+      cardRefundAmountCents: basisAmountCents,
+      cardRefundPercentage: 100,
+      creditRefundAmountCents: basisAmountCents,
+      creditRefundPercentage: 100,
+    }));
     const mod = await import("@/app/api/bookings/[id]/guests/[guestId]/route");
     DELETE = mod.DELETE;
   });
+
+  // Removal of a guest from a booking with a captured payment now requires an
+  // explicit card/credit election (parity with the batch modify endpoint).
+  function deleteWithMethod(
+    guestId: string,
+    settlementMethod: "card" | "credit" = "card",
+  ) {
+    return new NextRequest(
+      `http://localhost/api/bookings/bk1/guests/${guestId}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ settlementMethod }),
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
 
   it("returns 401 for unauthenticated requests", async () => {
     mockedAuth.mockResolvedValue(null as any);
@@ -1275,7 +1336,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     });
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
-    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const req = deleteWithMethod("g2");
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -1317,7 +1378,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockedProcessRefund.mockResolvedValue({ id: "re_789" } as any);
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
-    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const req = deleteWithMethod("g2");
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -1338,7 +1399,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockedProcessRefund.mockResolvedValue({ id: "re_000" } as any);
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
-    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const req = deleteWithMethod("g2");
     await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
     expect(mockedCalcChangeFee).not.toHaveBeenCalled();
   });
@@ -1363,7 +1424,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockedProcessRefund.mockResolvedValue({ id: "re_nm" } as any);
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
-    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const req = deleteWithMethod("g2");
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
     expect(res.status).toBe(200);
     // Should update hasNonMembers to false
@@ -1386,12 +1447,99 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     mockedProcessRefund.mockResolvedValue({ id: "re_audit" } as any);
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
-    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const req = deleteWithMethod("g2");
     await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
     expect(logAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking.modify.guests.remove" })
     );
     expect(sendBookingModifiedEmail).toHaveBeenCalled();
+  });
+
+  it("limits the refund to the cancellation-policy tier (#1014)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      totalPriceCents: 5000,
+    });
+    // 50% card tier inside the window: the 5000 delta returns only 2500,
+    // where the pre-fix path refunded the full 5000.
+    mockedCalcDualRefund.mockReturnValue({
+      cardRefundAmountCents: 2500,
+      cardRefundPercentage: 50,
+      creditRefundAmountCents: 3750,
+      creditRefundPercentage: 75,
+    } as any);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [{ paymentIntentId: "pi_123", refundId: "re_pol", amountCents: 2500 }],
+      totalRefundedAmountCents: 2500,
+    });
+
+    const res = await DELETE(deleteWithMethod("g2", "card"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.priceDiffCents).toBe(-5000);
+    expect(body.refundAmountCents).toBe(2500);
+    expect(body.policyRetainedAmountCents).toBe(2500);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 2500 }),
+    );
+  });
+
+  it("returns 400 when a settled booking is reduced without a settlement method (#1014)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      totalPriceCents: 5000,
+    });
+    mockedCalcDualRefund.mockReturnValue({
+      cardRefundAmountCents: 2500,
+      cardRefundPercentage: 50,
+      creditRefundAmountCents: 3750,
+      creditRefundPercentage: 75,
+    } as any);
+
+    // Body-less DELETE (the night-conflict self-removal shape) on a booking
+    // with a captured payment: must not silently settle the owner's money.
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
+    const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
+    expect(res.status).toBe(400);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  it("holds a policy reduction as account credit when credit is elected (#1014)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCalcPrice.mockReturnValue({
+      guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
+      totalPriceCents: 5000,
+    });
+    mockedCalcDualRefund.mockReturnValue({
+      cardRefundAmountCents: 2500,
+      cardRefundPercentage: 50,
+      creditRefundAmountCents: 3750,
+      creditRefundPercentage: 75,
+    } as any);
+
+    const res = await DELETE(deleteWithMethod("g2", "credit"), {
+      params: Promise.resolve({ id: "bk1", guestId: "g2" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.refundAmountCents).toBe(0);
+    expect(body.accountCreditAmountCents).toBe(3750);
+    expect(body.settlementMethod).toBe("credit");
+    // Credit is not a Stripe refund.
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
   });
 });
 

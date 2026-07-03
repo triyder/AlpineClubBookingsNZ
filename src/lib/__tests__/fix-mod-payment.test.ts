@@ -103,6 +103,14 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(30),
   loadCancellationPolicy: vi.fn().mockResolvedValue([]),
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  // Date reductions settle through the shared policy machinery (#1024);
+  // default to a 100% tier so existing full-refund expectations hold.
+  calculateDualRefundAmounts: vi.fn((basisAmountCents: number) => ({
+    cardRefundAmountCents: basisAmountCents,
+    cardRefundPercentage: 100,
+    creditRefundAmountCents: basisAmountCents,
+    creditRefundPercentage: 100,
+  })),
 }));
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
@@ -197,8 +205,10 @@ import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { calculateBookingPrice } from "@/lib/pricing";
 import { calculateChangeFee } from "@/lib/change-fee";
 import { processRefund, createPaymentIntent, findOrCreateCustomer, getPaymentIntent, constructWebhookEvent } from "@/lib/stripe";
+import { calculateDualRefundAmounts } from "@/lib/cancellation";
 
 const mockedAuth = vi.mocked(auth);
+const mockedCalcDualRefund = vi.mocked(calculateDualRefundAmounts);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
 const mockedCheckCapacityForGuestRanges = vi.mocked(checkCapacityForGuestRanges);
 const mockedCalcPrice = vi.mocked(calculateBookingPrice);
@@ -476,7 +486,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
-      body: JSON.stringify({ checkOut: "2026-08-02" }),
+      body: JSON.stringify({ checkOut: "2026-08-02", settlementMethod: "card" }),
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     const data = await res.json();
@@ -510,6 +520,56 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
   });
 
+  it("limits a captured-payment date reduction to the cancellation-policy tier (#1024)", async () => {
+    // Regression guard: date reductions must settle through the shared policy
+    // core, not refund the full price delta. Here the tier only returns 50%, so
+    // a $30 delta must refund $15 — the pre-#1024 code refunded the full $30.
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 7000, // price decreased from 10000 → $30 delta
+      guests: [{ priceCents: 7000, perNightCents: [3500] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockedCalcDualRefund.mockReturnValueOnce({
+      cardRefundAmountCents: 1500,
+      cardRefundPercentage: 50,
+      creditRefundAmountCents: 1500,
+      creditRefundPercentage: 50,
+    } as any);
+    mockPaymentUpdate.mockResolvedValue({});
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkOut: "2026-08-02", settlementMethod: "card" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // Policy-limited, NOT the full 3000 delta.
+    expect(data.refundAmountCents).toBe(1500);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "p1", amountCents: 1500 }),
+    );
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 1500,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      },
+    );
+  });
+
   it("does not send Internet Banking date reductions to Stripe refund recovery", async () => {
     const booking = makeBooking({
       payment: {
@@ -533,7 +593,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
-      body: JSON.stringify({ checkOut: "2026-08-02" }),
+      body: JSON.stringify({ checkOut: "2026-08-02", settlementMethod: "card" }),
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     const data = await res.json();

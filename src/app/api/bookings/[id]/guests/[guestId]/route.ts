@@ -14,9 +14,9 @@ import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
-import { refundPaymentTransactions } from "@/lib/payment-transactions";
-import { enqueueBookingModificationRefundRecovery } from "@/lib/payment-recovery";
+import { executeBookingModificationRefund } from "@/lib/booking-modification-settlement";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
+import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 
 export async function DELETE(
   request: NextRequest,
@@ -36,6 +36,23 @@ export async function DELETE(
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
+  const body = await request.json().catch(() => null);
+  const rawSettlementMethod = (body as { settlementMethod?: unknown } | null)
+    ?.settlementMethod;
+  if (
+    rawSettlementMethod !== undefined &&
+    rawSettlementMethod !== "card" &&
+    rawSettlementMethod !== "credit"
+  ) {
+    return NextResponse.json(
+      { error: "settlementMethod must be 'card' or 'credit'" },
+      { status: 400 },
+    );
+  }
+  const settlementMethod = rawSettlementMethod as
+    | BookingModificationSettlementMethod
+    | undefined;
+
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
@@ -44,42 +61,26 @@ export async function DELETE(
         guestId,
         actorMemberId: session.user.id,
         actorRole: authorizationRoleFromAccessRoles(session.user),
+        settlementMethod,
       })
     );
 
-    // Process Stripe refund outside transaction (avoids holding advisory lock during API call)
-    let stripeRefundId: string | undefined;
-    if (result.refundAmountCents > 0 && result.paymentId) {
-      try {
-        const refundResult = await refundPaymentTransactions({
-          paymentId: result.paymentId,
-          amountCents: result.refundAmountCents,
-          metadata: { bookingId, reason: "guest_removed_price_decrease" },
-          idempotencyKeyPrefix: `guest_remove_refund_${bookingId}`,
-        });
-        stripeRefundId = refundResult.refunds[0]?.refundId;
-      } catch (refundErr) {
-        logger.error({ err: refundErr, bookingId, amount: result.refundAmountCents },
-          "Stripe refund failed after guest removal - enqueuing durable recovery");
-        // Match the booking-modification settlement path: enqueue a durable,
-        // admin-visible REFUND_BOOKING_MODIFICATION recovery operation so the
-        // refund is retried instead of silently needing manual reconciliation
-        // (issue #818). Idempotent on the booking modification id.
-        try {
-          await enqueueBookingModificationRefundRecovery({
-            bookingId,
-            paymentId: result.paymentId,
-            bookingModificationId: result.bookingModificationId,
-            amountCents: result.refundAmountCents,
-          });
-        } catch (recoveryErr) {
-          logger.error(
-            { err: recoveryErr, bookingId, amount: result.refundAmountCents },
-            "Failed to enqueue guest-removal refund recovery - manual reconciliation required",
-          );
-        }
-      }
-    }
+    // Process the Stripe refund outside the transaction (avoids holding the
+    // advisory lock during the Stripe API call). Only the Stripe-refundable
+    // slice (pendingRefundAmountCents) is charged back; account credit and
+    // non-Stripe captured payments never issue a Stripe refund. The shared
+    // helper scopes the idempotency key to this modification and enqueues
+    // durable recovery on failure (issue #818).
+    const stripeRefundId = await executeBookingModificationRefund({
+      bookingId,
+      result,
+      metadataReason: "guest_removed_price_decrease",
+      idempotencyKeyPrefix: `guest_remove_refund_${bookingId}`,
+      failureMessage:
+        "Stripe refund failed after guest removal - enqueueing recovery",
+      recoveryFailureMessage:
+        "Failed to enqueue guest-removal refund recovery - manual reconciliation required",
+    });
 
     // Audit log
     logAudit({
@@ -96,6 +97,9 @@ export async function DELETE(
         removedGuest: `${result.removedGuest.firstName} ${result.removedGuest.lastName}`,
         priceDiffCents: result.priceDiffCents,
         refundAmountCents: result.refundAmountCents,
+        accountCreditAmountCents: result.accountCreditAmountCents,
+        settlementMethod: result.settlementMethod,
+        policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
       }),
       metadata: {
@@ -103,6 +107,9 @@ export async function DELETE(
         removedGuest: `${result.removedGuest.firstName} ${result.removedGuest.lastName}`,
         priceDiffCents: result.priceDiffCents,
         refundAmountCents: result.refundAmountCents,
+        accountCreditAmountCents: result.accountCreditAmountCents,
+        settlementMethod: result.settlementMethod,
+        policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
         newGuestCount: result.booking.guests.length,
       },
@@ -118,6 +125,12 @@ export async function DELETE(
       priceDiffCents: result.priceDiffCents,
       changeFeeCents: 0,
       datesChanged: false,
+      // Policy-limited settlement amount + method so a captured-payment
+      // reduction issues the correct (card vs credit) modification credit
+      // note; an unpaid issued invoice falls back to the full delta inside
+      // classifyXeroBookingEditSettlement when this is null.
+      settlementAmountCents: result.xeroRefundAmountCents,
+      settlementMethod: result.settlementMethod,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );
@@ -141,7 +154,11 @@ export async function DELETE(
         newFinalPriceCents: result.booking.finalPriceCents,
         changeFeeCents: 0,
         refundAmountCents: result.refundAmountCents,
-        additionalAmountCents: 0,
+        accountCreditAmountCents: result.accountCreditAmountCents,
+        // Removing a guest can raise the price when it invalidates a group
+        // promo the remaining guests relied on; surface that so the email is
+        // honest rather than always claiming a $0 additional charge.
+        additionalAmountCents: result.additionalAmountCents,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );
@@ -152,6 +169,9 @@ export async function DELETE(
       removedGuest: result.removedGuest,
       priceDiffCents: result.priceDiffCents,
       refundAmountCents: result.refundAmountCents,
+      accountCreditAmountCents: result.accountCreditAmountCents,
+      settlementMethod: result.settlementMethod,
+      policyRetainedAmountCents: result.policyRetainedAmountCents,
       stripeRefundId: stripeRefundId ?? null,
       promoRemoved: result.promoRemoved,
       choreWarnings: result.choreWarnings,
