@@ -84,7 +84,7 @@ export const EMAIL_AUDIT_DEFAULTS = {
   },
   "waitlist-offer": {
     "defaultSubject": "Spot Available! - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "A Spot Has Opened Up!\n\nHi {{firstName}}, great news — a spot has become available for your waitlisted booking.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nThis offer expires on {{expiresAt}}. If you don't confirm in time, the spot will be offered to the next person in line.\n\nConfirm Booking: {{BASE_URL}}/bookings/{{bookingId}}\n\nIf you no longer need this booking, you can decline from your booking page."
+    "defaultBody": "A Spot Has Opened Up!\n\nHi {{firstName}}, great news — a spot has become available for your waitlisted booking.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nPrice: {{price}}\n\nThis offer expires on {{expiresAt}}. If you don't confirm in time, the spot will be offered to the next person in line.\n\nConfirm Booking: {{BASE_URL}}/bookings/{{bookingId}}\n\nIf you no longer need this booking, you can decline from your booking page."
   },
   "waitlist-offer-expired": {
     "defaultSubject": "Waitlist Offer Expired - {{CLUB_LODGE_NAME}}",

@@ -2191,6 +2191,7 @@ export async function sendWaitlistOfferEmail(
   guestCount: number,
   expiresAt: Date,
   bookingId: string,
+  priceCents: number,
 ) {
   await sendEmail({
     to: email,
@@ -2202,6 +2203,7 @@ export async function sendWaitlistOfferEmail(
       guestCount,
       expiresAt,
       bookingId,
+      priceCents,
     ),
     templateName: "waitlist-offer",
     templateData: {
@@ -2209,6 +2211,8 @@ export async function sendWaitlistOfferEmail(
       checkIn: formatNZDate(checkIn),
       checkOut: formatNZDate(checkOut),
       guestCount,
+      // The price the member pays on confirmation (repriced at offer time, #1035).
+      price: formatMoneyCents(priceCents),
       expiresAt: formatNZDateTime(expiresAt),
       bookingId,
     },

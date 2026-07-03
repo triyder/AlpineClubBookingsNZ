@@ -768,6 +768,7 @@ Hi {{firstName}}, great news — a spot has become available for your waitlisted
 Check-in: {{checkIn}}
 Check-out: {{checkOut}}
 Guests: {{guestCount}}
+Price: {{price}}
 
 This offer expires on {{expiresAt}}. If you don't confirm in time, the spot will be offered to the next person in line.
 
