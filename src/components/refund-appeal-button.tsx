@@ -1,6 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { toast } from "sonner"
+import { humanizeStatus } from "@/lib/status-colors"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -34,7 +36,6 @@ export function RefundAppealButton({
   const [requestedAmount, setRequestedAmount] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
   const [existingRequests, setExistingRequests] = useState<RefundRequestData[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -70,7 +71,7 @@ export function RefundAppealButton({
 
       const newReq = await res.json()
       setExistingRequests((prev) => [newReq, ...prev])
-      setSuccess("Your refund appeal has been submitted. We'll review it and get back to you.")
+      toast.success("Your refund appeal has been submitted. We'll review it and get back to you.")
       setShowForm(false)
       setReason("")
       setRequestedAmount("")
@@ -103,7 +104,7 @@ export function RefundAppealButton({
                         : "destructive"
                     }
                   >
-                    {req.status}
+                    {humanizeStatus(req.status)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
                     {new Date(req.createdAt).toLocaleDateString("en-NZ")}
@@ -126,11 +127,6 @@ export function RefundAppealButton({
         {error && (
           <div className="bg-destructive/10 text-destructive px-3 py-2 rounded-md text-sm">
             {error}
-          </div>
-        )}
-        {success && (
-          <div className="bg-green-50 text-green-800 px-3 py-2 rounded-md text-sm border border-green-200">
-            {success}
           </div>
         )}
 

@@ -31,6 +31,26 @@ current docs and may need verification during a later UI/UX review.
 | Finance/Xero | Monitor accounting and reconcile provider state | Open finance/admin Xero pages, run safe syncs, review failures | Explain the shared operational Xero connection used by finance reports | Missing credentials, failed sync, wrong access level | `/finance`, `/admin/xero`, guarded role checks |
 | Lodge/kiosk | Manage arrivals, departures, chores, lodge info | Open `/lodge`, sign in or PIN, update day operations | Show current date, accountable actor, safe sign-out | No access, stale PIN session, empty roster | `/lodge`, keyboard/touch target checks |
 
+## Feedback Conventions
+
+One rule for "did that work?" feedback, so the affordance is predictable on
+every screen:
+
+- **Toasts (sonner, mounted globally in `app-providers.tsx`)** for simple
+  action confirmations and failures — a button was clicked, the action
+  succeeded or failed, there is nothing further to read or fix in place
+  (e.g. "Invitation sent", "Profile updated", "Banner deleted").
+- **Inline banners** for feedback the user must act on in place: validation
+  errors pointing at form fields, multi-step flow outcomes that carry
+  next-step content (cancellation summaries, nomination confirmations), and
+  long admin forms — pair those with the `use-scroll-to-feedback` hook so the
+  banner is brought into view.
+- **Destructive confirmations** use `useConfirm()` from
+  `src/components/confirm-dialog.tsx`, never `window.confirm`.
+
+New code follows this rule; existing inline success panels are converted
+opportunistically when a file is already being touched.
+
 ## Review Prompts
 
 For every journey, verify the next action, failure state, pending state,

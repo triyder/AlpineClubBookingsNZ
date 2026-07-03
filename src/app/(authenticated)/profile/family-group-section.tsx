@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -128,7 +129,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   const [detailsDob, setDetailsDob] = useState("");
   const [removalNotes, setRemovalNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [familyStatuses, setFamilyStatuses] = useState<FamilyMemberStatus[]>([]);
@@ -159,7 +159,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleRequestJoin(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setMessage("");
     setSubmitting(true);
 
     try {
@@ -173,7 +172,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Request failed");
         return;
       }
-      setMessage(data.message || "Request submitted successfully");
+      toast.success(data.message || "Request submitted successfully");
       setEmail("");
       setShowJoinForm(false);
       await loadFamilyData();
@@ -185,7 +184,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleInvite(e: React.FormEvent, familyGroupId: string) {
     e.preventDefault();
     setError("");
-    setMessage("");
     setSubmitting(true);
 
     try {
@@ -199,7 +197,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Invitation failed");
         return;
       }
-      setMessage(data.message || "Invitation sent");
+      toast.success(data.message || "Invitation sent");
       setEmail("");
       setShowInviteForm(null);
       await loadFamilyData();
@@ -211,7 +209,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleChildRequest(e: React.FormEvent, familyGroupId: string) {
     e.preventDefault();
     setError("");
-    setMessage("");
     setSubmitting(true);
 
     try {
@@ -232,7 +229,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Request failed");
         return;
       }
-      setMessage(data.message || "Request submitted");
+      toast.success(data.message || "Request submitted");
       setChildFirstName("");
       setChildLastName("");
       setChildDob("");
@@ -246,7 +243,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleAdultRequest(e: React.FormEvent, familyGroupId: string) {
     e.preventDefault();
     setError("");
-    setMessage("");
     setSubmitting(true);
 
     try {
@@ -266,7 +262,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Request failed");
         return;
       }
-      setMessage(data.message || "Request submitted");
+      toast.success(data.message || "Request submitted");
       setAdultFirstName("");
       setAdultLastName("");
       setAdultDob("");
@@ -286,13 +282,11 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
     setDetailsLastName(status?.lastName || member.lastName);
     setDetailsDob(status?.dateOfBirth || "");
     setError("");
-    setMessage("");
   }
 
   async function handleDelegatedDetails(e: React.FormEvent, memberId: string) {
     e.preventDefault();
     setError("");
-    setMessage("");
     setSubmitting(true);
 
     try {
@@ -311,7 +305,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Failed to save details");
         return;
       }
-      setMessage("Family member details confirmed.");
+      toast.success("Family member details confirmed.");
       setDetailMemberId(null);
       setDetailsFirstName("");
       setDetailsLastName("");
@@ -327,13 +321,11 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
     setDetailMemberId(null);
     setRemovalNotes("");
     setError("");
-    setMessage("");
   }
 
   async function handleRemovalRequest(e: React.FormEvent, familyGroupId: string, memberId: string) {
     e.preventDefault();
     setError("");
-    setMessage("");
     setSubmitting(true);
 
     try {
@@ -351,7 +343,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Request failed");
         return;
       }
-      setMessage(data.message || "Removal request submitted");
+      toast.success(data.message || "Removal request submitted");
       setRemovalMemberId(null);
       setRemovalNotes("");
       await loadFamilyData();
@@ -363,7 +355,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   async function handleInvitationResponse(invitationId: string, action: "accept" | "decline") {
     setRespondingTo(invitationId);
     setError("");
-    setMessage("");
 
     try {
       const res = await fetch("/api/members/family/invitations", {
@@ -376,7 +367,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         setError(data.error || "Response failed");
         return;
       }
-      setMessage(data.message || `Invitation ${action}ed`);
+      toast.success(data.message || `Invitation ${action}ed`);
       setInvitations((prev) => prev.filter((inv) => inv.id !== invitationId));
       await loadFamilyData();
     } finally {
@@ -408,11 +399,6 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
 
   return (
     <div className="space-y-4">
-      {message && (
-        <div className="p-2 bg-green-50 border border-green-200 text-green-700 rounded text-sm">
-          {message}
-        </div>
-      )}
       {error && (
         <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
           {error}
