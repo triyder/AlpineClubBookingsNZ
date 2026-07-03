@@ -119,6 +119,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     paymentTransactionId: "txn-1",
     paymentIntentId: "pi_superseded",
     amountCents: 6000,
+    allocationPlan: null,
     idempotencyKey: "payment_recovery_cancel_txn-1_pi_superseded",
     attempts: 1,
     nextRetryAt: new Date("2026-05-23T00:00:00.000Z"),
@@ -195,6 +196,7 @@ describe("payment recovery worker", () => {
           amountCents: 10000,
           refundedAmountCents: 0,
           status: PaymentStatus.SUCCEEDED,
+          createdAt: new Date("2026-05-01T00:00:00.000Z"),
         },
       ],
     });
@@ -491,6 +493,9 @@ describe("payment recovery worker", () => {
       expect.objectContaining({
         paymentId: "payment-1",
         amountCents: 4000,
+        // The allocation derived on first processing is frozen on the row and
+        // executed as explicit slices (#1097).
+        allocation: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
         metadata: {
           bookingId: "booking-1",
           reason: "booking_modification_refund_recovery",
@@ -503,9 +508,58 @@ describe("payment recovery worker", () => {
     expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "recovery-mod-refund" },
+        data: {
+          allocationPlan: [
+            { paymentTransactionId: "txn-1", amountCents: 4000 },
+          ],
+        },
+      }),
+    );
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-mod-refund" },
         data: expect.objectContaining({
           status: PaymentRecoveryOperationStatus.SUCCEEDED,
         }),
+      }),
+    );
+  });
+
+  it("replays a frozen allocation plan on retry instead of re-deriving it (#1097)", async () => {
+    const planned = makeOperation({
+      id: "recovery-mod-planned",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      // A previous attempt froze this plan, then died mid-refund. The current
+      // payment state would derive a different allocation — the frozen slices
+      // must win so the original Stripe keys are replayed.
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 1500 }],
+      idempotencyKey: "payment_recovery_modification_refund_mod-2",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(planned);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...planned, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 1500,
+        allocation: [{ paymentTransactionId: "txn-1", amountCents: 1500 }],
+      }),
+    );
+    // No re-derivation: the only operation update is the completion.
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ allocationPlan: expect.anything() }),
       }),
     );
   });

@@ -407,6 +407,15 @@ through `PaymentRecoveryOperation`. The recovery worker cancels still-open
 intents, treats already-cancelled intents as complete, and queues/refunds late
 captures without running the normal booking-confirmation path.
 
+Refund recovery is exactly-once across multi-transaction payments (#1097): a
+failed refund reports how much was refunded-and-recorded so the recovery row
+is enqueued for only the remainder, and the worker freezes its
+per-transaction allocation on the row (`allocationPlan`) before the first
+Stripe call. Retries replay those exact slices with their original
+idempotency keys — Stripe answers repeats with the original refund and the
+`PaymentRefund` ledger dedupes by refund id — instead of re-deriving a
+shifted allocation from whatever progress happens to be recorded.
+
 Group-settlement PaymentIntents get the same safety net: switching a group
 settlement to Internet Banking or re-attempting a card settlement voids the
 superseded intent in Stripe, and if a stale intent still captures, the webhook

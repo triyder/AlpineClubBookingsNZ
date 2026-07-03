@@ -1579,6 +1579,10 @@ model PaymentRecoveryOperation {
   paymentTransactionId String?
   paymentIntentId      String
   amountCents          Int
+  // #1097: the per-transaction refund allocation frozen on first processing,
+  // so retries re-request exactly the unfinished slices with their original
+  // Stripe idempotency keys. Array of { paymentTransactionId, amountCents }.
+  allocationPlan       Json?
   idempotencyKey       String                         @unique
   attempts             Int                            @default(0)
   nextRetryAt          DateTime?                      @default(now())

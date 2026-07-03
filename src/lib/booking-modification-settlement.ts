@@ -9,6 +9,7 @@ import {
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 import {
+  PartialRefundError,
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
@@ -86,17 +87,29 @@ export async function executeBookingModificationRefund({
       { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
       failureMessage,
     );
-    await enqueueBookingModificationRefundRecovery({
-      bookingId,
-      paymentId: result.paymentId,
-      bookingModificationId: result.bookingModificationId,
-      amountCents: result.pendingRefundAmountCents,
-    }).catch((enqueueErr) =>
-      logger.error(
-        { err: enqueueErr, bookingId },
-        recoveryFailureMessage,
-      ),
-    );
+    // Enqueue only what is still owed (#1097): slices that already refunded
+    // and recorded before the failure must not be requested again, or a
+    // multi-transaction recovery would re-derive a shifted allocation over
+    // the full amount and over-refund.
+    const completedRefundCents =
+      refundErr instanceof PartialRefundError
+        ? refundErr.completedRefundCents
+        : 0;
+    const remainingRefundCents =
+      result.pendingRefundAmountCents - completedRefundCents;
+    if (remainingRefundCents > 0) {
+      await enqueueBookingModificationRefundRecovery({
+        bookingId,
+        paymentId: result.paymentId,
+        bookingModificationId: result.bookingModificationId,
+        amountCents: remainingRefundCents,
+      }).catch((enqueueErr) =>
+        logger.error(
+          { err: enqueueErr, bookingId },
+          recoveryFailureMessage,
+        ),
+      );
+    }
     return undefined;
   }
 }

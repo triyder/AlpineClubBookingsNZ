@@ -145,6 +145,9 @@ vi.mock("@/lib/stripe", () => ({
   findOrCreateCustomer: mockFindOrCreateCustomer,
 }));
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   applyLocalRefundAllocation: (...args: unknown[]) =>

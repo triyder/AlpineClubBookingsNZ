@@ -17,6 +17,7 @@ import {
   recordStripeRefundLedgerEntry,
   refundPaymentTransactions,
   sumRecordedRefundsForTransaction,
+  type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -650,6 +651,32 @@ async function processRefundSupersededPaymentOperation(
   await completePaymentRecoveryOperation(operation.id);
 }
 
+/** Parse a persisted allocation plan (#1097); null when absent or malformed. */
+function parseRefundAllocationPlan(
+  value: unknown,
+): RefundAllocationSlice[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const slices: RefundAllocationSlice[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") return null;
+    const { paymentTransactionId, amountCents } = entry as Record<
+      string,
+      unknown
+    >;
+    if (
+      typeof paymentTransactionId !== "string" ||
+      !paymentTransactionId ||
+      typeof amountCents !== "number" ||
+      !Number.isInteger(amountCents) ||
+      amountCents <= 0
+    ) {
+      return null;
+    }
+    slices.push({ paymentTransactionId, amountCents });
+  }
+  return slices;
+}
+
 async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
 ) {
@@ -664,21 +691,60 @@ async function processBookingModificationRefundOperation(
     );
   }
 
-  const refundableCents = payment.transactions
-    .filter((transaction) =>
-      CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
-    )
-    .reduce(
+  // The allocation is frozen on the operation the first time it is processed
+  // (#1097): a retry after a partial recorded success must re-request exactly
+  // the original per-transaction slices — with the identical Stripe
+  // idempotency keys, which Stripe answers with the original refunds and the
+  // ledger dedupes by refund id — never a re-derived allocation whose shifted
+  // slice amounts would mint fresh keys (over-refunding) or misread replayed
+  // refunds as new progress (under-refunding).
+  let plan = parseRefundAllocationPlan(operation.allocationPlan);
+
+  if (!plan) {
+    const refundableTransactions = payment.transactions
+      .filter((transaction) =>
+        CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+      )
+      .filter(
+        (transaction) =>
+          transaction.amountCents - transaction.refundedAmountCents > 0,
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    const refundableCents = refundableTransactions.reduce(
       (sum, transaction) =>
         sum + (transaction.amountCents - transaction.refundedAmountCents),
       0,
     );
 
-  const outstandingCents = Math.min(operation.amountCents, refundableCents);
+    const outstandingCents = Math.min(operation.amountCents, refundableCents);
 
-  if (outstandingCents <= 0) {
-    await completePaymentRecoveryOperation(operation.id);
-    return;
+    if (outstandingCents <= 0) {
+      await completePaymentRecoveryOperation(operation.id);
+      return;
+    }
+
+    let remainingCents = outstandingCents;
+    plan = [];
+    for (const transaction of refundableTransactions) {
+      if (remainingCents <= 0) break;
+      const sliceCents = Math.min(
+        remainingCents,
+        transaction.amountCents - transaction.refundedAmountCents,
+      );
+      plan.push({
+        paymentTransactionId: transaction.id,
+        amountCents: sliceCents,
+      });
+      remainingCents -= sliceCents;
+    }
+
+    // Persist the plan before any Stripe call: if the process dies mid-refund
+    // the retry replays these exact slices instead of re-deriving.
+    await prisma.paymentRecoveryOperation.update({
+      where: { id: operation.id },
+      data: { allocationPlan: plan as unknown as Prisma.InputJsonValue },
+    });
   }
 
   // Refund-request recoveries reuse the route's original Stripe idempotency
@@ -694,7 +760,8 @@ async function processBookingModificationRefundOperation(
 
   await refundPaymentTransactions({
     paymentId: operation.paymentId,
-    amountCents: outstandingCents,
+    amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
+    allocation: plan,
     metadata: {
       bookingId: operation.bookingId,
       reason: refundRequestId
