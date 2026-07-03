@@ -20,7 +20,6 @@ import {
   createXeroCreditNoteForModification,
   createXeroEntranceFeeInvoice,
   createXeroInvoiceForBooking,
-  createXeroInvoiceForGroupSettlement,
   createXeroSupplementaryInvoice,
   createUnappliedXeroCreditNote,
   createUnappliedXeroCreditNoteForModification,
@@ -29,6 +28,7 @@ import {
   updateXeroBookingInvoiceForBooking,
   type EntranceFeeContext,
 } from "@/lib/xero";
+import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,

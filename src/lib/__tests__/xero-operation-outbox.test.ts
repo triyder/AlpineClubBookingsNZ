@@ -85,6 +85,10 @@ vi.mock("@/lib/xero-sync", () => ({
   upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
 
+vi.mock("@/lib/xero-group-settlement-invoices", () => ({
+  createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
+}));
+
 vi.mock("@/lib/xero", () => ({
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
   buildEntranceFeeInvoiceIdempotencyKey: (
@@ -100,7 +104,7 @@ vi.mock("@/lib/xero", () => ({
   getEntranceFeeContext: mocks.getEntranceFeeContext,
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
   createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
-  createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
+
   updateXeroBookingInvoiceForBooking: mocks.updateXeroBookingInvoiceForBooking,
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
   isXeroConnected: mocks.isXeroConnected,

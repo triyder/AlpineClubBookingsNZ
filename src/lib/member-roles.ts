@@ -30,15 +30,6 @@ export const NON_MEMBER_ROLE_VALUES = [
   "SCHOOL",
 ] as const satisfies readonly Role[];
 
-export const ASSIGNABLE_ACCESS_ROLE_VALUES = [
-  "USER",
-  "ADMIN",
-  "LODGE",
-] as const satisfies readonly Role[];
-
-export const LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES = [
-] as const satisfies readonly Role[];
-
 export const MEMBER_IMPORT_ROLE_VALUES = [
   "USER",
   "ADMIN",
@@ -56,14 +47,6 @@ export function isRole(value: string | null | undefined): value is AppRole {
   return ROLE_VALUES.includes(value as AppRole);
 }
 
-export function isNonMemberRole(
-  role: string | null | undefined,
-): role is (typeof NON_MEMBER_ROLE_VALUES)[number] {
-  return NON_MEMBER_ROLE_VALUES.includes(
-    role as (typeof NON_MEMBER_ROLE_VALUES)[number],
-  );
-}
-
 export function isMemberLevelRole(
   role: string | null | undefined,
 ): role is MemberLevelRole {
@@ -78,30 +61,3 @@ export function isOperationalRole(
   );
 }
 
-export function isLegacyMembershipCategoryRole(
-  role: string | null | undefined,
-): role is (typeof LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES)[number] {
-  return LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES.includes(
-    role as (typeof LEGACY_MEMBERSHIP_CATEGORY_ROLE_VALUES)[number],
-  );
-}
-
-export function getAccessRoleOptions(): Array<{
-  value: AppRole;
-  label: string;
-  legacyMembershipCategory: boolean;
-  nonMember: boolean;
-}> {
-  const values: AppRole[] = [...ASSIGNABLE_ACCESS_ROLE_VALUES];
-
-  // Always offer the non-member categories so an admin can classify a record
-  // (e.g. a school-booking contact) as School / Non-Member. These grant no access.
-  values.push(...NON_MEMBER_ROLE_VALUES);
-
-  return values.map((value) => ({
-    value,
-    label: ROLE_LABELS[value],
-    legacyMembershipCategory: isLegacyMembershipCategoryRole(value),
-    nonMember: isNonMemberRole(value),
-  }));
-}

@@ -5,7 +5,6 @@ import {
   NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
   isMemberLevelRole,
-  isNonMemberRole,
   isOperationalRole,
 } from "@/lib/member-roles";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
@@ -78,14 +77,6 @@ describe("member role categories", () => {
 });
 
 describe("non-member booking-request roles", () => {
-  it("recognizes NON_MEMBER and SCHOOL as non-member categories", () => {
-    expect(NON_MEMBER_ROLE_VALUES).toEqual(["NON_MEMBER", "SCHOOL"]);
-    expect(isNonMemberRole("NON_MEMBER")).toBe(true);
-    expect(isNonMemberRole("SCHOOL")).toBe(true);
-    expect(isNonMemberRole("USER")).toBe(false);
-    expect(isNonMemberRole("ADMIN")).toBe(false);
-    expect(isNonMemberRole(null)).toBe(false);
-  });
 
   it("grants them no member-level or operational access", () => {
     for (const role of NON_MEMBER_ROLE_VALUES) {
