@@ -668,63 +668,6 @@ export async function markPaymentIntentTransactionFailed({
   return reconcilePaymentAggregates({ paymentId: transaction.paymentId, store });
 }
 
-export async function syncRefundedAmountFromStripe({
-  paymentIntentId,
-  refundedAmountCents,
-  store = prisma,
-}: {
-  paymentIntentId: string;
-  refundedAmountCents: number;
-  store?: PaymentStore;
-}) {
-  const transaction = await findPaymentTransactionByIntentId({
-    paymentIntentId,
-    store,
-  });
-  if (!transaction) {
-    return null;
-  }
-
-  const paymentBeforeUpdate = await store.payment.findUnique({
-    where: { id: transaction.paymentId },
-    select: { refundedAmountCents: true },
-  });
-
-  const nextRefundedAmountCents = boundedRefundedAmountCents(
-    transaction.amountCents,
-    transaction.refundedAmountCents,
-    refundedAmountCents
-  );
-
-  await store.paymentTransaction.update({
-    where: { id: transaction.id },
-    data: {
-      refundedAmountCents: nextRefundedAmountCents,
-      status: applyRefundStatus(
-        PaymentStatus.SUCCEEDED,
-        transaction.amountCents,
-        nextRefundedAmountCents
-      ),
-    },
-  });
-
-  const payment = await reconcilePaymentAggregates({
-    paymentId: transaction.paymentId,
-    store,
-  });
-
-  return {
-    payment,
-    refundDeltaCents: Math.max(
-      (payment?.refundedAmountCents ?? 0) -
-        (paymentBeforeUpdate?.refundedAmountCents ?? 0),
-      0
-    ),
-    paymentId: transaction.paymentId,
-    transactionId: transaction.id,
-  };
-}
-
 export async function syncRefundsFromStripeCharge({
   paymentIntentId,
   stripeChargeId,

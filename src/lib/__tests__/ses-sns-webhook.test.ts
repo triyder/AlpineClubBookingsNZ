@@ -187,4 +187,53 @@ describe("SES/SNS webhook route", () => {
     expect(body).toEqual({ received: true, duplicate: true });
     expect(mockIngestSesSnsEmailFeedback).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed JSON bodies before signature verification", async () => {
+    // Malformed row of the webhook Critical matrix (issue #1133).
+    const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+    const response = await POST(
+      new NextRequest("http://localhost/api/webhooks/ses-sns", {
+        method: "POST",
+        body: "not-json{",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid JSON" });
+    expect(mockVerifySnsWebhookMessage).not.toHaveBeenCalled();
+    expect(mockIngestSesSnsEmailFeedback).not.toHaveBeenCalled();
+  });
+
+  it("rejects JSON payloads that are not SNS envelopes", async () => {
+    const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+    const response = await POST(makeRequest({ hello: "world" }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid SNS envelope",
+    });
+    expect(mockVerifySnsWebhookMessage).not.toHaveBeenCalled();
+    expect(mockIngestSesSnsEmailFeedback).not.toHaveBeenCalled();
+  });
+
+  it("releases the idempotency claim when ingestion fails so SNS retries can reprocess", async () => {
+    // Exactly-once recovery: a claimed event whose handler dies must release
+    // the ProcessedWebhookEvent row, otherwise the SNS redelivery would be
+    // treated as a duplicate and the feedback would be lost permanently.
+    mockProcessedWebhookCreate.mockResolvedValueOnce({});
+    mockIngestSesSnsEmailFeedback.mockRejectedValueOnce(
+      new Error("ingest blew up")
+    );
+
+    const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+    const response = await POST(makeRequest(snsEnvelope()));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to process SES/SNS webhook",
+    });
+    expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
+      where: { eventId: "sns-message-1", source: "ses-sns" },
+    });
+  });
 });

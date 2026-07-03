@@ -263,8 +263,10 @@
     @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold/15 px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-colors hover:bg-brand-gold/25 dark:text-brand-gold;
   }
 
+  /* Charcoal-on-snow keeps AA contrast under both shipped theme presets;
+     gold is themable to mid-luminance colours that small caps can't survive. */
   .website-eyebrow {
-    @apply inline-flex items-center rounded-full bg-brand-gold px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-brand-charcoal shadow-sm;
+    @apply inline-flex items-center rounded-full bg-brand-charcoal px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-brand-snow shadow-sm;
   }
 
   .website-link {

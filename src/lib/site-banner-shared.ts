@@ -26,9 +26,3 @@ export const SITE_BANNER_PRIORITY_CLASSES: Record<
   WARNING: "bg-amber-100 border-amber-300 text-amber-900",
   NOTIFY: "bg-blue-100 border-blue-300 text-blue-900",
 };
-
-export function isSiteBannerPriority(
-  value: string,
-): value is SiteBannerPriorityValue {
-  return (SITE_BANNER_PRIORITIES as readonly string[]).includes(value);
-}

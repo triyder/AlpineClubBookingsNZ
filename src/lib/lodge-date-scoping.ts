@@ -66,18 +66,6 @@ export async function findLodgeGuestDepartingOnDate(
   });
 }
 
-export async function assignmentExistsForDate(assignmentId: string, date: Date) {
-  const assignment = await prisma.choreAssignment.findFirst({
-    where: {
-      id: assignmentId,
-      date,
-    },
-    select: { id: true },
-  });
-
-  return Boolean(assignment);
-}
-
 export async function validateRosterAllocationsForDate(
   allocations: Array<{ bookingGuestId: string; bookingId: string }>,
   date: Date

@@ -75,7 +75,7 @@ function appendAddressFilters(
 
 export function AddressAutocomplete({
   addressParams,
-  autoComplete = "disable-autocomplete",
+  autoComplete = "off",
   className,
   countryCode = "NZ",
   disabled,

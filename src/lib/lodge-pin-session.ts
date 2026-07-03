@@ -188,19 +188,6 @@ export async function findActiveHutLeaderAssignmentByPin(
   return null;
 }
 
-export function createLodgePinSession(
-  assignmentId: string,
-  memberId: string,
-  sessionUserId?: string | null
-) {
-  return createLodgePinSessionWithVersion(
-    assignmentId,
-    memberId,
-    undefined,
-    sessionUserId
-  );
-}
-
 export function createLodgePinSessionWithVersion(
   assignmentId: string,
   memberId: string,

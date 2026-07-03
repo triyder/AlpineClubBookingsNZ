@@ -3,7 +3,6 @@ import type {
   MembershipTypeBookingBehavior,
   MembershipTypeSubscriptionBehavior,
   Role,
-  SubscriptionStatus,
 } from "@prisma/client";
 import { BUILT_IN_MEMBERSHIP_TYPES, defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
@@ -492,22 +491,4 @@ export async function requiresPaidSubscriptionForMemberForBooking(
     return false;
   }
   return requiresPaidSubscriptionForBooking(params.ageTier);
-}
-
-export function getEffectiveSubscriptionStatus(params: {
-  rawStatus: SubscriptionStatus | "NOT_INVOICED" | null | undefined;
-  role?: string | null;
-  ageTier?: string | null;
-  notRequiredAgeTiers?: ReadonlySet<string>;
-  membershipTypeSubscriptionBehavior?: MembershipTypeSubscriptionBehavior | null;
-}): SubscriptionStatus | "NOT_INVOICED" {
-  if (
-    roleNeverRequiresSubscription(params.role) ||
-    (params.ageTier && params.notRequiredAgeTiers?.has(params.ageTier)) ||
-    params.membershipTypeSubscriptionBehavior === "NOT_REQUIRED"
-  ) {
-    return "NOT_REQUIRED";
-  }
-
-  return params.rawStatus ?? "NOT_INVOICED";
 }

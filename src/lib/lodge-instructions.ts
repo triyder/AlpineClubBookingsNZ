@@ -37,12 +37,6 @@ export type LodgeInstructionDocument = {
   updatedAt: string | null;
 };
 
-export function isLodgeInstructionKey(
-  value: string,
-): value is LodgeInstructionKeyValue {
-  return (LODGE_INSTRUCTION_KEYS as readonly string[]).includes(value);
-}
-
 /**
  * A member qualifies as a lodge-instructions reader while they hold a
  * current or upcoming hut leader assignment (endDate on or after today,

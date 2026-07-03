@@ -180,10 +180,6 @@ export const explicitPublicApiRoutes = {
   },
 } as const satisfies Record<string, ApiRouteSecurityMetadata>;
 
-export function getExplicitPublicApiRoute(path: string) {
-  return explicitPublicApiRoutes[path as keyof typeof explicitPublicApiRoutes];
-}
-
 export type ApiRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type MixedMethodApiRouteMetadata = {
