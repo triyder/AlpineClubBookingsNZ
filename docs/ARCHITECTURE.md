@@ -75,7 +75,7 @@ Use these ownership boundaries when adding new code:
 | --- | --- | --- |
 | Club configuration | `config/`, `src/config/` | Club identity, capacities, rates, and feature switches must come from config or environment, not hard-coded deployment values. |
 | Pages and route handlers | `src/app/` | Validate input and session state near the route boundary, then delegate decisions to `src/lib/`. |
-| Route-private admin UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks` | Large admin routes should be route shells plus local components/hooks before moving anything to shared UI. |
+| Route-private page UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-modify.ts`, `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
 | Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. |
@@ -136,7 +136,9 @@ booking detail Admin tools card — read-only detection mirroring the
 stuck-state queries.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
-`_components` and `_hooks` folders. Shared admin/member logic lives in
+`_components` and `_hooks` folders; the member `/book` wizard follows the same
+shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`
+while the page shell owns the shared booking state. Shared admin/member logic lives in
 `src/lib/`: `admin-member-xero-actions` wraps the Xero contact actions used by
 both the members list and detail page, `member-serialization` centralises DTO
 shape, `member-lifecycle-actions` owns archive/delete request handling, and

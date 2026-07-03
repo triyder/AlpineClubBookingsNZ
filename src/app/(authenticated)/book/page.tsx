@@ -1,73 +1,42 @@
 "use client";
 
-import type { AgeTier } from "@prisma/client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { toast } from "sonner";
-import { BookingCalendar } from "@/components/booking-calendar";
-import { GuestForm, type GuestData } from "@/components/guest-form";
+import { type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Card, CardContent } from "@/components/ui/card";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
-import { TimePicker } from "@/components/time-picker";
-import { CreditCard, ExternalLink, Landmark, UserMinus } from "lucide-react";
+import { type PromoResult } from "@/components/promo-code-input";
+import { ExternalLink, UserMinus } from "lucide-react";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
 } from "@/lib/booking-error-payment-targets";
 import { formatLocalDateOnly } from "@/lib/date-only";
 import Link from "next/link";
-import {
-  getFamilyMemberBookingActionLabel,
-  getFamilyMemberBookingBlockMessage,
-  shouldShowInviteFamilyGroupMembersLink,
-} from "@/lib/family-booking";
+import { shouldShowInviteFamilyGroupMembersLink } from "@/lib/family-booking";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
-import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
-import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
-
-interface FamilyMember {
-  id: string;
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-  relationship: "self" | "partner" | "dependent";
-  canLogin?: boolean;
-  canBeBooked?: boolean;
-  missingFields?: string[];
-  needsOwnLoginConfirmation?: boolean;
-  canCurrentUserConfirmDetails?: boolean;
-  pendingRequestStatus?: string | null;
-  pendingRequests?: Array<{
-    id: string;
-    type: string;
-    status: string;
-    familyGroupId: string;
-  }>;
-  pendingRequestFamilyGroupIds?: string[];
-  bookableFamilyGroupIds?: string[];
-  action?:
-    | "complete_details"
-    | "own_login_required"
-    | "pending_admin_approval"
-    | "contact_admin"
-    | null;
-}
+import { DatesStep } from "./_components/dates-step";
+import { GuestsStep } from "./_components/guests-step";
+import { ReviewStep } from "./_components/review-step";
+import { PayStep } from "./_components/pay-step";
+import {
+  PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
+  type AvailablePromoCode,
+  type BookingPaymentMethod,
+  type BookingWizardStep,
+  type CreatedBooking,
+  type FamilyMember,
+  type GroupPaymentMode,
+  type PriceQuote,
+  type RoomOption,
+  type WorkPartyEvent,
+} from "./_components/types";
 
 interface GuestProfileRequiredMember {
   memberId: string;
@@ -96,37 +65,9 @@ interface BookingMemberNightConflict {
   canSelfRemove: boolean;
 }
 
-interface RoomOption {
-  id: string;
-  name: string;
-  bedCount: number;
-}
-
-interface PriceQuote {
-  guests: {
-    ageTier: string;
-    isMember: boolean;
-    nights: number;
-    priceCents: number;
-    perNightCents?: number[];
-    nightDates?: string[];
-  }[];
-  totalPriceCents: number;
-  availableCreditCents?: number;
-}
-
 interface AvailabilityNightDetail {
   date: string;
   availableBeds: number;
-}
-
-interface WorkPartyEvent {
-  id: string;
-  name: string;
-  description: string | null;
-  startDate: string;
-  endDate: string;
-  discountPercent: number;
 }
 
 interface SubscriptionStatus {
@@ -136,7 +77,6 @@ interface SubscriptionStatus {
   invoiceNumber: string | null;
 }
 
-type BookingPaymentMethod = "stripe" | "internet_banking";
 type BookingMessageMap = Record<string, string>;
 
 const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
@@ -147,10 +87,6 @@ const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
 };
 
 const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");
-const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
-  "/book",
-  "family-group",
-);
 
 function clearGuestStayRanges(guestList: GuestData[]): GuestData[] {
   return guestList.map((guest) => {
@@ -173,16 +109,11 @@ export default function BookPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const { lodgeCapacity } = useClubIdentity();
-  const [step, setStep] = useState<"dates" | "guests" | "review" | "pay">(
-    "dates",
-  );
+  const [step, setStep] = useState<BookingWizardStep>("dates");
   // Set when the booking is created on the card-payment path; drives step 4.
-  const [createdBooking, setCreatedBooking] = useState<{
-    id: string;
-    status: string;
-    amountCents: number;
-    returnUrl: string;
-  } | null>(null);
+  const [createdBooking, setCreatedBooking] = useState<CreatedBooking | null>(
+    null,
+  );
   const [checkIn, setCheckIn] = useState<Date | null>(null);
   const [checkOut, setCheckOut] = useState<Date | null>(null);
   const [guests, setGuests] = useState<GuestData[]>([]);
@@ -221,16 +152,16 @@ export default function BookPage() {
   // discovered on the booking page after payment.
   const [groupBookingsEnabled, setGroupBookingsEnabled] = useState(false);
   const [groupTrip, setGroupTrip] = useState(false);
-  const [groupPaymentMode, setGroupPaymentMode] = useState<
-    "EACH_PAYS_OWN" | "ORGANISER_PAYS"
-  >("EACH_PAYS_OWN");
+  const [groupPaymentMode, setGroupPaymentMode] = useState<GroupPaymentMode>(
+    "EACH_PAYS_OWN",
+  );
   const [internetBankingUnavailableReason, setInternetBankingUnavailableReason] = useState<string | null>(null);
   const [internetBankingHoldSummary, setInternetBankingHoldSummary] = useState<string | null>(null);
   const [bookingMessages, setBookingMessages] = useState<BookingMessageMap>({});
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
-  const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null; lifetimeFreeNightsCap: number | null; fixedNightlyPriceCents: number | null; fixedNightlyMode: string | null }[]>([]);
+  const [availablePromoCodes, setAvailablePromoCodes] = useState<AvailablePromoCode[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
   // Promo codes module: the available-codes route 404s when the module is off,
   // so hide the code entry rather than show an input that can't validate.
@@ -987,15 +918,6 @@ export default function BookPage() {
     ? Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  function formatCents(cents: number) {
-    return `$${(cents / 100).toFixed(2)}`;
-  }
-
-  function formatSignedCents(cents: number) {
-    const prefix = cents > 0 ? "+" : "-";
-    return `${prefix}${formatCents(Math.abs(cents))}`;
-  }
-
   function getGuestProfileBlockMessage(block: GuestProfileRequiredMember) {
     if (block.action === "own_login_required") {
       return `${block.name} has their own login and needs to sign in and confirm their details before they can be booked as a member.`;
@@ -1359,645 +1281,111 @@ export default function BookPage() {
 
       {/* Step 1: Dates */}
       {step === "dates" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Select Your Dates</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {subscriptionUnpaid ? (
-              <p className="text-sm text-amber-700 py-8 text-center">
-                Booking is disabled until your subscription is paid.
-              </p>
-            ) : (
-              <BookingCalendar
-                onDateSelect={handleDateSelect}
-                selectedCheckIn={checkIn}
-                selectedCheckOut={checkOut}
-              />
-            )}
-          </CardContent>
-        </Card>
+        <DatesStep
+          subscriptionUnpaid={subscriptionUnpaid}
+          handleDateSelect={handleDateSelect}
+          checkIn={checkIn}
+          checkOut={checkOut}
+        />
       )}
 
       {/* Step 2: Guests */}
       {step === "guests" && (
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              Add Guests
-              {checkIn && checkOut && (
-                <span className="ml-2 text-sm font-normal text-gray-500">
-                  {checkIn.toLocaleDateString("en-NZ")} - {checkOut.toLocaleDateString("en-NZ")} ({nights} night{nights !== 1 ? "s" : ""})
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {familyMembers.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Quick add family members</p>
-                <div className="grid gap-2">
-                  {familyMembers.map((fm) => {
-                    const alreadyAdded = guests.some((g) => g.memberId === fm.id);
-                    const blocked = fm.canBeBooked === false;
-                    const label = fm.relationship === "self"
-                      ? `${fm.firstName} ${fm.lastName} (You)`
-                      : `${fm.firstName} ${fm.lastName} (${fm.ageTier})`;
-                    const blockMessage = getFamilyMemberBookingBlockMessage(fm);
-                    const actionLabel = getFamilyMemberBookingActionLabel(fm);
-                    return (
-                      <div
-                        key={fm.id}
-                        className={blocked ? "rounded-md border border-amber-200 bg-amber-50 p-3" : ""}
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
-                            size="sm"
-                            disabled={alreadyAdded || guests.length >= lodgeCapacity || blocked}
-                            onClick={() => addFamilyMemberAsGuest(fm)}
-                          >
-                            {alreadyAdded ? "\u2713 " : "+ "}
-                            {label}
-                          </Button>
-                          {blocked && actionLabel && (
-                            actionLabel === "Complete details" ? (
-                              <Button asChild variant="outline" size="sm">
-                                <Link href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}>
-                                  {actionLabel}
-                                </Link>
-                              </Button>
-                            ) : (
-                              <span className="text-xs font-medium text-amber-800">
-                                {actionLabel}
-                              </span>
-                            )
-                          )}
-                        </div>
-                        {blocked && blockMessage && (
-                          <p className="mt-2 text-sm text-amber-800">{blockMessage}</p>
-                        )}
-                        {blocked && fm.missingFields && fm.missingFields.length > 0 && (
-                          <p className="mt-1 text-xs text-amber-700">
-                            Missing: {fm.missingFields.join(", ")}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-            {showInviteFamilyGroupMembersLink && (
-              <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-4">
-                <p className="text-sm text-slate-600">
-                  No other family group members are available to quick add yet.{" "}
-                  <Link
-                    href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
-                    className="font-medium text-indigo-700 underline underline-offset-4 hover:text-indigo-800"
-                  >
-                    Invite family group members
-                  </Link>
-                  .
-                </p>
-              </div>
-            )}
-            <GuestForm
-              guests={guests}
-              onGuestsChange={handleGuestsChange}
-              maxGuests={lodgeCapacity}
-              bookingCheckIn={checkIn ? formatLocalDateOnly(checkIn) : undefined}
-              bookingCheckOut={checkOut ? formatLocalDateOnly(checkOut) : undefined}
-              perGuestDatesEnabled={perGuestDatesEnabled}
-              onPerGuestDatesEnabledChange={handlePerGuestDatesEnabledChange}
-              multiDateRangesEnabled={multiDateRangesEnabled}
-              onMultiDateRangesEnabledChange={handleMultiDateRangesEnabledChange}
-              nightlyPriceForGuest={(guestIndex, nightKey) => {
-                const g = priceQuote?.guests[guestIndex];
-                if (!g?.perNightCents || !g?.nightDates) return null;
-                const idx = g.nightDates.findIndex(
-                  (d) => d.slice(0, 10) === nightKey,
-                );
-                return idx >= 0 ? g.perNightCents[idx] : null;
-              }}
-            />
-            {groupBookingsEnabled && (
-              <div className="space-y-3 rounded-md border border-slate-200 p-4">
-                <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={groupTrip}
-                    onChange={(e) => setGroupTrip(e.target.checked)}
-                    className="rounded border-slate-300"
-                  />
-                  Make this a group trip
-                </label>
-                <p className="text-sm text-muted-foreground">
-                  Others can join this trip with their own booking via a link
-                  you share after you confirm.
-                </p>
-                {groupTrip && (
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input
-                        type="radio"
-                        name="groupPaymentMode"
-                        checked={groupPaymentMode === "EACH_PAYS_OWN"}
-                        onChange={() => setGroupPaymentMode("EACH_PAYS_OWN")}
-                      />
-                      Each person pays their own beds
-                    </label>
-                    <label className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input
-                        type="radio"
-                        name="groupPaymentMode"
-                        checked={groupPaymentMode === "ORGANISER_PAYS"}
-                        onChange={() => setGroupPaymentMode("ORGANISER_PAYS")}
-                      />
-                      You pay for everyone (settle one combined bill)
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="flex justify-between pt-4">
-              <Button variant="outline" onClick={() => setStep("dates")}>
-                Back
-              </Button>
-              <Button onClick={handleGuestsDone} disabled={priceLoading || guests.length === 0}>
-                {priceLoading ? "Calculating price..." : "Continue"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <GuestsStep
+          checkIn={checkIn}
+          checkOut={checkOut}
+          nights={nights}
+          familyMembers={familyMembers}
+          guests={guests}
+          lodgeCapacity={lodgeCapacity}
+          addFamilyMemberAsGuest={addFamilyMemberAsGuest}
+          showInviteFamilyGroupMembersLink={showInviteFamilyGroupMembersLink}
+          handleGuestsChange={handleGuestsChange}
+          perGuestDatesEnabled={perGuestDatesEnabled}
+          handlePerGuestDatesEnabledChange={handlePerGuestDatesEnabledChange}
+          multiDateRangesEnabled={multiDateRangesEnabled}
+          handleMultiDateRangesEnabledChange={handleMultiDateRangesEnabledChange}
+          priceQuote={priceQuote}
+          groupBookingsEnabled={groupBookingsEnabled}
+          groupTrip={groupTrip}
+          setGroupTrip={setGroupTrip}
+          groupPaymentMode={groupPaymentMode}
+          setGroupPaymentMode={setGroupPaymentMode}
+          setStep={setStep}
+          handleGuestsDone={handleGuestsDone}
+          priceLoading={priceLoading}
+        />
       )}
 
       {/* Step 3: Review */}
       {step === "review" && priceQuote && (
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Booking Summary</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">Check-in:</span>{" "}
-                  <span className="font-medium">
-                    {checkIn!.toLocaleDateString("en-NZ", {
-                      weekday: "short", day: "numeric", month: "short", year: "numeric",
-                    })}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500">Check-out:</span>{" "}
-                  <span className="font-medium">
-                    {checkOut!.toLocaleDateString("en-NZ", {
-                      weekday: "short", day: "numeric", month: "short", year: "numeric",
-                    })}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500">Nights:</span>{" "}
-                  <span className="font-medium">{nights}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">Guests:</span>{" "}
-                  <span className="font-medium">{guests.length}</span>
-                </div>
-              </div>
-
-              <div className="border-t pt-4">
-                <h2 className="font-medium mb-2 text-base">Guests</h2>
-                {reviewGuestPayload.map((g, i) => {
-                  const stayStart = g.stayStart ?? bookingDateStrings?.checkIn;
-                  const stayEnd = g.stayEnd ?? bookingDateStrings?.checkOut;
-                  const guestNights = priceQuote.guests[i]?.nights ?? 0;
-
-                  return (
-                    <div key={i} className="flex justify-between gap-3 text-sm py-1">
-                      <span>
-                        {g.firstName} {g.lastName} ({g.ageTier}, {g.isMember ? "Member" : "Non-member"})
-                        {perGuestDatesEnabled && stayStart && stayEnd && (
-                          <span className="block text-xs text-gray-500">
-                            Date In {stayStart} - Date Out {stayEnd} ({guestNights} night{guestNights === 1 ? "" : "s"})
-                          </span>
-                        )}
-                      </span>
-                      <span className="font-medium">
-                        {formatCents(priceQuote.guests[i]?.priceCents || 0)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {appliedPromo && appliedPromo.promoAdjustmentCents !== 0 ? (
-                <>
-                  <div className="border-t pt-4 flex justify-between text-sm">
-                    <span>Subtotal</span>
-                    <span>{formatCents(priceQuote.totalPriceCents)}</span>
-                  </div>
-                  <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
-                    <span>
-                      {appliedPromo.workPartyEvent
-                        ? `Working bee discount (${appliedPromo.workPartyEvent.name})`
-                        : `Promo adjustment (${appliedPromo.code})`}
-                    </span>
-                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
-                  </div>
-                  {appliedCreditCents > 0 && (
-                    <div className="flex justify-between text-sm text-green-600">
-                      <span>Account credit</span>
-                      <span>-{formatCents(appliedCreditCents)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between font-bold text-lg">
-                    <span>{appliedCreditCents > 0 ? "Remaining to pay" : "Total"}</span>
-                    <span>{formatCents(remainingToPay)}</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  {appliedCreditCents > 0 && (
-                    <>
-                      <div className="border-t pt-4 flex justify-between text-sm">
-                        <span>Subtotal</span>
-                        <span>{formatCents(priceQuote.totalPriceCents)}</span>
-                      </div>
-                      <div className="flex justify-between text-sm text-green-600">
-                        <span>Account credit</span>
-                        <span>-{formatCents(appliedCreditCents)}</span>
-                      </div>
-                    </>
-                  )}
-                  <div className={`${appliedCreditCents === 0 ? "border-t pt-4 " : ""}flex justify-between font-bold text-lg`}>
-                    <span>{appliedCreditCents > 0 ? "Remaining to pay" : "Total"}</span>
-                    <span>{formatCents(remainingToPay)}</span>
-                  </div>
-                </>
-              )}
-
-              {groupTrip && groupBookingsEnabled && (
-                <div className="rounded-md border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
-                  <span className="font-medium">Group trip</span> —{" "}
-                  {groupPaymentMode === "EACH_PAYS_OWN"
-                    ? "each person pays their own beds."
-                    : "you pay for everyone and settle one combined bill."}{" "}
-                  You&apos;ll get a shareable join link after confirming.
-                </div>
-              )}
-
-              {availableCreditCents > 0 && (
-                <div className="rounded-md bg-green-50 border border-green-200 p-4 mt-2">
-                  <p className="text-sm text-green-800 mb-2">
-                    You have <strong>{formatCents(availableCreditCents)}</strong> in account credit
-                  </p>
-                  <label className="flex items-center gap-2 text-sm text-green-800 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={useCredit}
-                      onChange={(e) => setUseCredit(e.target.checked)}
-                      className="rounded border-green-300"
-                    />
-                    Apply credit to this booking
-                  </label>
-                  {useCredit && remainingToPay === 0 && (
-                    <p className="mt-2 text-sm font-medium text-green-700">
-                      Credit covers entire booking — no card payment needed
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {showPaymentMethodChoice && (
-                <div className="space-y-3 rounded-md border border-slate-200 p-4">
-                  <p className="text-sm font-medium text-slate-900">Payment method</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("stripe")}
-                      className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                        paymentMethod === "stripe"
-                          ? "border-blue-500 bg-blue-50 text-blue-950"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span>
-                        <span className="block font-medium">Card</span>
-                        <span className="block text-xs opacity-80">
-                          {cardPaymentDescription}
-                        </span>
-                      </span>
-                    </button>
-                    {internetBankingEnabled ? (
-                      <button
-                        type="button"
-                        onClick={() => setPaymentMethod("internet_banking")}
-                        className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                          paymentMethod === "internet_banking"
-                            ? "border-blue-500 bg-blue-50 text-blue-950"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                        }`}
-                      >
-                        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>
-                          <span className="block font-medium">Internet Banking</span>
-                          <span className="block text-xs opacity-80">
-                            {internetBankingPaymentDescription}
-                            {internetBankingHoldSummary ? (
-                              <span className="mt-1 block">{internetBankingHoldSummary}</span>
-                            ) : null}
-                          </span>
-                        </span>
-                      </button>
-                    ) : internetBankingUnavailableReason ? (
-                      <div className="flex min-h-20 items-start gap-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-left text-sm text-slate-500">
-                        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>
-                          <span className="block font-medium">Internet Banking</span>
-                          <span className="block text-xs">{internetBankingUnavailableCopy}</span>
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6 space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="notes">Notes (optional)</Label>
-                <Input
-                  id="notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Any special requirements..."
-                />
-              </div>
-              {requiresAdminReviewLocal && (
-                <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4">
-                  <Label htmlFor="review-justification" className="text-amber-900">
-                    Reason for booking without an adult guest (required)
-                  </Label>
-                  <p className="text-sm text-amber-900">
-                    This booking includes minors but no adult. Please explain why so an
-                    admin can review. The booking will be held until an admin approves it,
-                    and payment cannot be taken until then.
-                  </p>
-                  <Textarea
-                    id="review-justification"
-                    value={memberReviewJustification}
-                    onChange={(e) => setMemberReviewJustification(e.target.value)}
-                    rows={3}
-                    maxLength={1000}
-                    placeholder="Explain why an adult is not on the booking..."
-                  />
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
-                <TimePicker
-                  value={expectedArrivalTime}
-                  onChange={setExpectedArrivalTime}
-                />
-              </div>
-              {roomRequestEnabled && roomOptions.length > 0 && (
-                <div className="space-y-2">
-                  <Label htmlFor="requested-room">Preferred room (optional)</Label>
-                  <Select
-                    value={requestedRoomId ?? "none"}
-                    onValueChange={(value) =>
-                      setRequestedRoomId(value === "none" ? null : value)
-                    }
-                  >
-                    <SelectTrigger id="requested-room">
-                      <SelectValue placeholder="No preference" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No preference</SelectItem>
-                      {roomOptions.map((room) => (
-                        <SelectItem key={room.id} value={room.id}>
-                          {room.name} ({room.bedCount} {room.bedCount === 1 ? "bed" : "beds"})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    We&apos;ll try to allocate your group to this room, but it
-                    isn&apos;t guaranteed if it&apos;s full.
-                  </p>
-                </div>
-              )}
-              {activeWorkPartyEvents.length > 0 && (
-                <div className="space-y-3 rounded-md border p-4">
-                  <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={attendingWorkParty}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setAttendingWorkParty(checked);
-                        setWorkPartyError("");
-                        setWorkPartyClearedNotice(null);
-                        if (!checked) {
-                          setSelectedWorkPartyEventId(null);
-                          setAppliedPromo((current) =>
-                            current?.workPartyEvent ? null : current
-                          );
-                        } else if (activeWorkPartyEvents.length === 1) {
-                          setSelectedWorkPartyEventId(activeWorkPartyEvents[0].id);
-                        }
-                      }}
-                      className="rounded border-input"
-                      disabled={Boolean(appliedPromo && !appliedPromo.workPartyEvent)}
-                    />
-                    I am attending a working bee
-                  </label>
-                  {appliedPromo && !appliedPromo.workPartyEvent && (
-                    <p className="text-sm text-muted-foreground">
-                      Remove your promo code to select a working bee event — a
-                      booking can only use one discount.
-                    </p>
-                  )}
-                  {attendingWorkParty && (
-                    <div className="space-y-2">
-                      {activeWorkPartyEvents.length > 1 && (
-                        <select
-                          aria-label="Working bee event"
-                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          value={selectedWorkPartyEventId ?? ""}
-                          onChange={(e) =>
-                            setSelectedWorkPartyEventId(e.target.value || null)
-                          }
-                        >
-                          <option value="">Select an event…</option>
-                          {activeWorkPartyEvents.map((event) => (
-                            <option key={event.id} value={event.id}>
-                              {event.name} ({event.startDate} – {event.endDate})
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      {selectedWorkPartyEventId && (
-                        (() => {
-                          const event = activeWorkPartyEvents.find(
-                            (e) => e.id === selectedWorkPartyEventId
-                          );
-                          if (!event) return null;
-                          return (
-                            <p className="text-sm text-muted-foreground">
-                              {event.discountPercent}% discount on nights
-                              between {event.startDate} and {event.endDate}
-                              {event.description ? ` — ${event.description}` : ""}.
-                            </p>
-                          );
-                        })()
-                      )}
-                      {workPartyError && (
-                        <p className="text-sm text-red-600">{workPartyError}</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-              {workPartyClearedNotice && (
-                <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-                  &ldquo;{workPartyClearedNotice}&rdquo; no longer overlaps your
-                  selected dates, so the working bee discount has been
-                  cleared.
-                </div>
-              )}
-              {availablePromoCodes.length > 0 && !appliedPromo && !attendingWorkParty && (
-                <div className="app-callout-brand p-4">
-                  <p className="mb-2 text-sm font-medium text-brand-charcoal">
-                    You have promo codes available:
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {availablePromoCodes.map((pc) => (
-                      <button
-                        key={pc.code}
-                        type="button"
-                        onClick={() => setPrefillPromoCode(pc.code)}
-                        className="app-chip-brand font-mono"
-                      >
-                        {pc.code}
-                        {pc.description && (
-                          <span className="font-sans font-normal text-brand-charcoal/75">
-                            — {pc.description}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {promoCodesEnabled && (
-                <PromoCodeInput
-                  checkIn={checkIn!}
-                  checkOut={checkOut!}
-                  guests={reviewGuestPayload}
-                  onPromoApplied={setAppliedPromo}
-                  appliedPromo={appliedPromo}
-                  prefillCode={prefillPromoCode}
-                  disabled={attendingWorkParty}
-                  disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          {guests.some((g) => !g.isMember) && (
-            <div className="space-y-3">
-              <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
-                <strong>Note:</strong> This booking includes non-member guests.
-                {guests.some((g) => g.isMember)
-                  ? " By default your own place is booked and paid for now to hold it, while your non-member guests are held provisionally as a linked booking \u2014 no beds are reserved for them until they are confirmed and paid for closer to check-in. Members have priority if the lodge fills up."
-                  : " Your booking is held provisionally until closer to check-in. Members have priority \u2014 no beds are reserved until your booking is confirmed and paid."}
-              </div>
-              {guests.some((g) => g.isMember) && (
-                <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    checked={cancelIfGuestsBumped}
-                    onChange={(e) => setCancelIfGuestsBumped(e.target.checked)}
-                  />
-                  <span>
-                    <strong>Only book if my guests can come.</strong> Tick this
-                    and we&apos;ll keep your whole party together as a single
-                    provisional booking instead of booking your place now:{" "}
-                    <strong>no beds are held and nothing is charged up front</strong>
-                    , and we only confirm and take payment once your guests are
-                    confirmed closer to your stay.
-                  </span>
-                </label>
-              )}
-            </div>
-          )}
-
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setStep("guests")}>
-              Back
-            </Button>
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={handleSaveAsDraft}
-                disabled={savingDraft || submitting}
-              >
-                {savingDraft ? "Saving draft..." : "Save as Draft"}
-              </Button>
-              <Button onClick={handleSubmit} disabled={submitting || savingDraft} size="lg">
-                {submitting
-                  ? "Creating booking..."
-                  : requiresAdminReviewLocal
-                    ? "Submit for Review"
-                    : remainingToPay > 0
-                      ? "Continue to Payment"
-                      : "Confirm Booking"}
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ReviewStep
+          checkIn={checkIn}
+          checkOut={checkOut}
+          nights={nights}
+          guests={guests}
+          priceQuote={priceQuote}
+          reviewGuestPayload={reviewGuestPayload}
+          bookingDateStrings={bookingDateStrings}
+          perGuestDatesEnabled={perGuestDatesEnabled}
+          appliedPromo={appliedPromo}
+          setAppliedPromo={setAppliedPromo}
+          availableCreditCents={availableCreditCents}
+          appliedCreditCents={appliedCreditCents}
+          remainingToPay={remainingToPay}
+          useCredit={useCredit}
+          setUseCredit={setUseCredit}
+          groupTrip={groupTrip}
+          groupBookingsEnabled={groupBookingsEnabled}
+          groupPaymentMode={groupPaymentMode}
+          showPaymentMethodChoice={showPaymentMethodChoice}
+          paymentMethod={paymentMethod}
+          setPaymentMethod={setPaymentMethod}
+          internetBankingEnabled={internetBankingEnabled}
+          internetBankingUnavailableReason={internetBankingUnavailableReason}
+          internetBankingHoldSummary={internetBankingHoldSummary}
+          cardPaymentDescription={cardPaymentDescription}
+          internetBankingPaymentDescription={internetBankingPaymentDescription}
+          internetBankingUnavailableCopy={internetBankingUnavailableCopy}
+          notes={notes}
+          setNotes={setNotes}
+          requiresAdminReviewLocal={requiresAdminReviewLocal}
+          memberReviewJustification={memberReviewJustification}
+          setMemberReviewJustification={setMemberReviewJustification}
+          expectedArrivalTime={expectedArrivalTime}
+          setExpectedArrivalTime={setExpectedArrivalTime}
+          roomRequestEnabled={roomRequestEnabled}
+          roomOptions={roomOptions}
+          requestedRoomId={requestedRoomId}
+          setRequestedRoomId={setRequestedRoomId}
+          activeWorkPartyEvents={activeWorkPartyEvents}
+          attendingWorkParty={attendingWorkParty}
+          setAttendingWorkParty={setAttendingWorkParty}
+          selectedWorkPartyEventId={selectedWorkPartyEventId}
+          setSelectedWorkPartyEventId={setSelectedWorkPartyEventId}
+          workPartyError={workPartyError}
+          setWorkPartyError={setWorkPartyError}
+          workPartyClearedNotice={workPartyClearedNotice}
+          setWorkPartyClearedNotice={setWorkPartyClearedNotice}
+          availablePromoCodes={availablePromoCodes}
+          promoCodesEnabled={promoCodesEnabled}
+          prefillPromoCode={prefillPromoCode}
+          setPrefillPromoCode={setPrefillPromoCode}
+          cancelIfGuestsBumped={cancelIfGuestsBumped}
+          setCancelIfGuestsBumped={setCancelIfGuestsBumped}
+          setStep={setStep}
+          handleSaveAsDraft={handleSaveAsDraft}
+          handleSubmit={handleSubmit}
+          submitting={submitting}
+          savingDraft={savingDraft}
+        />
       )}
 
       {/* Step 4: Pay (card path only; #1084). The booking already exists in
           the same state as the old redirect flow, so abandoning this step is
           safe — the booking page's payment card and banner take over. */}
       {step === "pay" && createdBooking && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Complete Payment</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Your booking is created. Complete payment to finish securing it.
-            </p>
-            <BookingPaymentWrapper
-              bookingId={createdBooking.id}
-              amountCents={createdBooking.amountCents}
-              paymentMode={getBookingPaymentMode(createdBooking.status)}
-              returnUrl={createdBooking.returnUrl}
-              onPaymentComplete={() =>
-                router.push(`/bookings/${createdBooking.id}`)
-              }
-            />
-            <p className="text-sm text-gray-600">
-              <Link
-                href={`/bookings/${createdBooking.id}`}
-                className="underline"
-              >
-                View booking details
-              </Link>{" "}
-              &mdash; you can also pay later from your booking page.
-            </p>
-          </CardContent>
-        </Card>
+        <PayStep createdBooking={createdBooking} />
       )}
     </div>
   );
