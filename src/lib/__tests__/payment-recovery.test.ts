@@ -510,6 +510,53 @@ describe("payment recovery worker", () => {
     );
   });
 
+  it("replays a refund-request recovery with the route's original Stripe key prefix (#1039)", async () => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(
+      makeOperation({
+        id: "recovery-refund-request",
+        type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+        amountCents: 4000,
+        idempotencyKey: "refund_request_refund_refund-1",
+        paymentTransactionId: null,
+      }),
+    );
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([
+          makeOperation({
+            id: "recovery-refund-request",
+            type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+            status: "PENDING",
+            amountCents: 4000,
+            idempotencyKey: "refund_request_refund_refund-1",
+            paymentTransactionId: null,
+          }),
+        ]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // Reusing refund_request_<id> means a refund that succeeded on Stripe but
+    // was never recorded locally is replayed by Stripe, not issued again.
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        amountCents: 4000,
+        metadata: {
+          bookingId: "booking-1",
+          reason: "refund_request_refund_recovery",
+          refundRequestId: "refund-1",
+        },
+        idempotencyKeyPrefix: "refund_request_refund-1",
+      }),
+    );
+  });
+
   it("skips the Stripe call when the outstanding refund balance has already been settled", async () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({

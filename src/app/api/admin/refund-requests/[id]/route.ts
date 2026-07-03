@@ -13,6 +13,7 @@ import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
+import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatNZDate } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
@@ -123,30 +124,53 @@ export async function PUT(
         idempotencyKeyPrefix: `refund_request_${id}`,
       });
     } catch (err) {
-      // Release the claim back to PENDING so the refund can be retried. The
-      // stable idempotency key (refund_request_<id>) makes a retry safe
-      // against double-refunding if Stripe did process the first attempt.
-      await prisma.refundRequest
-        .updateMany({
-          where: { id, status: "APPROVED" },
-          data: {
-            status: "PENDING",
-            approvedAmountCents: null,
-            reviewedBy: null,
-            reviewedAt: null,
-          },
-        })
-        .catch((revertErr) => {
-          logger.error(
-            { err: revertErr, refundRequestId: id },
-            "Failed to revert refund request claim after Stripe refund failure"
-          );
-        });
-      logger.error({ err, refundRequestId: id }, "Failed to process Stripe refund for appeal");
-      return NextResponse.json(
-        { error: "Failed to process Stripe refund" },
-        { status: 500 }
+      // The approval stands: complete the refund through the durable payment
+      // recovery queue instead of releasing the claim (#1039 item 1, PR #846
+      // residual). Bouncing back to PENDING would create two retry paths —
+      // a second admin approval and the recovery cron — with two distinct
+      // Stripe idempotency scopes for the same money. The recovery operation
+      // reuses the original refund_request_<id> Stripe key prefix, so a
+      // refund that succeeded on Stripe without being recorded is replayed,
+      // not repeated.
+      logger.error(
+        { err, refundRequestId: id },
+        "Stripe refund failed for approved appeal - enqueueing durable recovery"
       );
+      try {
+        await enqueueRefundRequestRefundRecovery({
+          bookingId: booking.id,
+          paymentId: payment.id,
+          refundRequestId: id,
+          amountCents: approvedAmountCents,
+        });
+      } catch (enqueueErr) {
+        // No durable row could be written: fall back to the pre-#1039
+        // behaviour and release the claim so an admin can retry manually.
+        logger.error(
+          { err: enqueueErr, refundRequestId: id },
+          "Failed to enqueue refund recovery - releasing the claim for manual retry"
+        );
+        await prisma.refundRequest
+          .updateMany({
+            where: { id, status: "APPROVED" },
+            data: {
+              status: "PENDING",
+              approvedAmountCents: null,
+              reviewedBy: null,
+              reviewedAt: null,
+            },
+          })
+          .catch((revertErr) => {
+            logger.error(
+              { err: revertErr, refundRequestId: id },
+              "Failed to revert refund request claim after Stripe refund failure"
+            );
+          });
+        return NextResponse.json(
+          { error: "Failed to process Stripe refund" },
+          { status: 500 }
+        );
+      }
     }
 
     // Queue the Xero credit note durably and try to kick the worker.
