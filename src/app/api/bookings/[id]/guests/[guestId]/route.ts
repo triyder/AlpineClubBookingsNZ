@@ -156,9 +156,19 @@ export async function DELETE(
         refundAmountCents: result.refundAmountCents,
         accountCreditAmountCents: result.accountCreditAmountCents,
         // Removing a guest can raise the price when it invalidates a group
-        // promo the remaining guests relied on; surface that so the email is
-        // honest rather than always claiming a $0 additional charge.
-        additionalAmountCents: result.additionalAmountCents,
+        // promo the remaining guests relied on. Only the issued-invoice
+        // (Internet Banking) path actually bills that increase — via a Xero
+        // supplementary invoice — so only surface it there. On a Stripe booking
+        // this endpoint has no mechanism to collect it (tracked in #1042), and
+        // an "additional payment required" note with no way to pay is worse
+        // than saying nothing; the price change still shows via old/new total.
+        additionalAmountCents: result.hasIssuedXeroInvoice
+          ? result.additionalAmountCents
+          : 0,
+        additionalPaymentMethod:
+          result.hasIssuedXeroInvoice && result.additionalAmountCents > 0
+            ? "INTERNET_BANKING"
+            : undefined,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );
