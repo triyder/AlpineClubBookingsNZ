@@ -3,6 +3,10 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    accessRoleDefinition: {
+      // Empty definitions: resolution falls back to legacy bundles.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: {
       findUnique: vi.fn(),
       findFirst: vi.fn(),
@@ -341,8 +345,18 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(deleteManyArgs).toEqual({ where: { memberId: "m1" } });
     expect(createManyArgs).toEqual({
       data: [
-        { memberId: "m1", role: "LODGE", assignedByMemberId: "admin1" },
-        { memberId: "m1", role: "FINANCE_USER", assignedByMemberId: "admin1" },
+        {
+          memberId: "m1",
+          role: "LODGE",
+          roleDefinitionId: null,
+          assignedByMemberId: "admin1",
+        },
+        {
+          memberId: "m1",
+          role: "FINANCE_USER",
+          roleDefinitionId: null,
+          assignedByMemberId: "admin1",
+        },
       ],
       skipDuplicates: true,
     });

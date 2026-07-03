@@ -2,6 +2,28 @@
 
 All notable public reference-release changes should be recorded here.
 
+## Unreleased
+
+- Added editable admin access roles. The six seeded bundles (Read-only Admin,
+  Booking Officer, Membership Officer, Content Manager, Finance Viewer,
+  Treasurer) are now database-backed definitions that a Full Admin can rename,
+  re-permission, or delete at `/admin/access-roles`, and brand-new custom
+  roles can be created with their own per-area permission matrix. Full Admin,
+  Lodge, User, and Organisation remain protected system roles. Custom roles
+  fall under the existing Full-Admin separation-of-duties gate, definition
+  deletion is blocked while members hold the role, and all definition changes
+  write critical-severity audit entries.
+- Behavior change: finance-portal access now derives from the merged finance
+  area level of the admin permission matrix instead of the two finance enum
+  roles. Full Admin is now a finance manager in `/finance`; Read-only Admin,
+  Booking Officer, and Membership Officer (finance view in their seeded
+  matrices) can open the finance portal read-only and see the Finance nav
+  link; Finance Viewer additionally gains read-only access to the finance
+  admin area pages (for example `/admin/payments`).
+- Renamed the `ADMIN_BOOKINGS` access-role display label from "Booking
+  Office" to "Booking Officer" (display copy only; the stored enum value is
+  unchanged).
+
 ## 0.9.0 - 2026-06-27
 
 - Release classification: minor public reference release. The change set since

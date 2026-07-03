@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ExternalLink } from "lucide-react";
 import { getLoginBadge } from "@/lib/admin-member-badges";
-import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
+import { accessRoleLabelForToken } from "@/lib/access-role-definitions";
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options";
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers";
 import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
 import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
@@ -20,6 +21,7 @@ export function MemberInfoCard({
   member,
   onEditFamilyGroup,
 }: MemberInfoCardProps) {
+  const roleOptions = useAccessRoleOptions();
   const loginBadge = getLoginBadge(member.canLogin);
   const accessRoles = member.accessRoles ?? [];
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
@@ -96,7 +98,7 @@ export function MemberInfoCard({
                       role.startsWith("ADMIN") ? "default" : "secondary"
                     }
                   >
-                    {ACCESS_ROLE_LABELS[role]}
+                    {accessRoleLabelForToken(role, roleOptions)}
                   </Badge>
                 ))
               ) : (

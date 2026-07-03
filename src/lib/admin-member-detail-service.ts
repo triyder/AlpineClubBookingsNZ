@@ -47,19 +47,27 @@ import { nameField } from "@/lib/zod-helpers";
 import { genderEnum, titleEnum } from "@/lib/member-enums";
 import { ROLE_VALUES } from "@/lib/member-roles";
 import {
-  ACCESS_ROLE_VALUES,
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
-  financeAccessLevelFromAccessRoles,
   hasPrivilegedAccess,
   isFullAdmin,
   legacyRoleFromAccessRoles,
-  normalizeAssignableAccessRoles,
-  resolveAccessRoles,
+  normalizeAssignableAccessRoleTokens,
+  resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
   type AccessRoleInput,
-  type AppAccessRole,
 } from "@/lib/access-roles";
+import {
+  accessRoleAssignmentRowsFromTokens,
+  findUnknownAccessRoleTokens,
+  loadAccessRoleDefinitions,
+  MEMBER_ACCESS_ROLE_SELECT,
+  type AccessRoleDefinitionRecord,
+} from "@/lib/access-role-definitions";
+import {
+  financeAccessLevelFromMatrix,
+  getAdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 import { serializeSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
@@ -91,7 +99,9 @@ export const updateMemberSchema = z.object({
     .or(z.literal("")),
   role: z.enum(ROLE_VALUES).optional(),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).optional(),
-  accessRoles: z.array(z.enum(ACCESS_ROLE_VALUES)).optional(),
+  // Role tokens: enum values for system roles/seeded bundles, definition
+  // ids for custom roles. Validated against the definitions table on write.
+  accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
   active: z.boolean().optional(),
   canLogin: z.boolean().optional(),
@@ -227,14 +237,14 @@ function buildAccessChanges(
   }));
 }
 
-function resolveWriteAccessRoles(input: {
-  accessRoles?: AppAccessRole[] | null;
+function resolveWriteAccessRoleTokens(input: {
+  accessRoles?: string[] | null;
   role?: string | null;
   financeAccessLevel?: string | null;
   canLogin?: boolean | null;
-}) {
+}): string[] {
   if (input.accessRoles) {
-    return normalizeAssignableAccessRoles(input.accessRoles, {
+    return normalizeAssignableAccessRoleTokens(input.accessRoles, {
       canLogin: input.canLogin,
     });
   }
@@ -311,7 +321,7 @@ export async function getAdminMemberDetail(params: {
         dateOfBirth: true,
         role: true,
         financeAccessLevel: true,
-        accessRoles: { select: { role: true } },
+        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
         ageTier: true,
         active: true,
         canLogin: true,
@@ -562,7 +572,7 @@ export async function getAdminMemberDetail(params: {
 
   return jsonResult({
     ...member,
-    accessRoles: resolveAccessRoles(member),
+    accessRoles: resolveAccessRoleTokens(member),
     parentLinks: buildParentLinks(member),
     dependents: [
       ...(member.dependents ?? []).map((dependent) => ({
@@ -646,12 +656,28 @@ export async function updateAdminMember(params: {
     request: req,
     data,
   } = params;
-  const existing = await prisma.member.findUnique({
-    where: { id },
-    include: { accessRoles: { select: { role: true } } },
-  });
+  const [existing, roleDefinitions] = await Promise.all([
+    prisma.member.findUnique({
+      where: { id },
+      include: { accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT } },
+    }),
+    loadAccessRoleDefinitions(prisma),
+  ]);
   if (!existing) {
     return jsonResult({ error: "Member not found" }, { status: 404 });
+  }
+
+  if (data.accessRoles !== undefined) {
+    const unknownTokens = findUnknownAccessRoleTokens(
+      data.accessRoles,
+      roleDefinitions,
+    );
+    if (unknownTokens.length > 0) {
+      return jsonResult(
+        { error: `Unknown access role: ${unknownTokens.join(", ")}` },
+        { status: 400 },
+      );
+    }
   }
 
   if (id === currentAdminMemberId) {
@@ -664,7 +690,7 @@ export async function updateAdminMember(params: {
 
     if (
       data.accessRoles !== undefined &&
-      !normalizeAssignableAccessRoles(data.accessRoles, {
+      !normalizeAssignableAccessRoleTokens(data.accessRoles, {
         canLogin: data.canLogin ?? existing.canLogin,
       }).includes("ADMIN")
     ) {
@@ -786,7 +812,7 @@ export async function updateAdminMember(params: {
     data.financeAccessLevel !== undefined ||
     data.canLogin !== undefined;
   const requestedAccessRoles = shouldSyncAccessRoles
-    ? resolveWriteAccessRoles({
+    ? resolveWriteAccessRoleTokens({
         accessRoles: data.accessRoles,
         role: data.role ?? existing.role,
         financeAccessLevel:
@@ -814,7 +840,7 @@ export async function updateAdminMember(params: {
     (data.accessRoles === undefined ||
       sameAccessRoleSet(
         requestedAccessRoles ?? [],
-        resolveAccessRoles(existing),
+        resolveAccessRoleTokens(existing),
       ));
   const nextAccessRoles = roleSubmissionIsNoOp ? null : requestedAccessRoles;
   if (shouldSyncAccessRoles && !roleSubmissionIsNoOp) {
@@ -826,7 +852,9 @@ export async function updateAdminMember(params: {
     // name/contact details and toggle login for ordinary members.
     const storedAfter =
       data.accessRoles !== undefined
-        ? normalizeAssignableAccessRoles(data.accessRoles, { canLogin: true })
+        ? normalizeAssignableAccessRoleTokens(data.accessRoles, {
+            canLogin: true,
+          })
         : accessRolesFromCompatibilityFields({
             role: data.role ?? existing.role,
             financeAccessLevel:
@@ -837,7 +865,7 @@ export async function updateAdminMember(params: {
           });
     const requiresFullAdmin =
       accessRoleChangeRequiresFullAdmin(
-        resolveAccessRoles(existing),
+        resolveAccessRoleTokens(existing),
         nextAccessRoles ?? [],
       ) ||
       accessRoleChangeRequiresFullAdmin(
@@ -859,8 +887,16 @@ export async function updateAdminMember(params: {
     // access-role rows exactly as they are.
   } else if (data.accessRoles !== undefined) {
     updateData.role = legacyRoleFromAccessRoles(nextAccessRoles ?? []);
-    updateData.financeAccessLevel = financeAccessLevelFromAccessRoles(
-      nextAccessRoles ?? [],
+    // Derived from the merged matrix so definition-backed (custom or edited)
+    // roles with finance access are reflected in the compatibility field.
+    updateData.financeAccessLevel = financeAccessLevelFromMatrix(
+      getAdminPermissionMatrix({
+        accessRoles: accessRoleAssignmentRowsFromTokens(
+          nextAccessRoles ?? [],
+          roleDefinitions,
+        ),
+        canLogin: true,
+      }),
     );
   } else {
     if (data.role !== undefined) updateData.role = data.role;
@@ -955,7 +991,7 @@ export async function updateAdminMember(params: {
   try {
     const existingAuditRecord = {
       ...(existing as unknown as Record<string, unknown>),
-      accessRoles: resolveAccessRoles(existing),
+      accessRoles: resolveAccessRoleTokens(existing),
     };
     const auditUpdateData = {
       ...updateData,
@@ -1019,17 +1055,22 @@ export async function updateAdminMember(params: {
           postalRegion: true,
           postalPostalCode: true,
           postalCountry: true,
-          accessRoles: { select: { role: true } },
+          accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
         },
       });
 
       if (nextAccessRoles) {
+        const assignmentRows = accessRoleAssignmentRowsFromTokens(
+          nextAccessRoles,
+          roleDefinitions,
+        );
         await tx.memberAccessRole.deleteMany({ where: { memberId: id } });
-        if (nextAccessRoles.length > 0) {
+        if (assignmentRows.length > 0) {
           await tx.memberAccessRole.createMany({
-            data: nextAccessRoles.map((role) => ({
+            data: assignmentRows.map((row) => ({
               memberId: id,
-              role,
+              role: row.role,
+              roleDefinitionId: row.roleDefinitionId,
               assignedByMemberId: currentAdminMemberId,
             })),
             skipDuplicates: true,
@@ -1085,7 +1126,7 @@ export async function updateAdminMember(params: {
 
       return {
         ...updatedMember,
-        accessRoles: nextAccessRoles ?? resolveAccessRoles(updatedMember),
+        accessRoles: nextAccessRoles ?? resolveAccessRoleTokens(updatedMember),
       };
     });
 

@@ -184,7 +184,8 @@ export interface MemberDetail {
   phoneNumber: string | null;
   dateOfBirth: string | null;
   role: AppRole;
-  accessRoles: AppAccessRole[];
+  // Role tokens: enum values or AccessRoleDefinition ids.
+  accessRoles: string[];
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;
@@ -284,7 +285,8 @@ export interface EditForm {
   occupation: string;
   comments: string;
   role: AppRole;
-  accessRoles: AppAccessRole[];
+  // Role tokens: enum values or AccessRoleDefinition ids.
+  accessRoles: string[];
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;

@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ACCESS_ROLE_LABELS, ACCESS_ROLE_VALUES } from "@/lib/access-roles"
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
 import type { Filters, XeroContactGroup, XeroFeatureFlags } from "../_types"
 import { filterLabelMap, filterValueLabels } from "../_utils"
 
@@ -36,6 +36,7 @@ export function MemberFilterToolbar({
   onSetFilter,
   onClearFilters,
 }: MemberFilterToolbarProps) {
+  const roleOptions = useAccessRoleOptions()
   const getFilterDisplayValue = (key: string, value: string) =>
     key === "xeroContactGroup"
       ? xeroContactGroupsList.find((group) => group.id === value)?.name ?? value
@@ -61,9 +62,9 @@ export function MemberFilterToolbar({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Access Roles</SelectItem>
-            {ACCESS_ROLE_VALUES.map((role) => (
-              <SelectItem key={role} value={role}>
-                {ACCESS_ROLE_LABELS[role]}
+            {roleOptions.map((option) => (
+              <SelectItem key={option.token} value={option.token}>
+                {option.label}
               </SelectItem>
             ))}
           </SelectContent>

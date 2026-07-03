@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ACCESS_ROLE_LABELS, ACCESS_ROLE_VALUES, type AppAccessRole } from "@/lib/access-roles"
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
 import type { BulkAction } from "../_types"
 
 interface MemberBulkDialogProps {
@@ -38,7 +38,8 @@ export function MemberBulkDialog({
   onUpdated,
   onError,
 }: MemberBulkDialogProps) {
-  const [bulkRole, setBulkRole] = useState<AppAccessRole>("USER")
+  const roleOptions = useAccessRoleOptions()
+  const [bulkRole, setBulkRole] = useState<string>("USER")
   const [bulkLoading, setBulkLoading] = useState(false)
 
   useEffect(() => {
@@ -81,14 +82,14 @@ export function MemberBulkDialog({
         {action === "set-role" && (
           <div className="space-y-2">
             <Label>New Access Role</Label>
-            <Select value={bulkRole} onValueChange={(value) => setBulkRole(value as AppAccessRole)}>
+            <Select value={bulkRole} onValueChange={setBulkRole}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ACCESS_ROLE_VALUES.map((role) => (
-                  <SelectItem key={role} value={role}>
-                    {ACCESS_ROLE_LABELS[role]}
+                {roleOptions.map((option) => (
+                  <SelectItem key={option.token} value={option.token}>
+                    {option.label}
                   </SelectItem>
                 ))}
               </SelectContent>

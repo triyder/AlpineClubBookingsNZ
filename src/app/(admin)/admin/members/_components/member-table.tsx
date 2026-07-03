@@ -21,7 +21,8 @@ import {
   getLoginBadge,
 } from "@/lib/admin-member-badges"
 import { memberName } from "@/lib/member-serialization"
-import { ACCESS_ROLE_LABELS } from "@/lib/access-roles"
+import { accessRoleLabelForToken } from "@/lib/access-role-definitions"
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
 import type { Member } from "../_types"
 import { subscriptionStatusConfig } from "../_utils"
 
@@ -71,6 +72,7 @@ export function MemberTable({
   onOpenPasswordActionDialog,
   onEditMember,
 }: MemberTableProps) {
+  const roleOptions = useAccessRoleOptions()
   if (loading) {
     return (
       <div className="py-12 text-center">
@@ -212,7 +214,7 @@ export function MemberTable({
                               : ""
                           }
                         >
-                          {ACCESS_ROLE_LABELS[role]}
+                          {accessRoleLabelForToken(role, roleOptions)}
                         </Badge>
                       ))
                     ) : (

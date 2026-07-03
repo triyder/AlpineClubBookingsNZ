@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
 import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membership-types";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
@@ -208,6 +209,9 @@ async function main() {
   assertLocalDatabase();
   await cleanup();
   console.log("Building demo data...");
+
+  // Demo data expects the seeded access-role definitions to exist.
+  await ensureAccessRoleDefinitions(prisma);
 
   // Need an admin to act as reviewer/approver on requests.
   const admin =
