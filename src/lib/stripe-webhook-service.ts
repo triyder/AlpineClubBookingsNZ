@@ -816,7 +816,7 @@ async function refundSupersededGroupSettlementIntent(
   const failureDescription =
     outcome === "not_found"
       ? "matched no group settlement record (the settlement switched payment method or was re-attempted)"
-      : "did not match the recorded group settlement amount";
+      : "did not match the group settlement total at apply time (the recorded amount, or a child booking changed while the intent was open)";
 
   let refundId: string | null = null;
   try {
