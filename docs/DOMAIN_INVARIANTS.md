@@ -127,6 +127,18 @@ the whole booking at current rates before the member confirms, and the offer
 email states that price. Legacy guests without stored night rows price at
 current rates.
 
+Every edit path passes the default group discount into pricing exactly as
+creation and the waitlist reprice do (#1095), and locks win over the discount:
+a night a guest already bought keeps its locked (discount-inclusive) price, so
+a party dropping below the minimum on removal never loses a discount it
+bought, and the discount applies only to newly priced nights — a guest added
+to a qualifying party, or nights a date change adds. Eligibility is per night
+and per party size on that night: a partial-stay guest's absent nights do not
+count toward the minimum. The modify-quote preview prices with the same
+config so previews match what the mutating paths charge. The guest-add route
+therefore prices the whole post-add party in one pass — the added guest's
+stored price and night rows are their slice of the combined breakdown.
+
 Every booking-reduction path — batch modify (`removeGuestIds`/date change),
 single-guest removal (`DELETE …/guests/[guestId]`), and date change
 (`modify-dates`) — returns member money limited by the same cancellation-policy

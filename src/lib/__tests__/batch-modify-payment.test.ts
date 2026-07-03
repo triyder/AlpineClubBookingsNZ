@@ -307,6 +307,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    groupDiscountSetting: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod_1" }),
     },

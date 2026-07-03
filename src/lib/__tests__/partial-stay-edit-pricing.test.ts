@@ -247,7 +247,16 @@ const CURRENT_SEASON = [{
   ],
 }];
 
-function makeTx(booking: ReturnType<typeof makeBooking>) {
+function makeTx(
+  booking: ReturnType<typeof makeBooking>,
+  options?: {
+    groupDiscountSetting?: {
+      enabled: boolean;
+      minGroupSize: number;
+      summerOnly: boolean;
+    } | null;
+  },
+) {
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     $executeRaw: vi.fn().mockResolvedValue(undefined),
@@ -261,6 +270,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       create: vi.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new-g", ...data })),
       update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
+    },
+    groupDiscountSetting: {
+      findUnique: vi
+        .fn()
+        .mockResolvedValue(options?.groupDiscountSetting ?? null),
     },
     bookingGuestNight: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -396,5 +410,90 @@ describe("date change resets guests to the full new range (#1093 policy)", () =>
     expect(createManyByGuest.get("g2").map((row: any) => row.priceCents)).toEqual([
       5000, 6000, 5000, 6000, 6000,
     ]);
+  });
+});
+
+describe("group discount on edit-path repricing (#1095)", () => {
+  const QUALIFYING = { enabled: true, minGroupSize: 3, summerOnly: false };
+
+  it("prices a guest added to a qualifying party at the discounted member rate", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking, { groupDiscountSetting: QUALIFYING });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    // The discount is per night and per party size: on Aug 1 and 3 the full
+    // party of 3 (g1, gap-stay g2, new guest) meets minGroupSize 3 and the
+    // (unlinked, hence non-member-rate) new guest prices at the member 6000;
+    // on Aug 2 and 4 the gap-stay guest is absent, the party of 2 does not
+    // qualify, and the new guest pays the non-member 8000. Locked guests
+    // unchanged.
+    const bookingUpdate = tx.booking.update.mock.calls
+      .map(([args]: any[]) => args.data)
+      .find((data: any) => data.totalPriceCents !== undefined);
+    expect(bookingUpdate.totalPriceCents).toBe(30000 + 28000);
+
+    const createArgs = tx.bookingGuest.create.mock.calls[0][0].data;
+    expect(createArgs.priceCents).toBe(28000);
+    expect(createArgs.nights.create.map((n: any) => n.priceCents)).toEqual([
+      6000, 8000, 6000, 8000,
+    ]);
+  });
+
+  it("does not discount an addition that leaves the party below the minimum", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking, {
+      groupDiscountSetting: { enabled: true, minGroupSize: 5, summerOnly: false },
+    });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { POST } = await import("@/app/api/bookings/[id]/guests/route");
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [{ firstName: "Bob", lastName: "Jones", ageTier: "ADULT", isMember: true }],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    const createArgs = tx.bookingGuest.create.mock.calls[0][0].data;
+    expect(createArgs.priceCents).toBe(32000);
+  });
+
+  it("applies the discount to the nights a date extension adds for a qualifying party", async () => {
+    const booking = makeBooking();
+    // Make the gap-stay guest a non-member so the discount is visible on her
+    // newly priced nights; her locked 5000s (bought under the discount) stay.
+    booking.guests[1].isMember = false;
+    const tx = makeTx(booking, {
+      groupDiscountSetting: { enabled: true, minGroupSize: 2, summerOnly: false },
+    });
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    const { PUT } = await import("@/app/api/bookings/[id]/modify-dates/route");
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-01", checkOut: "2026-08-06" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    // g1 (member): 4 locked + Aug 5 at 6000 = 26000. g2 (non-member): locked
+    // Aug 1/3 at 5000, new Aug 2/4/5 at the discounted member 6000 = 28000
+    // (34000 undiscounted). The party of 2 qualifies every night.
+    const bookingUpdate = tx.booking.update.mock.calls
+      .map(([args]: any[]) => args.data)
+      .find((data: any) => data.totalPriceCents !== undefined);
+    expect(bookingUpdate.totalPriceCents).toBe(26000 + 28000);
   });
 });

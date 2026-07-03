@@ -57,6 +57,7 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -319,6 +320,9 @@ export async function modifyBookingDates({
       seasonYear,
     });
 
+    const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
+      where: { id: "default" },
+    });
     let priceBreakdown;
     try {
       priceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
@@ -327,6 +331,9 @@ export async function modifyBookingDates({
         checkOut: newCheckOut,
         guests: guestsForPricing,
         seasons: seasonRateData,
+        // Group discount applies to the nights the new range adds (#1095);
+        // nights kept across the date change stay at their locked prices.
+        groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
         seasonYear,
       });
     } catch (error) {

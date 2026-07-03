@@ -19,6 +19,7 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import {
   deletePromoRedemptionAndAdjustCount,
   replacePromoRedemptionAllocations,
@@ -352,57 +353,12 @@ export async function POST(
         memberId: g.memberId ?? null,
       }));
 
-      let newGuestPrice;
-      try {
-        newGuestPrice = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-          ownerMemberId: booking.memberId,
-          checkIn: booking.checkIn,
-          checkOut: booking.checkOut,
-          guests: newGuestInputs,
-          seasons: seasonRateData,
-          seasonYear,
-        });
-      } catch (error) {
-        if (error instanceof MembershipTypeBookingPolicyError) {
-          throw error;
-        }
-        throw new ApiError(
-          "No season rate found for the booking dates",
-          400
-        );
-      }
-
-      // Create BookingGuest records, persisting one BookingGuestNight row per
-      // priced night (#1093) so added guests join the uniform night-row model:
-      // without rows, a later edit would reprice their whole stay at current
-      // season rates instead of honouring the prices they booked at (#1036).
-      const createdGuests: BookingGuest[] = [];
-      for (let i = 0; i < normalizedNewGuests.length; i++) {
-        const guest = await tx.bookingGuest.create({
-          data: {
-            bookingId,
-            firstName: normalizedNewGuests[i].firstName,
-            lastName: normalizedNewGuests[i].lastName,
-            ageTier: normalizedNewGuests[i].ageTier,
-            isMember: normalizedNewGuests[i].isMember,
-            memberId: normalizedNewGuests[i].memberId || null,
-            stayStart: booking.checkIn,
-            stayEnd: booking.checkOut,
-            priceCents: newGuestPrice.guests[i].priceCents,
-            nights: {
-              create: (newGuestPrice.guests[i].nightDates ?? []).map(
-                (stayDate, k) => ({
-                  stayDate,
-                  priceCents: newGuestPrice.guests[i].perNightCents[k] ?? 0,
-                }),
-              ),
-            },
-          },
-        });
-        createdGuests.push(guest);
-      }
-
-      // Recalculate total booking price with all guests
+      // Price the whole post-add party together (#1095): the group discount
+      // depends on party size per night, so a new guest joining a qualifying
+      // party must price at the discounted rate — a standalone new-guest
+      // pricing pass can never see the party. Existing guests are fully
+      // locked (#1036), so the new guests' slices of this breakdown are
+      // exactly their own prices.
       const allGuestsForPricing = [
         ...booking.guests.map((g) => ({
           bookingGuestId: g.id,
@@ -420,26 +376,73 @@ export async function POST(
           // a guest must cost exactly the added guest's own price.
           lockedNightPrices: lockedNightPricesForGuest(g),
         })),
-        ...newGuestInputs.map((guest, index) => ({
-          ...guest,
-          bookingGuestId: createdGuests[index]?.id ?? null,
-        })),
+        ...newGuestInputs,
       ];
       const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
       const adminReviewReason = requiresAdminReview
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;
 
-      const fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
-        ownerMemberId: booking.memberId,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        guests: allGuestsForPricing,
-        seasons: seasonRateData,
-        seasonYear,
+      const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
+        where: { id: "default" },
       });
+
+      let fullPriceBreakdown;
+      try {
+        fullPriceBreakdown = await priceBookingGuestsWithMembershipTypePolicy(tx, {
+          ownerMemberId: booking.memberId,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          guests: allGuestsForPricing,
+          seasons: seasonRateData,
+          groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
+          seasonYear,
+        });
+      } catch (error) {
+        if (error instanceof MembershipTypeBookingPolicyError) {
+          throw error;
+        }
+        throw new ApiError(
+          "No season rate found for the booking dates",
+          400
+        );
+      }
+
+      // Create BookingGuest records from their slice of the full-party
+      // breakdown, persisting one BookingGuestNight row per priced night
+      // (#1093) so added guests join the uniform night-row model: without
+      // rows, a later edit would reprice their whole stay at current season
+      // rates instead of honouring the prices they booked at (#1036).
+      const createdGuests: BookingGuest[] = [];
+      for (let i = 0; i < normalizedNewGuests.length; i++) {
+        const priced = fullPriceBreakdown.guests[booking.guests.length + i];
+        const guest = await tx.bookingGuest.create({
+          data: {
+            bookingId,
+            firstName: normalizedNewGuests[i].firstName,
+            lastName: normalizedNewGuests[i].lastName,
+            ageTier: normalizedNewGuests[i].ageTier,
+            isMember: normalizedNewGuests[i].isMember,
+            memberId: normalizedNewGuests[i].memberId || null,
+            stayStart: booking.checkIn,
+            stayEnd: booking.checkOut,
+            priceCents: priced.priceCents,
+            nights: {
+              create: (priced.nightDates ?? []).map((stayDate, k) => ({
+                stayDate,
+                priceCents: priced.perNightCents[k] ?? 0,
+              })),
+            },
+          },
+        });
+        createdGuests.push(guest);
+      }
+
       const guestNightRates = allGuestsForPricing.map((guest, index) => ({
-        bookingGuestId: guest.bookingGuestId,
+        bookingGuestId:
+          index < booking.guests.length
+            ? booking.guests[index].id
+            : createdGuests[index - booking.guests.length]?.id ?? null,
         memberId: guest.memberId ?? null,
         isMember: guest.isMember,
         perNightRates: fullPriceBreakdown.guests[index].perNightCents,

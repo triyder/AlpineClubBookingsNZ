@@ -16,6 +16,7 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
+import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import { calculateChangeFee } from "@/lib/change-fee";
 import {
   daysUntilDate,
@@ -675,6 +676,12 @@ export async function POST(
     })),
   }));
 
+  // The preview must quote what the mutating paths will charge (#1095): the
+  // group discount applies to newly priced nights on every pricing pass below.
+  const groupDiscount = toGroupDiscountConfig(
+    await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } }),
+  );
+
   const policyAdjustedGuestsForPricing = await applyMembershipTypeRatePolicyToGuests(prisma, {
     seasonYear,
     guests: guestsForPricing,
@@ -759,6 +766,7 @@ export async function POST(
         checkOut: newCheckOut,
         guests: policyAdjustedGuestsForPricing,
         seasons: seasonRateData,
+        groupDiscount,
         seasonYear,
       });
       newTotalPriceCents = priceBreakdown.totalPriceCents;
@@ -838,6 +846,7 @@ export async function POST(
         checkOut: booking.checkOut,
         guests: oldRemainingForPricing,
         seasons: seasonRateData,
+        groupDiscount,
       });
       const newPriceForRemaining = await priceBookingGuestsWithMembershipTypePolicy(prisma, {
         ownerMemberId: booking.memberId,
@@ -845,6 +854,7 @@ export async function POST(
         checkOut: newCheckOut,
         guests: newRemainingForPricing,
         seasons: seasonRateData,
+        groupDiscount,
         seasonYear,
       });
       const dateChangeCost =
@@ -917,6 +927,7 @@ export async function POST(
             },
           ],
           seasons: seasonRateData,
+          groupDiscount,
           seasonYear,
         });
         const tierLabel = guest.ageTier.charAt(0) + guest.ageTier.slice(1).toLowerCase();
