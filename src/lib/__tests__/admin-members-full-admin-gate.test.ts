@@ -19,6 +19,12 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       count: vi.fn(),
     },
+    accessRoleDefinition: {
+      // Empty definitions: permission resolution falls back to the legacy
+      // hardcoded bundles, matching this suite's pre-definitions behavior.
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn(),
+    },
     memberAccessRole: {
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),

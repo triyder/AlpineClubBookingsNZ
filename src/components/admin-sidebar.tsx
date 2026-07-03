@@ -62,12 +62,20 @@ import {
 } from "@/components/ui/sheet";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
-import { canViewAdminHref } from "@/lib/admin-permissions";
-import type { AppAccessRole } from "@/lib/access-roles";
+import {
+  canViewAdminHrefWithMatrix,
+  type AdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 interface NavSection {
   label?: string;
-  items: Array<{ href: string; label: string; icon: typeof LayoutDashboard }>;
+  items: Array<{
+    href: string;
+    label: string;
+    icon: typeof LayoutDashboard;
+    /** Shown only to Full Admins (e.g. access-role management). */
+    fullAdminOnly?: boolean;
+  }>;
 }
 
 /**
@@ -258,6 +266,12 @@ const navSections: NavSection[] = [
         label: "Membership Types",
         icon: BadgeCheck,
       },
+      {
+        href: "/admin/access-roles",
+        label: "Access Roles",
+        icon: Shield,
+        fullAdminOnly: true,
+      },
       { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
       { href: "/admin/site-banners", label: "Site Banners", icon: Megaphone },
@@ -292,7 +306,8 @@ const navSections: NavSection[] = [
 
 export function getVisibleAdminNavSections(
   features: FeatureFlags,
-  accessRoles?: readonly AppAccessRole[],
+  permissionMatrix?: AdminPermissionMatrix,
+  isFullAdmin?: boolean,
 ): NavSection[] {
   return navSections
     .map((section) => ({
@@ -300,8 +315,9 @@ export function getVisibleAdminNavSections(
       items: section.items.filter(
         (item) =>
           isFeatureHrefVisible(item.href, features) &&
-          (!accessRoles ||
-            canViewAdminHref({ accessRoles, canLogin: true }, item.href)),
+          (!item.fullAdminOnly || isFullAdmin) &&
+          (!permissionMatrix ||
+            canViewAdminHrefWithMatrix(permissionMatrix, item.href)),
       ),
     }))
     .filter((section) => section.items.length > 0);
@@ -312,9 +328,10 @@ type AdminNavBadgeMap = Record<string, number>;
 export function getRenderedAdminNavSections(
   features: FeatureFlags,
   badges: AdminNavBadgeMap,
-  accessRoles?: readonly AppAccessRole[],
+  permissionMatrix?: AdminPermissionMatrix,
+  isFullAdmin?: boolean,
 ): NavSection[] {
-  return getVisibleAdminNavSections(features, accessRoles)
+  return getVisibleAdminNavSections(features, permissionMatrix, isFullAdmin)
     .map((section) =>
       section.label === NEEDS_ATTENTION_LABEL
         ? {
@@ -368,11 +385,13 @@ function usePendingCounts(): AdminPendingCounts {
 
 function SidebarLinks({
   features,
-  accessRoles,
+  permissionMatrix,
+  isFullAdmin,
   onNavigate,
 }: {
   features: FeatureFlags;
-  accessRoles?: readonly AppAccessRole[];
+  permissionMatrix?: AdminPermissionMatrix;
+  isFullAdmin?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -448,9 +467,14 @@ function SidebarLinks({
   const renderedNavSections = getRenderedAdminNavSections(
     features,
     badges,
-    accessRoles,
+    permissionMatrix,
+    isFullAdmin,
   );
-  const visibleNavSections = getVisibleAdminNavSections(features, accessRoles);
+  const visibleNavSections = getVisibleAdminNavSections(
+    features,
+    permissionMatrix,
+    isFullAdmin,
+  );
 
   // Highlight the most specific nav item whose href is a prefix of the current
   // path, so nested routes (e.g. /admin/xero/setup) activate the deepest match
@@ -552,10 +576,12 @@ function SidebarLinks({
 
 export function AdminSidebar({
   features,
-  accessRoles,
+  permissionMatrix,
+  isFullAdmin,
 }: {
   features: FeatureFlags;
-  accessRoles?: readonly AppAccessRole[];
+  permissionMatrix?: AdminPermissionMatrix;
+  isFullAdmin?: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -570,7 +596,11 @@ export function AdminSidebar({
           <span>Admin Panel</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3 pb-8">
-          <SidebarLinks features={features} accessRoles={accessRoles} />
+          <SidebarLinks
+            features={features}
+            permissionMatrix={permissionMatrix}
+            isFullAdmin={isFullAdmin}
+          />
         </div>
       </aside>
 
@@ -592,7 +622,8 @@ export function AdminSidebar({
             <div className="flex-1 overflow-y-auto p-3 pb-8">
               <SidebarLinks
                 features={features}
-                accessRoles={accessRoles}
+                permissionMatrix={permissionMatrix}
+                isFullAdmin={isFullAdmin}
                 onNavigate={() => setMobileOpen(false)}
               />
             </div>

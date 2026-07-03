@@ -28,13 +28,17 @@ import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee";
 import {
   accessRolesFromCompatibilityFields,
-  financeAccessLevelFromAccessRoles,
   legacyRoleFromAccessRoles,
-  normalizeAssignableAccessRoles,
-  type AppAccessRole,
+  normalizeAssignableAccessRoleTokens,
   hasPrivilegedAccess,
   storedAccessRolesForFullAdminGate,
 } from "@/lib/access-roles";
+import { financeAccessLevelFromMatrix } from "@/lib/admin-permissions";
+import {
+  previewMatrixForTokens,
+  type AccessRoleOption,
+} from "@/lib/access-role-definitions";
+import { useAccessRoleOptions } from "@/hooks/use-access-role-options";
 import {
   shouldDefaultPostalSameAsPhysical,
   withDefaultNzCountry,
@@ -119,11 +123,18 @@ function memberToForm(member: Member | null): MemberForm {
   };
 }
 
-function buildAccessRolePatch(accessRoles: AppAccessRole[]) {
+function buildAccessRolePatch(
+  accessRoles: string[],
+  roleOptions: readonly AccessRoleOption[],
+) {
   return {
     accessRoles,
     role: legacyRoleFromAccessRoles(accessRoles),
-    financeAccessLevel: financeAccessLevelFromAccessRoles(accessRoles),
+    // Matrix-derived so definition-backed (custom or edited) roles are
+    // reflected; keeps unchanged echo submissions no-ops server-side.
+    financeAccessLevel: financeAccessLevelFromMatrix(
+      previewMatrixForTokens(accessRoles, roleOptions),
+    ),
   };
 }
 
@@ -137,6 +148,7 @@ export function MemberEditorDialog({
   onSuccess,
   onWarning,
 }: MemberEditorDialogProps) {
+  const roleOptions = useAccessRoleOptions();
   const [currentEditingMember, setCurrentEditingMember] =
     useState<Member | null>(editingMember);
   const [form, setForm] = useState<MemberForm>(memberToForm(editingMember));
@@ -593,7 +605,7 @@ export function MemberEditorDialog({
       canLogin,
       sendInvite: canLogin ? current.sendInvite : false,
       ...buildAccessRolePatch(
-        normalizeAssignableAccessRoles(
+        normalizeAssignableAccessRoleTokens(
           canLogin
             ? current.accessRoles.length > 0
               ? current.accessRoles
@@ -601,22 +613,23 @@ export function MemberEditorDialog({
             : [],
           { canLogin },
         ),
+        roleOptions,
       ),
     }));
   };
 
-  const toggleAccessRole = (role: AppAccessRole, checked: boolean) => {
+  const toggleAccessRole = (token: string, checked: boolean) => {
     setForm((current) => {
-      const nextRoles = normalizeAssignableAccessRoles(
+      const nextRoles = normalizeAssignableAccessRoleTokens(
         checked
-          ? [...current.accessRoles, role]
-          : current.accessRoles.filter((value) => value !== role),
+          ? [...current.accessRoles, token]
+          : current.accessRoles.filter((value) => value !== token),
         { canLogin: current.canLogin },
       );
 
       return {
         ...current,
-        ...buildAccessRolePatch(nextRoles),
+        ...buildAccessRolePatch(nextRoles, roleOptions),
       };
     });
   };
@@ -881,6 +894,7 @@ export function MemberEditorDialog({
 
             <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">
               <MemberAccessRolePicker
+                roleOptions={roleOptions}
                 accessRoles={form.accessRoles}
                 canLogin={form.canLogin}
                 actorIsFullAdmin={actorIsFullAdmin}

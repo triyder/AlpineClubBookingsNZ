@@ -25,7 +25,7 @@ import {
   type FinanceMappedPnlCategorySummary,
 } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
-import { hasFinanceManagerAccess } from "@/lib/access-roles";
+import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
 import type { FinanceAccessMember } from "@/lib/finance-auth";
 import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,

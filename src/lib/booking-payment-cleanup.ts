@@ -30,10 +30,6 @@ export async function queueSupersededPrimaryIntentCancellations(
     newFinalPriceCents: number;
   },
 ): Promise<SupersededPrimaryPaymentIntent[]> {
-  if (options.newFinalPriceCents > 0) {
-    return [];
-  }
-
   const pendingPrimaryTransactions = await tx.paymentTransaction.findMany({
     where: {
       paymentId: options.paymentId,
@@ -41,7 +37,12 @@ export async function queueSupersededPrimaryIntentCancellations(
       source: PaymentSource.STRIPE,
       status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
       stripePaymentIntentId: { not: null },
-      amountCents: { gt: 0 },
+      // A pending intent is only reusable at exactly the current price:
+      // any modification that moves finalPriceCents strands the old intent
+      // at the old amount, and capturing it charges the member the wrong
+      // total (#1161). Price->0 supersedes every positive pending intent,
+      // which is the pre-#1161 behaviour unchanged.
+      amountCents: { gt: 0, not: options.newFinalPriceCents },
     },
     select: {
       id: true,

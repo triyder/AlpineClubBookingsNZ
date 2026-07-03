@@ -39,18 +39,26 @@ import {
   isRole,
 } from "@/lib/member-roles";
 import {
-  ACCESS_ROLE_VALUES,
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
-  financeAccessLevelFromAccessRoles,
   isFullAdmin,
   legacyRoleFromAccessRoles,
-  normalizeAssignableAccessRoles,
-  resolveAccessRoles,
+  normalizeAssignableAccessRoleTokens,
+  resolveAccessRoleTokens,
   isAccessRole,
   type AccessRoleInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
+import {
+  accessRoleAssignmentRowsFromTokens,
+  findUnknownAccessRoleTokens,
+  loadAccessRoleDefinitions,
+  MEMBER_ACCESS_ROLE_SELECT,
+} from "@/lib/access-role-definitions";
+import {
+  financeAccessLevelFromMatrix,
+  getAdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -94,7 +102,9 @@ export const createMemberSchema = z.object({
     .enum(ROLE_VALUES)
     .default("USER"),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).default("NONE"),
-  accessRoles: z.array(z.enum(ACCESS_ROLE_VALUES)).optional(),
+  // Role tokens: enum values for system roles/seeded bundles, definition
+  // ids for custom roles. Validated against the definitions table on write.
+  accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
   ageTier: ageTierEnum.optional(),
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
@@ -199,14 +209,14 @@ export type AdminMembersQuery = z.infer<typeof adminMembersQuerySchema>;
 
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 
-function resolveWriteAccessRoles(input: {
-  accessRoles?: AppAccessRole[] | null;
+function resolveWriteAccessRoleTokens(input: {
+  accessRoles?: string[] | null;
   role?: string | null;
   financeAccessLevel?: string | null;
   canLogin?: boolean | null;
-}) {
+}): string[] {
   if (input.accessRoles) {
-    return normalizeAssignableAccessRoles(input.accessRoles, {
+    return normalizeAssignableAccessRoleTokens(input.accessRoles, {
       canLogin: input.canLogin,
     });
   }
@@ -387,6 +397,11 @@ export async function listAdminMembers(
     });
   } else if (isRole(roleFilter)) {
     andConditions.push({ role: roleFilter });
+  } else if (roleFilter) {
+    // Custom definition-backed role token (definition id).
+    andConditions.push({
+      accessRoles: { some: { roleDefinitionId: roleFilter } },
+    });
   }
 
   if (
@@ -566,7 +581,7 @@ export async function listAdminMembers(
     dateOfBirth: true,
     role: true,
     financeAccessLevel: true,
-    accessRoles: { select: { role: true } },
+    accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
     ageTier: true,
     active: true,
     canLogin: true,
@@ -715,7 +730,7 @@ export async function listAdminMembers(
 
     return {
       ...m,
-      accessRoles: resolveAccessRoles(m),
+      accessRoles: resolveAccessRoleTokens(m),
       subscriptionStatus:
         subscriptionNotRequired
           ? "NOT_REQUIRED"
@@ -768,7 +783,9 @@ export async function createAdminMember(
   // so a dormant elevated role cannot be parked for later activation.
   const requestedGrant =
     data.accessRoles !== undefined
-      ? normalizeAssignableAccessRoles(data.accessRoles, { canLogin: true })
+      ? normalizeAssignableAccessRoleTokens(data.accessRoles, {
+          canLogin: true,
+        })
       : accessRolesFromCompatibilityFields({
           role: data.role,
           financeAccessLevel:
@@ -786,6 +803,20 @@ export async function createAdminMember(
       },
       { status: 403 },
     );
+  }
+
+  const roleDefinitions = await loadAccessRoleDefinitions(prisma);
+  if (data.accessRoles !== undefined) {
+    const unknownTokens = findUnknownAccessRoleTokens(
+      data.accessRoles,
+      roleDefinitions,
+    );
+    if (unknownTokens.length > 0) {
+      return jsonResult(
+        { error: `Unknown access role: ${unknownTokens.join(", ")}` },
+        { status: 400 },
+      );
+    }
   }
 
   const email = data.email.toLowerCase().trim();
@@ -899,7 +930,7 @@ export async function createAdminMember(
       : data.parentMemberId
         ? false
         : ageTier === "ADULT";
-  const accessRoles = resolveWriteAccessRoles({
+  const accessRoles = resolveWriteAccessRoleTokens({
     accessRoles: data.accessRoles,
     role: data.role,
     financeAccessLevel: data.financeAccessLevel,
@@ -911,7 +942,15 @@ export async function createAdminMember(
       : data.role;
   const financeAccessLevel =
     data.accessRoles !== undefined
-      ? financeAccessLevelFromAccessRoles(accessRoles)
+      ? financeAccessLevelFromMatrix(
+          getAdminPermissionMatrix({
+            accessRoles: accessRoleAssignmentRowsFromTokens(
+              accessRoles,
+              roleDefinitions,
+            ),
+            canLogin: true,
+          }),
+        )
       : legacyRole === "LODGE"
         ? "NONE"
         : data.financeAccessLevel;
@@ -1032,6 +1071,7 @@ export async function createAdminMember(
         memberId: created.id,
         roles: accessRoles,
         canLogin,
+        definitions: roleDefinitions,
       });
 
       // Admin accounts never owe a membership subscription, so they default

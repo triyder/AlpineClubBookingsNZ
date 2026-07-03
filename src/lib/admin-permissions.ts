@@ -1,5 +1,7 @@
+import type { FinanceAccessLevel } from "@prisma/client";
 import {
-  resolveAccessRoles,
+  isAccessRole,
+  type AccessRoleDefinitionLevelFields,
   type AccessRoleInput,
   type AppAccessRole,
 } from "@/lib/access-roles";
@@ -66,6 +68,15 @@ const EMPTY_MATRIX = Object.fromEntries(
   ADMIN_PERMISSION_AREAS.map((area) => [area.key, "none"]),
 ) as AdminPermissionMatrix;
 
+/**
+ * Legacy hardcoded bundles. `ADMIN` is the protected Full Admin matrix and is
+ * always resolved from here, never from the database. Every other entry is
+ * only a mid-deploy/pre-seed fallback for assignment rows whose
+ * AccessRoleDefinition was not joined or has not been linked yet — the
+ * database definitions (seeded identical to these, then club editable) are
+ * authoritative. The fallback's failure mode is "yesterday's behavior",
+ * never wider access.
+ */
 const ADMIN_ROLE_BUNDLES: Partial<
   Record<AppAccessRole, Partial<AdminPermissionMatrix>>
 > = {
@@ -112,6 +123,9 @@ const ADMIN_ROLE_BUNDLES: Partial<
     membership: "view",
     finance: "edit",
     support: "view",
+  },
+  FINANCE_USER: {
+    finance: "view",
   },
 };
 
@@ -244,6 +258,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "support",
     prefixes: [
+      "/admin/access-roles",
       "/admin/setup",
       "/admin/modules",
       "/admin/subscription-lockout",
@@ -258,6 +273,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/stuck-states",
       "/admin/issue-reports",
       "/admin/audit-log",
+      "/api/admin/access-roles",
       "/api/admin/setup",
       "/api/admin/modules",
       "/api/admin/notifications",
@@ -311,23 +327,87 @@ function maxLevel(
   return LEVEL_RANK[candidate] > LEVEL_RANK[current] ? candidate : current;
 }
 
-export function getAdminPermissionMatrix(
-  input: AccessRoleInput,
+function definitionLevelToAppLevel(
+  level: AccessRoleDefinitionLevelFields[keyof AccessRoleDefinitionLevelFields] | undefined,
+): AdminPermissionLevel | null {
+  switch (level) {
+    case "NONE":
+      return "none";
+    case "VIEW":
+      return "view";
+    case "EDIT":
+      return "edit";
+    default:
+      return null;
+  }
+}
+
+/** Permission matrix stored on an AccessRoleDefinition row. */
+export function matrixFromAccessRoleDefinition(
+  definition: Partial<AccessRoleDefinitionLevelFields>,
 ): AdminPermissionMatrix {
   const matrix = cloneEmptyMatrix();
+  for (const area of ADMIN_PERMISSION_AREAS) {
+    const level = definitionLevelToAppLevel(definition[`${area.key}Level`]);
+    if (level) matrix[area.key] = level;
+  }
+  return matrix;
+}
 
-  for (const role of resolveAccessRoles(input)) {
-    const bundle = ADMIN_ROLE_BUNDLES[role];
-    if (!bundle) continue;
-
+/** Merge = max level per area; used for both members and picker previews. */
+export function mergeAdminPermissionMatrices(
+  matrices: ReadonlyArray<Partial<AdminPermissionMatrix>>,
+): AdminPermissionMatrix {
+  const matrix = cloneEmptyMatrix();
+  for (const candidate of matrices) {
     for (const area of ADMIN_PERMISSION_AREAS) {
-      const level = bundle[area.key];
+      const level = candidate[area.key];
       if (!level) continue;
       matrix[area.key] = maxLevel(matrix[area.key], level);
     }
   }
-
   return matrix;
+}
+
+/**
+ * Merged permission matrix for a member's access-role assignments.
+ *
+ * Per-row resolution, strictly in this order:
+ * 1. `ADMIN` → the hardcoded Full Admin bundle, never the database.
+ * 2. A joined `roleDefinition` (definition-backed or seeded-default row
+ *    selected with the definition include) → that definition's matrix.
+ * 3. A bare enum value → the legacy hardcoded bundle (mid-deploy/pre-seed
+ *    fallback; identical to the seeded definitions until the club edits
+ *    them).
+ * 4. Anything unresolved (e.g. a custom-role row selected without its
+ *    definition) contributes nothing — fail closed, never wider.
+ */
+export function getAdminPermissionMatrix(
+  input: AccessRoleInput,
+): AdminPermissionMatrix {
+  if (input.canLogin === false) return cloneEmptyMatrix();
+
+  const matrices: Array<Partial<AdminPermissionMatrix>> = [];
+  for (const item of input.accessRoles ?? []) {
+    const role = typeof item === "string" ? item : item.role;
+    if (role === "ADMIN") {
+      matrices.push(ADMIN_ROLE_BUNDLES.ADMIN ?? {});
+      continue;
+    }
+
+    const definition = typeof item === "string" ? null : item.roleDefinition;
+    if (definition) {
+      matrices.push(matrixFromAccessRoleDefinition(definition));
+      continue;
+    }
+
+    if (isAccessRole(role)) {
+      const bundle = ADMIN_ROLE_BUNDLES[role];
+      if (bundle) matrices.push(bundle);
+    }
+  }
+
+  return mergeAdminPermissionMatrices(matrices);
 }
 
 export function getAdminPermissionLevel(
@@ -410,4 +490,45 @@ export function getAdminRouteRequirement(
 export function canViewAdminHref(input: AccessRoleInput, href: string) {
   const requirement = getAdminRouteRequirement(href, "GET");
   return requirement ? hasAdminAreaAccess(input, requirement) : false;
+}
+
+/**
+ * Matrix-based variant for client components (e.g. the admin sidebar), which
+ * receive the precomputed matrix from a server layout instead of raw roles —
+ * definitions live in the database and cannot be resolved client-side.
+ */
+export function canViewAdminHrefWithMatrix(
+  matrix: AdminPermissionMatrix,
+  href: string,
+) {
+  const requirement = getAdminRouteRequirement(href, "GET");
+  if (!requirement) return false;
+  return LEVEL_RANK[matrix[requirement.area]] >= LEVEL_RANK[requirement.level];
+}
+
+/**
+ * Finance portal access derives from the merged finance area level of the
+ * admin permission matrix: view ⇒ finance viewer, edit ⇒ finance manager.
+ * Seeded "Treasurer" is finance edit and "Finance Viewer" is finance view,
+ * both club-editable like any other definition-backed role.
+ */
+export function hasFinanceViewerAccess(input: AccessRoleInput) {
+  return LEVEL_RANK[getAdminPermissionMatrix(input).finance] >= LEVEL_RANK.view;
+}
+
+export function hasFinanceManagerAccess(input: AccessRoleInput) {
+  return getAdminPermissionMatrix(input).finance === "edit";
+}
+
+/**
+ * Legacy `Member.financeAccessLevel` compatibility value derived from the
+ * merged matrix; synchronized on role writes for display/back-compat only —
+ * runtime guards never read it.
+ */
+export function financeAccessLevelFromMatrix(
+  matrix: AdminPermissionMatrix,
+): FinanceAccessLevel {
+  if (matrix.finance === "edit") return "MANAGER";
+  if (matrix.finance === "view") return "VIEWER";
+  return "NONE";
 }

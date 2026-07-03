@@ -1831,6 +1831,17 @@ export async function applyLifecycleTransitions(
         paymentId: zeroDollarPayment.id,
         newFinalPriceCents,
       });
+  } else if (booking.payment) {
+    // Nonzero price changes strand any pending primary intent at the old
+    // amount (#1161): the payment page would hand back its stale
+    // client_secret and Stripe would capture the old total. Supersede the
+    // mismatched intents now; the pay-time paths mint a fresh one.
+    supersededPrimaryPaymentIntents =
+      await queueSupersededPrimaryIntentCancellations(tx, {
+        bookingId,
+        paymentId: booking.payment.id,
+        newFinalPriceCents,
+      });
   }
 
   return {

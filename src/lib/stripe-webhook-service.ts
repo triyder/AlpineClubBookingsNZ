@@ -279,6 +279,35 @@ async function handlePaymentIntentSucceeded(
     throw new Error(`Stripe payment amount mismatch for booking ${bookingId}`);
   }
 
+  // The transaction row mirrors the intent, so the check above cannot catch
+  // a *stale* intent: one minted before an unpaid-booking modification moved
+  // finalPriceCents (#1161). Without this guard the capture would loop
+  // forever in markBookingPaymentSucceeded's mismatch throw with no alert.
+  if (
+    bookingRecord &&
+    paymentIntent.amount !== bookingRecord.finalPriceCents
+  ) {
+    logger.error(
+      {
+        bookingId,
+        bookingFinalPriceCents: bookingRecord.finalPriceCents,
+        receivedCents: paymentIntent.amount,
+        paymentIntentId: paymentIntent.id,
+      },
+      "Stripe capture does not match the booking's current total - refusing to auto-apply payment"
+    );
+    await alertPaymentAmountMismatch(
+      bookingId,
+      paymentIntent.id,
+      bookingRecord.finalPriceCents,
+      paymentIntent.amount,
+      "Primary booking payment (stale intent: booking was modified after the intent was created)"
+    );
+    throw new Error(
+      `Stripe capture amount does not match current booking total for ${bookingId}`
+    );
+  }
+
   const reconciliation = await markBookingPaymentSucceeded({
     bookingId,
     paymentIntentId: paymentIntent.id,

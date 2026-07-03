@@ -93,8 +93,8 @@ adopters can find the contract without reading the whole application.
 
 ### Xero integration layers
 
-`src/lib/xero.ts` is a 199-line compatibility facade for older imports. Prefer
-direct imports from the focused modules below for new code.
+`src/lib/xero.ts` is a compatibility facade (re-exports only) for older
+imports. Prefer direct imports from the focused modules below for new code.
 [`docs/xero/ARCHITECTURE.md`](xero/ARCHITECTURE.md) maps the subsystem in
 depth: runtime dataflow, ledger data model, and sequence diagrams for the
 outbound-document, inbound-reconciliation, and repair flows.
@@ -289,32 +289,65 @@ off, is gated by Admin Modules and `src/proxy.ts` before route handlers run, and
 never replaces manual address entry.
 
 Access roles live in `MemberAccessRole` and are the normalized login/permission
-axis: `USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
-`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`,
-`FINANCE_ADMIN`, and `ORG`.
+axis. An assignment row carries the legacy enum value (`USER`, `ADMIN`,
+`ADMIN_READONLY`, `ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`,
+`LODGE`, `FINANCE_USER`, `FINANCE_ADMIN`, `ORG`) and/or a link to an
+`AccessRoleDefinition` row. Definitions are the club-editable roles managed at
+`/admin/access-roles`: label, description, and a per-area permission matrix.
+The six seeded defaults (Read-only Admin, Booking Officer, Membership
+Officer, Content Manager, Finance Viewer, Treasurer) keep their enum value in
+`AccessRoleDefinition.systemRole` and can be edited or deleted; brand-new
+custom roles are definition-only rows (`role` is NULL). `ADMIN` (Full Admin),
+`LODGE`, `USER`, and `ORG` are protected system roles with no definition row:
+code-defined, never editable or deletable, and Full Admin always keeps full
+permissions.
 `Member.role` remains a synchronized compatibility/classification field with
 `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and `SCHOOL`; Associate, Life, and
 club-created categories are membership types, not role enum values.
-`Member.financeAccessLevel` remains synchronized for compatibility visibility,
-but runtime finance guards ignore it. Non-login records simply have no
+`Member.financeAccessLevel` remains synchronized for compatibility visibility
+(derived from the merged matrix finance level on role writes), but runtime
+finance guards ignore it. Non-login records simply have no
 access-role rows. The canonical access-role constants and compatibility helpers
 live in `src/lib/access-roles.ts`; compatibility role constants stay in
 `src/lib/member-roles.ts` for old imports, membership classification, and
 provider-created non-member records.
 
 Admin authorization is area-based in `src/lib/admin-permissions.ts`. `ADMIN`
-has edit access everywhere; `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
-`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, and `FINANCE_ADMIN` are bundled
-permissions that merge when assigned together. `requireAdmin()` infers the
-requested admin path and HTTP method from proxy headers and enforces view/edit
-requirements centrally, while admin layout/sidebar rendering uses the same
-matrix for page access and navigation visibility.
+has edit access everywhere (hardcoded, never database-resolved); every other
+role resolves per assignment row: a joined `AccessRoleDefinition` is
+authoritative, a bare enum value falls back to the legacy hardcoded bundle
+(identical to the seeded definitions until the club edits them), and an
+unresolved row contributes nothing — the resolver fails closed, never wider.
+Roles merge by taking the maximum level per area when assigned together.
+Finance-portal access derives from the merged `finance` area level (view ⇒
+finance viewer, edit ⇒ finance manager) via `hasFinanceViewerAccess` and
+`hasFinanceManagerAccess` in `src/lib/admin-permissions.ts` — Full Admin is
+therefore a finance manager, and any role whose matrix grants finance view
+(including Read-only Admin, Booking Officer, and Membership Officer as
+seeded) can open the finance portal read-only. `requireAdmin()` infers the
+requested admin path and HTTP method from proxy headers and enforces
+view/edit requirements centrally, selecting assignment rows with their
+definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in
+`src/lib/access-role-definitions.ts`); the admin layout precomputes the
+matrix server-side and passes it to the sidebar, because definitions cannot
+resolve client-side. Editing a definition applies to every holder on their
+next request — guards re-read roles and definitions from the database and
+never trust the JWT.
+
+Managing the definitions themselves is Full-Admin-only: the
+`/api/admin/access-roles` mutation handlers enforce an explicit `isFullAdmin`
+check on top of `requireAdmin()` (an editable role could otherwise widen
+itself past the area gate), deletion is blocked while any member holds the
+role (including via a bare enum row), and create/update/delete write
+critical-severity audit entries.
 
 Access-role writes carry an additional separation-of-duties gate, independent
 of the path-inferred area: only a Full Admin (`ADMIN`) may grant or revoke
-privileged access roles (every role other than `USER` and `ORG`), including via
-the legacy `Member.role` and `financeAccessLevel` compatibility fields and the
-member-import `role` column. The shared helpers are `isFullAdmin` and
+privileged access roles (every role other than `USER` and `ORG` — custom
+definition-backed roles are always privileged), including via the legacy
+`Member.role` and `financeAccessLevel` compatibility fields and the
+member-import `role` column. Role writes are token-based: the enum value for
+system roles and seeded defaults, the definition id for custom roles. The shared helpers are `isFullAdmin` and
 `accessRoleChangeRequiresFullAdmin` in `src/lib/access-roles.ts`; the member
 editor, create, bulk-update, and import paths all apply them and return 403
 for a non-Full-Admin actor. `requireAdmin()` returns DB-verified access roles
@@ -525,6 +558,7 @@ disable cron with `CRON_ENABLED=false`.
 | `xero-link-backfill` | Daily | Backfill canonical Xero object links into the ledger |
 | `xero-link-cleanup` | Daily | Clean stale canonical Xero object links |
 | `xero-reconciliation-report` | Daily | Send the Xero reconciliation report |
+| `finance-daily-sync` | Daily when the finance dashboard module is enabled | Refresh finance report/invoice/balance snapshots from the operational Xero connection |
 | `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings |
 | `pending-deadline-alerts` | Daily | Alert admins about pending bookings approaching deadline |

@@ -37,6 +37,10 @@ vi.mock("@/lib/payment-reconciliation", () => ({
   markBookingPaymentSucceeded: vi.fn(),
 }));
 
+vi.mock("@/lib/booking-payment-cleanup", () => ({
+  queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: vi.fn().mockResolvedValue(undefined),
 }));
@@ -422,6 +426,58 @@ describe("createPaymentIntentForPaymentLink", () => {
 
     expect(result).toEqual({ type: "clientSecret", clientSecret: "secret_existing", paymentIntentId: "pi_existing" });
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("supersedes a stale-amount intent and mints a fresh one at the current price (#1161)", async () => {
+    const { queueSupersededPrimaryIntentCancellations } = await import(
+      "@/lib/booking-payment-cleanup"
+    );
+    mockedFindUnique.mockResolvedValue(
+      baseLink({
+        booking: baseBooking({
+          payment: { id: "pay-1", stripePaymentIntentId: "pi_stale", status: PaymentStatus.PENDING },
+        }),
+      }) as never
+    );
+    // Minted at $100 before the unpaid booking was edited to $120.
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_stale",
+      status: "requires_payment_method",
+      client_secret: "secret_stale",
+      amount: 10000,
+      payment_method: null,
+    } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue(
+      baseBooking({ guests: [{ id: "guest-1" }] }) as never
+    );
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_new",
+      client_secret: "secret_new",
+      amount: 12000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    const result = await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    // The stale secret is never disclosed; a fresh intent carries the
+    // current price and the stale one is queued for cancellation.
+    expect(result).toEqual({
+      type: "clientSecret",
+      clientSecret: "secret_new",
+      paymentIntentId: "pi_new",
+    });
+    expect(vi.mocked(queueSupersededPrimaryIntentCancellations)).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        bookingId: "booking-1",
+        paymentId: "pay-1",
+        newFinalPriceCents: 12000,
+      },
+    );
+    expect(mockedCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 12000 }),
+    );
   });
 
   it("reports alreadyPaid and reconciles when the existing PaymentIntent already succeeded", async () => {
