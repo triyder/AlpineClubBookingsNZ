@@ -23,6 +23,18 @@
  * the settle path takes, so a payment that lands just before the reaper wins
  * (SUCCEEDED settlements are skipped inside the lock), and a rerun finds no
  * CONFIRMED children and does nothing.
+ *
+ * Second phase (#1094): reverted children cannot be paid by the joiner (the
+ * organiserSettled flag blocks joiner payment by design), so if the organiser
+ * never retries, they would linger in PAYMENT_PENDING forever. Once a FAILED
+ * settlement sits unretried through a second full reap window (fresh
+ * `updatedAt` from the reap itself, same deadline function), its
+ * organiser-settled PAYMENT_PENDING children are cancelled, each exactly
+ * once, with a joiner notification. A settlement retry flips the status back
+ * to PENDING and resets `updatedAt`, so a retry between reap and expiry
+ * always keeps the children alive; both are re-checked on the fresh row
+ * inside the advisory lock so a retry racing the cron wins. No capacity or
+ * waitlist work is needed — PAYMENT_PENDING holds no beds.
  */
 import {
   BookingEventType,
@@ -37,6 +49,7 @@ import { processWaitlistForDates } from "@/lib/waitlist";
 import {
   sendGroupSettlementExpiredEmail,
   sendGroupJoinReleasedEmail,
+  sendGroupJoinCancelledEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
 
@@ -50,6 +63,9 @@ export interface GroupSettlementReapResult {
   scanned: number;
   reaped: number;
   releasedChildBookings: number;
+  /** FAILED settlements whose reverted children were cancelled this run. */
+  expiredSettlements: number;
+  cancelledChildBookings: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -100,6 +116,8 @@ export async function reapStaleGroupSettlements(
     scanned: candidates.length,
     reaped: 0,
     releasedChildBookings: 0,
+    expiredSettlements: 0,
+    cancelledChildBookings: 0,
   };
 
   for (const settlement of candidates) {
@@ -136,7 +154,73 @@ export async function reapStaleGroupSettlements(
     }
   }
 
+  await expireReapedChildren(now, result);
+
   return result;
+}
+
+/**
+ * Second phase (#1094): cancel PAYMENT_PENDING organiser-settled children of
+ * FAILED settlements that sat unretried through another full reap window.
+ * Scanned fresh after phase one so a settlement reaped in this run (whose
+ * `updatedAt` the reap just refreshed) is never expired in the same run.
+ */
+async function expireReapedChildren(
+  now: Date,
+  result: GroupSettlementReapResult
+): Promise<void> {
+  const failedSettlements = await prisma.groupBookingSettlement.findMany({
+    where: { status: PaymentStatus.FAILED },
+    select: {
+      id: true,
+      status: true,
+      updatedAt: true,
+      groupBookingId: true,
+      groupBooking: {
+        select: {
+          organiserBookingId: true,
+          organiserMember: {
+            select: { email: true, firstName: true, lastName: true },
+          },
+          organiserBooking: { select: { checkIn: true, checkOut: true } },
+        },
+      },
+    },
+  });
+
+  for (const settlement of failedSettlements) {
+    const deadline = groupSettlementReapDeadline(
+      settlement.updatedAt,
+      settlement.groupBooking.organiserBooking.checkIn
+    );
+    if (now < deadline) {
+      continue;
+    }
+
+    try {
+      const cancelled = await cancelReapedChildren(settlement.id, {
+        organiserBookingId: settlement.groupBooking.organiserBookingId,
+        checkIn: settlement.groupBooking.organiserBooking.checkIn,
+        now,
+      });
+      if (cancelled === null || cancelled.length === 0) {
+        // Retried, settled, or already expired in the meantime — nothing to
+        // cancel, nothing to notify. A rerun lands here, keeping the cron
+        // idempotent.
+        continue;
+      }
+
+      result.expiredSettlements += 1;
+      result.cancelledChildBookings += cancelled.length;
+
+      await finishExpiry({ settlement, cancelled });
+    } catch (err) {
+      logger.error(
+        { err, settlementId: settlement.id, groupBookingId: settlement.groupBookingId },
+        "Failed to expire reaped group settlement children"
+      );
+    }
+  }
 }
 
 type ReleasedChild = {
@@ -200,10 +284,18 @@ async function releaseSettlementChildren(
       });
     }
 
-    await tx.groupBookingSettlement.update({
-      where: { id: settlementId },
-      data: { status: PaymentStatus.FAILED },
-    });
+    // Write FAILED (bumping `updatedAt`) only when this pass did real work —
+    // released children, or recorded the PENDING→FAILED abandonment. The
+    // update restarts the clock the expiry phase (#1094) measures its second
+    // window from, so re-writing it on every no-op pass over an already
+    // FAILED settlement would keep reverted children in PAYMENT_PENDING
+    // forever.
+    if (children.length > 0 || current.status !== PaymentStatus.FAILED) {
+      await tx.groupBookingSettlement.update({
+        where: { id: settlementId },
+        data: { status: PaymentStatus.FAILED },
+      });
+    }
 
     return children.map((child) => ({
       id: child.id,
@@ -213,6 +305,119 @@ async function releaseSettlementChildren(
       memberFirstName: child.member.firstName,
     }));
   });
+}
+
+/**
+ * Cancel the settlement's reverted PAYMENT_PENDING children under the same
+ * advisory lock the settle path takes. Returns null when the settlement was
+ * retried (PENDING again), paid (SUCCEEDED), or its expiry clock restarted in
+ * the meantime — the retry always wins.
+ */
+async function cancelReapedChildren(
+  settlementId: string,
+  {
+    organiserBookingId,
+    checkIn,
+    now,
+  }: { organiserBookingId: string; checkIn: Date; now: Date }
+): Promise<ReleasedChild[] | null> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+    const current = await tx.groupBookingSettlement.findUnique({
+      where: { id: settlementId },
+      select: { status: true, updatedAt: true },
+    });
+    if (!current || current.status !== PaymentStatus.FAILED) {
+      return null;
+    }
+    // Re-check the expiry deadline on the fresh row: a failed retry between
+    // the scan and this lock restarted the clock.
+    if (now < groupSettlementReapDeadline(current.updatedAt, checkIn)) {
+      return null;
+    }
+
+    const children = await tx.booking.findMany({
+      where: {
+        parentBookingId: organiserBookingId,
+        organiserSettled: true,
+        deletedAt: null,
+        status: BookingStatus.PAYMENT_PENDING,
+      },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        member: { select: { email: true, firstName: true } },
+      },
+    });
+
+    for (const child of children) {
+      await tx.booking.update({
+        where: { id: child.id },
+        data: { status: BookingStatus.CANCELLED },
+      });
+    }
+
+    return children.map((child) => ({
+      id: child.id,
+      checkIn: child.checkIn,
+      checkOut: child.checkOut,
+      memberEmail: child.member.email,
+      memberFirstName: child.member.firstName,
+    }));
+  });
+}
+
+/** Post-commit side effects of the expiry phase: record events and notify. */
+async function finishExpiry({
+  settlement,
+  cancelled,
+}: {
+  settlement: {
+    id: string;
+    groupBookingId: string;
+    groupBooking: {
+      organiserMember: { email: string; firstName: string; lastName: string };
+    };
+  };
+  cancelled: ReleasedChild[];
+}) {
+  const organiser = settlement.groupBooking.organiserMember;
+  const organiserName = `${organiser.firstName} ${organiser.lastName}`.trim();
+
+  for (const child of cancelled) {
+    await recordBookingEvent({
+      bookingId: child.id,
+      type: BookingEventType.CANCELLED,
+      reason:
+        "The group organiser's combined payment was never completed; this pending place has been cancelled.",
+    });
+
+    try {
+      await sendGroupJoinCancelledEmail({
+        email: child.memberEmail,
+        firstName: child.memberFirstName,
+        organiserName,
+        checkIn: child.checkIn,
+        checkOut: child.checkOut,
+      });
+    } catch (err) {
+      logger.error(
+        { err, bookingId: child.id },
+        "Failed to send group join cancelled email to joiner"
+      );
+    }
+  }
+
+  logger.info(
+    {
+      groupBookingId: settlement.groupBookingId,
+      settlementId: settlement.id,
+      cancelledCount: cancelled.length,
+    },
+    "Expired reaped group settlement children"
+  );
 }
 
 /** Post-commit side effects: void the intent, record events, notify, waitlist. */

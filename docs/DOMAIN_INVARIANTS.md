@@ -70,6 +70,13 @@ Future reviews and issues should cite this file when proposing changes.
   settlement stays unpaid past its window (never past check-in), voids the
   open intent, and notifies the organiser and joiners — idempotently, and a
   payment that lands first always wins under the shared lock.
+- The reverted children have a terminal path too (#1094): joiners cannot pay
+  an organiser-settled booking themselves, so if the FAILED settlement sits
+  unretried through a second full reap window the same cron cancels the
+  PAYMENT_PENDING children, exactly once, with a joiner notification. A
+  settlement retry (which flips the row back to PENDING and resets its clock)
+  always keeps the children alive — both are re-checked on the fresh row
+  under the shared lock.
 
 ## Booking Modifications
 

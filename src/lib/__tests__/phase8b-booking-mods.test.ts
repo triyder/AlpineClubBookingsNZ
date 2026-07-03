@@ -99,6 +99,9 @@ vi.mock("@/lib/stripe", () => ({
   findOrCreateCustomer: (...args: unknown[]) => mockFindOrCreateCustomer(...args),
 }));
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   refundPaymentTransactions: (...args: unknown[]) =>
     mockRefundPaymentTransactions(...args),
   upsertPaymentIntentTransaction: (...args: unknown[]) =>

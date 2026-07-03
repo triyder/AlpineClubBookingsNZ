@@ -511,8 +511,10 @@ async function main() {
   const paidPayment = await prisma.payment.create({ data: { bookingId: bPaid.id, amountCents: bPaid.finalPriceCents, source: "STRIPE", status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid", stripeCustomerId: "cus_demo_erin", additionalPaymentIntentId: "pi_demo_paid_add", additionalAmountCents: 1500, additionalPaymentStatus: "SUCCEEDED" } });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: bPaid.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid" } });
   await prisma.paymentTransaction.create({ data: { paymentId: paidPayment.id, kind: "ADDITIONAL", source: "STRIPE", amountCents: 1500, status: "SUCCEEDED", stripePaymentIntentId: "pi_demo_paid_add", reason: "Added extra guest night" } });
+  // The PromoRedemption_sync_allocation_insert trigger creates the matching
+  // PromoRedemptionAllocation row; inserting it here too violates the
+  // (promoRedemptionId, memberId) unique constraint.
   const erinRedemption = await prisma.promoRedemption.create({ data: { promoCodeId: promoFreeNights.id, bookingId: bPaid.id, memberId: erin.id, discountCents: NIGHTLY, freeNightsUsed: 1, eligibleGuestCount: 1 } });
-  await prisma.promoRedemptionAllocation.create({ data: { promoRedemptionId: erinRedemption.id, promoCodeId: promoFreeNights.id, bookingId: bPaid.id, memberId: erin.id, discountCents: NIGHTLY, freeNightsUsed: 1 } });
   await prisma.promoRedemptionGuestTarget.create({ data: { promoRedemptionId: erinRedemption.id, bookingId: bPaid.id, bookingGuestId: erinGuest.id } });
   await prisma.promoCode.update({ where: { id: promoFreeNights.id }, data: { currentRedemptions: 1 } });
   await prisma.bookingEvent.create({ data: { bookingId: bPaid.id, type: "MEMBER_PAID", actorMemberId: erin.id, amountCents: bPaid.finalPriceCents } });

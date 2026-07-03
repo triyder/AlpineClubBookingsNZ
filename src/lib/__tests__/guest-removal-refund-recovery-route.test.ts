@@ -40,6 +40,9 @@ vi.mock("@/lib/booking-guest-removal-service", () => ({
   },
 }));
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   refundPaymentTransactions: mocks.refundPaymentTransactions,
 }));
 vi.mock("@/lib/payment-recovery", () => ({

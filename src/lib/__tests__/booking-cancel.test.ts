@@ -97,6 +97,9 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,

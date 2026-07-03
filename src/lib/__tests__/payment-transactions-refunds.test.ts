@@ -15,6 +15,7 @@ vi.mock("@/lib/stripe", () => ({
 
 import {
   markPaymentIntentTransactionFailed,
+  PartialRefundError,
   recordInternetBankingPaymentTransaction,
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
@@ -415,6 +416,144 @@ describe("payment refund ledger", () => {
       })
     ).rejects.toThrow("Refund amount exceeds captured Stripe payments");
 
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+});
+
+describe("multi-transaction refund allocation (#1097)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function twoTransactionStore() {
+    const ctx = createRefundStore();
+    ctx.payment.amountCents = 8000;
+    ctx.transactions.push({
+      id: "txn_2",
+      paymentId: "payment_1",
+      kind: "ADDITIONAL",
+      source: PaymentSource.STRIPE,
+      stripePaymentIntentId: "pi_2",
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      reference: null,
+      amountCents: 3000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      paymentMethodId: "pm_1",
+      reason: null,
+      // Newer than txn_1 so the internal allocation refunds it first.
+      createdAt: new Date("2026-01-05T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-05T00:00:00.000Z"),
+    });
+    return ctx;
+  }
+
+  function stripeRefund(
+    id: string,
+    amount: number,
+    paymentIntent: string,
+    charge: string
+  ) {
+    return {
+      id,
+      amount,
+      currency: "nzd",
+      status: "succeeded",
+      reason: "requested_by_customer",
+      created: 1770000000,
+      charge,
+      payment_intent: paymentIntent,
+    };
+  }
+
+  it("recovers a partial-success-then-fail refund to exactly the approved amount across retries", async () => {
+    const { store, refunds } = twoTransactionStore();
+
+    // Original attempt: 6000 approved across txn_2 (3000, newest-first) then
+    // txn_1 (3000). The first slice succeeds and is recorded; the second
+    // fails at Stripe.
+    mocks.processRefund
+      .mockResolvedValueOnce(stripeRefund("re_slice_a", 3000, "pi_2", "ch_2"))
+      .mockRejectedValueOnce(new Error("stripe unavailable"));
+
+    let thrown: unknown;
+    try {
+      await refundPaymentTransactions({
+        paymentId: "payment_1",
+        amountCents: 6000,
+        idempotencyKeyPrefix: "refund_request_rq1",
+        store: store as any,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(PartialRefundError);
+    expect((thrown as PartialRefundError).completedRefundCents).toBe(3000);
+    expect(mocks.processRefund).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        idempotencyKey: "refund_request_rq1_txn_2_3000",
+        amountCents: 3000,
+      })
+    );
+    const originalSecondSliceKey =
+      mocks.processRefund.mock.calls[1][0].idempotencyKey;
+    expect(originalSecondSliceKey).toBe("refund_request_rq1_txn_1_3000");
+
+    // Recovery, enqueued for exactly the 3000 remainder, executes the frozen
+    // plan slice — the identical Stripe key the original attempt used.
+    mocks.processRefund.mockResolvedValueOnce(
+      stripeRefund("re_slice_b", 3000, "pi_1", "ch_1")
+    );
+    await refundPaymentTransactions({
+      paymentId: "payment_1",
+      amountCents: 3000,
+      allocation: [{ paymentTransactionId: "txn_1", amountCents: 3000 }],
+      idempotencyKeyPrefix: "refund_request_rq1",
+      store: store as any,
+    });
+    expect(mocks.processRefund).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        idempotencyKey: originalSecondSliceKey,
+        amountCents: 3000,
+      })
+    );
+
+    // A rerun of the same plan (crash before the operation completed) replays
+    // the same key: Stripe answers with the original refund, the ledger
+    // dedupes by refund id, and no new money moves.
+    mocks.processRefund.mockResolvedValueOnce(
+      stripeRefund("re_slice_b", 3000, "pi_1", "ch_1")
+    );
+    await refundPaymentTransactions({
+      paymentId: "payment_1",
+      amountCents: 3000,
+      allocation: [{ paymentTransactionId: "txn_1", amountCents: 3000 }],
+      idempotencyKeyPrefix: "refund_request_rq1",
+      store: store as any,
+    });
+
+    const totalRecordedCents = [...refunds.values()].reduce(
+      (sum, refund) => sum + Number(refund.amountCents),
+      0
+    );
+    expect(totalRecordedCents).toBe(6000);
+  });
+
+  it("rejects an allocation slice that references an unknown transaction", async () => {
+    const { store } = twoTransactionStore();
+
+    await expect(
+      refundPaymentTransactions({
+        paymentId: "payment_1",
+        amountCents: 100,
+        allocation: [{ paymentTransactionId: "txn_missing", amountCents: 100 }],
+        store: store as any,
+      })
+    ).rejects.toThrow(/not a captured Stripe transaction/);
     expect(mocks.processRefund).not.toHaveBeenCalled();
   });
 });

@@ -10,8 +10,9 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     // Never descend into agent git worktrees (.claude/worktrees/*): they hold
     // stale snapshots of the repo whose test files would otherwise be collected
-    // and run against the main source via the "@" alias.
-    exclude: [...configDefaults.exclude, "**/.claude/**"],
+    // and run against the main source via the "@" alias. e2e/ holds Playwright
+    // specs that Vitest's default include pattern would otherwise collect.
+    exclude: [...configDefaults.exclude, "**/.claude/**", "e2e/**"],
   },
   resolve: {
     alias: {

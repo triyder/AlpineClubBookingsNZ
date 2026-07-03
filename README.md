@@ -193,6 +193,9 @@ npm test
 npm run build
 ```
 
+Browser E2E tests for the Critical journeys run separately against the staging
+compose stack: `npm run test:e2e` (see `docs/E2E_PLAYWRIGHT.md`).
+
 This repository uses a current Next.js version. Before changing framework APIs,
 read the relevant versioned guide in `node_modules/next/dist/docs/`.
 

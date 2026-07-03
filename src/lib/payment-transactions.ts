@@ -812,12 +812,54 @@ export async function syncRefundsFromStripeCharge({
   };
 }
 
+export interface RefundAllocationSlice {
+  paymentTransactionId: string;
+  amountCents: number;
+}
+
+/**
+ * Thrown when a multi-slice refund fails partway (#1097): carries how much of
+ * the requested amount was refunded **and recorded** before the failure so
+ * enqueued recovery work asks for exactly the remainder, never the original
+ * total again.
+ */
+export class PartialRefundError extends Error {
+  completedRefundCents: number;
+  refunds: Array<{
+    paymentIntentId: string;
+    refundId: string;
+    amountCents: number;
+  }>;
+  cause: unknown;
+
+  constructor({
+    completedRefundCents,
+    refunds,
+    cause,
+  }: {
+    completedRefundCents: number;
+    refunds: PartialRefundError["refunds"];
+    cause: unknown;
+  }) {
+    super(
+      `Refund failed after ${completedRefundCents} cents were refunded and recorded: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`
+    );
+    this.name = "PartialRefundError";
+    this.completedRefundCents = completedRefundCents;
+    this.refunds = refunds;
+    this.cause = cause;
+  }
+}
+
 export async function refundPaymentTransactions({
   paymentId,
   amountCents,
   reason = "requested_by_customer",
   metadata,
   idempotencyKeyPrefix,
+  allocation,
   store = prisma,
 }: {
   paymentId: string;
@@ -825,6 +867,16 @@ export async function refundPaymentTransactions({
   reason?: Stripe.RefundCreateParams.Reason;
   metadata?: Record<string, string>;
   idempotencyKeyPrefix?: string;
+  /**
+   * Explicit per-transaction slices to execute (#1097). When present, the
+   * internal newest-first allocation is skipped and exactly these slices are
+   * refunded with keys `${prefix}_${transactionId}_${sliceAmount}` — so a
+   * retry driven by a persisted plan replays the identical Stripe requests
+   * (Stripe returns the original refund for a repeated key, and the ledger
+   * dedupes on refund id), instead of deriving a shifted allocation from
+   * whatever progress happens to be recorded.
+   */
+  allocation?: ReadonlyArray<RefundAllocationSlice>;
   store?: PaymentStore;
 }) {
   const payment = await ensurePaymentTransactionsBackfilled(store, paymentId);
@@ -832,52 +884,94 @@ export async function refundPaymentTransactions({
     throw new Error("Payment not found");
   }
 
-  const refundableTransactions = [...payment.transactions]
-    .filter((transaction) => isStripeTransaction(transaction))
-    .filter((transaction) => isCapturedTransactionStatus(transaction.status))
-    .filter(
-      (transaction) =>
-        transaction.amountCents - transaction.refundedAmountCents > 0
-    )
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  const stripeTransactions = payment.transactions
+    .filter(isStripeTransaction)
+    .filter((transaction) => isCapturedTransactionStatus(transaction.status));
 
-  const totalRefundableCents = refundableTransactions.reduce((sum, transaction) => {
-    return sum + (transaction.amountCents - transaction.refundedAmountCents);
-  }, 0);
+  let slices: Array<{
+    transaction: (typeof stripeTransactions)[number];
+    amountCents: number;
+  }>;
 
-  if (amountCents > totalRefundableCents) {
-    throw new Error("Refund amount exceeds captured Stripe payments");
+  if (allocation) {
+    const byId = new Map(
+      stripeTransactions.map((transaction) => [transaction.id, transaction])
+    );
+    slices = allocation.map((slice) => {
+      const transaction = byId.get(slice.paymentTransactionId);
+      if (!transaction) {
+        throw new Error(
+          `Refund allocation references transaction ${slice.paymentTransactionId} which is not a captured Stripe transaction of payment ${paymentId}`
+        );
+      }
+      return { transaction, amountCents: slice.amountCents };
+    });
+  } else {
+    const refundableTransactions = [...stripeTransactions]
+      .filter(
+        (transaction) =>
+          transaction.amountCents - transaction.refundedAmountCents > 0
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    const totalRefundableCents = refundableTransactions.reduce(
+      (sum, transaction) =>
+        sum + (transaction.amountCents - transaction.refundedAmountCents),
+      0
+    );
+
+    if (amountCents > totalRefundableCents) {
+      throw new Error("Refund amount exceeds captured Stripe payments");
+    }
+
+    let remainingAmountCents = amountCents;
+    slices = [];
+    for (const transaction of refundableTransactions) {
+      if (remainingAmountCents <= 0) break;
+      const refundableAmountCents =
+        transaction.amountCents - transaction.refundedAmountCents;
+      const sliceAmountCents = Math.min(
+        remainingAmountCents,
+        refundableAmountCents
+      );
+      slices.push({ transaction, amountCents: sliceAmountCents });
+      remainingAmountCents -= sliceAmountCents;
+    }
+
+    if (remainingAmountCents > 0) {
+      throw new Error(
+        `Refund partially processed; ${remainingAmountCents} cents still need manual reconciliation`
+      );
+    }
   }
 
-  let remainingAmountCents = amountCents;
   const refunds: Array<{
     paymentIntentId: string;
     refundId: string;
     amountCents: number;
   }> = [];
+  let completedRefundCents = 0;
 
-  for (const transaction of refundableTransactions) {
-    if (remainingAmountCents <= 0) {
-      break;
+  for (const { transaction, amountCents: refundAmountForTransaction } of slices) {
+    let refund;
+    try {
+      refund = await processRefund({
+        paymentIntentId: transaction.stripePaymentIntentId,
+        amountCents: refundAmountForTransaction,
+        reason:
+          typeof reason === "string" ? reason : "requested_by_customer",
+        metadata,
+        idempotencyKey: idempotencyKeyPrefix
+          ? `${idempotencyKeyPrefix}_${transaction.id}_${refundAmountForTransaction}`
+          : undefined,
+      });
+    } catch (err) {
+      throw new PartialRefundError({
+        completedRefundCents,
+        refunds,
+        cause: err,
+      });
     }
-
-    const refundableAmountCents =
-      transaction.amountCents - transaction.refundedAmountCents;
-    const refundAmountForTransaction = Math.min(
-      remainingAmountCents,
-      refundableAmountCents
-    );
-
-    const refund = await processRefund({
-      paymentIntentId: transaction.stripePaymentIntentId,
-      amountCents: refundAmountForTransaction,
-      reason:
-        typeof reason === "string" ? reason : "requested_by_customer",
-      metadata,
-      idempotencyKey: idempotencyKeyPrefix
-        ? `${idempotencyKeyPrefix}_${transaction.id}_${refundAmountForTransaction}`
-        : undefined,
-    });
 
     await recordStripeRefundLedgerEntry({
       paymentId,
@@ -914,13 +1008,7 @@ export async function refundPaymentTransactions({
       refundId: refund.id,
       amountCents: refund.amount,
     });
-    remainingAmountCents -= refundAmountForTransaction;
-  }
-
-  if (remainingAmountCents > 0) {
-    throw new Error(
-      `Refund partially processed; ${remainingAmountCents} cents still need manual reconciliation`
-    );
+    completedRefundCents += refundAmountForTransaction;
   }
 
   return {

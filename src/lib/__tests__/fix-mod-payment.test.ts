@@ -163,6 +163,9 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
   refundPaymentTransactions: (...args: unknown[]) =>

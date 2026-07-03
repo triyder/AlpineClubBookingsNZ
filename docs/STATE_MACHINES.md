@@ -21,6 +21,12 @@ To verify in later review: exact terminal transitions, capacity-holding
 statuses, non-member hold expiry, school group `CONFIRMED` semantics, and
 payment-failure back paths.
 
+Organiser-pays group children add one cron-driven back path: the
+`group-settlement-reaper` reverts CONFIRMED-unpaid children to
+`PAYMENT_PENDING` when the settlement expires, and cancels those reverted
+children (`PAYMENT_PENDING -> CANCELLED`, #1094) if the settlement is still
+FAILED after a second full window — a settlement retry always wins.
+
 Booking quote and create paths reject a linked member who is already present on
 another live booking for any requested lodge night. The guard covers draft,
 pending, confirmed/paid/completed, waitlist, offered, and admin-review bookings,
