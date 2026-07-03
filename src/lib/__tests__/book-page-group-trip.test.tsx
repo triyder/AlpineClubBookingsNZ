@@ -169,11 +169,13 @@ async function advanceToGuestsStep() {
 async function advanceToReviewAndConfirm() {
   fireEvent.click(screen.getByText("add test guest"));
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  // With money owed the submit CTA reads "Continue to Payment" and the
+  // redirect anchors the payment card (#1063).
   fireEvent.click(
-    await screen.findByRole("button", { name: "Confirm Booking" }),
+    await screen.findByRole("button", { name: "Continue to Payment" }),
   );
   await waitFor(() =>
-    expect(routerMocks.push).toHaveBeenCalledWith("/bookings/booking-1"),
+    expect(routerMocks.push).toHaveBeenCalledWith("/bookings/booking-1#payment"),
   );
 }
 
