@@ -28,6 +28,7 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { checkCapacity } from "@/lib/capacity";
 import {
@@ -345,6 +346,29 @@ export async function modifyBookingDates({
         400,
       );
     }
+
+    // One-live-booking-per-member-per-night guard (#1157, #1127 F1). A date
+    // change resets every guest to the new envelope (see the write loop below),
+    // so re-check that no member-linked guest lands on a night where that member
+    // is already on another live booking. Mirror the ranges the service is about
+    // to persist — stayStart/stayEnd = the new envelope, nights = the priced
+    // night set — so the guard evaluates exactly what will exist. This runs
+    // under the pg_advisory_xact_lock(1) taken above and before any
+    // BookingGuest/BookingGuestNight/Booking writes, so a conflict rolls back
+    // with nothing written.
+    await assertNoBookingMemberNightConflicts(tx, {
+      actorMemberId: actor.id,
+      actorRole: actor.role,
+      checkIn: newCheckIn,
+      checkOut: newCheckOut,
+      guests: booking.guests.map((g, index) => ({
+        memberId: g.memberId ?? null,
+        stayStart: newCheckIn,
+        stayEnd: newCheckOut,
+        nights: priceBreakdown.guests[index].nightDates ?? [],
+      })),
+      excludeBookingId: bookingId,
+    });
 
     const newTotalPriceCents = priceBreakdown.totalPriceCents;
     const guestNightRates = guestsForPricing.map((guest, index) => ({
