@@ -1126,7 +1126,7 @@ export default function BookPage() {
       )}
 
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>{error}</p>
           {guestProfileBlocks.length > 0 && (
             <div className="mt-3 space-y-3">
