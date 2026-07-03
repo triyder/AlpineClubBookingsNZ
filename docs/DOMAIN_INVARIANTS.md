@@ -135,7 +135,12 @@ per-tier rates are not persisted on the booking. Standard edit paths (batch
 modify, date change, guest add, single-guest removal, and the modify-quote
 preview) refuse such bookings rather than silently repricing every guest at
 season rates — the change is made by re-pricing or issuing a revised quote
-from the booking request.
+from the booking request. The one exception (#1099) is identity-only edits:
+guest name fixes never run the pricing engine — stored totals, per-guest
+prices, and night rows are echoed back unchanged on every booking, quoted or
+not — so they pass the block, and quoted bookings are additionally exempt
+from the paid-name lock (renaming placeholder students after the school has
+paid its invoice is the intended workflow).
 
 A price reduction against an issued-but-unpaid Xero invoice (pay-on-account,
 no captured payment) is corrected for the full net delta — there is no captured

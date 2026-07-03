@@ -316,18 +316,26 @@ export function isBookingFullyPaidForGuestNameEdits(booking: {
 export function resolveGuestNameUpdates({
   booking,
   input,
+  allowWhenFullyPaid = false,
 }: {
   booking: Pick<
     LoadedBookingForModify,
     "guests" | "status" | "finalPriceCents" | "payment"
   >;
   input: Pick<BatchModifyInput, "guestUpdates" | "removeGuestIds">;
+  /**
+   * Quoted (booking-request) bookings are exempt from the paid-name lock
+   * (#1099): their guests are placeholder records ("School Child 1..N") and
+   * replacing them with real attendee names before arrival is the intended
+   * workflow — including after the school has paid its invoice.
+   */
+  allowWhenFullyPaid?: boolean;
 }): ResolvedGuestNameUpdate[] {
   if (!input.guestUpdates?.length) {
     return [];
   }
 
-  if (isBookingFullyPaidForGuestNameEdits(booking)) {
+  if (!allowWhenFullyPaid && isBookingFullyPaidForGuestNameEdits(booking)) {
     throw new ApiError(
       "Non-member guest names cannot be edited after the booking is fully paid",
       400,
@@ -1852,20 +1860,27 @@ export function assertBookingModifiable(
  * refuse instead and direct the admin to the booking-request re-quote /
  * re-price flow.
  */
-export async function assertBookingNotQuotePriced(
+export async function isQuotePricedBooking(
   db: Prisma.TransactionClient,
   bookingId: string,
-): Promise<void> {
+): Promise<boolean> {
   const request = await db.bookingRequest.findFirst({
     where: {
       OR: [{ convertedBookingId: bookingId }, { heldBookingId: bookingId }],
     },
     select: { id: true },
   });
-  if (request) {
-    throw new ApiError(
-      "This booking keeps a negotiated booking-request price, so standard edits are disabled — they would reprice every guest at season rates. Re-price or issue a revised quote from its booking request instead.",
-      400,
-    );
+  return Boolean(request);
+}
+
+export const QUOTE_PRICED_EDIT_BLOCK_MESSAGE =
+  "This booking keeps a negotiated booking-request price, so standard edits are disabled — they would reprice every guest at season rates. Re-price or issue a revised quote from its booking request instead.";
+
+export async function assertBookingNotQuotePriced(
+  db: Prisma.TransactionClient,
+  bookingId: string,
+): Promise<void> {
+  if (await isQuotePricedBooking(db, bookingId)) {
+    throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
   }
 }

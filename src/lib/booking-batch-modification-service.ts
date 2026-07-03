@@ -16,7 +16,6 @@ import {
   applyPaymentAdjustments,
   applyPromoCodeChanges,
   assertBookingModifiable,
-  assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   calculateModificationChangeFee,
   calculateModifiedPricing,
@@ -28,6 +27,9 @@ import {
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
+  type PricingResult,
+  isQuotePricedBooking,
+  QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
 import {
   createModificationAdditionalPaymentIntent,
@@ -92,6 +94,35 @@ export type BatchModificationResponse = {
   choreWarnings: string[];
 };
 
+/**
+ * Pricing echo for identity-only modifications (#1099): stored totals,
+ * per-guest prices, and night rows exactly as persisted, in booking-guest
+ * order (matching proposedRemainingGuests when nothing is added or removed).
+ * Guests without night rows (quoted or pre-#713 bookings) echo empty night
+ * arrays, which the guest-sync step treats as "leave the rows alone".
+ */
+function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
+  return {
+    inProgressPlan: null,
+    newTotalPriceCents: booking.totalPriceCents,
+    priceBreakdown: {
+      totalPriceCents: booking.totalPriceCents,
+      guests: booking.guests.map((guest) => ({
+        priceCents: guest.priceCents,
+        perNightCents: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
+        nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+      })),
+    },
+    guestNightRates: booking.guests.map((guest) => ({
+      bookingGuestId: guest.id,
+      memberId: guest.memberId ?? null,
+      isMember: guest.isMember,
+      perNightRates: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
+      nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+    })),
+  };
+}
+
 export async function modifyBookingBatch({
   bookingId,
   actor,
@@ -129,7 +160,25 @@ export async function modifyBookingBatch({
       role: actor.role,
       actorId: actor.id,
     });
-    await assertBookingNotQuotePriced(tx, bookingId);
+    // Identity-only requests (guest name fixes, nothing structural) never
+    // reprice (#1099), so they are allowed on quote-priced bookings: the
+    // negotiated basis cannot be disturbed by an edit that skips the pricing
+    // engine entirely.
+    const requestedStructuralChange = Boolean(
+      input.checkIn ||
+        input.checkOut ||
+        input.addGuests?.length ||
+        input.removeGuestIds?.length ||
+        input.guestStayRanges?.length ||
+        input.promoCode ||
+        input.removePromoCode,
+    );
+    const requestIsIdentityOnly =
+      !requestedStructuralChange && Boolean(input.guestUpdates?.length);
+    const quotePriced = await isQuotePricedBooking(tx, bookingId);
+    if (!requestIsIdentityOnly && quotePriced) {
+      throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
+    }
 
     const dates = resolveTargetDates({
       booking,
@@ -147,44 +196,54 @@ export async function modifyBookingBatch({
       newCheckIn: dates.newCheckIn,
       newCheckOut: dates.newCheckOut,
     });
-    const guestNameUpdates = resolveGuestNameUpdates({ booking, input });
-    const requestedStructuralChange = Boolean(
-      input.checkIn ||
-        input.checkOut ||
-        input.addGuests?.length ||
-        input.removeGuestIds?.length ||
-        input.guestStayRanges?.length ||
-        input.promoCode ||
-        input.removePromoCode,
-    );
+    const guestNameUpdates = resolveGuestNameUpdates({
+      booking,
+      input,
+      // Quoted bookings rename placeholder students even after payment.
+      allowWhenFullyPaid: quotePriced,
+    });
     const identityOnlyModification =
       guestNameUpdates.length > 0 && !requestedStructuralChange;
 
-    const seasonRateData = await loadActiveSeasonRates(tx);
+    // Identity-only modifications are price-preserving by construction
+    // (#1099): the stored totals, per-guest prices, and night rows are echoed
+    // back instead of running the pricing engine, so a name fix can never
+    // move money — not on quoted bookings (no per-tier basis to reprice
+    // from), not on legacy bookings without night rows, not across a season
+    // rate change. The promo is equally untouched: nothing promo-relevant
+    // changes when a name does.
+    const pricing = identityOnlyModification
+      ? buildIdentityOnlyPricing(booking)
+      : await calculateModifiedPricing(tx, {
+          booking,
+          bookingId,
+          isInProgressEdit: dates.isInProgressEdit,
+          editableFrom: dates.editableFrom,
+          newCheckIn: dates.newCheckIn,
+          newCheckOut: dates.newCheckOut,
+          normalizedAddGuests: guestPlan.normalizedAddGuests,
+          removeGuestIds: input.removeGuestIds,
+          guestsForPricing: guestPlan.guestsForPricing,
+          skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+          seasonRateData: await loadActiveSeasonRates(tx),
+        });
 
-    const pricing = await calculateModifiedPricing(tx, {
-      booking,
-      bookingId,
-      isInProgressEdit: dates.isInProgressEdit,
-      editableFrom: dates.editableFrom,
-      newCheckIn: dates.newCheckIn,
-      newCheckOut: dates.newCheckOut,
-      normalizedAddGuests: guestPlan.normalizedAddGuests,
-      removeGuestIds: input.removeGuestIds,
-      guestsForPricing: guestPlan.guestsForPricing,
-      skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
-      seasonRateData,
-    });
-
-    const promo = await applyPromoCodeChanges(tx, {
-      booking,
-      bookingId,
-      input,
-      inProgressPlan: pricing.inProgressPlan,
-      newCheckIn: dates.newCheckIn,
-      newTotalPriceCents: pricing.newTotalPriceCents,
-      guestNightRates: pricing.guestNightRates,
-    });
+    const promo = identityOnlyModification
+      ? {
+          newDiscountCents: booking.discountCents,
+          newPromoAdjustmentCents: booking.promoAdjustmentCents,
+          promoRemoved: false,
+          promoChanged: false,
+        }
+      : await applyPromoCodeChanges(tx, {
+          booking,
+          bookingId,
+          input,
+          inProgressPlan: pricing.inProgressPlan,
+          newCheckIn: dates.newCheckIn,
+          newTotalPriceCents: pricing.newTotalPriceCents,
+          guestNightRates: pricing.guestNightRates,
+        });
 
     const newFinalPriceCents = pricing.newTotalPriceCents + promo.newPromoAdjustmentCents;
     const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;

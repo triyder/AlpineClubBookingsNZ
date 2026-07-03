@@ -49,10 +49,11 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 import {
-  assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
   lockedNightPricesForGuest,
   resolveGuestNameUpdates,
+  isQuotePricedBooking,
+  QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
 import {
   buildInProgressGuestRangePlan,
@@ -247,18 +248,6 @@ export async function POST(
     );
   }
 
-  // Quote-priced bookings are blocked at preview time too (#1032), so the
-  // admin sees the actionable message instead of a season-rate delta that the
-  // mutating endpoints would refuse anyway.
-  try {
-    await assertBookingNotQuotePriced(prisma, bookingId);
-  } catch (err) {
-    if (err instanceof ApiError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
-    }
-    throw err;
-  }
-
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
 
@@ -280,6 +269,28 @@ export async function POST(
     promoCode: newPromoCode,
     removePromoCode,
   } = parsed.data;
+  // Quote-priced bookings are blocked at preview time too (#1032) — except
+  // for identity-only requests (#1099), which never touch the pricing engine
+  // and therefore cannot disturb the negotiated basis.
+  const requestedStructuralChange = Boolean(
+    newCheckInStr ||
+      newCheckOutStr ||
+      addGuests?.length ||
+      removeGuestIds?.length ||
+      guestStayRanges?.length ||
+      newPromoCode ||
+      removePromoCode,
+  );
+  const requestIsIdentityOnly =
+    !requestedStructuralChange && Boolean(guestUpdates?.length);
+  const quotePriced = await isQuotePricedBooking(prisma, bookingId);
+  if (!requestIsIdentityOnly && quotePriced) {
+    return NextResponse.json(
+      { error: QUOTE_PRICED_EDIT_BLOCK_MESSAGE },
+      { status: 400 },
+    );
+  }
+
   let normalizedAddGuests: NormalizedAddGuest[] | undefined = addGuests;
   let guestNameUpdates: ReturnType<typeof resolveGuestNameUpdates> = [];
 
@@ -287,12 +298,47 @@ export async function POST(
     guestNameUpdates = resolveGuestNameUpdates({
       booking,
       input: { guestUpdates, removeGuestIds },
+      // Quoted bookings rename placeholder students even after payment.
+      allowWhenFullyPaid: quotePriced,
     });
   } catch (error) {
     if (error instanceof ApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     throw error;
+  }
+
+  // Identity-only preview (#1099): a name fix never reprices, so the quote is
+  // the stored state with zero deltas — no pricing engine, no capacity check,
+  // safe for quoted and legacy bookings alike.
+  if (requestIsIdentityOnly) {
+    return NextResponse.json({
+      newTotalPriceCents: booking.totalPriceCents,
+      newDiscountCents: booking.discountCents,
+      newPromoAdjustmentCents: booking.promoAdjustmentCents,
+      newFinalPriceCents: booking.finalPriceCents,
+      priceDiffCents: 0,
+      changeFeeCents: 0,
+      netChargeCents: 0,
+      settlementOptions: null,
+      capacityAvailable: true,
+      minimumStayValid: true,
+      minimumStayViolations: [],
+      promoStillValid: true,
+      promoValidation: null,
+      itemizedChanges:
+        guestNameUpdates.length > 0
+          ? [
+              {
+                label:
+                  guestNameUpdates.length === 1
+                    ? "Guest name update"
+                    : "Guest name updates",
+                amountCents: 0,
+              },
+            ]
+          : [],
+    });
   }
 
   try {

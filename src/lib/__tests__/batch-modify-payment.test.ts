@@ -490,6 +490,135 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
   });
 
+  it("allows identity-only edits on a quote-priced booking without repricing (#1099)", async () => {
+    // A school booking's student names must be editable; the negotiated flat
+    // price must not move. Identity-only edits skip the pricing engine, so
+    // the quote guard lets them through.
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Teacher",
+          lastName: "InCharge",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+        {
+          id: "g2",
+          bookingId: "bk1",
+          firstName: "School Child",
+          lastName: "1",
+          ageTier: "YOUTH",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    tx.bookingRequest.findFirst.mockResolvedValue({ id: "req_1" });
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [{ guestId: "g2", firstName: "Aroha", lastName: "Ngata" }],
+      }),
+    });
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    // The pricing engine never runs, so the negotiated basis cannot move.
+    expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    // Stored totals are echoed back unchanged.
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalPriceCents: booking.totalPriceCents,
+          finalPriceCents: booking.finalPriceCents,
+          discountCents: booking.discountCents,
+        }),
+      })
+    );
+    // The name update itself is applied.
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "g2" },
+        data: expect.objectContaining({ firstName: "Aroha", lastName: "Ngata" }),
+      })
+    );
+  });
+
+  it("identity-only edits preserve prices on ordinary bookings too (#1099)", async () => {
+    // Unpaid booking: the pre-existing paid-name lock stays in force for
+    // non-quoted bookings and is tested elsewhere.
+    const booking = makeBooking({
+      status: "PAYMENT_PENDING",
+      payment: {
+        id: "p1",
+        bookingId: "bk1",
+        amountCents: 5000,
+        source: "STRIPE",
+        status: "PENDING",
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: null,
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          priceCents: 2500,
+        },
+        {
+          id: "g2",
+          bookingId: "bk1",
+          firstName: "Bob",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [{ guestId: "g2", firstName: "Robert", lastName: "Smith" }],
+      }),
+    });
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.priceDiffCents).toBe(0);
+    expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
+  });
+
   it("blocks batch edits on a quote-priced booking (#1032)", async () => {
     // A booking converted from a school/public booking request keeps its
     // negotiated flat total; the batch edit path would reprice every guest

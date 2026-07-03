@@ -505,6 +505,57 @@ describe("P2.3: Guest subscription check", () => {
     expect(body.error).toContain("negotiated booking-request price");
   });
 
+  it("previews identity-only edits on a quote-priced booking as a zero-delta quote (#1099)", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    // Quote-converted school booking with a placeholder student.
+    mockPrisma.bookingRequest.findFirst.mockResolvedValueOnce({ id: "req_1" });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      checkIn,
+      checkOut,
+      status: "CONFIRMED",
+      totalPriceCents: 87000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 87000,
+      guests: [
+        {
+          id: "student-1",
+          firstName: "School Child",
+          lastName: "1",
+          ageTier: "YOUTH",
+          isMember: false,
+          memberId: null,
+          priceCents: 87000,
+        },
+      ],
+      payment: null,
+      promoRedemption: null,
+    });
+
+    const req = makeModifyQuoteRequest({
+      guestUpdates: [
+        { guestId: "student-1", firstName: "Aroha", lastName: "Ngata" },
+      ],
+    });
+
+    const res = await getModifyQuote(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Zero-delta: the negotiated price is echoed back untouched, and the
+    // pricing engine never runs.
+    expect(body.priceDiffCents).toBe(0);
+    expect(body.netChargeCents).toBe(0);
+    expect(body.newFinalPriceCents).toBe(87000);
+    expect(body.itemizedChanges).toEqual([
+      { label: "Guest name update", amountCents: 0 },
+    ]);
+  });
+
   it("quotes per-guest stay range changes by guest-night ranges", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
