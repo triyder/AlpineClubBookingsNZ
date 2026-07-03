@@ -19,7 +19,7 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.requestEmailChange, request);
+  const rateLimited = await applyRateLimit(rateLimiters.requestEmailChange, request);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

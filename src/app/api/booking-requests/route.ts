@@ -39,7 +39,7 @@ const bookingRequestSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingRequest, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingRequest, request);
   if (rateLimited) return rateLimited;
 
   let body: unknown;

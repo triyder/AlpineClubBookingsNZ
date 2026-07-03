@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const rl = checkRateLimit(
+  const rl = await checkRateLimit(
     rateLimiters.membershipCancellationRequest,
     session.user.id,
   );

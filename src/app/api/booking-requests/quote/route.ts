@@ -25,7 +25,7 @@ const quoteSchema = z.object({
  * non-members" — otherwise the form must submit as a Request for Price.
  */
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingQuery, request);
   if (rateLimited) return rateLimited;
 
   const settings = await getBookingRequestSettings();

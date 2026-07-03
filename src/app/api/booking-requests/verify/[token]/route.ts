@@ -12,7 +12,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingRequestToken, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingRequestToken, request);
   if (rateLimited) return rateLimited;
 
   const { token } = await params;

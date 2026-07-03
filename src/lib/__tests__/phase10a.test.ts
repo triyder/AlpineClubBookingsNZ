@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { starterPageContent } from "../../../prisma/starter-page-content";
-import { checkRateLimit, _testStore } from "@/lib/rate-limit";
+import { checkRateLimitInMemory as checkRateLimit, _testStore } from "@/lib/rate-limit";
 import { rateLimiters } from "@/lib/rate-limit";
 
 // Note: Committee data tests moved to committee.test.ts (now database-driven)

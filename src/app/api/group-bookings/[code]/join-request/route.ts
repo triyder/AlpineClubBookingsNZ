@@ -54,7 +54,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  const rateLimited = applyRateLimit(rateLimiters.groupBookingJoinRequest, request);
+  const rateLimited = await applyRateLimit(rateLimiters.groupBookingJoinRequest, request);
   if (rateLimited) return rateLimited;
 
   const json = await parseJsonRequestBody(request);

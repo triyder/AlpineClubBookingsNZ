@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     return inactiveResponse;
   }
 
-  const rateLimited = applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
+  const rateLimited = await applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
   let body: unknown;

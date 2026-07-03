@@ -32,7 +32,7 @@ const createGroupBookingSchema = z
  * Members only; the service enforces booking ownership and an eligible state.
  */
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.groupBookingCreate, request);
+  const rateLimited = await applyRateLimit(rateLimiters.groupBookingCreate, request);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

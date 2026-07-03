@@ -11,7 +11,7 @@ const resendSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.resendVerification, request);
+  const rateLimited = await applyRateLimit(rateLimiters.resendVerification, request);
   if (rateLimited) return rateLimited;
 
   let body: unknown;

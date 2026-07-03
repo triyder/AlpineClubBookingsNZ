@@ -11,7 +11,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
-  const rateLimited = applyRateLimit(rateLimiters.guestChoreToken, req);
+  const rateLimited = await applyRateLimit(rateLimiters.guestChoreToken, req);
   if (rateLimited) {
     return rateLimited;
   }

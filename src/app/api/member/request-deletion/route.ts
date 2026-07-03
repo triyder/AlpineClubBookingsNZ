@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Rate limit by member ID
-  const rl = checkRateLimit(rateLimiters.deletionRequest, session.user.id);
+  const rl = await checkRateLimit(rateLimiters.deletionRequest, session.user.id);
   if (!rl.success) {
     const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
     return NextResponse.json(

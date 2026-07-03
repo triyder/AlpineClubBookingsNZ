@@ -1,11 +1,25 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  checkRateLimit,
+  checkRateLimit as checkSharedRateLimit,
+  checkRateLimitInMemory as checkRateLimit,
   getClientIp,
   applyRateLimit,
   _testStore,
   type RateLimitConfig,
 } from "../rate-limit";
+
+// Shared-store path (#1039 item 4): prisma is mocked so the atomic upsert
+// can be scripted; the fallback test rejects it to prove degradation.
+const mockQueryRaw = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    $queryRaw: mockQueryRaw,
+    $executeRaw: vi.fn().mockResolvedValue(0),
+  },
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
 
 describe("rate-limit", () => {
   beforeEach(() => {
@@ -130,22 +144,22 @@ describe("rate-limit", () => {
   describe("applyRateLimit", () => {
     const config: RateLimitConfig = { id: "apply-test", limit: 2, windowSeconds: 60 };
 
-    it("returns null when within limit", () => {
+    it("returns null when within limit", async () => {
       const req = new Request("http://localhost", {
         headers: { "x-forwarded-for": "10.0.0.1" },
       });
-      const result = applyRateLimit(config, req);
+      const result = await applyRateLimit(config, req);
       expect(result).toBeNull();
     });
 
-    it("returns 429 Response when limit exceeded", () => {
+    it("returns 429 Response when limit exceeded", async () => {
       const req = new Request("http://localhost", {
         headers: { "x-forwarded-for": "10.0.0.2" },
       });
 
-      applyRateLimit(config, req);
-      applyRateLimit(config, req);
-      const result = applyRateLimit(config, req);
+      await applyRateLimit(config, req);
+      await applyRateLimit(config, req);
+      const result = await applyRateLimit(config, req);
 
       expect(result).not.toBeNull();
       expect(result!.status).toBe(429);
@@ -157,9 +171,9 @@ describe("rate-limit", () => {
         headers: { "x-forwarded-for": "10.0.0.3" },
       });
 
-      applyRateLimit(config, req);
-      applyRateLimit(config, req);
-      const result = applyRateLimit(config, req);
+      await applyRateLimit(config, req);
+      await applyRateLimit(config, req);
+      const result = await applyRateLimit(config, req);
 
       expect(result!.headers.get("X-RateLimit-Limit")).toBe("2");
       expect(result!.headers.get("X-RateLimit-Remaining")).toBe("0");
@@ -167,5 +181,48 @@ describe("rate-limit", () => {
       const body = await result!.json();
       expect(body.error).toContain("Too many requests");
     });
+  });
+});
+
+describe("shared rate-limit store (#1039)", () => {
+  const config = { id: "shared-test", limit: 2, windowSeconds: 60 };
+
+  beforeEach(() => {
+    mockQueryRaw.mockReset();
+  });
+
+  it("allows and counts through the shared Postgres counter", async () => {
+    const resetAt = new Date(Date.now() + 60_000);
+    mockQueryRaw.mockResolvedValueOnce([{ count: 1, resetAt }]);
+
+    const result = await checkSharedRateLimit(config, "ip1");
+
+    expect(result.success).toBe(true);
+    expect(result.remaining).toBe(1);
+    expect(result.resetAt).toBe(resetAt.getTime());
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks once the shared counter exceeds the limit", async () => {
+    const resetAt = new Date(Date.now() + 60_000);
+    mockQueryRaw.mockResolvedValueOnce([{ count: 3, resetAt }]);
+
+    const result = await checkSharedRateLimit(config, "ip1");
+
+    expect(result.success).toBe(false);
+    expect(result.remaining).toBe(0);
+  });
+
+  it("falls back to per-process limiting when the store is unavailable", async () => {
+    mockQueryRaw.mockRejectedValue(new Error("connection refused"));
+
+    const r1 = await checkSharedRateLimit(config, "fallback-ip");
+    const r2 = await checkSharedRateLimit(config, "fallback-ip");
+    const r3 = await checkSharedRateLimit(config, "fallback-ip");
+
+    // The in-memory window still enforces the limit per process.
+    expect(r1.success).toBe(true);
+    expect(r2.success).toBe(true);
+    expect(r3.success).toBe(false);
   });
 });

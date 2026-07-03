@@ -237,12 +237,13 @@ enumeration, spam, upstream-cost exhaustion, token guessing, and availability
 probing. Current mitigations are route-specific rate limits, Zod validation,
 non-secret public health responses, token expiry, and provider signatures.
 
-Residual risk: rate limits are in-memory and single-instance. The supported
-production topology routes public traffic through Caddy to one active web slot,
-so this is acceptable for normal operation, but blue/green drain can temporarily
-split counters between the retiring and replacement slots. Public exceptions are
-now backed by route metadata and static tests, but #615 should still review the
-concrete anonymous endpoint behavior.
+Rate limits are backed by a shared Postgres counter (`RateLimitCounter`,
+one atomic upsert per check), so blue/green drain and any future multi-replica
+routing share the same window (#1039). If the database is unreachable the
+limiter degrades to the previous per-process in-memory counters rather than
+failing requests. Public exceptions are now backed by route metadata and
+static tests, but #615 should still review the concrete anonymous endpoint
+behavior.
 
 ### Authenticated Member
 
@@ -385,10 +386,10 @@ Hardening applied in #615:
 
 Accepted residual risk:
 
-- In-memory rate limits remain single-instance only. The supported production
-  shape has Caddy as the only public listener and one active web slot; blue/green
-  drain can temporarily split counters, and any long-term multi-replica routing
-  requires a shared rate-limit store.
+- Rate limits share a Postgres-backed counter across slots/replicas (#1039);
+  during a database outage the limiter degrades to per-process counters, which
+  briefly restores the old split-counter behaviour rather than blocking
+  traffic.
 - Membership application duplicate-account responses still reveal duplicate
   applicant/pending-application state. That is useful applicant feedback today,
   but should be revisited if public enumeration risk outweighs support value.

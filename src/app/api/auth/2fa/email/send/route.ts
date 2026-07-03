@@ -9,7 +9,7 @@ import {
 } from "@/lib/two-factor-api";
 
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.twoFactorVerify, request);
+  const rateLimited = await applyRateLimit(rateLimiters.twoFactorVerify, request);
   if (rateLimited) return rateLimited;
 
   const guard = await requireTwoFactorApiSession();

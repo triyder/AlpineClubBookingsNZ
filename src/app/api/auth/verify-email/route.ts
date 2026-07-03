@@ -10,7 +10,7 @@ const verifyEmailQuerySchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.verificationToken, request);
+  const rateLimited = await applyRateLimit(rateLimiters.verificationToken, request);
   if (rateLimited) {
     return rateLimited;
   }

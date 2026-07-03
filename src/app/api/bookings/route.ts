@@ -108,7 +108,7 @@ const createBookingSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.bookingCreate, request);
+  const rateLimited = await applyRateLimit(rateLimiters.bookingCreate, request);
   if (rateLimited) return rateLimited;
 
   const session = await auth();

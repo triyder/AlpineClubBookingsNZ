@@ -1553,6 +1553,18 @@ model PaymentRefund {
   @@index([status, createdAt])
 }
 
+// Shared sliding-window rate-limit counters (#1039 item 4). Replicas and
+// blue/green slots must see one counter per limiter+key, so the counter lives
+// in Postgres instead of process memory; the in-memory limiter remains only
+// as a per-process fallback when the database is unreachable.
+model RateLimitCounter {
+  id      String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}
+
 model PaymentRecoveryOperation {
   id                   String                         @id @default(cuid())
   type                 PaymentRecoveryOperationType

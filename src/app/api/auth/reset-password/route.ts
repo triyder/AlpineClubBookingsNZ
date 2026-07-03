@@ -19,7 +19,7 @@ const resetPasswordSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const rateLimited = applyRateLimit(rateLimiters.resetPassword, req);
+  const rateLimited = await applyRateLimit(rateLimiters.resetPassword, req);
   if (rateLimited) return rateLimited;
 
   let body: unknown;
