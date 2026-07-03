@@ -55,6 +55,7 @@ describe("AdminBookingCalendar", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   it("hides cancelled bookings by default with the Cancelled pill off", async () => {
@@ -90,5 +91,42 @@ describe("AdminBookingCalendar", () => {
       screen.getByRole("button", { name: "Cancelled" }).getAttribute("aria-pressed")
     ).toBe("true");
     expect(screen.getByText(/Casey Cancelled/)).toBeTruthy();
+  });
+
+  it("persists the status toggles across visits (#1039)", async () => {
+    const { unmount } = render(<AdminBookingCalendar />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Paula Paid/)).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancelled" }));
+    unmount();
+
+    // A fresh mount (new visit) restores the stored choice instead of the
+    // hide-cancelled default.
+    render(<AdminBookingCalendar />);
+    await waitFor(() => {
+      expect(screen.getByText(/Paula Paid/)).toBeTruthy();
+    });
+    expect(
+      screen.getByRole("button", { name: "Cancelled" }).getAttribute("aria-pressed")
+    ).toBe("true");
+    expect(screen.getByText(/Casey Cancelled/)).toBeTruthy();
+  });
+
+  it("falls back to the hide-cancelled default when storage holds garbage (#1039)", async () => {
+    window.localStorage.setItem(
+      "admin-calendar-enabled-statuses",
+      "not json at all",
+    );
+
+    render(<AdminBookingCalendar />);
+    await waitFor(() => {
+      expect(screen.getByText(/Paula Paid/)).toBeTruthy();
+    });
+    expect(
+      screen.getByRole("button", { name: "Cancelled" }).getAttribute("aria-pressed")
+    ).toBe("false");
+    expect(screen.queryByText(/Casey Cancelled/)).toBeNull();
   });
 });

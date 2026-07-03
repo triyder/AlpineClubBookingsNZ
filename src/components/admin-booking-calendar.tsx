@@ -53,6 +53,8 @@ function dateToStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+const ENABLED_STATUSES_STORAGE_KEY = "admin-calendar-enabled-statuses";
+
 export function AdminBookingCalendar() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -66,10 +68,38 @@ export function AdminBookingCalendar() {
   const [availability, setAvailability] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   // Cancelled bookings are hidden by default to reduce noise; the CANCELLED
-  // toggle pill below re-enables them (filtering is purely client-side).
-  const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(
-    new Set(ALL_STATUSES.filter((status) => status !== "CANCELLED"))
-  );
+  // toggle pill below re-enables them (filtering is purely client-side). The
+  // admin's last choice persists across visits (#1039 item 5).
+  const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(() => {
+    const defaults = ALL_STATUSES.filter((status) => status !== "CANCELLED");
+    if (typeof window === "undefined") return new Set(defaults);
+    try {
+      const stored = window.localStorage.getItem(ENABLED_STATUSES_STORAGE_KEY);
+      if (!stored) return new Set(defaults);
+      const parsed: unknown = JSON.parse(stored);
+      if (!Array.isArray(parsed)) return new Set(defaults);
+      const valid = parsed.filter(
+        (status): status is string =>
+          typeof status === "string" &&
+          (ALL_STATUSES as readonly string[]).includes(status)
+      );
+      return new Set(valid.length > 0 ? valid : defaults);
+    } catch {
+      return new Set(defaults);
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        ENABLED_STATUSES_STORAGE_KEY,
+        JSON.stringify([...enabledStatuses])
+      );
+    } catch {
+      // Storage unavailable (private mode, quota): the toggle still works
+      // for the session, it just will not persist.
+    }
+  }, [enabledStatuses]);
 
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
   const currentPageParams = new URLSearchParams(searchParams.toString());
