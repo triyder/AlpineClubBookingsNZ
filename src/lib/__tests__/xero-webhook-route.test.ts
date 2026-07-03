@@ -93,6 +93,59 @@ describe("Xero webhook route", () => {
     expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
   });
 
+  it("rejects a correctly signed non-JSON body without recording events", async () => {
+    // Malformed row of the webhook Critical matrix (issue #1133): the HMAC is
+    // valid for the raw bytes but the body is not JSON. Signature verification
+    // runs first (over raw bytes), then parsing fails closed.
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    const body = "not-json{";
+    const signature = createHmac("sha256", "xero-webhook-key")
+      .update(body)
+      .digest("base64");
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/webhooks/xero", {
+        method: "POST",
+        headers: { "x-xero-signature": signature },
+        body,
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid JSON" });
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("maps a replayed event to the same idempotency correlation key", async () => {
+    // Duplicate row of the webhook Critical matrix (issue #1133): DB-level
+    // dedup lives in recordXeroInboundEvent (unique correlationKey with
+    // terminal-state preservation — covered in xero-sync.test.ts). The route
+    // contract frozen here is that an identical redelivery produces the
+    // identical correlation key, so a replay converges on the same row even
+    // across process restarts.
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    const payload = {
+      events: [
+        {
+          eventType: "UPDATE",
+          eventCategory: "INVOICE",
+          resourceId: "inv-123",
+          eventDateUtc: "2026-07-01T00:00:00.000Z",
+        },
+      ],
+    };
+
+    const first = await POST(signedRequest(payload));
+    const second = await POST(signedRequest(payload));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(mockRecordXeroInboundEvent).toHaveBeenCalledTimes(2);
+    const [firstCall, secondCall] = mockRecordXeroInboundEvent.mock.calls;
+    expect(firstCall[0].correlationKey).toBeTruthy();
+    expect(secondCall[0].correlationKey).toBe(firstCall[0].correlationKey);
+  });
+
   it("rejects oversized Xero webhook payloads before signature verification", async () => {
     const body = "{}";
     const signature = createHmac("sha256", "xero-webhook-key")
