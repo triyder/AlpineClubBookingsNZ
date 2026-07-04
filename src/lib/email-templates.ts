@@ -6,6 +6,7 @@
 import { getAppBaseUrl, sanitizeEmailHref } from "./app-url";
 import {
   CLUB_EMAIL_FROM_NAME,
+  CLUB_HUT_LEADER_LABEL,
   CLUB_LODGE_TRAVEL_NOTE,
   CLUB_NAME,
 } from "@/config/club-identity";
@@ -649,7 +650,7 @@ export function hutLeaderAssignmentTemplate(params: {
   pin: string;
 }): string {
   return layout(`
-    ${heading("Hut Leader Assignment")}
+    ${heading(`${CLUB_HUT_LEADER_LABEL} Assignment`)}
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on hut leader duties for the lodge.")}
     ${infoTable([
       { label: "Start date", value: formatNZDate(params.startDate) },

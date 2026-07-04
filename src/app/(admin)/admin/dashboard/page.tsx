@@ -28,7 +28,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
-import { CLUB_NAME } from "@/config/club-identity";
+import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
@@ -264,7 +264,7 @@ export default async function AdminDashboardPage() {
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="font-medium text-amber-900">Hut Leader Assignment Required</p>
+                <p className="font-medium text-amber-900">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
                 <p className="text-sm text-amber-700 mt-1">
                   {stats.unassignedDatesWithBookings.length} upcoming date{stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no hut leader assigned:{" "}
                   {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}

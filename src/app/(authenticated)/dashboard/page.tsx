@@ -25,7 +25,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
-import { CLUB_NAME } from "@/config/club-identity";
+import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -247,7 +247,7 @@ export default async function DashboardPage() {
             <Button asChild variant="outline" className="gap-2">
               <Link href="/lodge/kiosk">
                 <Shield className="h-4 w-4" />
-                Hut Leader
+                {CLUB_HUT_LEADER_LABEL}
               </Link>
             </Button>
           )}

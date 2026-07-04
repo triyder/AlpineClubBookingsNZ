@@ -10,6 +10,7 @@ export const CLUB_PUBLIC_URL = clubConfig.publicUrl;
 export const CLUB_EMAIL_FROM_NAME = clubConfig.emailFromName;
 export const CLUB_LODGE_TRAVEL_NOTE =
   clubConfig.lodgeTravelNote ?? "Please allow adequate travel time.";
+export const CLUB_HUT_LEADER_LABEL = clubConfig.hutLeaderLabel ?? "Hut Leader";
 export const CLUB_SOCIAL_LINKS = clubConfig.socialLinks ?? {};
 export const CLUB_FACEBOOK_URL = CLUB_SOCIAL_LINKS.facebook;
 export const CLUB_BOOKINGS_NAME = `${clubConfig.name} - Bookings`;
@@ -25,6 +26,7 @@ export const clubIdentity: ClubIdentity = {
   publicUrl: CLUB_PUBLIC_URL,
   emailFromName: CLUB_EMAIL_FROM_NAME,
   lodgeTravelNote: CLUB_LODGE_TRAVEL_NOTE,
+  hutLeaderLabel: CLUB_HUT_LEADER_LABEL,
   socialLinks: CLUB_SOCIAL_LINKS,
   bookingsName: CLUB_BOOKINGS_NAME,
   lodgeName: CLUB_LODGE_NAME,

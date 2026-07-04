@@ -6,6 +6,7 @@ export interface ClubIdentity {
   publicUrl: string;
   emailFromName: string;
   lodgeTravelNote: string;
+  hutLeaderLabel: string;
   socialLinks: {
     facebook?: string;
   };

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { useConfirm } from "@/components/confirm-dialog";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,6 +83,7 @@ const KIND_OPTIONS: InductionKind[] = [
 ];
 
 export function InductionRegisterTable() {
+  const { hutLeaderLabel } = useClubIdentity();
   const { prompt, confirmDialog } = useConfirm();
   const [rows, setRows] = useState<RegisterRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -295,7 +297,7 @@ export function InductionRegisterTable() {
         <CardHeader>
           <CardTitle>Start an induction</CardTitle>
           <CardDescription>
-            Create a New Member, Hut Leader, youth-to-full, or re-induction
+            Create a New Member, {hutLeaderLabel}, youth-to-full, or re-induction
             workflow for an existing member.
           </CardDescription>
         </CardHeader>

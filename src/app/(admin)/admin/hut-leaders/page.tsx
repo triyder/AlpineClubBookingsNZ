@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { useClubIdentity } from "@/components/club-identity-provider";
 
 interface HutLeaderAssignment {
   id: string;
@@ -39,6 +40,7 @@ interface UnassignedDate {
 }
 
 export default function HutLeadersPage() {
+  const { hutLeaderLabel } = useClubIdentity();
   const [assignments, setAssignments] = useState<HutLeaderAssignment[]>([]);
   const [eligibleMembers, setEligibleMembers] = useState<EligibleMember[]>([]);
   const [unassignedDates, setUnassignedDates] = useState<UnassignedDate[]>([]);
@@ -241,7 +243,7 @@ export default function HutLeadersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Hut Leader Assignments</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{hutLeaderLabel} Assignments</h1>
           <p className="text-sm text-slate-500 mt-1">
             Assign members as hut leader for specific date ranges
           </p>
@@ -257,7 +259,7 @@ export default function HutLeadersPage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base text-amber-800 flex items-center gap-2">
               <CalendarDays className="h-5 w-5" />
-              Upcoming Dates Without Hut Leader ({unassignedDates.length})
+              Upcoming Dates Without {hutLeaderLabel} ({unassignedDates.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -291,7 +293,7 @@ export default function HutLeadersPage() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">New Hut Leader Assignment</CardTitle>
+            <CardTitle className="text-lg">New {hutLeaderLabel} Assignment</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-4">
@@ -347,7 +349,7 @@ export default function HutLeadersPage() {
                             <div className="mt-1.5">
                               {m.hutLeaderEligible ? (
                                 <Badge className="bg-green-100 text-green-800 border-green-200">
-                                  Hut Leader qualified
+                                  {hutLeaderLabel} qualified
                                 </Badge>
                               ) : (
                                 <span className="text-xs text-slate-500">

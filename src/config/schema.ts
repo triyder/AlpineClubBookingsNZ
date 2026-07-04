@@ -89,6 +89,7 @@ export const clubConfigSchema = z
       }),
     emailFromName: z.string().trim().min(1, "emailFromName is required"),
     lodgeTravelNote: z.string().trim().min(1).optional(),
+    hutLeaderLabel: z.string().trim().min(1).optional(),
     socialLinks: socialLinksSchema.optional(),
     beds: z.array(bedSchema).min(1, "at least one bed is required"),
     ageTiers: z.array(ageTierSchema).min(1, "at least one age tier is required"),

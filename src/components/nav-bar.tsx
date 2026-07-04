@@ -52,14 +52,18 @@ const memberLinks = [
 
 const financeLink = { href: "/finance", label: "Finance" };
 const adminLink = { href: "/admin/dashboard", label: "Admin" };
-const hutLeaderLink = { href: "/lodge/kiosk", label: "Hut Leader" };
 const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
 
 export function getAuthenticatedBrandHref() {
   return "/dashboard";
 }
 
-export function getNavBarLinks(user: NavBarUser, features: FeatureFlags) {
+export function getNavBarLinks(
+  user: NavBarUser,
+  features: FeatureFlags,
+  hutLeaderLabel = "Hut Leader",
+) {
+  const hutLeaderLink = { href: "/lodge/kiosk", label: hutLeaderLabel };
   return [
     ...memberLinks,
     ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
@@ -83,7 +87,7 @@ export function NavBar({ user, features }: NavBarProps) {
       ? "/profile"
       : buildProfilePathWithReturnTo(pathname);
 
-  const links = getNavBarLinks(user, features);
+  const links = getNavBarLinks(user, features, club.hutLeaderLabel);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
 
 interface Guest {
@@ -75,6 +76,7 @@ function formatArrivalTime(time: string): string {
 }
 
 export default function KioskPage() {
+  const { hutLeaderLabel } = useClubIdentity();
   const [date, setDate] = useState(() => formatDate(new Date()));
   const [bookings, setBookings] = useState<BookingGroup[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -383,7 +385,7 @@ export default function KioskPage() {
             className="bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600"
           >
             <option value="admin">Admin</option>
-            <option value="hut-leader">Hut Leader</option>
+            <option value="hut-leader">{hutLeaderLabel}</option>
             <option value="lodge">Lodge</option>
             <option value="staying-guest">Staying Guest</option>
           </select>
