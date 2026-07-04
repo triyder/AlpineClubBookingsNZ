@@ -240,7 +240,16 @@ export async function createGroupSettlementIntent(
       groupBookingId: group.id,
       organiserMemberId: group.organiserMemberId,
     },
-    idempotencyKey: `groupsettle_${group.id}_${amountCents}`,
+    // Discriminate the key by the intent being superseded, not amount alone.
+    // Stripe idempotency keys live 24h, so a bare `groupsettle_<group>_<amount>`
+    // can replay a *canceled* prior intent: settle at X (intent A) -> child
+    // changes, total Y (intent B, A canceled) -> child reverts to X -> re-settle
+    // mints `..._X` again within 24h -> Stripe replays dead intent A. Each intent
+    // is superseded at most once, so `(amount, supersededIntentId)` is unique per
+    // epoch; two concurrent mints of the *same* attempt read the same
+    // `group.settlement` and share the key (Stripe dedupes). The `"initial"`
+    // sentinel is safe because real Stripe intent ids are always `pi_…`.
+    idempotencyKey: `groupsettle_${group.id}_${amountCents}_${group.settlement?.stripePaymentIntentId ?? "initial"}`,
   });
 
   await prisma.groupBookingSettlement.upsert({
@@ -771,15 +780,23 @@ export async function markGroupSettlementIntentFailed(
   paymentIntentId: string,
   status: PaymentStatus = PaymentStatus.FAILED
 ): Promise<void> {
-  const settlement = await prisma.groupBookingSettlement.findUnique({
-    where: { stripePaymentIntentId: paymentIntentId },
-    select: { id: true, status: true },
-  });
-  if (!settlement || settlement.status === PaymentStatus.SUCCEEDED) {
-    return;
-  }
-  await prisma.groupBookingSettlement.update({
-    where: { id: settlement.id },
+  // Guard an out-of-order payment_failed/canceled webhook racing payment_intent.succeeded:
+  // atomically move only a settlement that is NOT already in a positive terminal state.
+  // markGroupSettlementIntentFailed only records a non-success outcome (its callers are the
+  // payment_failed and payment_intent.canceled webhooks, both stored as FAILED), so it can never
+  // legitimately need to leave SUCCEEDED/REFUNDED/PARTIALLY_REFUNDED. updateMany fuses the
+  // "still non-terminal?" check with the write; a no-match (incl. unknown intent) is a no-op.
+  await prisma.groupBookingSettlement.updateMany({
+    where: {
+      stripePaymentIntentId: paymentIntentId,
+      status: {
+        notIn: [
+          PaymentStatus.SUCCEEDED,
+          PaymentStatus.REFUNDED,
+          PaymentStatus.PARTIALLY_REFUNDED,
+        ],
+      },
+    },
     data: { status },
   });
 }

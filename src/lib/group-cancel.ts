@@ -175,7 +175,15 @@ export async function settleGroupBookingOnOrganiserCancel(
             groupBookingId: group.id,
             reason: "organiser_cancellation",
           },
-          idempotencyKey: `group_cancel_refund_${group.id}_${totalRefundCents}`,
+          // Key by the stable settlement id, not the tier-dependent amount.
+          // The amount-in-key was a foot-gun: a >24h re-run in a different policy
+          // tier would compute a different amount -> a different key -> a second
+          // refund, and within 24h the same-key/different-params call errors.
+          // Keying by settlement id removes the foot-gun (belt-and-suspenders),
+          // but the real guarantee this refund runs once is #1160's upstream
+          // single-flight cancel — settleGroupBookingOnOrganiserCancel is called
+          // only on the winning cancel (booking-cancel.ts) — not this key.
+          idempotencyKey: `group_cancel_refund_${settlement.id}`,
         });
         await prisma.groupBookingSettlement.update({
           where: { id: settlement.id },
@@ -214,6 +222,11 @@ export async function settleGroupBookingOnOrganiserCancel(
         });
         await revokePaymentLinksForBooking(child.id, tx);
         if (refundForChild > 0 && child.payment) {
+          // Ledger bypass is acceptable here: these organiser-settled child
+          // payments have no PaymentTransaction rows (they were paid via the
+          // combined settlement PI, not per-child intents), so there is no
+          // ledger to post against — the per-child refundedAmountCents is the
+          // record of record for these refunds.
           const nextRefunded = Math.min(
             child.payment.amountCents,
             child.payment.refundedAmountCents + refundForChild

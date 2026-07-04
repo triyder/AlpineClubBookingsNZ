@@ -261,6 +261,35 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
   });
 
+  it("Fix #3: keys the refund by the stable settlement id, not the tier-dependent amount", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 9000,
+        stripePaymentIntentId: "pi_settle_1",
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "child-1",
+        status: BookingStatus.PAID,
+        finalPriceCents: 4500,
+        payment: { id: "pay-1", amountCents: 4500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED },
+      }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.processRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "group_cancel_refund_settle-1",
+      })
+    );
+  });
+
   it("ORGANISER_PAYS mid-settlement: voids the open intent, fails the settlement, no refund", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,

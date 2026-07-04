@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   settlementFindUnique: vi.fn(),
   settlementFindFirst: vi.fn(),
   settlementUpdate: vi.fn(),
+  settlementUpdateMany: vi.fn(),
   txExecuteRaw: vi.fn(),
   transaction: vi.fn(),
   createPaymentIntent: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.settlementFindUnique,
       findFirst: mocks.settlementFindFirst,
       update: mocks.settlementUpdate,
+      updateMany: mocks.settlementUpdateMany,
     },
     internetBankingPaymentSettings: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -100,6 +102,7 @@ import {
   createGroupSettlementIntent,
   applyGroupSettlementSucceeded,
   applyGroupSettlementSucceededFromInvoice,
+  markGroupSettlementIntentFailed,
 } from "@/lib/group-settlement";
 import { GroupBookingError } from "@/lib/group-booking";
 
@@ -142,6 +145,7 @@ beforeEach(() => {
     internetBankingPayments: true,
   });
   mocks.settlementUpsert.mockResolvedValue({ id: "settle-1", groupBookingId: GROUP_ID });
+  mocks.settlementUpdateMany.mockResolvedValue({ count: 1 });
   mocks.findOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
   mocks.createPaymentIntent.mockResolvedValue({
     id: "pi_settle_1",
@@ -435,6 +439,120 @@ describe("createGroupSettlementIntent", () => {
     expect(mocks.enqueueSettlementInvoice).not.toHaveBeenCalled();
     expect(mocks.createPaymentIntent).not.toHaveBeenCalled();
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+
+  // Fix #1: the idempotency key is discriminated by the superseded intent id so a
+  // re-settle at a previously-used amount within Stripe's 24h window cannot replay
+  // a canceled prior intent.
+  function settleableChildren() {
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      { id: "child-2", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+    ]);
+    mocks.bookingFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    }));
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+  }
+
+  it("keys the intent with the _initial sentinel on a first-ever settle", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    settleableChildren();
+
+    await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: `groupsettle_${GROUP_ID}_9000_initial`,
+      })
+    );
+  });
+
+  it("keys the intent with the superseded intent id when a prior settlement exists", async () => {
+    // Mismatched recorded amount (8000 != 9000 total) skips the reuse branch so a
+    // fresh intent is minted and keyed by the prior intent id.
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_old",
+          amountCents: 8000,
+        },
+      })
+    );
+    settleableChildren();
+
+    await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(mocks.createPaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: `groupsettle_${GROUP_ID}_9000_pi_old`,
+      })
+    );
+  });
+
+  it("mints different keys for the same amount when the superseded intent differs", async () => {
+    settleableChildren();
+
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_A",
+          amountCents: 8000,
+        },
+      })
+    );
+    await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    mocks.groupBookingFindUnique.mockResolvedValue(
+      organiserPaysGroup({
+        settlement: {
+          status: PaymentStatus.PENDING,
+          stripePaymentIntentId: "pi_B",
+          amountCents: 8000,
+        },
+      })
+    );
+    await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    const keys = mocks.createPaymentIntent.mock.calls.map(
+      (call) => (call[0] as { idempotencyKey: string }).idempotencyKey
+    );
+    expect(keys).toEqual([
+      `groupsettle_${GROUP_ID}_9000_pi_A`,
+      `groupsettle_${GROUP_ID}_9000_pi_B`,
+    ]);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+});
+
+describe("markGroupSettlementIntentFailed", () => {
+  it("atomically moves only a non-terminal settlement to FAILED", async () => {
+    await markGroupSettlementIntentFailed("pi_settle_1");
+
+    // The guarded updateMany fuses the "still non-terminal?" check with the write,
+    // so a racing succeeded/refunded settlement is never overwritten to FAILED.
+    expect(mocks.settlementUpdateMany).toHaveBeenCalledWith({
+      where: {
+        stripePaymentIntentId: "pi_settle_1",
+        status: {
+          notIn: [
+            PaymentStatus.SUCCEEDED,
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ],
+        },
+      },
+      data: { status: PaymentStatus.FAILED },
+    });
+    // No read-then-update: the plain findUnique/update path is gone.
+    expect(mocks.settlementFindUnique).not.toHaveBeenCalled();
+    expect(mocks.settlementUpdate).not.toHaveBeenCalled();
   });
 });
 
