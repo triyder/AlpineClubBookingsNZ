@@ -107,7 +107,7 @@ export function CancelBookingButton({
         <p className="text-sm font-medium text-green-800">Booking cancelled successfully</p>
         {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
           <p className="text-sm text-green-700">
-            {formatDollars(result.creditRestoredCents)} of previously applied credit has been restored to your account.
+            {formatDollars(result.creditRestoredCents)} of previously applied credit has been restored to your account (per the cancellation policy).
           </p>
         )}
         {refund > 0 && isCredit ? (
@@ -140,7 +140,13 @@ export function CancelBookingButton({
 
   // Preview step
   if (step === "preview" && preview) {
-    const hasRefund = preview.refundAmountCents > 0 || preview.creditRefundAmountCents > 0;
+    // A credit-only booking can have card slices at 0 but still restore a
+    // positive (tiered) applied-credit amount (#1164): treat that as a
+    // refund-bearing cancel so the restored-credit row is not hidden behind
+    // "No refund applies".
+    const hasCardRefund =
+      preview.refundAmountCents > 0 || preview.creditRefundAmountCents > 0;
+    const hasRefund = hasCardRefund || preview.creditRestoredCents > 0;
 
     return (
       <div className="rounded-md border border-red-200 bg-red-50 p-4 space-y-3">
@@ -156,62 +162,68 @@ export function CancelBookingButton({
           </p>
         ) : (
           <div className="space-y-3 text-sm">
-            {/* Refund method selection */}
-            <div className="space-y-2">
-              <p className="font-medium text-slate-700">Choose refund method:</p>
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="refundMethod"
-                  value="card"
-                  checked={refundMethod === "card"}
-                  onChange={() => setRefundMethod("card")}
-                  className="mt-0.5"
-                />
-                <span>
-                  <span className="font-medium text-slate-800">
-                    Refund {formatDollars(preview.refundAmountCents)} to original payment method
-                  </span>
-                  <span className="text-slate-500 ml-1">({preview.refundPercentage}% refund)</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="refundMethod"
-                  value="credit"
-                  checked={refundMethod === "credit"}
-                  onChange={() => setRefundMethod("credit")}
-                  className="mt-0.5"
-                />
-                <span>
-                  <span className="font-medium text-green-700">
-                    Hold {formatDollars(preview.creditRefundAmountCents)} as account credit
-                  </span>
-                  <span className="text-slate-500 ml-1">({preview.creditRefundPercentage}% refund)</span>
-                  {preview.creditRefundAmountCents > preview.refundAmountCents && (
-                    <span className="ml-1 text-xs text-green-600 font-medium">
-                      +{formatDollars(preview.creditRefundAmountCents - preview.refundAmountCents)} more
+            {/* Refund method selection — only meaningful when a card/bank slice
+                can be refunded. A credit-only cancel (#1164) has no card slice,
+                so the radios are hidden and only the restored-credit row shows. */}
+            {hasCardRefund && (
+              <div className="space-y-2">
+                <p className="font-medium text-slate-700">Choose refund method:</p>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="refundMethod"
+                    value="card"
+                    checked={refundMethod === "card"}
+                    onChange={() => setRefundMethod("card")}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium text-slate-800">
+                      Refund {formatDollars(preview.refundAmountCents)} to original payment method
                     </span>
-                  )}
-                </span>
-              </label>
-            </div>
+                    <span className="text-slate-500 ml-1">({preview.refundPercentage}% refund)</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="refundMethod"
+                    value="credit"
+                    checked={refundMethod === "credit"}
+                    onChange={() => setRefundMethod("credit")}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium text-green-700">
+                      Hold {formatDollars(preview.creditRefundAmountCents)} as account credit
+                    </span>
+                    <span className="text-slate-500 ml-1">({preview.creditRefundPercentage}% refund)</span>
+                    {preview.creditRefundAmountCents > preview.refundAmountCents && (
+                      <span className="ml-1 text-xs text-green-600 font-medium">
+                        +{formatDollars(preview.creditRefundAmountCents - preview.refundAmountCents)} more
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </div>
+            )}
 
             {/* Amount summary */}
             <div className="border-t border-red-100 pt-2 space-y-1">
-              <div className="flex justify-between">
-                <span className="text-slate-600">
-                  {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
-                </span>
-                <span className="font-medium text-green-700">
-                  {formatDollars(
-                    refundMethod === "credit"
-                      ? preview.creditRefundAmountCents
-                      : preview.refundAmountCents
-                  )}
-                </span>
-              </div>
+              {hasCardRefund && (
+                <div className="flex justify-between">
+                  <span className="text-slate-600">
+                    {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
+                  </span>
+                  <span className="font-medium text-green-700">
+                    {formatDollars(
+                      refundMethod === "credit"
+                        ? preview.creditRefundAmountCents
+                        : preview.refundAmountCents
+                    )}
+                  </span>
+                </div>
+              )}
               {preview.keptAmountCents > 0 && refundMethod === "card" && (
                 <div className="flex justify-between">
                   <span className="text-slate-600">
@@ -233,7 +245,9 @@ export function CancelBookingButton({
               )}
               {preview.creditRestoredCents > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-slate-600">Previously applied credit restored:</span>
+                  <span className="text-slate-600">
+                    Previously applied credit restored (per the cancellation policy):
+                  </span>
                   <span className="font-medium text-green-700">{formatDollars(preview.creditRestoredCents)}</span>
                 </div>
               )}

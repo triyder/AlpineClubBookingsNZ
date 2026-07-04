@@ -218,6 +218,25 @@ describe("email-templates", () => {
       const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 0);
       expect(html).toContain("No refund was applicable");
     });
+
+    it("surfaces restored applied credit subject to the cancellation policy (#1164)", () => {
+      const html = bookingCancelledTemplate(
+        "Alice",
+        checkIn,
+        checkOut,
+        0,
+        "card",
+        1500
+      );
+      expect(html).toContain("$15.00");
+      expect(html).toContain("previously applied account credit");
+      expect(html).toContain("per the cancellation policy");
+    });
+
+    it("omits the restored-credit line when nothing was restored", () => {
+      const html = bookingCancelledTemplate("Alice", checkIn, checkOut, 25000);
+      expect(html).not.toContain("previously applied account credit");
+    });
   });
 
   describe("choreRosterTemplate", () => {

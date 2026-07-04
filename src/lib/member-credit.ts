@@ -308,11 +308,18 @@ export async function applyCreditToBooking(
 /**
  * Restore credit that was previously applied to a booking (on cancellation).
  * Creates a positive CANCELLATION_REFUND entry to reverse the applied credit.
+ *
+ * `restoreAmountCentsOverride` (#1164 / D7): the member-cancellation path passes
+ * the tiered restore amount so the applied-credit slice is penalised by the same
+ * cancellation tier as the card slice. When omitted, the FULL applied total is
+ * restored — the payment-reconciliation `capacity_failed` system void relies on
+ * this default (a system void must never penalise the member).
  */
 export async function restoreCreditFromBooking(
   memberId: string,
   bookingId: string,
-  tx?: Prisma.TransactionClient
+  tx?: Prisma.TransactionClient,
+  restoreAmountCentsOverride?: number
 ): Promise<number> {
   const db = tx || prisma;
 
@@ -330,18 +337,32 @@ export async function restoreCreditFromBooking(
 
   const totalApplied = calculateRestoredCreditAmount(appliedCredits);
 
+  // Cap the override at what was actually applied. INVARIANT the cap relies on:
+  // payment.creditAppliedCents (the mirror the cancel path tiers) == Σ
+  // BOOKING_APPLIED (this ledger sum). If the mirror ever exceeds the ledger,
+  // the cap makes actual < preview — the SAFE direction (never over-restore).
+  // Do NOT remove the cap as "dead code".
+  const amount =
+    restoreAmountCentsOverride === undefined
+      ? totalApplied
+      : Math.max(0, Math.min(restoreAmountCentsOverride, totalApplied));
+
+  if (amount <= 0) {
+    return 0;
+  }
+
   // Create a positive entry to restore the credit
   await db.memberCredit.create({
     data: {
       memberId,
-      amountCents: totalApplied,
+      amountCents: amount,
       type: CreditType.CANCELLATION_REFUND,
       description: `Credit restored from cancelled booking ${bookingId.slice(0, 8)}`,
       sourceBookingId: bookingId,
     },
   });
 
-  return totalApplied;
+  return amount;
 }
 
 /**

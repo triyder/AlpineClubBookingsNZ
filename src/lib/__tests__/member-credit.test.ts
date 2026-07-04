@@ -355,7 +355,10 @@ describe("member-credit helpers", () => {
   });
 
   describe("restoreCreditFromBooking", () => {
-    it("creates a positive restore entry for cancelled booking", async () => {
+    it("restores the FULL applied total when no override is passed (guards the payment-reconciliation system void, #1164)", async () => {
+      // The capacity_failed system void in payment-reconciliation.ts calls this
+      // with no override and MUST still restore 100% — a system void never
+      // penalises the member. This is an explicit assertion, not an assumption.
       const { prisma } = await import("@/lib/prisma");
       vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
         { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
@@ -375,6 +378,75 @@ describe("member-credit helpers", () => {
           sourceBookingId: "booking-cancelled",
         }),
       });
+    });
+
+    it("restores exactly the tiered override when one is passed (#1164)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
+        { id: "c2", amountCents: -2000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      // Tiered override of 2500 against a 5000 applied total restores 2500.
+      const restored = await restoreCreditFromBooking(
+        "member-1",
+        "booking-cancelled",
+        undefined,
+        2500
+      );
+
+      expect(restored).toBe(2500);
+      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          memberId: "member-1",
+          amountCents: 2500,
+          type: "CANCELLATION_REFUND",
+          sourceBookingId: "booking-cancelled",
+        }),
+      });
+    });
+
+    it("caps the override at the applied total in the safe (never over-restore) direction (#1164)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
+        { id: "c2", amountCents: -2000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      // Override 9000 exceeds the 5000 applied total -> capped to 5000.
+      const restored = await restoreCreditFromBooking(
+        "member-1",
+        "booking-cancelled",
+        undefined,
+        9000
+      );
+
+      expect(restored).toBe(5000);
+      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ amountCents: 5000 }),
+      });
+    });
+
+    it("returns 0 and writes nothing when the override is 0 (#1164)", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -5000, type: "BOOKING_APPLIED" },
+      ] as any);
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      const restored = await restoreCreditFromBooking(
+        "member-1",
+        "booking-cancelled",
+        undefined,
+        0
+      );
+
+      expect(restored).toBe(0);
+      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
     });
 
     it("returns 0 when no credit was applied", async () => {

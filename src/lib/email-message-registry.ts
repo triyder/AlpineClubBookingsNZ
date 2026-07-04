@@ -420,6 +420,8 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "choreName",
   "correlationKey",
   "count",
+  "creditRestored",
+  "creditRestoredMessage",
   "creditUsed",
   "date",
   "deadline",

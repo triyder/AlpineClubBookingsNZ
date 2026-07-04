@@ -5,6 +5,7 @@ import {
   ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT,
   assertMatchingIdempotentAdjustmentRequest,
   calculateAppliedCreditAmount,
+  calculateAppliedCreditRestore,
   calculateBookingCreditApplication,
   calculateCancellationPreview,
   calculateChangeFee,
@@ -228,8 +229,31 @@ describe("calculateBookingCreditApplication properties", () => {
   });
 });
 
+describe("calculateAppliedCreditRestore properties", () => {
+  it("restores between 0 and the full applied credit for any policy (#1164)", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 200_000 }),
+        fc.integer({ min: 0, max: 500_000 }),
+        fc.integer({ min: 0, max: 90 }),
+        rulesArb,
+        (creditApplied, cardBase, days, rules) => {
+          const { creditRestoredCents } = calculateAppliedCreditRestore(
+            creditApplied,
+            cardBase,
+            days,
+            rules
+          );
+          expect(creditRestoredCents).toBeGreaterThanOrEqual(0);
+          expect(creditRestoredCents).toBeLessThanOrEqual(creditApplied);
+        }
+      )
+    );
+  });
+});
+
 describe("calculateCancellationPreview properties", () => {
-  it("never promises more than was paid and mirrors restored credit exactly", () => {
+  it("never promises more than was paid and tiers restored credit within [0, applied]", () => {
     fc.assert(
       fc.property(
         fc.record({
@@ -261,9 +285,11 @@ describe("calculateCancellationPreview properties", () => {
           expect(preview.refundAmountCents).toBeLessThanOrEqual(Math.max(paid, 0));
           expect(preview.refundAmountCents + preview.keptAmountCents).toBe(paid);
           expect(preview.creditRefundAmountCents).toBeGreaterThanOrEqual(0);
-          expect(preview.creditRestoredCents).toBe(
-            payment.creditAppliedCents || 0
-          );
+          // #1164: the applied-credit slice is now tiered (not the 100% mirror),
+          // so the safe invariant is 0 <= restored <= creditApplied.
+          const applied = payment.creditAppliedCents || 0;
+          expect(preview.creditRestoredCents).toBeGreaterThanOrEqual(0);
+          expect(preview.creditRestoredCents).toBeLessThanOrEqual(applied);
         }
       )
     );

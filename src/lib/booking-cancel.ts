@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { cancelPaymentIntentIfCancellable, cancelSetupIntentIfCancellable } from "./stripe";
 import { isXeroConnected } from "./xero";
 import {
+  calculateAppliedCreditRestore,
   calculateRefundAmount,
   daysUntilDate,
   loadCancellationPolicy,
@@ -544,28 +545,43 @@ async function performBookingCancellation(
     }
     const payment = fresh.payment;
 
-    // Idempotent-by-claim credit restore: only reached once per claim.
-    let creditRestoredCents = 0;
-    if (payment.creditAppliedCents > 0) {
-      creditRestoredCents = await restoreCreditFromBooking(
-        fresh.memberId,
-        bookingId,
-        tx
-      );
-    }
-
     // Freeze the refund plan from the LOCKED read. Change fees (from prior
     // booking modifications) are non-refundable per FEE-03. The refundable
     // base is capped at the booking's current value (#1031): a stale Payment
     // mirror (credit-settled reductions, IB invoices paid at a reduced amount,
     // penalty-window retentions) would otherwise pay out more than the booking
     // is worth. Paid-path twin of the #1015/#1029 unpaid-invoice clearing rule.
+    // Computed BEFORE the credit restore so the applied-credit slice can be
+    // tiered off the same base/tier as the card slice (#1164 / D7).
     const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
     const refundableBaseCents =
       Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
       payment.changeFeeCents;
     const days = daysUntilDate(fresh.checkIn);
     const policy = await loadCancellationPolicy(fresh.checkIn);
+
+    // Idempotent-by-claim credit restore: only reached once per claim. The
+    // applied-credit slice is now tiered by the SAME card tier as the card
+    // slice (#1164 / D7) rather than restored at 100%. Tier off the mirror
+    // payment.creditAppliedCents (NOT the ledger sum) so the actual restore
+    // matches the preview input; restoreCreditFromBooking caps the override at
+    // the ledger sum in the SAFE (never over-restore) direction.
+    let creditRestoredCents = 0;
+    if (payment.creditAppliedCents > 0) {
+      const { creditRestoredCents: creditToRestore } = calculateAppliedCreditRestore(
+        payment.creditAppliedCents,
+        refundableBaseCents,
+        days,
+        policy,
+      );
+      creditRestoredCents = await restoreCreditFromBooking(
+        fresh.memberId,
+        bookingId,
+        tx,
+        creditToRestore,
+      );
+    }
+
     const { refundAmountCents, refundPercentage } = calculateRefundAmount(
       refundableBaseCents,
       days,
@@ -752,7 +768,8 @@ async function performBookingCancellation(
       fresh.checkIn,
       fresh.checkOut,
       refundAmountCents,
-      "credit"
+      "credit",
+      creditRestoredCents
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
@@ -885,7 +902,8 @@ async function performBookingCancellation(
       fresh.checkIn,
       fresh.checkOut,
       refundAmountCents,
-      "card"
+      "card",
+      creditRestoredCents
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
@@ -943,7 +961,8 @@ async function performBookingCancellation(
     fresh.checkIn,
     fresh.checkOut,
     0,
-    "card"
+    "card",
+    creditRestoredCents
   ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
   // Trigger waitlist processing for freed dates

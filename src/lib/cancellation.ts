@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { type CancellationRule } from "./policies/cancellation";
 
 export {
+  calculateAppliedCreditRestore,
   calculateDualRefundAmounts,
   calculateRefundAmount,
   daysUntilDate,

@@ -456,6 +456,8 @@ Check-out: {{checkOut}}
 
 {{refundMessage}}
 
+{{creditRestoredMessage}}
+
 You can make a new booking at any time from your account.
 
 Make a New Booking: {{BASE_URL}}/book
@@ -473,6 +475,15 @@ A refund of {{refundAmount}} has been processed to your original payment method.
 
 ```text
 No refund was applicable based on the cancellation policy.
+```
+
+Restored-credit line (`{{creditRestoredMessage}}`, empty when no applied credit was
+restored). Since #1164 the account credit originally applied to a booking is restored
+subject to the same cancellation policy as the card slice, so it may be less than the
+full amount applied:
+
+```text
+{{creditRestored}} of previously applied account credit has been restored to your account (per the cancellation policy).
 ```
 
 Triggers and frequency:

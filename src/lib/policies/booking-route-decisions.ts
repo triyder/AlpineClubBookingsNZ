@@ -13,6 +13,7 @@ import {
   type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
 import {
+  calculateAppliedCreditRestore,
   calculateDualRefundAmounts,
   daysUntilDate,
   type CancellationRule,
@@ -252,7 +253,15 @@ export function calculateCancellationPreview(input: {
     refundPercentage: cardRefundPercentage,
     creditRefundAmountCents,
     creditRefundPercentage,
-    creditRestoredCents: input.payment.creditAppliedCents || 0,
+    // Applied-credit slice is tiered by the SAME card tier as the card slice
+    // (#1164 / D7), no longer restored at 100%. Fed the same refundableBaseCents
+    // and days so preview == actual cancel.
+    creditRestoredCents: calculateAppliedCreditRestore(
+      input.payment.creditAppliedCents ?? 0,
+      refundableBaseCents,
+      days,
+      input.policyRules,
+    ).creditRestoredCents,
     totalPaidCents: paidAmountCents,
   };
 }

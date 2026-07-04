@@ -1178,7 +1178,8 @@ export default async function BookingDetailPage({
                   {cancellationSettlement.restoredAppliedCreditCents > 0 && (
                     <div>
                       <span className="text-slate-500">
-                        Previously applied credit restored:
+                        Previously applied credit restored (per the cancellation
+                        policy):
                       </span>{" "}
                       {formatCents(
                         cancellationSettlement.restoredAppliedCreditCents

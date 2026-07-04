@@ -82,6 +82,33 @@ export function calculateRefundAmount(
 }
 
 /**
+ * Refund amount for the slice a member originally paid with account credit, tiered by the
+ * SAME cancellation tier as the card slice (#1164 / decision D7). The fixed cancellation fee is
+ * charged once per cancellation, card-first: only the portion of the tier's fixedFeeCents the card
+ * slice's gross did not absorb is taken from the credit slice, so a credit-only booking still pays
+ * the fee and a mixed booking is not double-charged.
+ */
+export function calculateAppliedCreditRestore(
+  creditAppliedCents: number,
+  cardRefundableBaseCents: number,
+  daysUntilCheckIn: number,
+  policyRules: CancellationRule[]
+): { creditRestoredCents: number; creditRestorePercentage: number } {
+  if (creditAppliedCents <= 0) {
+    return { creditRestoredCents: 0, creditRestorePercentage: 0 };
+  }
+  const tier = getRefundTier(daysUntilCheckIn, policyRules);
+  const pct = tier.refundPercentage; // same tier as card
+  const cardGross = Math.round((Math.max(0, cardRefundableBaseCents) * pct) / 100);
+  const feeRemainder = Math.max(0, tier.fixedFeeCents - cardGross); // fee once, card-first
+  const creditGross = Math.round((creditAppliedCents * pct) / 100);
+  return {
+    creditRestoredCents: Math.max(0, creditGross - feeRemainder),
+    creditRestorePercentage: pct,
+  };
+}
+
+/**
  * Calculate both card and credit refund amounts for a cancel preview.
  */
 export function calculateDualRefundAmounts(

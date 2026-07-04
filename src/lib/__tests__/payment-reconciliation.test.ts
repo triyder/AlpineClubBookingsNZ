@@ -214,5 +214,13 @@ describe("markBookingPaymentSucceeded", () => {
       expect.objectContaining({ data: expect.objectContaining({ status: BookingStatus.PAID }) })
     );
     expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
+    // The capacity_failed system void must restore applied credit at 100% — it
+    // calls restoreCreditFromBooking with NO override (exactly 3 args), so the
+    // #1164 cancellation tiering never applies to a system void.
+    expect(mocks.restoreCreditFromBooking).toHaveBeenCalledWith(
+      "member-1",
+      "booking-1",
+      expect.anything()
+    );
   });
 });

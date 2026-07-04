@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
   promoRedemptionFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
   calculateRefundAmount: vi.fn(),
+  calculateAppliedCreditRestore: vi.fn(),
   daysUntilDate: vi.fn(),
   loadCancellationPolicy: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
@@ -69,6 +70,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/cancellation", () => ({
   calculateRefundAmount: mocks.calculateRefundAmount,
+  calculateAppliedCreditRestore: mocks.calculateAppliedCreditRestore,
   daysUntilDate: mocks.daysUntilDate,
   loadCancellationPolicy: mocks.loadCancellationPolicy,
 }));
@@ -197,6 +199,12 @@ describe("cancelBooking credit refunds", () => {
     mocks.calculateRefundAmount.mockReturnValue({
       refundAmountCents: 5000,
       refundPercentage: 50,
+    });
+    // Tiered applied-credit restore (#1164). Default 0; the credit-restore test
+    // overrides it to a deterministic tiered amount.
+    mocks.calculateAppliedCreditRestore.mockReturnValue({
+      creditRestoredCents: 0,
+      creditRestorePercentage: 50,
     });
     mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.createCancellationCredit.mockResolvedValue(undefined);
@@ -690,7 +698,13 @@ describe("cancelBooking credit refunds", () => {
     mocks.txBookingFindUnique
       .mockResolvedValueOnce(bookingWithCredit)
       .mockResolvedValueOnce({ ...bookingWithCredit, status: "CANCELLED" });
-    mocks.restoreCreditFromBooking.mockResolvedValue(3000);
+    // The 3000 applied credit is tiered to 1500 (#1164); restoreCreditFromBooking
+    // receives that tiered amount as its 4th (override) arg.
+    mocks.calculateAppliedCreditRestore.mockReturnValue({
+      creditRestoredCents: 1500,
+      creditRestorePercentage: 50,
+    });
+    mocks.restoreCreditFromBooking.mockResolvedValue(1500);
 
     const first = await cancelBooking(
       "booking_credit",
@@ -710,10 +724,23 @@ describe("cancelBooking credit refunds", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(409);
     expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
+    // The restore now passes the tiered override (#1164) as the 4th arg.
     expect(mocks.restoreCreditFromBooking).toHaveBeenCalledWith(
       "member_1",
       "booking_credit",
-      expect.anything()
+      expect.anything(),
+      1500
+    );
+    // The tiered restored amount is threaded to the cancellation email (7th arg)
+    // so the member sees the policy-adjusted restore, not the full applied sum.
+    expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Alice",
+      expect.anything(),
+      expect.anything(),
+      5000,
+      "card",
+      1500
     );
   });
 

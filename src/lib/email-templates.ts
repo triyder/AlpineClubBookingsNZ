@@ -401,7 +401,8 @@ export function bookingCancelledTemplate(
   checkIn: Date,
   checkOut: Date,
   refundCents: number,
-  refundMethod: "card" | "credit" = "card"
+  refundMethod: "card" | "credit" = "card",
+  creditRestoredCents: number = 0
 ): string {
   let refundInfo: string;
   if (refundCents > 0 && refundMethod === "credit") {
@@ -418,6 +419,18 @@ export function bookingCancelledTemplate(
     refundInfo = alertBox("No refund was applicable based on the cancellation policy.", "info");
   }
 
+  // #1164 / D7: the account credit originally applied to this booking is now
+  // restored subject to the same cancellation policy as the card slice, so a
+  // late cancellation may restore less than the full amount applied.
+  const creditRestoredInfo =
+    creditRestoredCents > 0
+      ? alertBox(
+          formatCents(creditRestoredCents) +
+            " of previously applied account credit has been restored to your account (per the cancellation policy).",
+          "success"
+        )
+      : "";
+
   return layout(`
     ${heading("Booking Cancelled")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been cancelled.")}
@@ -426,6 +439,7 @@ export function bookingCancelledTemplate(
       { label: "Check-out", value: formatNZDate(checkOut) },
     ])}
     ${refundInfo}
+    ${creditRestoredInfo}
     ${paragraph("You can make a new booking at any time from your account.")}
     ${button("Make a New Booking", BASE_URL + "/book")}
   `);

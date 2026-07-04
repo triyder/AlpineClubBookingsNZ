@@ -136,7 +136,11 @@ describe("booking route policy decisions", () => {
       refundPercentage: 50,
       creditRefundAmountCents: 5500,
       creditRefundPercentage: 75,
-      creditRestoredCents: 2000,
+      // #1164 / D7: applied credit is now tiered by the CARD tier (50%), not
+      // restored at 100%. refundableBase 8000 -> cardGross 4000 absorbs the full
+      // 1000 fixed fee (feeRemainder 0), so the 2000 applied credit restores
+      // 50% = 1000.
+      creditRestoredCents: 1000,
       totalPaidCents: 9000,
     });
   });

@@ -187,6 +187,7 @@ export async function sendBookingCancelledEmail(
   checkOut: Date,
   refundCents: number,
   refundMethod: "card" | "credit" = "card",
+  creditRestoredCents: number = 0,
 ) {
   await sendEmail({
     to: email,
@@ -197,6 +198,7 @@ export async function sendBookingCancelledEmail(
       checkOut,
       refundCents,
       refundMethod,
+      creditRestoredCents,
     ),
     templateName: "booking-cancelled",
     templateData: {
@@ -210,6 +212,14 @@ export async function sendBookingCancelledEmail(
           : refundCents > 0
             ? `A refund of ${formatMoneyCents(refundCents)} has been processed to your original payment method.`
             : "No refund was applicable based on the cancellation policy.",
+      // #1164 / D7: applied account credit is restored subject to the same
+      // cancellation policy as the card slice. Empty when nothing was restored
+      // so the override body renders no line (mirrors the refundMessage token).
+      creditRestored: formatMoneyCents(creditRestoredCents),
+      creditRestoredMessage:
+        creditRestoredCents > 0
+          ? `${formatMoneyCents(creditRestoredCents)} of previously applied account credit has been restored to your account (per the cancellation policy).`
+          : "",
     },
   });
 }
