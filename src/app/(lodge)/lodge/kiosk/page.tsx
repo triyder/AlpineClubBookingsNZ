@@ -77,6 +77,12 @@ function formatArrivalTime(time: string): string {
 
 export default function KioskPage() {
   const { hutLeaderLabel } = useClubIdentity();
+  // Position-appropriate casings of the configurable label so the default
+  // "Hut Leader" reproduces the previous copy byte-for-byte: mid-sentence prose
+  // uses the lowercase form, sentence-start prose capitalizes the first letter.
+  const hutLeaderLower = hutLeaderLabel.toLowerCase();
+  const hutLeaderSentence =
+    hutLeaderLower.charAt(0).toUpperCase() + hutLeaderLower.slice(1);
   const [date, setDate] = useState(() => formatDate(new Date()));
   const [bookings, setBookings] = useState<BookingGroup[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -458,11 +464,11 @@ export default function KioskPage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-white">
-                Hut leader controls
+                {hutLeaderSentence} controls
               </h2>
               <p className="text-sm text-slate-300 mt-1">
-                Enter the 6-digit hut leader PIN to unlock hut leader controls on
-                this kiosk, including roster management.
+                Enter the 6-digit {hutLeaderLower} PIN to unlock {hutLeaderLower}{" "}
+                controls on this kiosk, including roster management.
               </p>
             </div>
             {!showPinForm && (
@@ -488,7 +494,7 @@ export default function KioskPage() {
                   htmlFor="hut-leader-pin"
                   className="block text-sm font-medium text-slate-300 mb-2"
                 >
-                  Hut leader PIN
+                  {hutLeaderSentence} PIN
                 </label>
                 <input
                   id="hut-leader-pin"

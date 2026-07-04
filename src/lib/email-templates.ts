@@ -657,14 +657,14 @@ export function hutLeaderAssignmentTemplate(params: {
   const p = emailPalette();
   return layout(`
     ${heading(`${CLUB_HUT_LEADER_LABEL} Assignment`)}
-    ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on hut leader duties for the lodge.")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on " + CLUB_HUT_LEADER_LABEL.toLowerCase() + " duties for the lodge.")}
     ${infoTable([
       { label: "Start date", value: formatNZDate(params.startDate) },
       { label: "End date", value: formatNZDate(params.endDate) },
       { label: "Kiosk PIN", value: `<strong style="font-size: 18px; letter-spacing: 2px;">${escapeHtml(params.pin)}</strong>` },
     ])}
-    ${paragraph("When you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.")}
-    ${alertBox("Please keep this PIN private and share it only with the assigned hut leader team for these dates.", "warning")}
+    ${paragraph(`When you arrive, open the lodge kiosk and use this PIN to unlock ${CLUB_HUT_LEADER_LABEL.toLowerCase()} controls for arrivals, departures, and roster management.`)}
+    ${alertBox(`Please keep this PIN private and share it only with the assigned ${CLUB_HUT_LEADER_LABEL.toLowerCase()} team for these dates.`, "warning")}
     ${paragraph("Responsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.")}
     ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/lodge-instructions")}" style="color: ${p.charcoal}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge.`)}
     ${button("Open Lodge View", BASE_URL + "/lodge")}

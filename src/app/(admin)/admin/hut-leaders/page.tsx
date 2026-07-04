@@ -189,7 +189,7 @@ export default function HutLeadersPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm("Delete this hut leader assignment?")) return;
+    if (!confirm(`Delete this ${hutLeaderLabel.toLowerCase()} assignment?`)) return;
     const res = await fetch(`/api/admin/hut-leaders/${id}`, { method: "DELETE" });
     if (res.ok) {
       fetchAssignments();
@@ -245,7 +245,7 @@ export default function HutLeadersPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{hutLeaderLabel} Assignments</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Assign members as hut leader for specific date ranges
+            Assign members as {hutLeaderLabel.toLowerCase()} for specific date ranges
           </p>
         </div>
         <Button onClick={() => setShowForm(!showForm)}>
@@ -461,7 +461,7 @@ export default function HutLeadersPage() {
               <p className="mt-1 text-xs text-blue-800">
                 This PIN is shown once.{" "}
                 {pinMessage.emailSent
-                  ? "It has also been emailed to the hut leader."
+                  ? `It has also been emailed to the ${hutLeaderLabel.toLowerCase()}.`
                   : "Email delivery failed, so provide it directly."}
               </p>
             </div>
@@ -482,7 +482,7 @@ export default function HutLeadersPage() {
             <div className="p-6 text-center text-slate-500">Loading...</div>
           ) : assignments.length === 0 ? (
             <div className="p-6 text-center text-slate-500">
-              No hut leader assignments yet.
+              No {hutLeaderLabel.toLowerCase()} assignments yet.
             </div>
           ) : (
             <div className="overflow-x-auto">

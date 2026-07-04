@@ -266,7 +266,7 @@ export default async function AdminDashboardPage() {
               <div>
                 <p className="font-medium text-amber-900">{CLUB_HUT_LEADER_LABEL} Assignment Required</p>
                 <p className="text-sm text-amber-700 mt-1">
-                  {stats.unassignedDatesWithBookings.length} upcoming date{stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no hut leader assigned:{" "}
+                  {stats.unassignedDatesWithBookings.length} upcoming date{stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no {CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned:{" "}
                   {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}
                   {stats.unassignedDatesWithBookings.length > 5 ? ` and ${stats.unassignedDatesWithBookings.length - 5} more` : ""}
                 </p>
