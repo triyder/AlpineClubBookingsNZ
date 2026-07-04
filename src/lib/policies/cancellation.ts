@@ -1,4 +1,5 @@
 import { normalizeCancellationRule, type CancellationRuleLike } from "../cancellation-rules";
+import { normalizeDateOnlyForTimeZone } from "../date-only";
 
 export type CancellationRule = CancellationRuleLike;
 
@@ -109,15 +110,22 @@ export function calculateDualRefundAmounts(
 }
 
 /**
- * Calculate days between now and check-in date.
+ * Days between `now` and `checkIn`, counted in NZ lodge days.
  *
- * Uses Math.floor deliberately: partial days do NOT count toward a higher
- * refund tier. A cancellation 6.9 days before check-in gets the 6-day rule,
- * not the 7-day rule. This is distinct from the booking-creation hold-day
- * check which uses Math.ceil (any fraction over the threshold keeps the
- * booking pending to protect capacity).
+ * Both operands are normalized to UTC-midnight of their NZ-local calendar date
+ * (Pacific/Auckland via APP_TIME_ZONE), so the difference is a whole number of NZ
+ * lodge days and the tier boundary falls at NZ-local midnight — matching the
+ * member-visible "N days before check-in" countdown. UTC midnights are
+ * DST-independent, so consecutive days are exactly 86_400_000 ms apart and the
+ * result is already an integer; Math.floor is retained as a no-op safety that
+ * preserves the deliberate "partial days do NOT reach a higher tier" intent
+ * (documented above the previous implementation).
+ *
+ * Previously this used raw (checkIn - now) wall-clock ms, whose boundary sat at
+ * UTC midnight of the check-in date minus N*24h — up to ~13h off NZ local time.
  */
 export function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
-  const diffMs = checkIn.getTime() - now.getTime();
-  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const checkInDay = normalizeDateOnlyForTimeZone(checkIn);
+  const nowDay = normalizeDateOnlyForTimeZone(now);
+  return Math.floor((checkInDay.getTime() - nowDay.getTime()) / (1000 * 60 * 60 * 24));
 }

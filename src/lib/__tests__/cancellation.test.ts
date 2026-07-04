@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 
-// Import only the pure functions (no prisma dependency)
+// getRefundTier / calculateRefundAmount are re-implemented below to avoid
+// importing "../cancellation", which pulls in prisma. daysUntilDate is imported
+// straight from the prisma-free policy module so these tests exercise the real
+// NZ-lodge-day boundary logic (issue #1166) rather than a stale copy.
+import { daysUntilDate } from "../policies/cancellation";
 import type { CancellationRule } from "../cancellation";
-
-// Re-implement the pure functions here to avoid importing the module
-// which pulls in prisma. In a real setup with a test DB, we'd import directly.
 
 function getRefundTier(
   daysUntilCheckIn: number,
@@ -41,11 +42,6 @@ function calculateRefundAmount(
     (paidAmountCents * refundPercentage) / 100
   );
   return { refundAmountCents, refundPercentage };
-}
-
-function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
-  const diffMs = checkIn.getTime() - now.getTime();
-  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
 const standardPolicy: CancellationRule[] = [
@@ -287,16 +283,19 @@ describe("daysUntilDate", () => {
     expect(daysUntilDate(checkIn, now)).toBe(7);
   });
 
-  it("floors partial days", () => {
+  it("counts whole NZ lodge days regardless of intra-day times", () => {
+    // NZST (UTC+12): 18:00Z is 06:00 on 2 Jul NZ; 06:00Z is 18:00 on 8 Jul NZ.
+    // Six NZ calendar days apart (2 Jul -> 8 Jul), not the raw 6.5 wall-clock days.
     const now = new Date("2025-07-01T18:00:00Z");
     const checkIn = new Date("2025-07-08T06:00:00Z");
     expect(daysUntilDate(checkIn, now)).toBe(6);
   });
 
-  it("partial day over a tier boundary resolves to the lower tier (Math.floor semantics)", () => {
-    // 7 days and 30 minutes away → Math.floor gives 7, applies 7-day tier (50%)
+  it("keeps the 7-day tier for the whole NZ boundary day", () => {
+    // NZST (UTC+12): 11:00Z is 23:00 on 1 Jul NZ; 11:30Z is 23:30 on 8 Jul NZ.
+    // Seven NZ lodge days apart, so the 7-day tier (50%) applies.
     const now = new Date("2025-07-01T11:00:00Z");
-    const checkIn = new Date("2025-07-08T11:30:00Z"); // 7.02 days away
+    const checkIn = new Date("2025-07-08T11:30:00Z");
     const days = daysUntilDate(checkIn, now);
     expect(days).toBe(7);
     // Should get the 7-day tier, not below it
@@ -305,14 +304,79 @@ describe("daysUntilDate", () => {
     );
   });
 
-  it("partial day under a tier boundary resolves to the lower tier", () => {
-    // 6 days and 23 hours away → Math.floor gives 6, falls to 0% tier
+  it("drops to the lower tier once the NZ day count falls below the threshold", () => {
+    // NZST (UTC+12): 12:00Z is 00:00 on 2 Jul NZ; 11:00Z is 23:00 on 8 Jul NZ.
+    // Six NZ lodge days apart, one short of the 7-day tier, so 0% applies.
     const now = new Date("2025-07-01T12:00:00Z");
-    const checkIn = new Date("2025-07-08T11:00:00Z"); // 6.96 days away
+    const checkIn = new Date("2025-07-08T11:00:00Z");
     const days = daysUntilDate(checkIn, now);
     expect(days).toBe(6);
     expect(getRefundTier(days, standardPolicy)).toEqual(
       expect.objectContaining({ refundPercentage: 0, daysBeforeStay: 0 })
+    );
+  });
+});
+
+// Issue #1166: the refund-tier boundary is counted in NZ lodge days, so it
+// falls at NZ-local midnight (matching the member-visible "N days before
+// check-in" countdown) rather than at UTC-midnight-of-check-in minus N*24h.
+// TZ is left unset (repo convention) so APP_TIME_ZONE resolves to
+// Pacific/Auckland. In each case `checkIn` is a date-only value (UTC midnight
+// of the NZ lodge date) and `now` is chosen so the NZ-local calendar date, or
+// the raw wall-clock ms, would disagree with the NZ-day answer.
+describe("daysUntilDate — NZ lodge-day boundary (issue #1166)", () => {
+  it("NZDT (summer, UTC+13): a late NZ evening on the boundary date keeps the 7-day tier", () => {
+    // 2026-01-13T09:00Z is 22:00 on 13 Jan in NZ (NZDT). The member countdown
+    // still reads 7 days (13 Jan -> 20 Jan), so the 50% tier applies. The old
+    // raw-ms diff was 6.6 days -> floor 6 -> wrongly dropped to the 0% tier.
+    const now = new Date("2026-01-13T09:00:00.000Z");
+    const checkIn = new Date("2026-01-20T00:00:00.000Z");
+    expect(daysUntilDate(checkIn, now)).toBe(7);
+    expect(getRefundTier(daysUntilDate(checkIn, now), standardPolicy)).toEqual(
+      expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
+    );
+  });
+
+  it("NZST (winter, UTC+12): a late NZ evening on the boundary date keeps the 7-day tier", () => {
+    // 2025-07-13T10:00Z is 22:00 on 13 Jul in NZ (NZST). Same NZ-day count of
+    // 7; the old raw-ms diff was 6.6 days -> floor 6 -> wrong 0% tier.
+    const now = new Date("2025-07-13T10:00:00.000Z");
+    const checkIn = new Date("2025-07-20T00:00:00.000Z");
+    expect(daysUntilDate(checkIn, now)).toBe(7);
+    expect(getRefundTier(daysUntilDate(checkIn, now), standardPolicy)).toEqual(
+      expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
+    );
+  });
+
+  it("NZDT: an early NZ morning counts from the NZ date, not the earlier UTC date", () => {
+    // 2026-01-13T13:00Z is 02:00 on 14 Jan in NZ — the NZ calendar date is a
+    // day ahead of the UTC date (13 Jan). Counting from the NZ date gives 6;
+    // counting from the UTC date would wrongly give 7.
+    const now = new Date("2026-01-13T13:00:00.000Z");
+    const checkIn = new Date("2026-01-20T00:00:00.000Z");
+    expect(daysUntilDate(checkIn, now)).toBe(6);
+  });
+
+  it("NZST: an early NZ morning counts from the NZ date, not the earlier UTC date", () => {
+    // 2025-07-13T13:00Z is 01:00 on 14 Jul in NZ (NZST). NZ date is 14 Jul,
+    // UTC date is 13 Jul; NZ counting gives 6, the UTC date would give 7.
+    const now = new Date("2025-07-13T13:00:00.000Z");
+    const checkIn = new Date("2025-07-20T00:00:00.000Z");
+    expect(daysUntilDate(checkIn, now)).toBe(6);
+  });
+
+  it("any time on the same NZ calendar day yields the same whole-day count", () => {
+    // 00:30 and 23:30 on 13 Jan NZ (NZDT) are the same NZ lodge day, so both
+    // are 7 days before the 20 Jan check-in. The old raw-ms diff split them
+    // across the boundary (7 vs 6), landing identical bookings in different
+    // refund tiers purely on the time of day.
+    const checkIn = new Date("2026-01-20T00:00:00.000Z");
+    const earlyNzDay = new Date("2026-01-12T11:30:00.000Z"); // 00:30 on 13 Jan NZ
+    const lateNzDay = new Date("2026-01-13T10:30:00.000Z"); // 23:30 on 13 Jan NZ
+    expect(daysUntilDate(checkIn, earlyNzDay)).toBe(7);
+    expect(daysUntilDate(checkIn, lateNzDay)).toBe(7);
+    expect(daysUntilDate(checkIn, earlyNzDay)).toBe(
+      daysUntilDate(checkIn, lateNzDay)
     );
   });
 });
