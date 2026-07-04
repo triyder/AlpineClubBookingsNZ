@@ -414,7 +414,11 @@ describe("createXeroInvoiceForBooking", () => {
       memberId: "mem_1",
       member: { id: "mem_1" },
       checkIn: "2026-08-03T00:00:00.000Z",
-      checkOut: "2026-08-04T00:00:00.000Z",
+      // A 2-night stay (checkIn + 2 days); getStayNights is mocked to length 2
+      // above, so checkOut must be 08-05 for the fixture to be internally
+      // consistent. The #1163 price-run splitter derives the line's end date from
+      // the night count, so an inconsistent checkOut would misdescribe the range.
+      checkOut: "2026-08-05T00:00:00.000Z",
       createdAt: "2026-05-15T10:30:00.000Z",
       discountCents: 0,
       guests: [
@@ -485,7 +489,7 @@ describe("createXeroInvoiceForBooking", () => {
               expect.objectContaining({
                 lineItemID: "line_1",
                 description:
-                  "Jordan Hartley-Smith - (ADULT, Member) - 2 nights - 2026-08-03 - 2026-08-04",
+                  "Jordan Hartley-Smith - (ADULT, Member) - 2 nights - 2026-08-03 - 2026-08-05",
                 quantity: 1,
                 unitAmount: 100,
                 taxType: "OUTPUT2",
@@ -496,7 +500,7 @@ describe("createXeroInvoiceForBooking", () => {
         ],
       },
       undefined,
-      "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-04:v1"
+      "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-05:v1"
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_1",
