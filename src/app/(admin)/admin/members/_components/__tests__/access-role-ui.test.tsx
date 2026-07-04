@@ -304,6 +304,54 @@ describe("admin member access-role UI", () => {
     expect(screen.queryByText("Finance Access")).not.toBeInTheDocument();
   });
 
+  it("offers non-login member-type options in the filter toolbar", () => {
+    render(
+      <MemberFilterToolbar
+        search=""
+        filters={emptyFilters}
+        activeFilterCount={0}
+        xeroFeatures={{
+          liveMemberGroupLookups: false,
+          autoLoadContactGroups: false,
+        }}
+        xeroContactGroupsList={[]}
+        onSearchChange={vi.fn()}
+        onSetFilter={vi.fn()}
+        onClearFilters={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("All Member Types")).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Non-Member" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "School" })).toBeInTheDocument();
+  });
+
+  it("labels a member-type filter chip with the friendly role name", () => {
+    const filters: Filters = {
+      ...emptyFilters,
+      role: "NON_MEMBER",
+    };
+    render(
+      <MemberFilterToolbar
+        search=""
+        filters={filters}
+        activeFilterCount={1}
+        xeroFeatures={{
+          liveMemberGroupLookups: false,
+          autoLoadContactGroups: false,
+        }}
+        xeroContactGroupsList={[]}
+        onSearchChange={vi.fn()}
+        onSetFilter={vi.fn()}
+        onClearFilters={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Access Role: Non-Member/)).toBeInTheDocument();
+  });
+
   it("submits bulk access changes through accessRoles instead of the legacy role field", async () => {
     const onUpdated = vi.fn();
     render(

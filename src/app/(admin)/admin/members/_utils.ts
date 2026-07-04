@@ -1,5 +1,6 @@
 import type { Filters, MemberForm } from "./_types";
 import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
+import { ROLE_LABELS } from "@/lib/member-roles";
 
 export const emptyForm: MemberForm = {
   title: "",
@@ -71,7 +72,14 @@ export const filterValueLabels: Partial<
     archived: "Archived",
     all: "All Including Archived",
   },
-  role: ACCESS_ROLE_LABELS,
+  // The `role` filter param carries either an access-role token (from the
+  // Access Role select) or a non-login member-type Role (from the Member Type
+  // select), so cover both so the active-filter chip renders a friendly label.
+  role: {
+    ...ACCESS_ROLE_LABELS,
+    NON_MEMBER: ROLE_LABELS.NON_MEMBER,
+    SCHOOL: ROLE_LABELS.SCHOOL,
+  },
   familyGroup: { any: "Yes", none: "No" },
   inviteStatus: {
     invite: "Invite",
