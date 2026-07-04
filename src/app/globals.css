@@ -676,7 +676,14 @@ html:not(.dark)
 html:not(.dark)
   .app-theme-scope
   .theme-aware-kiosk
-  :is(.bg-blue-600, .bg-green-600, .bg-amber-600, .bg-red-600) .text-white {
+  :is(.bg-blue-600, .bg-green-600, .bg-amber-600, .bg-red-600)
+  .text-white:not(.bg-blue-600):not(.bg-green-600):not(.bg-amber-600):not(
+    .bg-red-600
+  ) {
+  /* The extra :not()s pad specificity to (0,9,1) so this outranks the
+     non-accent white->dark rule (0,8,1); otherwise a descendant .text-white such
+     as the completed-chore checkmark SVG (child of a bg-green-600 button) would
+     be darkened. White on the darkened green accent is 5.54:1. */
   color: #fff;
 }
 
