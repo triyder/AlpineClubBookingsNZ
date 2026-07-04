@@ -37,6 +37,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `publicUrl`                                        | yes      | Canonical public origin with no trailing slash.                                                                  |
 | `emailFromName`                                    | yes      | Display name for outbound email sender headers.                                                                  |
 | `lodgeTravelNote`                                  | no       | Email reminder travel/location note.                                                                             |
+| `hutLeaderLabel`                                   | no       | User-facing label for the hut-leader role (e.g. `Lodge Leader`, `Warden`, `Duty Manager`). Defaults to `Hut Leader`. |
 | `socialLinks.facebook`                             | no       | Facebook URL used by public pages/footer. Must be an http(s) URL, like `publicUrl`.                              |
 | `beds[].id`                                        | yes      | Stable bed or lodge identifier.                                                                                  |
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |

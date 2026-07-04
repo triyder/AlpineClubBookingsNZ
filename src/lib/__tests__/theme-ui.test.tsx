@@ -38,6 +38,7 @@ const testClubIdentity: ClubIdentity = {
   bookingsName: "Example Bookings",
   contactEmail: "contact@example.org",
   emailFromName: "Example Club",
+  hutLeaderLabel: "Hut Leader",
   lodgeCapacity: 20,
   lodgeName: "Example Lodge",
   lodgeTravelNote: "Allow travel time.",

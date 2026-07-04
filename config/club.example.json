@@ -6,6 +6,7 @@
   "publicUrl": "https://example.org",
   "emailFromName": "Example Mountain Club - Online Booking System",
   "lodgeTravelNote": "The lodge is located near the mountain. Please allow adequate travel time.",
+  "hutLeaderLabel": "Hut Leader",
   "socialLinks": {
     "facebook": "https://www.facebook.com/example"
   },

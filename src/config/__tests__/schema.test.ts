@@ -34,6 +34,18 @@ describe("clubConfigSchema", () => {
     expect(() => clubConfigSchema.parse(rest)).not.toThrow();
   });
 
+  it("accepts an optional hutLeaderLabel and rejects an empty one", () => {
+    expect(() =>
+      clubConfigSchema.parse({ ...validClub, hutLeaderLabel: "Lodge Warden" }),
+    ).not.toThrow();
+
+    const result = clubConfigSchema.safeParse({
+      ...validClub,
+      hutLeaderLabel: "   ",
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a missing required field with a useful error", () => {
     const broken: Record<string, unknown> = { ...validClub };
     delete broken.name;

@@ -657,8 +657,10 @@ describe("#25: Dashboard Hut Leader Warning", () => {
     // unassigned-date query in the page.
     expect(content).toContain("getUnassignedHutLeaderDates");
     expect(content).not.toContain("hutLeaderAssignment.findMany");
-    // Should have the warning UI
-    expect(content).toContain("Hut Leader Assignment Required");
+    // Should have the warning UI, using the configurable hut-leader label
+    // (CLUB_HUT_LEADER_LABEL) rather than a hard-coded "Hut Leader" literal.
+    expect(content).toContain("CLUB_HUT_LEADER_LABEL");
+    expect(content).toContain("Assignment Required");
     // Should link to hut leaders page
     expect(content).toContain("/admin/hut-leaders");
     // Should show unassigned dates count

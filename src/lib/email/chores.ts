@@ -3,6 +3,7 @@ import {
   hutLeaderAssignmentTemplate,
 } from "../email-templates";
 import {
+  CLUB_HUT_LEADER_LABEL,
   CLUB_LODGE_NAME,
   CLUB_NAME,
 } from "@/config/club-identity";
@@ -53,7 +54,7 @@ export async function sendHutLeaderAssignmentEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: `Your ${CLUB_NAME} hut leader assignment`,
+    subject: `Your ${CLUB_NAME} ${CLUB_HUT_LEADER_LABEL} assignment`,
     html: hutLeaderAssignmentTemplate(params),
     templateName: "hut-leader-assignment",
     templateData: {
