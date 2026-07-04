@@ -97,6 +97,29 @@ test("declined test-mode card leaves the booking payable", async ({ page }) => {
     expect(appVisible || frameVisible).toBe(true);
   }).toPass({ timeout: 45_000 });
 
+  // TEMP(#1224 attribution): once the decline is visible, report which surface
+  // rendered it and the exact matched copy, so US CI proves the green is a real
+  // "card declined" (not a generic match or a Link/bot-check interception).
+  // Revert this block before merge.
+  {
+    const appLoc = page.getByText(declineCopy).first();
+    const appTxt = (await appLoc.isVisible().catch(() => false))
+      ? await appLoc.textContent().catch(() => null)
+      : null;
+    let frameTxt: string | null = null;
+    for (const frame of page.frames()) {
+      if (!/stripe/i.test(frame.url())) continue;
+      const loc = frame.getByText(declineCopy).first();
+      if (await loc.isVisible().catch(() => false)) {
+        frameTxt = await loc.textContent().catch(() => null);
+        break;
+      }
+    }
+    console.log(
+      `#1224 ATTRIBUTION app=${JSON.stringify(appTxt)} frame=${JSON.stringify(frameTxt)}`,
+    );
+  }
+
   await expect(page.getByText("Payment successful!")).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Pay Now" })).toBeVisible();
 });
