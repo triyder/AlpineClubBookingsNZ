@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => {
   const prismaClient = {
+    accessRoleDefinition: {
+      // Empty definitions: resolution falls back to legacy bundles.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: {
       findUnique: mocks.memberFindUnique,
       findMany: mocks.memberFindMany,

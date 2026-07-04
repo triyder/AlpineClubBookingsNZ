@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { createHmac, timingSafeEqual } from "crypto";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
@@ -216,6 +217,7 @@ export async function POST(request: NextRequest) {
       });
 
       logger.error({ err, eventCategory, eventType, resourceId }, "Error processing Xero webhook event");
+      Sentry.captureException(err);
 
       // OBS-08: Record failed webhook processing
       await recordWebhookLog({

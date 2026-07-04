@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { prisma } from "./prisma";
 import { isXeroConnected } from "./xero";
 import logger from "@/lib/logger";
@@ -63,6 +64,18 @@ export async function reconcileCreditBalances(): Promise<{
       },
       `${refundsMissingCreditNotes.count} refunded Stripe payment(s) are missing Xero refund credit notes`
     );
+    // Cron context: logger output does not reach Sentry, so page explicitly.
+    Sentry.captureMessage(
+      `${refundsMissingCreditNotes.count} refunded Stripe payment(s) are missing Xero refund credit notes`,
+      {
+        level: "error",
+        extra: {
+          alert: "REFUNDS_MISSING_XERO_CREDIT_NOTES",
+          count: refundsMissingCreditNotes.count,
+          href: "/admin/xero",
+        },
+      }
+    );
   }
 
   if (negativeBalances.length > 0) {
@@ -74,7 +87,6 @@ export async function reconcileCreditBalances(): Promise<{
       "Members with negative credit balance detected"
     );
 
-    // Log error prominently — Sentry will pick this up
     logger.error(
       {
         alert: "CREDIT_BALANCE_DISCREPANCY",
@@ -82,6 +94,18 @@ export async function reconcileCreditBalances(): Promise<{
         memberIds: negativeBalances.map((b) => b.memberId),
       },
       `${negativeBalances.length} member(s) have negative credit balances — investigate immediately`
+    );
+    // Cron context: logger output does not reach Sentry, so page explicitly.
+    Sentry.captureMessage(
+      `${negativeBalances.length} member(s) have negative credit balances`,
+      {
+        level: "error",
+        extra: {
+          alert: "CREDIT_BALANCE_DISCREPANCY",
+          count: negativeBalances.length,
+          memberIds: negativeBalances.map((b) => b.memberId),
+        },
+      }
     );
   }
 

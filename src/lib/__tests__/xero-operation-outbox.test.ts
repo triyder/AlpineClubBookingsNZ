@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   completeXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
   findCanonicalPaymentRefundCreditNote: vi.fn(),
+  sumCoveredRefundCreditNoteCents: vi.fn(),
   upsertXeroObjectLink: vi.fn(),
   getEntranceFeeContext: vi.fn(),
   createUnappliedXeroCreditNote: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock("@/lib/xero-sync", () => ({
   completeXeroSyncOperation: mocks.completeXeroSyncOperation,
   failXeroSyncOperation: mocks.failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote: mocks.findCanonicalPaymentRefundCreditNote,
+  sumCoveredRefundCreditNoteCents: mocks.sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
 
@@ -491,14 +493,17 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     mocks.findFirstLink.mockResolvedValue(null);
     mocks.findUniquePayment.mockResolvedValue({
       id: "payment_1",
+      source: "INTERNET_BANKING",
+      refundedAmountCents: 5000,
       xeroRefundCreditNoteId: null,
     });
     mocks.findFirstOperation.mockResolvedValue(null);
     mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue(null);
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(0);
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_credit_note_1" });
   });
 
-  it("creates a pending primary Xero sync operation for refund credit notes", async () => {
+  it("creates a pending primary Xero sync operation for non-Stripe refund credit notes", async () => {
     await expect(
       enqueueXeroRefundCreditNoteOperation("payment_1", 5000, {
         createdByMemberId: "admin_1",
@@ -522,14 +527,95 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
         requestPayload: {
           queueType: "REFUND_CREDIT_NOTE",
           refundAmountCents: 5000,
+          watermarkCents: 5000,
+        },
+      })
+    );
+    // Non-Stripe payments never consult the cumulative refund watermark.
+    expect(mocks.sumCoveredRefundCreditNoteCents).not.toHaveBeenCalled();
+  });
+
+  it("queues the uncovered delta with a v2 watermark key for a second Stripe refund", async () => {
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "STRIPE",
+      refundedAmountCents: 8000,
+      xeroRefundCreditNoteId: "cn_1",
+    });
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(5000);
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 3000, {
+        createdByMemberId: "admin_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_credit_note_1",
+      message: "Xero refund credit note queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "payment:payment_1:refund-credit-note:8000:v2",
+        correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
         },
       })
     );
   });
 
-  it("skips queueing when the refund credit note is already linked", async () => {
+  it("skips a replayed Stripe delta once the notes already cover the refund", async () => {
     mocks.findUniquePayment.mockResolvedValue({
       id: "payment_1",
+      source: "STRIPE",
+      refundedAmountCents: 8000,
+      xeroRefundCreditNoteId: "cn_1",
+    });
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(8000);
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 3000)
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "Refund credit notes already cover this payment's refunded amount.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("gives two equal Stripe deltas distinct watermark correlation keys", async () => {
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "STRIPE",
+      refundedAmountCents: 5000,
+      xeroRefundCreditNoteId: null,
+    });
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(0);
+    await enqueueXeroRefundCreditNoteOperation("payment_1", 5000);
+
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "STRIPE",
+      refundedAmountCents: 10000,
+      xeroRefundCreditNoteId: "cn_1",
+    });
+    mocks.sumCoveredRefundCreditNoteCents.mockResolvedValue(5000);
+    await enqueueXeroRefundCreditNoteOperation("payment_1", 5000);
+
+    const firstKey = mocks.startXeroSyncOperation.mock.calls[0][0].correlationKey;
+    const secondKey = mocks.startXeroSyncOperation.mock.calls[1][0].correlationKey;
+    expect(firstKey).toBe("payment:payment_1:refund-credit-note:5000:v2");
+    expect(secondKey).toBe("payment:payment_1:refund-credit-note:10000:v2");
+    expect(firstKey).not.toBe(secondKey);
+  });
+
+  it("keeps the legacy single-note skip for non-Stripe payments already linked", async () => {
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+      source: "INTERNET_BANKING",
+      refundedAmountCents: 5000,
       xeroRefundCreditNoteId: "cn_existing",
     });
     mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({
@@ -545,6 +631,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       message: "Xero refund credit note already linked for this payment.",
     });
 
+    expect(mocks.sumCoveredRefundCreditNoteCents).not.toHaveBeenCalled();
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
@@ -1091,7 +1178,7 @@ describe("processQueuedXeroOutboxOperations", () => {
     );
   });
 
-  it("claims and processes queued refund credit note operations", async () => {
+  it("claims and processes queued refund credit note operations, forwarding the watermark", async () => {
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_credit_note_1",
@@ -1100,7 +1187,8 @@ describe("processQueuedXeroOutboxOperations", () => {
         createdByMemberId: "admin_1",
         requestPayload: {
           queueType: "REFUND_CREDIT_NOTE",
-          refundAmountCents: 5000,
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
         },
       },
     ]);
@@ -1114,9 +1202,10 @@ describe("processQueuedXeroOutboxOperations", () => {
       skipped: 0,
     });
 
-    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 5000, {
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 3000, {
       createdByMemberId: "admin_1",
       syncOperationId: "op_credit_note_1",
+      watermarkCents: 8000,
     });
   });
 

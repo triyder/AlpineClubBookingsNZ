@@ -6,22 +6,30 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { ROLE_VALUES } from "@/lib/member-roles";
 import {
-  ACCESS_ROLE_VALUES,
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
-  financeAccessLevelFromAccessRoles,
   isFullAdmin,
   legacyRoleFromAccessRoles,
-  normalizeAssignableAccessRoles,
-  resolveAccessRoles,
+  normalizeAssignableAccessRoleTokens,
+  resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
 } from "@/lib/access-roles";
+import {
+  accessRoleAssignmentRowsFromTokens,
+  findUnknownAccessRoleTokens,
+  loadAccessRoleDefinitions,
+  MEMBER_ACCESS_ROLE_SELECT,
+} from "@/lib/access-role-definitions";
+import {
+  financeAccessLevelFromMatrix,
+  getAdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
   action: z.enum(["deactivate", "reactivate", "set-role"]),
   role: z.enum(ROLE_VALUES).optional(),
-  accessRoles: z.array(z.enum(ACCESS_ROLE_VALUES)).optional(),
+  accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
 }).refine(
   (data) =>
     data.action !== "set-role" ||
@@ -55,11 +63,26 @@ export async function POST(req: NextRequest) {
 
   const { ids, action, role, accessRoles } = parsed.data;
   const currentUserId = session.user.id;
+
+  const roleDefinitions = await loadAccessRoleDefinitions(prisma);
+  if (accessRoles !== undefined) {
+    const unknownTokens = findUnknownAccessRoleTokens(
+      accessRoles,
+      roleDefinitions,
+    );
+    if (unknownTokens.length > 0) {
+      return NextResponse.json(
+        { error: `Unknown access role: ${unknownTokens.join(", ")}` },
+        { status: 400 },
+      );
+    }
+  }
+
   const selfAdminAccessPreserved =
     accessRoles !== undefined
-      ? normalizeAssignableAccessRoles(accessRoles, { canLogin: true }).includes(
-          "ADMIN",
-        )
+      ? normalizeAssignableAccessRoleTokens(accessRoles, {
+          canLogin: true,
+        }).includes("ADMIN")
       : role === "ADMIN";
 
   // Self-protection checks
@@ -95,7 +118,7 @@ export async function POST(req: NextRequest) {
         canLogin: true,
         cancelledAt: true,
         archivedAt: true,
-        accessRoles: { select: { role: true } },
+        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
       },
     });
 
@@ -149,7 +172,7 @@ export async function POST(req: NextRequest) {
               member,
               nextAccessRoles:
                 accessRoles !== undefined
-                  ? normalizeAssignableAccessRoles(accessRoles, {
+                  ? normalizeAssignableAccessRoleTokens(accessRoles, {
                       canLogin: member.canLogin,
                     })
                   : accessRolesFromCompatibilityFields({
@@ -171,7 +194,9 @@ export async function POST(req: NextRequest) {
       setRoleTargets.some(({ member, nextAccessRoles }) => {
         const storedAfter =
           accessRoles !== undefined
-            ? normalizeAssignableAccessRoles(accessRoles, { canLogin: true })
+            ? normalizeAssignableAccessRoleTokens(accessRoles, {
+                canLogin: true,
+              })
             : accessRolesFromCompatibilityFields({
                 role,
                 financeAccessLevel:
@@ -180,7 +205,7 @@ export async function POST(req: NextRequest) {
               });
         return (
           accessRoleChangeRequiresFullAdmin(
-            resolveAccessRoles(member),
+            resolveAccessRoleTokens(member),
             nextAccessRoles,
           ) ||
           accessRoleChangeRequiresFullAdmin(
@@ -216,20 +241,33 @@ export async function POST(req: NextRequest) {
                   : role!,
               financeAccessLevel:
                 accessRoles !== undefined
-                  ? financeAccessLevelFromAccessRoles(nextAccessRoles)
+                  ? financeAccessLevelFromMatrix(
+                      getAdminPermissionMatrix({
+                        accessRoles: accessRoleAssignmentRowsFromTokens(
+                          nextAccessRoles,
+                          roleDefinitions,
+                        ),
+                        canLogin: true,
+                      }),
+                    )
                   : role === "LODGE"
                     ? "NONE"
                     : member.financeAccessLevel,
             },
           });
+          const assignmentRows = accessRoleAssignmentRowsFromTokens(
+            nextAccessRoles,
+            roleDefinitions,
+          );
           await tx.memberAccessRole.deleteMany({
             where: { memberId: member.id },
           });
-          if (nextAccessRoles.length > 0) {
+          if (assignmentRows.length > 0) {
             await tx.memberAccessRole.createMany({
-              data: nextAccessRoles.map((nextRole) => ({
+              data: assignmentRows.map((row) => ({
                 memberId: member.id,
-                role: nextRole,
+                role: row.role,
+                roleDefinitionId: row.roleDefinitionId,
                 assignedByMemberId: currentUserId,
               })),
               skipDuplicates: true,

@@ -773,6 +773,129 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
       })
     );
   });
+
+  it("rejects a date change that lands a member-linked guest on a night they are already booked (#1157)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000], nightDates: [] },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([]);
+    mockedGetHoldDays.mockResolvedValue(7);
+
+    // Member m1 (guest g1) is already on another live booking covering the
+    // first night of the requested new range (Jun 5). The guard must reject.
+    tx.bookingGuest.findMany.mockResolvedValue([
+      {
+        id: "g-other",
+        memberId: "m1",
+        firstName: "Alice",
+        lastName: "Smith",
+        stayStart: new Date("2026-06-05"),
+        stayEnd: new Date("2026-06-06"),
+        nights: [{ stayDate: new Date("2026-06-05") }],
+        member: { firstName: "Alice", lastName: "Smith" },
+        booking: {
+          id: "bk-other",
+          memberId: "m1",
+          status: "CONFIRMED",
+          checkIn: new Date("2026-06-05"),
+          checkOut: new Date("2026-06-06"),
+          member: { firstName: "Alice", lastName: "Smith" },
+          guests: [{ id: "g-other", memberId: "m1" }],
+        },
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("BOOKING_MEMBER_NIGHT_CONFLICT");
+    expect(body.conflicts).toHaveLength(1);
+    expect(body.conflicts[0]).toMatchObject({
+      memberId: "m1",
+      bookingId: "bk-other",
+      conflictingNights: ["2026-06-05"],
+    });
+
+    // The guard runs before any BookingGuest/BookingGuestNight/Booking write,
+    // so a rejected date change persists nothing.
+    expect(tx.booking.update).not.toHaveBeenCalled();
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(tx.bookingGuestNight.deleteMany).not.toHaveBeenCalled();
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+  });
+
+  it("allows a date change when a member-linked guest has no overlapping live night (#1157)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000], nightDates: [] },
+        { ageTier: "ADULT" as const, isMember: true, nights: 3, priceCents: 15000, perNightCents: [5000, 5000, 5000], nightDates: [] },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    // Member m1 has another live booking whose window overlaps the new range,
+    // but as a gap-stay guest present only on Jun 3 — none of the requested
+    // nights (Jun 5-7). The guard evaluates the nights and finds no conflict.
+    tx.bookingGuest.findMany.mockResolvedValue([
+      {
+        id: "g-other",
+        memberId: "m1",
+        firstName: "Alice",
+        lastName: "Smith",
+        stayStart: new Date("2026-06-03"),
+        stayEnd: new Date("2026-06-06"),
+        nights: [{ stayDate: new Date("2026-06-03") }],
+        member: { firstName: "Alice", lastName: "Smith" },
+        booking: {
+          id: "bk-other",
+          memberId: "m1",
+          status: "CONFIRMED",
+          checkIn: new Date("2026-06-03"),
+          checkOut: new Date("2026-06-06"),
+          member: { firstName: "Alice", lastName: "Smith" },
+          guests: [{ id: "g-other", memberId: "m1" }],
+        },
+      },
+    ]);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.priceDiffCents).toBe(20000); // 30000 - 10000
+    // The guard actively evaluated the member's other booking and let the
+    // write proceed.
+    expect(tx.bookingGuest.findMany).toHaveBeenCalled();
+    expect(tx.booking.update).toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/bookings/[id]/guests", () => {

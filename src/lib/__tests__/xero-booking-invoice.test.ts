@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
     },
     xeroObjectLink: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
     xeroToken: {
       findFirst: vi.fn(),
@@ -758,7 +759,7 @@ describe("createXeroRefundPaymentForInvoice", () => {
         ],
       },
       undefined,
-      "payment:pay_1:refund-payment:2500:v1"
+      "payment:pay_1:refund-payment:2500:cn_1:v2"
     );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_payment_1",
@@ -782,6 +783,7 @@ describe("createXeroCreditNote", () => {
     vi.stubEnv("XERO_CLIENT_ID", "client-id");
     vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
     mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue(null);
+    mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
   });
 
   it("reuses an existing refund credit note link before attempting a new create", async () => {
@@ -827,5 +829,105 @@ describe("createXeroCreditNote", () => {
     });
     expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
     expect(mocks.xeroClientInstance.accountingApi.createPayments).not.toHaveBeenCalled();
+  });
+
+  it("skips the delta note when an active link already covers the watermark (#1162)", async () => {
+    mocks.prisma.payment.findUnique.mockResolvedValue({
+      id: "pay_1",
+      xeroInvoiceId: "inv_1",
+      xeroRefundCreditNoteId: null,
+      booking: {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1" },
+        guests: [],
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+      },
+    });
+    mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([
+      {
+        xeroObjectId: "cn_delta",
+        xeroObjectNumber: "CN-8",
+        metadata: { amountCents: 8000, watermarkCents: 8000 },
+      },
+    ]);
+    mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
+
+    await expect(
+      createXeroCreditNote("pay_1", 3000, { watermarkCents: 8000 })
+    ).resolves.toBe("cn_delta");
+
+    // A covering note already settles this watermark: no new Xero writes, and
+    // the canonical single-note lookup is bypassed in delta mode.
+    expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
+    expect(mocks.xeroClientInstance.accountingApi.createPayments).not.toHaveBeenCalled();
+    expect(mocks.findCanonicalPaymentRefundCreditNote).not.toHaveBeenCalled();
+    expect(mocks.prisma.payment.update).toHaveBeenCalledWith({
+      where: { id: "pay_1" },
+      data: { xeroRefundCreditNoteId: "cn_delta" },
+    });
+  });
+
+  it("creates a new delta note when no active link covers the higher watermark (#1162)", async () => {
+    mocks.prisma.payment.findUnique.mockResolvedValue({
+      id: "pay_1",
+      xeroInvoiceId: "inv_1",
+      xeroRefundCreditNoteId: "cn_delta",
+      booking: {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1" },
+        guests: [],
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+      },
+    });
+    mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([
+      {
+        xeroObjectId: "cn_delta",
+        xeroObjectNumber: "CN-8",
+        metadata: { amountCents: 8000, watermarkCents: 8000 },
+      },
+    ]);
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      email: "member@example.com",
+      xeroContactId: "contact_1",
+    });
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: encryptToken("access"),
+      refreshToken: encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+    mocks.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
+    mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_delta_1" });
+    mocks.xeroClientInstance.accountingApi.createCreditNotes.mockResolvedValue({
+      body: { creditNotes: [{ creditNoteID: "cn_new", creditNoteNumber: "CN-11" }] },
+    });
+    mocks.xeroClientInstance.accountingApi.createPayments.mockResolvedValue({
+      body: { payments: [{ paymentID: "xpay_new" }] },
+    });
+
+    await expect(
+      createXeroCreditNote("pay_1", 3000, {
+        watermarkCents: 11000,
+        syncOperationId: "op_delta_1",
+      })
+    ).resolves.toBe("cn_new");
+
+    expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).toHaveBeenCalledTimes(1);
+    // The credit note is keyed on the new cumulative watermark, not the amount.
+    expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).toHaveBeenCalledWith(
+      "tenant_1",
+      expect.anything(),
+      undefined,
+      undefined,
+      "payment:pay_1:refund-credit-note:11000:v2"
+    );
   });
 });

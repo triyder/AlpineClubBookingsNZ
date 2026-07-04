@@ -1,14 +1,23 @@
 import type { FinanceAccessLevel, Prisma, Role } from "@prisma/client";
 import {
   accessRolesFromCompatibilityFields,
-  normalizeAssignableAccessRoles,
+  normalizeAssignableAccessRoleTokens,
   type AppAccessRole,
 } from "@/lib/access-roles";
+import {
+  accessRoleAssignmentRowsFromTokens,
+  loadAccessRoleDefinitions,
+  type AccessRoleDefinitionRecord,
+} from "@/lib/access-role-definitions";
 
 type MemberAccessRoleWriter = {
   memberAccessRole: Pick<
     Prisma.TransactionClient["memberAccessRole"],
     "createMany"
+  >;
+  accessRoleDefinition?: Pick<
+    Prisma.TransactionClient["accessRoleDefinition"],
+    "findMany"
   >;
 };
 
@@ -19,9 +28,11 @@ export async function ensureMemberAccessRoles(
     roles: ReadonlyArray<AppAccessRole | string | null | undefined>;
     canLogin?: boolean | null;
     assignedByMemberId?: string | null;
+    /** Preloaded definitions (e.g. fetched before a transaction). */
+    definitions?: ReadonlyArray<AccessRoleDefinitionRecord>;
   },
 ) {
-  const roles = normalizeAssignableAccessRoles(params.roles, {
+  const roles = normalizeAssignableAccessRoleTokens(params.roles, {
     canLogin: params.canLogin,
   });
 
@@ -29,11 +40,26 @@ export async function ensureMemberAccessRoles(
     return { count: 0, roles };
   }
 
+  // Dual-write: enum rows are linked to their seeded definition when it
+  // exists; definition-id tokens become definition-only rows. Unknown
+  // tokens are dropped by the row resolver (callers validate first). When
+  // no definitions are reachable, enum rows are written unlinked — the
+  // resolver falls back to the legacy bundles and
+  // ensureAccessRoleDefinitions re-links them on the next seed run.
+  const definitions =
+    params.definitions ??
+    (db.accessRoleDefinition ? await loadAccessRoleDefinitions(db as Required<MemberAccessRoleWriter>) : []);
+  const assignmentRows = accessRoleAssignmentRowsFromTokens(
+    roles,
+    definitions,
+  );
+
   const assignedByMemberId = params.assignedByMemberId?.trim() || null;
   const result = await db.memberAccessRole.createMany({
-    data: roles.map((role) => ({
+    data: assignmentRows.map((row) => ({
       memberId: params.memberId,
-      role,
+      role: row.role,
+      roleDefinitionId: row.roleDefinitionId,
       ...(assignedByMemberId ? { assignedByMemberId } : {}),
     })),
     skipDuplicates: true,

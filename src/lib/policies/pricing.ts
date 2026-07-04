@@ -1,6 +1,11 @@
 import type { AgeTier, FixedNightlyMode, PromoCodeType, SeasonType } from "@prisma/client";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "../date-only";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  formatDateOnlyForTimeZone,
+  parseDateOnly,
+} from "../date-only";
 import {
   countActiveGuestsForNight,
   type GuestNightInput,
@@ -91,22 +96,10 @@ export interface CalculatePromoDiscountOptions {
 }
 
 function getDateOnlyStringForTimeZone(date: Date, timeZone = APP_TIME_ZONE): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const parts = formatter.formatToParts(date);
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  if (!year || !month || !day) {
-    throw new Error(`Unable to derive booking date for timezone ${timeZone}`);
-  }
-
-  return `${year}-${month}-${day}`;
+  // Shared per-timezone-cached formatter (#1146): pricing normalizes dates
+  // once per (guest, night), so a fresh Intl.DateTimeFormat per call
+  // dominated quote and edit repricing time.
+  return formatDateOnlyForTimeZone(date, timeZone);
 }
 
 function normalizeBookingDate(date: Date): Date {

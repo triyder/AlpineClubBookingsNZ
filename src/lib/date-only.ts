@@ -109,18 +109,31 @@ export function formatLocalDateOnly(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+// Intl.DateTimeFormat construction costs ~0.1ms; the capacity, pricing, and
+// finance loops call this once per (booking, night) pair, so a fresh formatter
+// per call dominated those paths. Instances are stateless for formatToParts,
+// so one per time zone is shared safely.
+const dateOnlyFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getDateOnlyFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = dateOnlyFormatterCache.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    dateOnlyFormatterCache.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 export function formatDateOnlyForTimeZone(
   date: Date,
   timeZone = APP_TIME_ZONE
 ): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(date);
+  const parts = getDateOnlyFormatter(timeZone).formatToParts(date);
   const year = parts.find((part) => part.type === "year")?.value;
   const month = parts.find((part) => part.type === "month")?.value;
   const day = parts.find((part) => part.type === "day")?.value;

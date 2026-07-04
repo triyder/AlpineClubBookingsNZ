@@ -1,34 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, use } from "react";
+import { useEffect, useRef, useState, use } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
-import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import {
   formatMemberAuditLogSummary as formatMemberAuditLogSummaryHelper,
   getAuditActorDisplayName as getAuditActorDisplayNameHelper,
   getMemberDetailBackLabel,
-  memberUsesSamePostalAddress,
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
-  shouldDefaultLinkSideEffects,
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee";
-import {
-  linkMemberXeroContact,
-  pushMemberToXero,
-  searchXeroContacts,
-  unlinkMemberXeroContact,
-  type XeroPushResponse,
-} from "@/lib/admin-member-xero-actions";
-import {
-  NZ_COUNTRY_NAME,
-  withDefaultNzCountry,
-  type MemberAddressValues,
-} from "@/lib/member-address";
 import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
@@ -53,85 +37,21 @@ import { MemberDependentDialog } from "./_components/member-dependent-dialog";
 import { MemberDeleteRequestDialog } from "./_components/member-delete-request-dialog";
 import { MemberDeleteReviewDialog } from "./_components/member-delete-review-dialog";
 import { useCollapsibleMemberSections } from "./_hooks/use-collapsible-member-sections";
-import type {
-  CreditHistoryItem,
-  DependentDialogMode,
-  DependentForm,
-  EditForm,
-  EmailInheritanceSearchResult,
-  LinkDependentSearchResult,
-  LinkParentSearchResult,
-  MemberDetail,
-  MemberLifecycleActionRequest,
-  PendingCreditAdjustmentItem,
-} from "./_types";
+import { useMemberCredits } from "./_hooks/use-member-credits";
+import { useMemberLifecycleActions } from "./_hooks/use-member-lifecycle-actions";
+import { useMemberDelete } from "./_hooks/use-member-delete";
+import { useMemberRelationships } from "./_hooks/use-member-relationships";
+import { useMemberParentLink } from "./_hooks/use-member-parent-link";
+import { useMemberDependentDialog } from "./_hooks/use-member-dependent-dialog";
+import { useMemberXero } from "./_hooks/use-member-xero";
+import { useMemberEdit } from "./_hooks/use-member-edit";
+import type { MemberDetail } from "./_types";
 
 // Re-exports preserve the existing import paths used by tests and other callers
 // that previously imported these helpers from the page route.
 export const formatMemberAuditLogSummary = formatMemberAuditLogSummaryHelper;
 export const parseInviteAuditDetails = parseInviteAuditDetailsHelper;
 export const getAuditActorDisplayName = getAuditActorDisplayNameHelper;
-
-const defaultEditForm: EditForm = {
-  title: "",
-  firstName: "",
-  lastName: "",
-  gender: "",
-  email: "",
-  phoneCountryCode: "",
-  phoneAreaCode: "",
-  phoneNumber: "",
-  dateOfBirth: "",
-  joinedDate: "",
-  lifeMemberDate: "",
-  occupation: "",
-  comments: "",
-  role: "USER",
-  accessRoles: ["USER"],
-  ageTier: "ADULT",
-  financeAccessLevel: "NONE",
-  active: true,
-  canLogin: true,
-  forcePasswordChange: false,
-  requiresInduction: false,
-  inheritEmailFromId: null,
-  streetAddressLine1: "",
-  streetAddressLine2: "",
-  streetCity: "",
-  streetRegion: "",
-  streetPostalCode: "",
-  streetCountry: "",
-  postalAddressLine1: "",
-  postalAddressLine2: "",
-  postalCity: "",
-  postalRegion: "",
-  postalPostalCode: "",
-  postalCountry: "",
-};
-
-const defaultDependentForm: DependentForm = {
-  title: "",
-  gender: "",
-  firstName: "",
-  lastName: "",
-  email: "",
-  dateOfBirth: "",
-  phoneCountryCode: "",
-  phoneAreaCode: "",
-  phoneNumber: "",
-  streetAddressLine1: "",
-  streetAddressLine2: "",
-  streetCity: "",
-  streetRegion: "",
-  streetPostalCode: "",
-  streetCountry: NZ_COUNTRY_NAME,
-  postalAddressLine1: "",
-  postalAddressLine2: "",
-  postalCity: "",
-  postalRegion: "",
-  postalPostalCode: "",
-  postalCountry: NZ_COUNTRY_NAME,
-};
 
 export default function MemberDetailPage({
   params,
@@ -152,154 +72,237 @@ export default function MemberDetailPage({
   const xeroErrorRef = useRef<HTMLDivElement>(null);
   const { scrollToError } = useScrollToFeedback();
 
-  // Edit dialog state
-  const [editOpen, setEditOpen] = useState(false);
-  const [form, setForm] = useState<EditForm>(defaultEditForm);
-  const [editPostalSameAsPhysical, setEditPostalSameAsPhysical] =
-    useState(false);
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-  const [hasHandledInitialEditParam, setHasHandledInitialEditParam] =
-    useState(false);
-  const [inheritEmailSearch, setInheritEmailSearch] = useState("");
-  const [inheritEmailSearchResults, setInheritEmailSearchResults] = useState<
-    EmailInheritanceSearchResult[]
-  >([]);
-  const [inheritEmailSearchError, setInheritEmailSearchError] = useState("");
-  const [inheritEmailSearching, setInheritEmailSearching] = useState(false);
-  const [selectedInheritEmailSource, setSelectedInheritEmailSource] =
-    useState<EmailInheritanceSearchResult | null>(null);
+  const fetchMember = async () => {
+    try {
+      const res = await fetch(`/api/admin/members/${id}`);
+      if (!res.ok) {
+        setPageError(
+          res.status === 404 ? "Member not found" : "Failed to load member",
+        );
+        setLoading(false);
+        return;
+      }
+      setMember(await res.json());
+      setPageError("");
+    } catch {
+      setPageError("Failed to load member");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const shouldAutoOpenEdit = searchParams.get("edit") === "true";
 
   // Dependent dialog state
-  const [dependentOpen, setDependentOpen] = useState(false);
-  const [dependentForm, setDependentForm] =
-    useState<DependentForm>(defaultDependentForm);
-  const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] =
-    useState(false);
-  const [dependentSaving, setDependentSaving] = useState(false);
-  const [dependentFormError, setDependentFormError] = useState("");
-  const [dependentMode, setDependentMode] =
-    useState<DependentDialogMode>("create");
-  const [linkDependentSearch, setLinkDependentSearch] = useState("");
-  const [linkDependentSearchResults, setLinkDependentSearchResults] = useState<
-    LinkDependentSearchResult[]
-  >([]);
-  const [linkDependentSearching, setLinkDependentSearching] = useState(false);
-  const [selectedLinkDependent, setSelectedLinkDependent] =
-    useState<LinkDependentSearchResult | null>(null);
-  const [linkDependentInheritEmail, setLinkDependentInheritEmail] =
-    useState(false);
-  const [
+  const {
+    dependentOpen,
+    dependentForm,
+    dependentPostalSameAsPhysical,
+    dependentSaving,
+    dependentFormError,
+    dependentMode,
+    linkDependentSearch,
+    linkDependentSearchResults,
+    linkDependentSearching,
+    selectedLinkDependent,
     linkDependentNotificationParentId,
+    linkDependentDisableLogin,
+    linkDependentFamilyGroupIds,
+    setDependentOpen,
+    setDependentForm,
+    setDependentPostalSameAsPhysical,
+    setDependentFormError,
+    setDependentMode,
+    setLinkDependentSearch,
+    setSelectedLinkDependent,
+    setLinkDependentInheritEmail,
     setLinkDependentNotificationParentId,
-  ] = useState("");
-  const [linkDependentDisableLogin, setLinkDependentDisableLogin] =
-    useState(false);
-  const [linkDependentFamilyGroupIds, setLinkDependentFamilyGroupIds] =
-    useState<string[]>([]);
+    setLinkDependentDisableLogin,
+    openDependentDialog,
+    handleCreateDependent,
+    selectLinkDependent,
+    clearLinkDependent,
+    toggleLinkFamilyGroup,
+    handleLinkDependent,
+    updateDependentAddressFields,
+  } = useMemberDependentDialog({ member, fetchMember, setLoading });
 
   // Parent link dialog state
-  const [parentLinkOpen, setParentLinkOpen] = useState(false);
-  const [parentLinkSearch, setParentLinkSearch] = useState("");
-  const [parentLinkSearchResults, setParentLinkSearchResults] = useState<
-    LinkParentSearchResult[]
-  >([]);
-  const [parentLinkSearching, setParentLinkSearching] = useState(false);
-  const [selectedLinkParent, setSelectedLinkParent] =
-    useState<LinkParentSearchResult | null>(null);
-  const [parentLinkInheritEmail, setParentLinkInheritEmail] = useState(false);
-  const [parentLinkNotificationParentId, setParentLinkNotificationParentId] =
-    useState("");
-  const [parentLinkDisableLogin, setParentLinkDisableLogin] = useState(false);
-  const [parentLinkFamilyGroupIds, setParentLinkFamilyGroupIds] = useState<
-    string[]
-  >([]);
-  const [parentLinkSaving, setParentLinkSaving] = useState(false);
-  const [parentLinkError, setParentLinkError] = useState("");
-  const [unlinkingDependentId, setUnlinkingDependentId] = useState<
-    string | null
-  >(null);
+  const {
+    parentLinkOpen,
+    parentLinkSearch,
+    parentLinkSearchResults,
+    parentLinkSearching,
+    selectedLinkParent,
+    parentLinkNotificationParentId,
+    parentLinkDisableLogin,
+    parentLinkFamilyGroupIds,
+    parentLinkSaving,
+    parentLinkError,
+    setParentLinkOpen,
+    setParentLinkSearch,
+    setSelectedLinkParent,
+    setParentLinkInheritEmail,
+    setParentLinkNotificationParentId,
+    setParentLinkDisableLogin,
+    setParentLinkError,
+    openParentLinkDialog,
+    selectLinkParent,
+    clearLinkParent,
+    toggleParentLinkFamilyGroup,
+    handleLinkParent,
+  } = useMemberParentLink({
+    member,
+    fetchMember,
+    setLoading,
+    setRelationshipError,
+  });
+  const { unlinkingDependentId, handleUnlinkDependent } =
+    useMemberRelationships({ fetchMember, setLoading, setRelationshipError });
   const [familyGroupEditorId, setFamilyGroupEditorId] = useState<string | null>(
     null,
   );
 
   // Account credit state
-  const [creditBalance, setCreditBalance] = useState<number>(0);
-  const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([]);
-  const [pendingAdjustmentRequests, setPendingAdjustmentRequests] = useState<
-    PendingCreditAdjustmentItem[]
-  >([]);
-  const [creditLoading, setCreditLoading] = useState(true);
-  const [creditError, setCreditError] = useState("");
-  const [showAdjustmentForm, setShowAdjustmentForm] = useState(false);
-  const [adjustmentAmount, setAdjustmentAmount] = useState("");
-  const [adjustmentDescription, setAdjustmentDescription] = useState("");
-  const [adjustmentIdempotencyKey, setAdjustmentIdempotencyKey] = useState<
-    string | null
-  >(null);
-  const [adjustmentSaving, setAdjustmentSaving] = useState(false);
-  const [adjustmentError, setAdjustmentError] = useState("");
-  const [reviewingAdjustmentId, setReviewingAdjustmentId] = useState<
-    string | null
-  >(null);
+  const {
+    creditBalance,
+    creditHistory,
+    pendingAdjustmentRequests,
+    creditLoading,
+    creditError,
+    showAdjustmentForm,
+    adjustmentAmount,
+    adjustmentDescription,
+    adjustmentSaving,
+    adjustmentError,
+    reviewingAdjustmentId,
+    setAdjustmentAmount,
+    setAdjustmentDescription,
+    toggleAdjustmentForm,
+    handleAdjustmentSubmit,
+    handleReviewAdjustmentRequest,
+  } = useMemberCredits(id);
 
   // Lifecycle state
-  const [archiveReason, setArchiveReason] = useState("");
-  const [archiveReviewNotes, setArchiveReviewNotes] = useState<
-    Record<string, string>
-  >({});
-  const [archiveActionLoading, setArchiveActionLoading] = useState<
-    string | null
-  >(null);
-  const [archiveError, setArchiveError] = useState("");
-  const [cancellationReason, setCancellationReason] = useState("");
-  const [cancellationSubmitting, setCancellationSubmitting] = useState(false);
-  const [cancellationError, setCancellationError] = useState("");
+  const {
+    archiveReason,
+    archiveReviewNotes,
+    archiveActionLoading,
+    archiveError,
+    cancellationReason,
+    cancellationSubmitting,
+    cancellationError,
+    setArchiveReason,
+    setArchiveReviewNotes,
+    setCancellationReason,
+    handleSubmitArchiveRequest,
+    handleReviewArchiveRequest,
+    handleSubmitCancellationRequest,
+  } = useMemberLifecycleActions({ id, fetchMember, setLoading });
 
   // Xero link/push state
-  const [xeroSearchOpen, setXeroSearchOpen] = useState(false);
-  const [xeroSearchQuery, setXeroSearchQuery] = useState("");
-  const [xeroSearchResults, setXeroSearchResults] = useState<
-    XeroSearchResult[]
-  >([]);
-  const [xeroSearching, setXeroSearching] = useState(false);
-  const [xeroChoice, setXeroChoice] = useState<"" | "change">("");
-  const [xeroLinking, setXeroLinking] = useState(false);
-  const [selectedXeroContactId, setSelectedXeroContactId] = useState("");
-  const [xeroUnlinking, setXeroUnlinking] = useState(false);
-  const [xeroPushing, setXeroPushing] = useState(false);
-  const [xeroCreateOpen, setXeroCreateOpen] = useState(false);
   const {
+    xeroSearchOpen,
+    xeroSearchQuery,
+    xeroSearchResults,
+    xeroSearching,
+    xeroChoice,
+    xeroLinking,
+    selectedXeroContactId,
+    xeroUnlinking,
+    xeroPushing,
+    xeroCreateOpen,
     xeroCreateEntranceFeeInvoice,
-    setXeroCreateEntranceFeeInvoice,
     xeroEntranceFeeSkipReason,
-    setXeroEntranceFeeSkipReason,
     xeroEntranceFeeAmount,
-    setXeroEntranceFeeAmount,
     xeroEntranceFeeNarration,
+    xeroCreateDecisionOpen,
+    xeroCreateDecisionResults,
+    xeroDecisionContactId,
+    xeroDecisionError,
+    setXeroSearchOpen,
+    setXeroSearchQuery,
+    setXeroSearchResults,
+    setXeroChoice,
+    setSelectedXeroContactId,
+    setXeroCreateOpen,
+    setXeroCreateEntranceFeeInvoice,
+    setXeroEntranceFeeSkipReason,
+    setXeroEntranceFeeAmount,
     setXeroEntranceFeeNarration,
-    resetXeroEntranceFeeDecision,
-    buildXeroEntranceFeeInvoiceOptions,
-  } = useXeroEntranceFeeDecision();
-  const [xeroCreateDecisionOpen, setXeroCreateDecisionOpen] = useState(false);
-  const [xeroCreateDecisionResults, setXeroCreateDecisionResults] = useState<
-    XeroSearchResult[]
-  >([]);
-  const [xeroDecisionContactId, setXeroDecisionContactId] = useState("");
-  const [xeroDecisionError, setXeroDecisionError] = useState("");
+    setXeroCreateDecisionOpen,
+    setXeroCreateDecisionResults,
+    setXeroDecisionContactId,
+    setXeroDecisionError,
+    handleXeroSearch,
+    handleXeroLink,
+    handleXeroUnlink,
+    handleXeroPush,
+    handleXeroDecisionLink,
+    openLinkXero,
+    openCreateXero,
+  } = useMemberXero({ id, fetchMember, setLoading, setXeroError });
+
+  // Edit dialog state
+  const {
+    editOpen,
+    form,
+    editPostalSameAsPhysical,
+    saving,
+    formError,
+    inheritEmailSearch,
+    inheritEmailSearchResults,
+    inheritEmailSearchError,
+    inheritEmailSearching,
+    selectedInheritEmailSource,
+    setEditOpen,
+    setForm,
+    setEditPostalSameAsPhysical,
+    setInheritEmailSearch,
+    openEditDialog,
+    handleSave,
+    updateEditAddressFields,
+    selectInheritEmailSource,
+    clearInheritEmailSource,
+  } = useMemberEdit({
+    id,
+    member,
+    loading,
+    shouldAutoOpenEdit,
+    fetchMember,
+    setLoading,
+    setXeroError,
+    setXeroChoice,
+    setSelectedXeroContactId,
+    setXeroSearchQuery,
+    setXeroSearchResults,
+    setXeroCreateEntranceFeeInvoice,
+  });
 
   // Delete state
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deleteReason, setDeleteReason] = useState("");
-  const [deleteError, setDeleteError] = useState("");
-  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
-  const [deleteReviewDialog, setDeleteReviewDialog] = useState<{
-    request: MemberLifecycleActionRequest;
-    action: "approve" | "reject";
-  } | null>(null);
-  const [deleteReviewNote, setDeleteReviewNote] = useState("");
-  const [deleteReviewError, setDeleteReviewError] = useState("");
-  const [deleteReviewSubmitting, setDeleteReviewSubmitting] = useState(false);
+  const {
+    deleteDialogOpen,
+    deleteReason,
+    deleteError,
+    deleteSubmitting,
+    deleteReviewDialog,
+    deleteReviewNote,
+    deleteReviewError,
+    deleteReviewSubmitting,
+    setDeleteDialogOpen,
+    setDeleteReason,
+    setDeleteError,
+    setDeleteReviewDialog,
+    setDeleteReviewNote,
+    setDeleteReviewError,
+    handleCreateDeleteRequest,
+    handleReviewDeleteRequest,
+  } = useMemberDelete({
+    member,
+    fetchMember,
+    setLoading,
+    onDeleted: () => router.push(backHref),
+  });
 
   const { openSections, onValueChange: onSectionsChange } =
     useCollapsibleMemberSections();
@@ -309,8 +312,6 @@ export default function MemberDetailPage({
   const memberLifecycleLocked = Boolean(
     member?.cancelledAt || member?.archivedAt,
   );
-  const memberId = member?.id;
-  const shouldAutoOpenEdit = searchParams.get("edit") === "true";
   const backHref = resolveInternalReturnPath(
     searchParams.get("returnTo"),
     "/admin/members",
@@ -344,1245 +345,9 @@ export default function MemberDetailPage({
     xeroSearchOpen,
   ]);
 
-  const fetchMember = async () => {
-    try {
-      const res = await fetch(`/api/admin/members/${id}`);
-      if (!res.ok) {
-        setPageError(
-          res.status === 404 ? "Member not found" : "Failed to load member",
-        );
-        setLoading(false);
-        return;
-      }
-      setMember(await res.json());
-      setPageError("");
-    } catch {
-      setPageError("Failed to load member");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchCredits = async () => {
-    setCreditLoading(true);
-    setCreditError("");
-    try {
-      const res = await fetch(`/api/admin/members/${id}/credits`);
-      if (!res.ok) {
-        setCreditError("Failed to load credits");
-        return;
-      }
-      const data = await res.json();
-      setCreditBalance(data.balanceCents);
-      setCreditHistory(data.history);
-      setPendingAdjustmentRequests(data.pendingRequests ?? []);
-    } catch {
-      setCreditError("Failed to load credits");
-    } finally {
-      setCreditLoading(false);
-    }
-  };
-
-  const handleAdjustmentSubmit = async () => {
-    const cents = Math.round(parseFloat(adjustmentAmount) * 100);
-    if (isNaN(cents) || cents === 0) {
-      setAdjustmentError("Enter a non-zero amount");
-      return;
-    }
-    if (!adjustmentDescription.trim()) {
-      setAdjustmentError("Description is required");
-      return;
-    }
-    const idempotencyKey = adjustmentIdempotencyKey ?? crypto.randomUUID();
-    if (!adjustmentIdempotencyKey) {
-      setAdjustmentIdempotencyKey(idempotencyKey);
-    }
-    setAdjustmentSaving(true);
-    setAdjustmentError("");
-    try {
-      const res = await fetch(`/api/admin/members/${id}/credits`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amountCents: cents,
-          description: adjustmentDescription.trim(),
-          idempotencyKey,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to save adjustment");
-      }
-      setShowAdjustmentForm(false);
-      setAdjustmentAmount("");
-      setAdjustmentDescription("");
-      setAdjustmentIdempotencyKey(null);
-      toast.success(data.message || "Credit adjustment submitted for approval");
-      await fetchCredits();
-    } catch (err) {
-      setAdjustmentError(
-        err instanceof Error ? err.message : "Failed to save adjustment",
-      );
-    } finally {
-      setAdjustmentSaving(false);
-    }
-  };
-
-  const toggleAdjustmentForm = () => {
-    setAdjustmentError("");
-    setAdjustmentIdempotencyKey(
-      showAdjustmentForm ? null : crypto.randomUUID(),
-    );
-    setShowAdjustmentForm((current) => !current);
-  };
-
-  const handleReviewAdjustmentRequest = async (
-    requestId: string,
-    decision: "APPROVE" | "REJECT",
-  ) => {
-    setReviewingAdjustmentId(requestId);
-    setAdjustmentError("");
-    try {
-      const res = await fetch(`/api/admin/members/${id}/credits/${requestId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to review adjustment");
-      }
-
-      const data = await res.json();
-      toast.success(data.message || "Adjustment reviewed");
-      await fetchCredits();
-    } catch (err) {
-      setAdjustmentError(
-        err instanceof Error ? err.message : "Failed to review adjustment",
-      );
-    } finally {
-      setReviewingAdjustmentId(null);
-    }
-  };
-
-  const handleSubmitArchiveRequest = async () => {
-    const reason = archiveReason.trim();
-    if (!reason) {
-      setArchiveError("Archive reason is required");
-      return;
-    }
-
-    setArchiveActionLoading("request");
-    setArchiveError("");
-    try {
-      const res = await fetch(`/api/admin/members/${id}/lifecycle/archive`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to request archive");
-      }
-
-      setArchiveReason("");
-      toast.success("Archive request submitted");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setArchiveError(
-        err instanceof Error ? err.message : "Failed to request archive",
-      );
-    } finally {
-      setArchiveActionLoading(null);
-    }
-  };
-
-  const handleReviewArchiveRequest = async (
-    requestId: string,
-    action: "approve" | "reject",
-  ) => {
-    setArchiveActionLoading(`${action}:${requestId}`);
-    setArchiveError("");
-    try {
-      const res = await fetch(
-        `/api/admin/member-lifecycle-action-requests/${requestId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action,
-            note: archiveReviewNotes[requestId]?.trim() || undefined,
-          }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to review archive request");
-      }
-
-      setArchiveReviewNotes((current) => {
-        const next = { ...current };
-        delete next[requestId];
-        return next;
-      });
-      toast.success(action === "approve" ? "Member archived" : "Archive request rejected",);
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setArchiveError(
-        err instanceof Error ? err.message : "Failed to review archive request",
-      );
-    } finally {
-      setArchiveActionLoading(null);
-    }
-  };
-
-  const handleSubmitCancellationRequest = async () => {
-    const reason = cancellationReason.trim();
-    if (!reason) {
-      setCancellationError("Cancellation reason is required");
-      return;
-    }
-
-    setCancellationSubmitting(true);
-    setCancellationError("");
-    try {
-      const res = await fetch(
-        `/api/admin/members/${id}/membership-cancellation`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to request cancellation");
-      }
-
-      setCancellationReason("");
-      toast.success("Cancellation request submitted");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setCancellationError(
-        err instanceof Error ? err.message : "Failed to request cancellation",
-      );
-    } finally {
-      setCancellationSubmitting(false);
-    }
-  };
-
   useEffect(() => {
     fetchMember();
-    fetchCredits();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    setHasHandledInitialEditParam(false);
-  }, [id]);
-
-  useEffect(() => {
-    if (!editOpen || !memberId || form.canLogin) {
-      setInheritEmailSearchResults([]);
-      setInheritEmailSearchError("");
-      setInheritEmailSearching(false);
-      return;
-    }
-
-    const query = inheritEmailSearch.trim();
-    if (query.length < 2) {
-      setInheritEmailSearchResults([]);
-      setInheritEmailSearchError("");
-      setInheritEmailSearching(false);
-      return;
-    }
-
-    let cancelled = false;
-    setInheritEmailSearching(true);
-    setInheritEmailSearchError("");
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          q: query,
-          pageSize: "8",
-          inheritEmailEligible: "true",
-          excludeId: memberId,
-        });
-        const res = await fetch(`/api/admin/members?${params.toString()}`);
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(
-            data.error || "Failed to search eligible adult members",
-          );
-        }
-
-        if (!cancelled) {
-          setInheritEmailSearchResults(
-            (data.members ?? [])
-              .map(
-                (candidate: {
-                  id: string;
-                  firstName: string;
-                  lastName: string;
-                  email: string;
-                  active: boolean;
-                }) => ({
-                  id: candidate.id,
-                  firstName: candidate.firstName,
-                  lastName: candidate.lastName,
-                  email: candidate.email,
-                  active: candidate.active,
-                }),
-              )
-              .filter(
-                (candidate: EmailInheritanceSearchResult) =>
-                  candidate.id !== selectedInheritEmailSource?.id,
-              ),
-          );
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setInheritEmailSearchResults([]);
-          setInheritEmailSearchError(
-            error instanceof Error
-              ? error.message
-              : "Failed to search eligible adult members",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setInheritEmailSearching(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    editOpen,
-    form.canLogin,
-    inheritEmailSearch,
-    memberId,
-    selectedInheritEmailSource?.id,
-  ]);
-
-  useEffect(() => {
-    if (!dependentOpen || dependentMode !== "link" || !memberId) {
-      setLinkDependentSearchResults([]);
-      setLinkDependentSearching(false);
-      return;
-    }
-
-    const query = linkDependentSearch.trim();
-    if (query.length < 2) {
-      setLinkDependentSearchResults([]);
-      setLinkDependentSearching(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLinkDependentSearching(true);
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          q: query,
-          pageSize: "8",
-          dependentLinkEligibleFor: memberId,
-        });
-        const res = await fetch(`/api/admin/members?${params.toString()}`);
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to search members");
-        }
-
-        if (!cancelled) {
-          setLinkDependentSearchResults(
-            (data.members ?? [])
-              .map((candidate: LinkDependentSearchResult) => ({
-                id: candidate.id,
-                firstName: candidate.firstName,
-                lastName: candidate.lastName,
-                email: candidate.email,
-                ageTier: candidate.ageTier,
-                active: candidate.active,
-                canLogin: candidate.canLogin,
-                dateOfBirth: candidate.dateOfBirth,
-                parentLinks: candidate.parentLinks ?? [],
-              }))
-              .filter(
-                (candidate: LinkDependentSearchResult) =>
-                  candidate.id !== selectedLinkDependent?.id,
-              ),
-          );
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setLinkDependentSearchResults([]);
-          setDependentFormError(
-            error instanceof Error ? error.message : "Failed to search members",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLinkDependentSearching(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    dependentMode,
-    dependentOpen,
-    linkDependentSearch,
-    memberId,
-    selectedLinkDependent?.id,
-  ]);
-
-  useEffect(() => {
-    if (
-      !parentLinkOpen ||
-      !memberId ||
-      (member?.parentLinks?.length ?? 0) >= 2
-    ) {
-      setParentLinkSearchResults([]);
-      setParentLinkSearching(false);
-      return;
-    }
-
-    const query = parentLinkSearch.trim();
-    if (query.length < 2) {
-      setParentLinkSearchResults([]);
-      setParentLinkSearching(false);
-      return;
-    }
-
-    let cancelled = false;
-    setParentLinkSearching(true);
-    setParentLinkError("");
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = new URLSearchParams({
-          q: query,
-          pageSize: "8",
-          parentLinkEligibleFor: memberId,
-        });
-        const res = await fetch(`/api/admin/members?${params.toString()}`);
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to search parent members");
-        }
-
-        if (!cancelled) {
-          setParentLinkSearchResults(
-            (data.members ?? [])
-              .map((candidate: LinkParentSearchResult) => ({
-                id: candidate.id,
-                firstName: candidate.firstName,
-                lastName: candidate.lastName,
-                email: candidate.email,
-                ageTier: candidate.ageTier,
-                active: candidate.active,
-                canLogin: candidate.canLogin,
-                dateOfBirth: candidate.dateOfBirth,
-                familyGroups: candidate.familyGroups ?? [],
-              }))
-              .filter(
-                (candidate: LinkParentSearchResult) =>
-                  candidate.id !== selectedLinkParent?.id,
-              ),
-          );
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setParentLinkSearchResults([]);
-          setParentLinkError(
-            error instanceof Error
-              ? error.message
-              : "Failed to search parent members",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setParentLinkSearching(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    member?.parentLinks?.length,
-    memberId,
-    parentLinkOpen,
-    parentLinkSearch,
-    selectedLinkParent?.id,
-  ]);
-
-  const openEditDialog = useCallback(() => {
-    if (!member) return;
-    setForm({
-      title: member.title ?? "",
-      firstName: member.firstName,
-      lastName: member.lastName,
-      gender: member.gender ?? "",
-      email: member.email,
-      phoneCountryCode: member.phoneCountryCode || "",
-      phoneAreaCode: member.phoneAreaCode || "",
-      phoneNumber: member.phoneNumber || "",
-      dateOfBirth: member.dateOfBirth
-        ? new Date(member.dateOfBirth).toISOString().split("T")[0]
-        : "",
-      joinedDate: member.joinedDate
-        ? new Date(member.joinedDate).toISOString().split("T")[0]
-        : "",
-      lifeMemberDate: member.lifeMemberDate
-        ? new Date(member.lifeMemberDate).toISOString().split("T")[0]
-        : "",
-      occupation: member.occupation ?? "",
-      comments: member.comments || "",
-      role: member.role,
-      accessRoles: member.accessRoles,
-      ageTier: member.ageTier,
-      financeAccessLevel: member.financeAccessLevel,
-      active: member.active,
-      canLogin: member.canLogin,
-      forcePasswordChange: member.forcePasswordChange,
-      requiresInduction: member.requiresInduction,
-      inheritEmailFromId: member.inheritEmailFromId,
-      streetAddressLine1: member.streetAddressLine1 || "",
-      streetAddressLine2: member.streetAddressLine2 || "",
-      streetCity: member.streetCity || "",
-      streetRegion: member.streetRegion || "",
-      streetPostalCode: member.streetPostalCode || "",
-      streetCountry: withDefaultNzCountry(member.streetCountry),
-      postalAddressLine1: member.postalAddressLine1 || "",
-      postalAddressLine2: member.postalAddressLine2 || "",
-      postalCity: member.postalCity || "",
-      postalRegion: member.postalRegion || "",
-      postalPostalCode: member.postalPostalCode || "",
-      postalCountry: withDefaultNzCountry(member.postalCountry),
-    });
-    setSelectedInheritEmailSource(
-      member.inheritEmailFrom
-        ? {
-            id: member.inheritEmailFrom.id,
-            firstName: member.inheritEmailFrom.firstName,
-            lastName: member.inheritEmailFrom.lastName,
-            email: member.inheritEmailFrom.email,
-          }
-        : null,
-    );
-    setInheritEmailSearch("");
-    setInheritEmailSearchResults([]);
-    setInheritEmailSearchError("");
-    setXeroChoice("");
-    setSelectedXeroContactId("");
-    setXeroSearchQuery("");
-    setXeroSearchResults([]);
-    setXeroCreateEntranceFeeInvoice(false);
-    setXeroError("");
-    setEditPostalSameAsPhysical(
-      memberUsesSamePostalAddress({
-        streetAddressLine1: member.streetAddressLine1,
-        streetAddressLine2: member.streetAddressLine2,
-        streetCity: member.streetCity,
-        streetRegion: member.streetRegion,
-        streetPostalCode: member.streetPostalCode,
-        streetCountry: member.streetCountry,
-        postalAddressLine1: member.postalAddressLine1,
-        postalAddressLine2: member.postalAddressLine2,
-        postalCity: member.postalCity,
-        postalRegion: member.postalRegion,
-        postalPostalCode: member.postalPostalCode,
-        postalCountry: member.postalCountry,
-      }),
-    );
-    setFormError("");
-    setEditOpen(true);
-  }, [member, setXeroCreateEntranceFeeInvoice]);
-
-  useEffect(() => {
-    if (
-      hasHandledInitialEditParam ||
-      !shouldAutoOpenEdit ||
-      loading ||
-      !member
-    ) {
-      return;
-    }
-
-    openEditDialog();
-    setHasHandledInitialEditParam(true);
-  }, [
-    hasHandledInitialEditParam,
-    loading,
-    member,
-    openEditDialog,
-    shouldAutoOpenEdit,
-  ]);
-
-  const openDependentDialog = () => {
-    if (!member) return;
-
-    const inheritedEmailAddress =
-      member.inheritEmailFrom?.email || member.email;
-
-    setDependentForm({
-      title: "",
-      gender: "",
-      firstName: "",
-      lastName: member.lastName,
-      email: inheritedEmailAddress,
-      dateOfBirth: "",
-      phoneCountryCode: member.phoneCountryCode || "",
-      phoneAreaCode: member.phoneAreaCode || "",
-      phoneNumber: member.phoneNumber || "",
-      streetAddressLine1: member.streetAddressLine1 || "",
-      streetAddressLine2: member.streetAddressLine2 || "",
-      streetCity: member.streetCity || "",
-      streetRegion: member.streetRegion || "",
-      streetPostalCode: member.streetPostalCode || "",
-      streetCountry: withDefaultNzCountry(member.streetCountry),
-      postalAddressLine1: member.postalAddressLine1 || "",
-      postalAddressLine2: member.postalAddressLine2 || "",
-      postalCity: member.postalCity || "",
-      postalRegion: member.postalRegion || "",
-      postalPostalCode: member.postalPostalCode || "",
-      postalCountry: withDefaultNzCountry(member.postalCountry),
-    });
-    setDependentPostalSameAsPhysical(
-      memberUsesSamePostalAddress({
-        streetAddressLine1: member.streetAddressLine1,
-        streetAddressLine2: member.streetAddressLine2,
-        streetCity: member.streetCity,
-        streetRegion: member.streetRegion,
-        streetPostalCode: member.streetPostalCode,
-        streetCountry: member.streetCountry,
-        postalAddressLine1: member.postalAddressLine1,
-        postalAddressLine2: member.postalAddressLine2,
-        postalCity: member.postalCity,
-        postalRegion: member.postalRegion,
-        postalPostalCode: member.postalPostalCode,
-        postalCountry: member.postalCountry,
-      }),
-    );
-    setDependentFormError("");
-    setDependentMode("create");
-    setLinkDependentSearch("");
-    setLinkDependentSearchResults([]);
-    setLinkDependentSearching(false);
-    setSelectedLinkDependent(null);
-    setLinkDependentInheritEmail(false);
-    setLinkDependentNotificationParentId("");
-    setLinkDependentDisableLogin(false);
-    setLinkDependentFamilyGroupIds(
-      member.familyGroups.map((group) => group.id),
-    );
-    setDependentOpen(true);
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    setFormError("");
-    try {
-      const res = await fetch(`/api/admin/members/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: form.title || null,
-          firstName: form.firstName,
-          lastName: form.lastName,
-          gender: form.gender || null,
-          email: form.email,
-          phoneCountryCode: form.phoneCountryCode || null,
-          phoneAreaCode: form.phoneAreaCode || null,
-          phoneNumber: form.phoneNumber || null,
-          dateOfBirth: form.dateOfBirth || null,
-          joinedDate: form.joinedDate || null,
-          lifeMemberDate: form.lifeMemberDate || null,
-          occupation: form.occupation || null,
-          comments: form.comments || null,
-          role: form.role,
-          accessRoles: form.accessRoles,
-          ageTier: form.ageTier,
-          financeAccessLevel: form.financeAccessLevel,
-          active: form.active,
-          canLogin: form.canLogin,
-          forcePasswordChange: form.forcePasswordChange,
-          requiresInduction: form.requiresInduction,
-          inheritEmailFromId: form.inheritEmailFromId || null,
-          streetAddressLine1: form.streetAddressLine1 || null,
-          streetAddressLine2: form.streetAddressLine2 || null,
-          streetCity: form.streetCity || null,
-          streetRegion: form.streetRegion || null,
-          streetPostalCode: form.streetPostalCode || null,
-          streetCountry: form.streetCountry || null,
-          postalAddressLine1: form.postalAddressLine1 || null,
-          postalAddressLine2: form.postalAddressLine2 || null,
-          postalCity: form.postalCity || null,
-          postalRegion: form.postalRegion || null,
-          postalPostalCode: form.postalPostalCode || null,
-          postalCountry: form.postalCountry || null,
-          postalSameAsPhysical: editPostalSameAsPhysical,
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Save failed");
-      }
-      setEditOpen(false);
-      toast.success("Member updated successfully");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const updateEditAddressFields = (patch: Partial<MemberAddressValues>) => {
-    setForm((current) => ({ ...current, ...patch }));
-  };
-
-  const selectInheritEmailSource = (source: EmailInheritanceSearchResult) => {
-    setSelectedInheritEmailSource(source);
-    setForm((current) => ({ ...current, inheritEmailFromId: source.id }));
-    setInheritEmailSearch("");
-    setInheritEmailSearchResults([]);
-    setInheritEmailSearchError("");
-  };
-
-  const clearInheritEmailSource = () => {
-    setSelectedInheritEmailSource(null);
-    setForm((current) => ({ ...current, inheritEmailFromId: null }));
-    setInheritEmailSearch("");
-    setInheritEmailSearchResults([]);
-    setInheritEmailSearchError("");
-  };
-
-  const handleCreateDependent = async () => {
-    if (!member) return;
-
-    const inheritedEmailSourceId = member.inheritEmailFromId || member.id;
-
-    setDependentSaving(true);
-    setDependentFormError("");
-
-    try {
-      const res = await fetch("/api/admin/members", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: dependentForm.title || null,
-          gender: dependentForm.gender || null,
-          firstName: dependentForm.firstName,
-          lastName: dependentForm.lastName,
-          email: dependentForm.email,
-          dateOfBirth: dependentForm.dateOfBirth || null,
-          phoneCountryCode: dependentForm.phoneCountryCode || null,
-          phoneAreaCode: dependentForm.phoneAreaCode || null,
-          phoneNumber: dependentForm.phoneNumber || null,
-          role: "USER",
-          active: true,
-          canLogin: false,
-          parentMemberId: member.id,
-          inheritParentEmail: true,
-          inheritEmailFromId: inheritedEmailSourceId,
-          familyGroupIds: member.familyGroups.map((group) => group.id),
-          streetAddressLine1: dependentForm.streetAddressLine1 || null,
-          streetAddressLine2: dependentForm.streetAddressLine2 || null,
-          streetCity: dependentForm.streetCity || null,
-          streetRegion: dependentForm.streetRegion || null,
-          streetPostalCode: dependentForm.streetPostalCode || null,
-          streetCountry: dependentForm.streetCountry || null,
-          postalAddressLine1: dependentForm.postalAddressLine1 || null,
-          postalAddressLine2: dependentForm.postalAddressLine2 || null,
-          postalCity: dependentForm.postalCity || null,
-          postalRegion: dependentForm.postalRegion || null,
-          postalPostalCode: dependentForm.postalPostalCode || null,
-          postalCountry: dependentForm.postalCountry || null,
-          postalSameAsPhysical: dependentPostalSameAsPhysical,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to create dependent");
-      }
-
-      setDependentOpen(false);
-      toast.success("Dependent created successfully");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setDependentFormError(
-        err instanceof Error ? err.message : "Failed to create dependent",
-      );
-    } finally {
-      setDependentSaving(false);
-    }
-  };
-
-  const selectLinkDependent = (candidate: LinkDependentSearchResult) => {
-    const defaultSideEffects = shouldDefaultLinkSideEffects(candidate.ageTier);
-    setSelectedLinkDependent(candidate);
-    setLinkDependentInheritEmail(defaultSideEffects);
-    setLinkDependentNotificationParentId(
-      defaultSideEffects ? (member?.id ?? "") : "",
-    );
-    setLinkDependentDisableLogin(defaultSideEffects);
-    setLinkDependentFamilyGroupIds(
-      member?.familyGroups.map((group) => group.id) ?? [],
-    );
-    setLinkDependentSearch("");
-    setLinkDependentSearchResults([]);
-    setDependentFormError("");
-  };
-
-  const clearLinkDependent = () => {
-    setSelectedLinkDependent(null);
-    setLinkDependentInheritEmail(false);
-    setLinkDependentNotificationParentId("");
-    setLinkDependentDisableLogin(false);
-    setLinkDependentFamilyGroupIds(
-      member?.familyGroups.map((group) => group.id) ?? [],
-    );
-    setLinkDependentSearch("");
-    setLinkDependentSearchResults([]);
-    setDependentFormError("");
-  };
-
-  const toggleLinkFamilyGroup = (familyGroupId: string, checked: boolean) => {
-    setLinkDependentFamilyGroupIds((current) =>
-      checked
-        ? Array.from(new Set([...current, familyGroupId]))
-        : current.filter((idValue) => idValue !== familyGroupId),
-    );
-  };
-
-  const handleLinkDependent = async () => {
-    if (!member || !selectedLinkDependent) return;
-
-    setDependentSaving(true);
-    setDependentFormError("");
-
-    try {
-      const res = await fetch(
-        `/api/admin/members/${member.id}/dependents/link`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            memberId: selectedLinkDependent.id,
-            inheritEmail:
-              Boolean(linkDependentNotificationParentId) ||
-              linkDependentInheritEmail,
-            inheritEmailFromId: linkDependentNotificationParentId || null,
-            disableLogin: linkDependentDisableLogin,
-            addToFamilyGroupIds: linkDependentFamilyGroupIds,
-          }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to link dependent");
-      }
-
-      setDependentOpen(false);
-      toast.success("Dependent linked successfully");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setDependentFormError(
-        err instanceof Error ? err.message : "Failed to link dependent",
-      );
-    } finally {
-      setDependentSaving(false);
-    }
-  };
-
-  const openParentLinkDialog = () => {
-    if (!member) return;
-    const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier);
-    setParentLinkSearch("");
-    setParentLinkSearchResults([]);
-    setParentLinkSearching(false);
-    setSelectedLinkParent(null);
-    setParentLinkInheritEmail(defaultSideEffects);
-    setParentLinkNotificationParentId("");
-    setParentLinkDisableLogin(defaultSideEffects);
-    setParentLinkFamilyGroupIds([]);
-    setParentLinkError("");
-    setParentLinkOpen(true);
-  };
-
-  const selectLinkParent = (candidate: LinkParentSearchResult) => {
-    if (!member) return;
-    const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier);
-    setSelectedLinkParent(candidate);
-    setParentLinkInheritEmail(defaultSideEffects);
-    setParentLinkNotificationParentId(defaultSideEffects ? candidate.id : "");
-    setParentLinkDisableLogin(defaultSideEffects);
-    setParentLinkFamilyGroupIds(
-      candidate.familyGroups.map((group) => group.id),
-    );
-    setParentLinkSearch("");
-    setParentLinkSearchResults([]);
-    setParentLinkError("");
-  };
-
-  const clearLinkParent = () => {
-    if (!member) return;
-    const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier);
-    setSelectedLinkParent(null);
-    setParentLinkInheritEmail(defaultSideEffects);
-    setParentLinkNotificationParentId("");
-    setParentLinkDisableLogin(defaultSideEffects);
-    setParentLinkFamilyGroupIds([]);
-    setParentLinkSearch("");
-    setParentLinkSearchResults([]);
-    setParentLinkError("");
-  };
-
-  const toggleParentLinkFamilyGroup = (
-    familyGroupId: string,
-    checked: boolean,
-  ) => {
-    setParentLinkFamilyGroupIds((current) =>
-      checked
-        ? Array.from(new Set([...current, familyGroupId]))
-        : current.filter((idValue) => idValue !== familyGroupId),
-    );
-  };
-
-  const handleLinkParent = async () => {
-    if (!member || !selectedLinkParent) return;
-
-    setParentLinkSaving(true);
-    setParentLinkError("");
-    setRelationshipError("");
-
-    try {
-      const res = await fetch(
-        `/api/admin/members/${selectedLinkParent.id}/dependents/link`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            memberId: member.id,
-            inheritEmail:
-              Boolean(parentLinkNotificationParentId) || parentLinkInheritEmail,
-            inheritEmailFromId: parentLinkNotificationParentId || null,
-            disableLogin: parentLinkDisableLogin,
-            addToFamilyGroupIds: parentLinkFamilyGroupIds,
-          }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to link parent");
-      }
-
-      setParentLinkOpen(false);
-      toast.success("Parent linked successfully");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setParentLinkError(
-        err instanceof Error ? err.message : "Failed to link parent",
-      );
-    } finally {
-      setParentLinkSaving(false);
-    }
-  };
-
-  const handleUnlinkDependent = async (
-    parentId: string,
-    dependentId: string,
-    dependentName: string,
-  ) => {
-    if (!confirm(`Remove the parent/dependant link for ${dependentName}?`))
-      return;
-
-    setUnlinkingDependentId(dependentId);
-    setRelationshipError("");
-
-    try {
-      const res = await fetch(
-        `/api/admin/members/${parentId}/dependents/${dependentId}`,
-        {
-          method: "DELETE",
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to remove parent/dependant link");
-      }
-
-      toast.success("Parent/dependant link removed");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setRelationshipError(
-        err instanceof Error
-          ? err.message
-          : "Failed to remove parent/dependant link",
-      );
-    } finally {
-      setUnlinkingDependentId(null);
-    }
-  };
-
-  const updateDependentAddressFields = (
-    patch: Partial<MemberAddressValues>,
-  ) => {
-    setDependentForm((current) => ({ ...current, ...patch }));
-  };
-
-  const handleXeroSearch = async () => {
-    if (!xeroSearchQuery || xeroSearchQuery.length < 2) return;
-    setXeroSearching(true);
-    setXeroError("");
-    try {
-      const contacts = await searchXeroContacts(xeroSearchQuery);
-      setXeroSearchResults(contacts);
-    } catch (err) {
-      setXeroSearchResults([]);
-      setXeroError(err instanceof Error ? err.message : "Search failed");
-    } finally {
-      setXeroSearching(false);
-    }
-  };
-
-  const handleXeroLink = async (xeroContactId: string) => {
-    setXeroLinking(true);
-    setXeroError("");
-    try {
-      await linkMemberXeroContact(id, xeroContactId);
-      setXeroChoice("");
-      setSelectedXeroContactId("");
-      setXeroSearchQuery("");
-      setXeroSearchResults([]);
-      setXeroSearchOpen(false);
-      toast.success("Member linked to Xero contact");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setXeroError(err instanceof Error ? err.message : "Link failed");
-    } finally {
-      setXeroLinking(false);
-    }
-  };
-
-  const handleXeroUnlink = async () => {
-    setXeroUnlinking(true);
-    setXeroError("");
-    try {
-      await unlinkMemberXeroContact(id);
-      setXeroChoice("");
-      setSelectedXeroContactId("");
-      setXeroSearchQuery("");
-      setXeroSearchResults([]);
-      resetXeroEntranceFeeDecision();
-      toast.success("Member unlinked from Xero");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setXeroError(err instanceof Error ? err.message : "Unlink failed");
-    } finally {
-      setXeroUnlinking(false);
-    }
-  };
-
-  const applyXeroPushSuccess = async (
-    data: XeroPushResponse,
-    createEntranceFeeInvoice: boolean,
-  ) => {
-    setXeroChoice("");
-    setSelectedXeroContactId("");
-    setXeroSearchQuery("");
-    setXeroSearchResults([]);
-    setXeroCreateOpen(false);
-    setXeroCreateDecisionOpen(false);
-    setXeroCreateDecisionResults([]);
-    setXeroDecisionContactId("");
-    setXeroDecisionError("");
-    toast.success(createEntranceFeeInvoice && data.entranceFeeInvoiceQueued
-        ? "Member created in Xero and entrance fee invoice queued"
-        : "Member created in Xero",);
-
-    const warning =
-      typeof data.warning === "string"
-        ? data.warning
-        : createEntranceFeeInvoice &&
-            typeof data.entranceFeeInvoiceMessage === "string" &&
-            !data.entranceFeeInvoiceQueued
-          ? data.entranceFeeInvoiceMessage
-          : "";
-
-    if (warning) {
-      setXeroError(warning);
-    }
-
-    setLoading(true);
-    await fetchMember();
-  };
-
-  const handleXeroPush = async (forceCreate = false) => {
-    setXeroPushing(true);
-    setXeroError("");
-    if (forceCreate) {
-      setXeroDecisionError("");
-    }
-    try {
-      const entranceFeeInvoiceOptions = buildXeroEntranceFeeInvoiceOptions();
-      const result = await pushMemberToXero(id, {
-        ...entranceFeeInvoiceOptions,
-        forceCreate,
-      });
-      if (result.status === "needsDecision") {
-        setXeroCreateOpen(false);
-        setXeroCreateDecisionResults(result.suggestedContacts);
-        setXeroDecisionContactId(
-          result.suggestedContacts.find((contact) => !contact.isLinked)
-            ?.contactId ?? "",
-        );
-        setXeroDecisionError("");
-        setXeroCreateDecisionOpen(true);
-        return;
-      }
-
-      await applyXeroPushSuccess(
-        result.data,
-        entranceFeeInvoiceOptions.createEntranceFeeInvoice,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Push failed";
-      if (forceCreate) {
-        setXeroDecisionError(message);
-      } else {
-        setXeroError(message);
-      }
-    } finally {
-      setXeroPushing(false);
-    }
-  };
-
-  const handleXeroDecisionLink = async () => {
-    if (!xeroDecisionContactId) return;
-
-    setXeroLinking(true);
-    setXeroDecisionError("");
-    try {
-      await linkMemberXeroContact(id, xeroDecisionContactId);
-      setXeroChoice("");
-      setSelectedXeroContactId("");
-      setXeroSearchQuery("");
-      setXeroSearchResults([]);
-      setXeroCreateDecisionOpen(false);
-      setXeroCreateDecisionResults([]);
-      setXeroDecisionContactId("");
-      toast.success("Member linked to Xero contact");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setXeroDecisionError(err instanceof Error ? err.message : "Link failed");
-    } finally {
-      setXeroLinking(false);
-    }
-  };
-
-  const handleCreateDeleteRequest = async () => {
-    if (!member) return;
-    setDeleteSubmitting(true);
-    setDeleteError("");
-    try {
-      const res = await fetch(
-        `/api/admin/members/${member.id}/lifecycle/delete`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason: deleteReason }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to create delete request");
-      }
-
-      setDeleteDialogOpen(false);
-      setDeleteReason("");
-      toast.success("Delete request submitted for second-admin review");
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setDeleteError(
-        err instanceof Error ? err.message : "Failed to create delete request",
-      );
-    } finally {
-      setDeleteSubmitting(false);
-    }
-  };
-
-  const handleReviewDeleteRequest = async () => {
-    if (!deleteReviewDialog) return;
-    setDeleteReviewSubmitting(true);
-    setDeleteReviewError("");
-    try {
-      const res = await fetch(
-        `/api/admin/member-lifecycle-action-requests/${deleteReviewDialog.request.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: deleteReviewDialog.action,
-            note: deleteReviewNote || undefined,
-          }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to review delete request");
-      }
-
-      setDeleteReviewDialog(null);
-      setDeleteReviewNote("");
-      toast.success(deleteReviewDialog.action === "approve"
-          ? "Member deleted and snapshot retained"
-          : "Delete request rejected",);
-      if (deleteReviewDialog.action === "approve") {
-        router.push(backHref);
-        return;
-      }
-      setLoading(true);
-      await fetchMember();
-    } catch (err) {
-      setDeleteReviewError(
-        err instanceof Error ? err.message : "Failed to review delete request",
-      );
-    } finally {
-      setDeleteReviewSubmitting(false);
-    }
-  };
 
   const isSelf = session?.user?.id === id;
   const actorIsFullAdmin = isFullAdmin({
@@ -1645,25 +410,6 @@ export default function MemberDetailPage({
     !member.archivedAt &&
     !openCancellationRequest,
   );
-
-  const openLinkXero = () => {
-    setXeroSearchOpen(true);
-    setXeroSearchQuery("");
-    setXeroSearchResults([]);
-    setXeroError("");
-  };
-
-  const openCreateXero = () => {
-    resetXeroEntranceFeeDecision();
-    setXeroCreateOpen(true);
-    setXeroError("");
-  };
-
-  // Suppress unused-variable warnings for state that is still wired into other
-  // computations via the closure (inherit flags participate in the inheritEmail
-  // request body construction even though they're read inline above).
-  void linkDependentInheritEmail;
-  void parentLinkInheritEmail;
 
   return (
     <div className="space-y-6">

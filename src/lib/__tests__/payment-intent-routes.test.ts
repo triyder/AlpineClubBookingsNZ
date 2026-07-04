@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
   markBookingPaymentSucceeded: vi.fn(),
   markBookingSetupIntentSucceeded: vi.fn(),
   logAudit: vi.fn(),
@@ -36,6 +37,11 @@ vi.mock("@/lib/stripe", () => ({
   findOrCreateCustomer: vi.fn(),
   getPaymentIntent: vi.fn(),
   getSetupIntent: vi.fn(),
+}));
+
+vi.mock("@/lib/booking-payment-cleanup", () => ({
+  queueSupersededPrimaryIntentCancellations:
+    mocks.queueSupersededPrimaryIntentCancellations,
 }));
 
 vi.mock("@/lib/payment-reconciliation", () => ({
@@ -134,6 +140,7 @@ describe("payment intent routes", () => {
       id: "pi_existing",
       client_secret: "cs_existing",
       status: "requires_payment_method",
+      amount: 12500,
     });
 
     const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
@@ -148,6 +155,65 @@ describe("payment intent routes", () => {
     expect(res.status).toBe(200);
     expect(data.clientSecret).toBe("cs_existing");
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("supersedes a stale-amount intent and mints a fresh one at the current price (#1161)", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 15000,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      payment: {
+        id: "pay-1",
+        stripePaymentIntentId: "pi_stale",
+        status: "PENDING",
+      },
+    });
+    // Minted at $125 before the member edited the unpaid booking to $150.
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_stale",
+      client_secret: "cs_stale",
+      status: "requires_payment_method",
+      amount: 12500,
+    });
+    mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_1" });
+    mockStripeCreatePaymentIntent.mockResolvedValue({
+      id: "pi_fresh",
+      client_secret: "cs_fresh",
+      amount: 15000,
+    });
+    mockPrisma.payment.upsert.mockResolvedValue({ id: "pay-1" });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // The stale secret is never disclosed; the fresh intent carries the
+    // current price and the stale one is queued for cancellation.
+    expect(data.clientSecret).toBe("cs_fresh");
+    expect(mocks.queueSupersededPrimaryIntentCancellations).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        bookingId: "booking-1",
+        paymentId: "pay-1",
+        newFinalPriceCents: 15000,
+      },
+    );
+    expect(mockStripeCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 15000 }),
+    );
   });
 
   it("does not disclose an existing payment intent client secret to a non-owner", async () => {

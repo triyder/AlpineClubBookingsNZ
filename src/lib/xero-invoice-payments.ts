@@ -148,12 +148,15 @@ export async function createXeroRefundPaymentForInvoice(
     refundAmountCents: params.refundAmountCents,
     bankCode,
   });
+  // Key on the credit note id (#1162): equal-amount refund deltas each settle a
+  // distinct credit note, so amount alone would collide onto one payment key.
   const idempotencyKey = buildXeroIdempotencyKey(
     "payment",
     params.paymentId,
     "refund-payment",
     params.refundAmountCents,
-    "v1"
+    params.creditNoteId,
+    "v2"
   );
   const operation = await startXeroSyncOperation({
     direction: "OUTBOUND",

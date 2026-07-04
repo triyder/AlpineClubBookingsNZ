@@ -19,9 +19,28 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import dynamic from "next/dynamic";
 import { KpiStatCard } from "@/components/finance/charts/kpi-stat-card";
-import { MixPieChart } from "@/components/finance/charts/mix-pie-chart";
-import { TrendChart } from "@/components/finance/charts/trend-chart";
+
+// Charts load on demand (#1147): recharts is ~139kB gz, so the chart
+// components mount after the dashboard shell instead of blocking First Load
+// JS. Placeholders match the charts' default 300px height for layout
+// stability.
+const chartLoading = () => <div style={{ height: 300 }} />;
+const MixPieChart = dynamic(
+  () =>
+    import("@/components/finance/charts/mix-pie-chart").then(
+      (m) => m.MixPieChart
+    ),
+  { ssr: false, loading: chartLoading }
+);
+const TrendChart = dynamic(
+  () =>
+    import("@/components/finance/charts/trend-chart").then(
+      (m) => m.TrendChart
+    ),
+  { ssr: false, loading: chartLoading }
+);
 import {
   FINANCE_DASHBOARD_COMPARE_LABELS,
   FINANCE_DASHBOARD_COMPARE_OPTIONS,

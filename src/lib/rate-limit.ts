@@ -5,7 +5,9 @@
  * so multiple replicas and blue/green slots share the same window (#1039
  * item 4). When the database is unreachable the limiter falls back to the
  * original per-process in-memory counters — degraded to per-instance limiting
- * rather than failing the request.
+ * rather than failing the request. Auth-sensitive limiters fall back at a
+ * reduced budget (limit / DEGRADED_AUTH_LIMIT_DIVISOR, issue #1142) so the
+ * degraded window cannot be used to multiply a brute-force budget.
  */
 
 import { prisma } from "@/lib/prisma";
@@ -50,7 +52,25 @@ export interface RateLimitConfig {
   limit: number;
   /** Window duration in seconds */
   windowSeconds: number;
+  /**
+   * Credential-guessing or public-abuse surface (login, password reset,
+   * two-factor codes, public forms). When the shared Postgres counter is
+   * unavailable these limiters do not fall back at full strength: the
+   * per-process fallback runs at limit / DEGRADED_AUTH_LIMIT_DIVISOR
+   * (issue #1142) so an attacker cannot multiply their brute-force budget
+   * by degrading the store or spreading across replicas. Fail-closed was
+   * rejected: a limiter-store-local fault (table lock, migration drift)
+   * must not turn into a full login outage while auth queries still work.
+   */
+  authSensitive?: boolean;
 }
+
+/**
+ * Divisor applied to an auth-sensitive limiter's budget while running on the
+ * per-process fallback. 4 covers the blue/green double-slot deployment plus
+ * headroom for process restarts resetting in-memory counters mid-window.
+ */
+export const DEGRADED_AUTH_LIMIT_DIVISOR = 4;
 
 export interface RateLimitResult {
   success: boolean;
@@ -66,9 +86,18 @@ export interface RateLimitResult {
  */
 export function checkRateLimitInMemory(
   config: RateLimitConfig,
-  key: string
+  key: string,
+  options: { degraded?: boolean } = {}
 ): RateLimitResult {
   ensureCleanup();
+
+  // Degraded mode (shared store unreachable): auth-sensitive limiters run at
+  // a fraction of their budget because per-process counting no longer sees
+  // traffic hitting other replicas — see RateLimitConfig.authSensitive.
+  const effectiveLimit =
+    options.degraded && config.authSensitive
+      ? Math.max(1, Math.floor(config.limit / DEGRADED_AUTH_LIMIT_DIVISOR))
+      : config.limit;
 
   const storeKey = `${config.id}:${key}`;
   const now = Date.now();
@@ -79,9 +108,9 @@ export function checkRateLimitInMemory(
     const resetAt = now + config.windowSeconds * 1000;
     store.set(storeKey, { count: 1, resetAt });
     return {
-      success: true,
-      limit: config.limit,
-      remaining: config.limit - 1,
+      success: effectiveLimit >= 1,
+      limit: effectiveLimit,
+      remaining: Math.max(0, effectiveLimit - 1),
       resetAt,
     };
   }
@@ -89,10 +118,10 @@ export function checkRateLimitInMemory(
   // Within window - increment
   entry.count++;
 
-  if (entry.count > config.limit) {
+  if (entry.count > effectiveLimit) {
     return {
       success: false,
-      limit: config.limit,
+      limit: effectiveLimit,
       remaining: 0,
       resetAt: entry.resetAt,
     };
@@ -100,8 +129,8 @@ export function checkRateLimitInMemory(
 
   return {
     success: true,
-    limit: config.limit,
-    remaining: config.limit - entry.count,
+    limit: effectiveLimit,
+    remaining: effectiveLimit - entry.count,
     resetAt: entry.resetAt,
   };
 }
@@ -164,11 +193,11 @@ export async function checkRateLimit(
     ) {
       lastRateLimitDbErrorLogAt = Date.now();
       logger.error(
-        { err, limiterId: config.id },
+        { err, limiterId: config.id, authSensitive: config.authSensitive === true },
         "Shared rate-limit store unavailable; falling back to per-process limiting"
       );
     }
-    return checkRateLimitInMemory(config, key);
+    return checkRateLimitInMemory(config, key, { degraded: true });
   }
 }
 
@@ -248,15 +277,15 @@ export async function applyRateLimit(
 // Pre-configured rate limiters for common routes
 export const rateLimiters = {
   /** Login: 10 attempts per 15 minutes */
-  login: { id: "login", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
+  login: { id: "login", limit: 10, windowSeconds: 15 * 60, authSensitive: true } as RateLimitConfig,
   /** Register: 5 attempts per hour */
-  register: { id: "register", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  register: { id: "register", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Membership application: 3 submissions per hour */
-  membershipApplication: { id: "membership-application", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
+  membershipApplication: { id: "membership-application", limit: 3, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Password reset request: 5 per hour */
-  forgotPassword: { id: "forgot-password", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  forgotPassword: { id: "forgot-password", limit: 5, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Password reset submission: 10 per hour */
-  resetPassword: { id: "reset-password", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  resetPassword: { id: "reset-password", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** General API: 100 per minute */
   api: { id: "api", limit: 100, windowSeconds: 60 } as RateLimitConfig,
   /** Booking creation: 20 per hour */
@@ -266,9 +295,9 @@ export const rateLimiters = {
   /** Public address autocomplete proxy: 90 requests per minute */
   addressAutocomplete: { id: "address-autocomplete", limit: 90, windowSeconds: 60 } as RateLimitConfig,
   /** Contact form: 10 per hour */
-  contact: { id: "contact", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  contact: { id: "contact", limit: 10, windowSeconds: 60 * 60, authSensitive: true } as RateLimitConfig,
   /** Lodge hut leader PIN login: 5 attempts per minute */
-  lodgePinLogin: { id: "lodge-pin-login", limit: 5, windowSeconds: 60 } as RateLimitConfig,
+  lodgePinLogin: { id: "lodge-pin-login", limit: 5, windowSeconds: 60, authSensitive: true } as RateLimitConfig,
   /** Resend verification email: 3 per hour */
   resendVerification: { id: "resend-verification", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Request email change: 3 per hour */
@@ -276,7 +305,7 @@ export const rateLimiters = {
   /** Token-bearing verification links: 10 hits per 15 minutes */
   verificationToken: { id: "verification-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Two-factor code verification and email-code sends: 10 attempts per 10 minutes */
-  twoFactorVerify: { id: "two-factor-verify", limit: 10, windowSeconds: 10 * 60 } as RateLimitConfig,
+  twoFactorVerify: { id: "two-factor-verify", limit: 10, windowSeconds: 10 * 60, authSensitive: true } as RateLimitConfig,
   /** Guest chore token routes: 20 hits per 15 minutes */
   guestChoreToken: { id: "guest-chore-token", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Family group join request: 3 per hour */

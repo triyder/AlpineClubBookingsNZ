@@ -543,6 +543,10 @@ export async function register() {
       }
       isPruningRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "data-pruning", status: "in_progress" },
+        sentryCronMonitorConfig("30 3 * * *", { checkinMargin: 10, maxRuntime: 60 })
+      );
       try {
         const { pruneCronRuns } = await import("./lib/cron-job-run");
         const { pruneWebhookLogs } = await import("./lib/webhook-log");
@@ -573,11 +577,14 @@ export async function register() {
             archivePruned: auditRetention.archivePrune.pruned,
           },
         });
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "data-pruning" }, "Error in data pruning");
         Sentry.captureException(err);
         await recordCronRun("data-pruning", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "error" });
       } finally {
         isPruningRunning = false;
       }
@@ -594,6 +601,10 @@ export async function register() {
       }
       isDraftCleanupRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "draft-cleanup", status: "in_progress" },
+        sentryCronMonitorConfig("0 4 * * *", { checkinMargin: 10, maxRuntime: 30 })
+      );
       try {
         const expiredBefore = new Date();
         const cleanup = await prisma.$transaction(async (tx) => {
@@ -628,10 +639,13 @@ export async function register() {
 
         logger.info({ job: "draft-cleanup", ...cleanup }, "Draft cleanup complete");
         await recordCronRun("draft-cleanup", startedAt, "SUCCESS", cleanup);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "draft-cleanup", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "draft-cleanup" }, "Failed to delete expired draft bookings");
         await recordCronRun("draft-cleanup", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "draft-cleanup", status: "error" });
       } finally {
         isDraftCleanupRunning = false;
       }
@@ -788,6 +802,10 @@ export async function register() {
       }
       isAdminDigestRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "admin-digest", status: "in_progress" },
+        sentryCronMonitorConfig("30 7 * * *", { checkinMargin: 10, maxRuntime: 15 })
+      );
       logger.info({ job: "admin-digest" }, "Sending admin daily digest");
 
       try {
@@ -795,11 +813,14 @@ export async function register() {
         const result = await sendAdminDigest();
         logger.info({ job: "admin-digest", ...result }, "Admin daily digest complete");
         await recordCronRun("admin-digest", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "admin-digest", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "admin-digest" }, "Error in admin daily digest");
         Sentry.captureException(err);
         await recordCronRun("admin-digest", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "admin-digest", status: "error" });
       } finally {
         isAdminDigestRunning = false;
       }
@@ -853,6 +874,10 @@ export async function register() {
       }
       isCompleteBookingsRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "complete-bookings", status: "in_progress" },
+        sentryCronMonitorConfig("0 1 * * *", { checkinMargin: 10, maxRuntime: 30 })
+      );
       logger.info({ job: "complete-bookings" }, "Transitioning PAID bookings to COMPLETED");
 
       try {
@@ -860,11 +885,14 @@ export async function register() {
         const result = await completeBookings();
         logger.info({ job: "complete-bookings", ...result }, "Complete bookings cron finished");
         await recordCronRun("complete-bookings", startedAt, "SUCCESS", result as unknown as Record<string, unknown>);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "complete-bookings", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "complete-bookings" }, "Error in complete bookings cron");
         Sentry.captureException(err);
         await recordCronRun("complete-bookings", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "complete-bookings", status: "error" });
       } finally {
         isCompleteBookingsRunning = false;
       }
@@ -881,6 +909,10 @@ export async function register() {
       }
       isHutLeaderAutoAssignRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "hut-leader-auto-assign", status: "in_progress" },
+        sentryCronMonitorConfig("0 6 * * *", { checkinMargin: 10, maxRuntime: 15 })
+      );
       logger.info({ job: "hut-leader-auto-assign" }, "Running hut leader auto-assign");
 
       try {
@@ -888,11 +920,14 @@ export async function register() {
         const result = await autoAssignHutLeaders();
         logger.info({ job: "hut-leader-auto-assign", ...result }, "Hut leader auto-assign complete");
         await recordCronRun("hut-leader-auto-assign", startedAt, "SUCCESS", result as unknown as Record<string, unknown>);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "hut-leader-auto-assign", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "hut-leader-auto-assign" }, "Error in hut leader auto-assign");
         Sentry.captureException(err);
         await recordCronRun("hut-leader-auto-assign", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "hut-leader-auto-assign", status: "error" });
       } finally {
         isHutLeaderAutoAssignRunning = false;
       }
@@ -909,6 +944,10 @@ export async function register() {
       }
       isAgeUpRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "age-up", status: "in_progress" },
+        sentryCronMonitorConfig("30 6 * * *", { checkinMargin: 10, maxRuntime: 30 })
+      );
       logger.info({ job: "age-up" }, "Checking for members who have turned 18");
 
       try {
@@ -916,11 +955,14 @@ export async function register() {
         const result = await checkAgeUpMembers();
         logger.info({ job: "age-up", ...result }, "Age-up check complete");
         await recordCronRun("age-up", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "age-up", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "age-up" }, "Error in age-up check");
         Sentry.captureException(err);
         await recordCronRun("age-up", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "age-up", status: "error" });
       } finally {
         isAgeUpRunning = false;
       }
@@ -939,6 +981,10 @@ export async function register() {
       }
       isCreditReconRunning = true;
       const startedAt = new Date();
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "credit-reconciliation", status: "in_progress" },
+        sentryCronMonitorConfig("0 5 * * *", { checkinMargin: 10, maxRuntime: 30 })
+      );
       logger.info({ job: "credit-reconciliation" }, "Starting credit balance reconciliation");
 
       try {
@@ -946,11 +992,14 @@ export async function register() {
         const result = await reconcileCreditBalances();
         logger.info({ job: "credit-reconciliation", ...result }, "Credit reconciliation complete");
         await recordCronRun("credit-reconciliation", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "credit-reconciliation", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "credit-reconciliation" }, "Error in credit reconciliation");
         Sentry.captureException(err);
         await recordCronRun("credit-reconciliation", startedAt, "FAILURE", undefined, message);
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "credit-reconciliation", status: "error" });
       } finally {
         isCreditReconRunning = false;
       }

@@ -281,7 +281,10 @@ export function EditBookingPanel({
   }, [booking.bookingMemberId, booking.viewerRole]);
 
   // Check if anything has changed
-  const remainingGuests = booking.guests.filter((g) => !removedGuestIds.has(g.id));
+  const remainingGuests = useMemo(
+    () => booking.guests.filter((g) => !removedGuestIds.has(g.id)),
+    [booking.guests, removedGuestIds],
+  );
   const canEditPerGuestDates = !isInProgressEdit && totalGuestCountCandidate() > 1;
   function totalGuestCountCandidate() {
     return remainingGuests.length + addedGuests.length;

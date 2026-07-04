@@ -1,7 +1,9 @@
 # Email Message Audit
 
 This is an audit of outbound email messages in the current repository state.
-The main sender is `src/lib/email.ts`; most HTML bodies are in
+The main senders live under `src/lib/email/` (with `src/lib/email.ts` kept as a
+re-export facade); the core `sendEmail` transport is in `src/lib/email/core.ts`
+and most HTML bodies are in
 `src/lib/email-templates.ts`. Direct one-off senders also exist in the contact
 route, refund appeal admin route, admin bulk communications route, and email
 retry cron.

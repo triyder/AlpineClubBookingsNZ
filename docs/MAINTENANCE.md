@@ -162,7 +162,7 @@ extraction over expanding this table casually.
 | `src/lib/xero-booking-repair.ts` | 2682 | Accepted as-is for now: operator repair tool, documented separately, not normal request-path code. |
 | `src/lib/xero-operation-outbox.ts` | 2028 | Queued for future split when queue dispatch, release, or retry policy changes next land. |
 | `src/lib/email-templates.ts` | 2006 | Accepted as-is for now: central template catalogue; split only with a template-registry change. |
-| `src/lib/email.ts` | 1936 | Queued for future split when transport, registry, or recipient-policy work next lands. |
+| `src/lib/email.ts` | 11 | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). Largest module `src/lib/email/admin-alerts.ts` (~812 LOC) intentionally keeps every `sendAdmin*` alert together; split it further only if the admin-alert family changes next. |
 | `src/lib/xero-hardening.ts` | 1606 | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. |
 | `src/lib/finance-sync-xero-datasets.ts` | 1573 | Queued for future split by finance snapshot family when finance dataset work resumes. |
 | `src/app/(admin)/admin/members/[id]/page.tsx` | 1747 | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
@@ -189,6 +189,95 @@ exploratory work; use a staging database and Xero demo tenant where possible.
 `XERO_AMOUNT_MISMATCH` findings are manual-review only: the tool reports stored
 Xero operation/link amount evidence that disagrees with local cents, but it
 does not auto-adjust financial amounts.
+
+## Quarterly Backup Restore Drill
+
+A backup you have never restored is a hope, not a backup. `scripts/backup-restore-drill.sh`
+is a self-contained fire drill that proves a `pg_dump` artifact can actually be
+restored, that Prisma migrations still run forward on the restored data, and
+that the restored rows still satisfy the money-in-integer-cents invariants.
+
+The drill produces the same artifact shape as the automated backup pipeline
+(`src/lib/backup.ts`): a plain `pg_dump` piped through `gzip` (a `.sql.gz`
+file). All work happens in a throwaway Postgres 16 container bound to
+`127.0.0.1:55441`. **The drill never connects to production Postgres on port
+5432, never fetches from S3, and never reads live provider credentials.**
+
+### When to run it
+
+- Every quarter, as a standing operations task.
+- After any change to the backup pipeline (`src/lib/backup.ts`, the backup cron,
+  the `BACKUP_S3_*` configuration, the database schema, or the Postgres major
+  version).
+- Any time you need confidence that a specific backup file is restorable.
+
+### Local self-contained mode (default)
+
+No arguments, no production data. The script starts the container, seeds a
+source database, dumps it, restores the dump into a second database, runs
+`prisma migrate deploy` forward on the restore, and checks every assertion:
+
+```bash
+bash scripts/backup-restore-drill.sh
+```
+
+Requirements: Docker with the `postgres:16` image available, plus the repo
+dependencies installed (`npm ci`). The container is removed on exit even if the
+drill fails. The script prints a PASS/FAIL summary suitable for pasting into an
+operations log.
+
+### Operator mode with a real backup (`--from-dump`)
+
+Use this to prove that an actual production backup restores. **You** obtain the
+dump file first; the script never touches S3 itself.
+
+To fetch a backup safely, use read-only S3 credentials from a workstation (never
+the production host) to copy one object out of the backup bucket. The backups
+live under the `tacbookings_s3backup/` prefix of the bucket named in
+`BACKUP_S3_BUCKET`, in the region from `BACKUP_S3_REGION` (default
+`ap-southeast-2`), using the `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY`
+credentials. Copy a single `.sql.gz` object to a local scratch path — do not
+print or paste credential values, and do not run this on a production host:
+
+```bash
+# Values come from your operator secret store; never echo them.
+aws s3 cp "s3://$BACKUP_S3_BUCKET/tacbookings_s3backup/<backup-file>.sql.gz" \
+  /tmp/restore-check.sql.gz --region "$BACKUP_S3_REGION"
+
+bash scripts/backup-restore-drill.sh --from-dump /tmp/restore-check.sql.gz
+```
+
+In `--from-dump` mode the source-fidelity comparisons are reported as `SKIP`
+(there is no local source to compare against); the sentinel and migration
+assertions still run against the restored database. Delete the downloaded dump
+when you are done.
+
+### What the assertions prove
+
+- **Restore fidelity** (local mode only): row counts for `Member`, `Booking`,
+  `Payment`, `BookingGuest`, and `BookingGuestNight` match the source exactly,
+  and `SUM("finalPriceCents")` over `Booking` and `SUM("amountCents")` over
+  `Payment` match the source exactly as integers. This proves the dump/restore
+  round-trip loses no rows and no cents.
+- **Sentinel invariants** (both modes): the restored database has zero `Booking`
+  rows with a `NULL` or negative `finalPriceCents` and zero `Payment` rows with a
+  `NULL` or negative `amountCents`. This proves the money-in-integer-cents
+  invariant survives the round-trip.
+- **Migration health** (both modes): after `prisma migrate deploy`, the
+  `_prisma_migrations` table has zero rows still in progress (`finished_at IS
+  NULL AND rolled_back_at IS NULL`). This proves migrations run forward cleanly
+  on top of the restored data.
+
+### On failure
+
+A failing drill is a **backup-pipeline incident**, not a routine test flake:
+
+1. Do **not** overwrite, prune, or re-run the backup job — preserve every
+   existing backup artifact as evidence.
+2. Capture the full drill summary output.
+3. Escalate to the owner before taking any corrective action on the backup
+   pipeline. Restoring or repairing production data is an owner-approved,
+   high-risk operation.
 
 ## Public Reference Release Checklist
 

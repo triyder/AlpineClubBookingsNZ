@@ -53,9 +53,14 @@ export default function BookingRequestPage() {
 
   const validGuests = guests.filter((g) => g.firstName.trim() && g.lastName.trim());
   const datesValid = Boolean(checkIn && checkOut && checkOut > checkIn);
+  // The quote refetch is keyed on the serialized guest list, not the array
+  // identity: `validGuests` is a fresh filter result every render, so using it
+  // directly would re-arm the debounce timer on unrelated re-renders.
+  const validGuestsJson = JSON.stringify(validGuests);
 
   const fetchQuote = useCallback(async () => {
-    if (!showPricing || !datesValid || validGuests.length === 0) {
+    const quoteGuests = JSON.parse(validGuestsJson) as RequestGuest[];
+    if (!showPricing || !datesValid || quoteGuests.length === 0) {
       setIndicativePriceCents(null);
       return;
     }
@@ -64,7 +69,7 @@ export default function BookingRequestPage() {
       const res = await fetch("/api/booking-requests/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ checkIn, checkOut, guests: validGuests }),
+        body: JSON.stringify({ checkIn, checkOut, guests: quoteGuests }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -77,8 +82,7 @@ export default function BookingRequestPage() {
     } finally {
       setQuoteLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPricing, checkIn, checkOut, JSON.stringify(validGuests)]);
+  }, [showPricing, datesValid, checkIn, checkOut, validGuestsJson]);
 
   useEffect(() => {
     const timer = setTimeout(fetchQuote, 400);

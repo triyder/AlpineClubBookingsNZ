@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
+import { sumCoveredRefundCreditNoteCents } from "@/lib/xero-sync";
 import {
   STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES,
   STALE_RUNNING_XERO_OPERATION_MINUTES,
@@ -44,6 +45,8 @@ export interface RefundMissingCreditNote {
   memberName: string;
   memberEmail: string;
   refundedAmountCents: number;
+  // Refunded cents not yet covered by any active refund credit note (#1162).
+  uncoveredCents: number;
   refundedAt: string;
 }
 
@@ -214,9 +217,12 @@ export async function getMissingXeroInvoiceBookings(options?: {
  * Issue #818: detect refunds whose Xero credit-note follow-up never completed.
  * Local-only signal (no live Xero calls): a Stripe-source payment that was
  * invoiced (xeroInvoiceId set, so a credit note is expected), has been refunded
- * (refundedAmountCents > 0), still has no xeroRefundCreditNoteId, and has not
- * changed for longer than the grace window. This surfaces the "money refunded
- * but accounting follow-up failed" divergence the operator otherwise can't see.
+ * (refundedAmountCents > 0), and has not changed for longer than the grace
+ * window. Refunds can settle across several per-delta credit notes (#1162), so
+ * rather than a single `xeroRefundCreditNoteId != null` check we compare the
+ * refunded amount against the cents already covered by active refund credit
+ * notes and flag only the still-uncovered remainder. This surfaces the "money
+ * refunded but accounting follow-up failed" divergence the operator can't see.
  */
 export async function getRefundsMissingXeroCreditNotes(options?: {
   limit?: number;
@@ -231,7 +237,6 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     where: {
       source: "STRIPE",
       refundedAmountCents: { gt: 0 },
-      xeroRefundCreditNoteId: null,
       xeroInvoiceId: { not: null },
       updatedAt: { lt: graceThreshold },
     },
@@ -251,16 +256,24 @@ export async function getRefundsMissingXeroCreditNotes(options?: {
     orderBy: { updatedAt: "asc" },
   });
 
-  const formatted: RefundMissingCreditNote[] = payments.map((payment) => ({
-    paymentId: payment.id,
-    bookingId: payment.bookingId,
-    memberName: payment.booking?.member
-      ? `${payment.booking.member.firstName} ${payment.booking.member.lastName}`
-      : "Unknown",
-    memberEmail: payment.booking?.member?.email ?? "",
-    refundedAmountCents: payment.refundedAmountCents,
-    refundedAt: payment.updatedAt.toISOString(),
-  }));
+  const formatted: RefundMissingCreditNote[] = [];
+  for (const payment of payments) {
+    const coveredCents = await sumCoveredRefundCreditNoteCents(payment.id);
+    if (payment.refundedAmountCents <= coveredCents) {
+      continue;
+    }
+    formatted.push({
+      paymentId: payment.id,
+      bookingId: payment.bookingId,
+      memberName: payment.booking?.member
+        ? `${payment.booking.member.firstName} ${payment.booking.member.lastName}`
+        : "Unknown",
+      memberEmail: payment.booking?.member?.email ?? "",
+      refundedAmountCents: payment.refundedAmountCents,
+      uncoveredCents: payment.refundedAmountCents - coveredCents,
+      refundedAt: payment.updatedAt.toISOString(),
+    });
+  }
 
   return {
     count: formatted.length,

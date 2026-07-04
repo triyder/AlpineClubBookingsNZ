@@ -26,6 +26,7 @@ import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import { prisma } from "@/lib/prisma";
 import {
   createPaymentIntent,
@@ -389,7 +390,21 @@ export async function createPaymentIntentForPaymentLink(
       return { type: "alreadyPaid", paymentIntentId: existingIntent.id };
     }
 
-    if (existingIntent.client_secret && existingIntent.status !== "canceled") {
+    if (
+      existingIntent.status !== "canceled" &&
+      existingIntent.amount !== booking.finalPriceCents
+    ) {
+      // The booking was modified after this intent was minted (#1161): a
+      // stale client_secret would capture the old total. Queue the stale
+      // intent's cancellation and fall through to mint a fresh one.
+      if (booking.payment) {
+        await queueSupersededPrimaryIntentCancellations(prisma, {
+          bookingId: booking.id,
+          paymentId: booking.payment.id,
+          newFinalPriceCents: booking.finalPriceCents,
+        });
+      }
+    } else if (existingIntent.client_secret && existingIntent.status !== "canceled") {
       return {
         type: "clientSecret",
         clientSecret: existingIntent.client_secret,

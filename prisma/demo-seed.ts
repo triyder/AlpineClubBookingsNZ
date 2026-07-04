@@ -20,6 +20,7 @@
 import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import {
   ensureMemberAccessRoles,
   ensureMemberAccessRolesFromCompatibilityFields,
@@ -229,6 +230,9 @@ async function main() {
   assertLocalDatabase();
   await cleanup();
   console.log("Building demo data...");
+
+  // Demo data expects the seeded access-role definitions to exist.
+  await ensureAccessRoleDefinitions(prisma);
 
   // Need an admin to act as reviewer/approver on requests.
   const admin =

@@ -157,7 +157,12 @@ owner or an admin makes the election through the batch edit flow.
 Every modification path also applies the same lifecycle transitions: a
 PAYMENT_PENDING booking whose price drops to zero auto-pays with a zero-dollar
 payment (superseding and cancelling any outstanding primary PaymentIntents so a
-stale checkout tab cannot capture the pre-change amount), and the non-member
+stale checkout tab cannot capture the pre-change amount), any *other* price
+change supersedes pending primary intents stranded at the old amount (#1161 —
+and belt-and-braces, both intent-issuing endpoints refuse to hand out a
+client_secret whose amount no longer matches `finalPriceCents`, and the
+Stripe webhook alerts admins before refusing a capture that mismatches the
+booking's current total), and the non-member
 hold is recalculated from the remaining guests (all-member bookings clear the
 hold; bookings inside the hold window move PENDING → PAYMENT_PENDING). The same
 change must produce the same booking state regardless of which endpoint made
@@ -245,14 +250,22 @@ contact/link history where required.
 
 Access role, seasonal membership type, age tier, Xero contact-group rule, and
 committee assignment are separate axes. `MemberAccessRole` controls application
-access (`USER`, `ADMIN`, `ADMIN_READONLY`, `ADMIN_BOOKINGS`,
-`ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`, `FINANCE_USER`,
-`FINANCE_ADMIN`, `ORG`);
+access via the legacy enum values (`USER`, `ADMIN`, `ADMIN_READONLY`,
+`ADMIN_BOOKINGS`, `ADMIN_MEMBERSHIP`, `ADMIN_CONTENT`, `LODGE`,
+`FINANCE_USER`, `FINANCE_ADMIN`, `ORG`) and/or a link to a club-editable
+`AccessRoleDefinition` (label, description, per-area permission matrix).
+`ADMIN`, `LODGE`, `USER`, and `ORG` are protected system roles: code-defined,
+never editable or deletable, and Full Admin always keeps full permissions.
+Deleting a definition is blocked while any member holds it. Custom
+definition-backed roles are privileged for the Full-Admin
+separation-of-duties gate, exactly like the seeded bundles;
 `Member.role` is limited to `USER`, `ADMIN`, `LODGE`, `NON_MEMBER`, and
 `SCHOOL`, and `financeAccessLevel` is a compatibility field. Neither field may
 be used as a runtime permission gate or for new membership-category semantics.
-Bundled `ADMIN_*` rows are composed by the central admin permission matrix; they
-must not be projected into legacy `Member.role = ADMIN`.
+Bundled and definition-backed rows are composed by the central admin
+permission matrix (maximum level per area); they must not be projected into
+legacy `Member.role = ADMIN`. Finance portal access derives from the merged
+`finance` area level, never from the enum values or `financeAccessLevel`.
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.

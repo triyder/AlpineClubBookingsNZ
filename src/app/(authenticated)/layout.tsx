@@ -10,11 +10,11 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
-import { hasAdminPortalAccess } from "@/lib/admin-permissions";
 import {
-  hasAccessRole,
+  hasAdminPortalAccess,
   hasFinanceViewerAccess,
-} from "@/lib/access-roles";
+} from "@/lib/admin-permissions";
+import { hasAccessRole } from "@/lib/access-roles";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";

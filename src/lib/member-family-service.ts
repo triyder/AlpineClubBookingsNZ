@@ -88,7 +88,7 @@ type FamilyMemberRecord = MemberProfileCompletenessInput & {
   active: boolean;
   canLogin: boolean;
   role: string;
-  accessRoles?: Array<{ role: string }>;
+  accessRoles?: Array<{ role: string | null }>;
   inheritEmailFromId?: string | null;
   parent?: Parameters<typeof buildParentLinks>[0]["parent"];
   secondaryParent?: Parameters<typeof buildParentLinks>[0]["secondaryParent"];

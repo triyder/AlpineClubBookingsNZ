@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { PaymentSource, Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import {
   createXeroMembershipCancellationCreditNote,
@@ -12,6 +12,7 @@ import {
   failXeroSyncOperation,
   findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
+  sumCoveredRefundCreditNoteCents,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import {
@@ -493,6 +494,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
     where: { id: paymentId },
     select: {
       id: true,
+      source: true,
+      refundedAmountCents: true,
       xeroRefundCreditNoteId: true,
     },
   });
@@ -509,7 +512,31 @@ export async function enqueueXeroRefundCreditNoteOperation(
   }
 
   const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId);
-  if (canonicalLink) {
+  let noteAmountCents = refundAmountCents;
+  let watermarkCents = refundAmountCents;
+
+  if (payment.source === PaymentSource.STRIPE) {
+    // Stripe payments can be refunded in several steps, and each step needs its
+    // own credit note for the still-uncovered delta. `payment.refundedAmountCents`
+    // is the cumulative refund ledger and already includes this delta at enqueue
+    // time, so capping the note to `refundedAmountCents - coveredCents` yields
+    // this delta while replays of an already-covered state cap at zero.
+    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId);
+    noteAmountCents = Math.max(
+      0,
+      Math.min(refundAmountCents, payment.refundedAmountCents - coveredCents)
+    );
+    watermarkCents = coveredCents + noteAmountCents;
+    if (noteAmountCents <= 0) {
+      return {
+        queueOperationId: null,
+        message: "Refund credit notes already cover this payment's refunded amount.",
+      };
+    }
+  } else if (canonicalLink) {
+    // Non-Stripe callers (internet-banking cron, group-cancel) issue at most one
+    // refund per payment and re-enqueue on cron reruns; the single-note skip
+    // absorbs those replays by repointing at the existing note.
     if (payment.xeroRefundCreditNoteId !== canonicalLink.xeroObjectId) {
       await prisma.payment.update({
         where: { id: paymentId },
@@ -533,12 +560,15 @@ export async function enqueueXeroRefundCreditNoteOperation(
     };
   }
 
+  // The cumulative watermark distinguishes equal-amount Stripe deltas so each one
+  // gets its own note, while replays of the same state produce the same key and
+  // collide into the PENDING/RUNNING dedupe just below.
   const correlationKey = buildXeroIdempotencyKey(
     "payment",
     paymentId,
     "refund-credit-note",
-    refundAmountCents,
-    "v1"
+    payment.source === PaymentSource.STRIPE ? watermarkCents : noteAmountCents,
+    payment.source === PaymentSource.STRIPE ? "v2" : "v1"
   );
 
   const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
@@ -576,7 +606,8 @@ export async function enqueueXeroRefundCreditNoteOperation(
     correlationKey,
     requestPayload: {
       queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-      refundAmountCents,
+      refundAmountCents: noteAmountCents,
+      watermarkCents,
     },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
@@ -1874,6 +1905,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           {
             createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
             syncOperationId: queuedOperation.id,
+            watermarkCents: payload.watermarkCents,
           }
         );
       } else if (

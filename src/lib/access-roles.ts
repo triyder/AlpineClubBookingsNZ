@@ -41,9 +41,37 @@ export const ACCESS_ROLE_DESCRIPTIONS: Record<AppAccessRole, string> = {
   ORG: "Can use organisation self-service flows without member status.",
 };
 
+/**
+ * Per-area permission level fields as stored on AccessRoleDefinition rows.
+ * Declared here (not in admin-permissions.ts) so assignment-row inputs can
+ * carry a joined definition without an import cycle.
+ */
+export type AccessRoleDefinitionLevelFields = {
+  overviewLevel: "NONE" | "VIEW" | "EDIT";
+  bookingsLevel: "NONE" | "VIEW" | "EDIT";
+  membershipLevel: "NONE" | "VIEW" | "EDIT";
+  financeLevel: "NONE" | "VIEW" | "EDIT";
+  lodgeLevel: "NONE" | "VIEW" | "EDIT";
+  contentLevel: "NONE" | "VIEW" | "EDIT";
+  supportLevel: "NONE" | "VIEW" | "EDIT";
+};
+
+/**
+ * A MemberAccessRole row shape: `role` is the enum value (null for rows
+ * backed only by a custom definition); `roleDefinition` is the joined
+ * AccessRoleDefinition when the caller selected it.
+ */
+export type AccessRoleAssignmentInput = {
+  role: AppAccessRole | AccessRole | string | null;
+  roleDefinitionId?: string | null;
+  roleDefinition?:
+    | (Partial<AccessRoleDefinitionLevelFields> & { id?: string })
+    | null;
+};
+
 export type AccessRoleInput = {
   accessRoles?:
-    | ReadonlyArray<AppAccessRole | AccessRole | string | { role: AppAccessRole | AccessRole | string }>
+    | ReadonlyArray<AppAccessRole | AccessRole | string | AccessRoleAssignmentInput>
     | null;
   role?: Role | string | null;
   financeAccessLevel?: FinanceAccessLevel | string | null;
@@ -87,14 +115,6 @@ export function financeAccessLevelToAccessRoles(
   }
 }
 
-export function financeAccessLevelFromAccessRoles(
-  roles: ReadonlyArray<string>,
-): FinanceAccessLevel {
-  if (roles.includes("FINANCE_ADMIN")) return "MANAGER";
-  if (roles.includes("FINANCE_USER")) return "VIEWER";
-  return "NONE";
-}
-
 export function legacyRoleFromAccessRoles(
   roles: ReadonlyArray<string>,
 ): Role {
@@ -133,6 +153,29 @@ export function normalizeAssignableAccessRoles(
   return deduped.filter((role) => role !== "FINANCE_USER");
 }
 
+/**
+ * Token-aware variant of normalizeAssignableAccessRoles: keeps definition-id
+ * tokens as-is and applies the same canLogin clearing and legacy
+ * Treasurer-supersedes-Finance-Viewer rule to the enum tokens. Callers must
+ * validate definition-id tokens against the definitions table before
+ * persisting.
+ */
+export function normalizeAssignableAccessRoleTokens(
+  tokens: ReadonlyArray<string | null | undefined>,
+  options: { canLogin?: boolean | null } = {},
+): string[] {
+  if (options.canLogin === false) return [];
+
+  const deduped: string[] = [];
+  for (const token of tokens) {
+    if (!token || deduped.includes(token)) continue;
+    deduped.push(token);
+  }
+
+  if (!deduped.includes("FINANCE_ADMIN")) return deduped;
+  return deduped.filter((token) => token !== "FINANCE_USER");
+}
+
 export function resolveAccessRoles(input: AccessRoleInput): AppAccessRole[] {
   const explicit = (input.accessRoles ?? [])
     .map((item) => (typeof item === "string" ? item : item.role))
@@ -141,6 +184,43 @@ export function resolveAccessRoles(input: AccessRoleInput): AppAccessRole[] {
   return normalizeAssignableAccessRoles(explicit, {
     canLogin: input.canLogin,
   });
+}
+
+/**
+ * Canonical role token for an assignment: the enum value for system roles
+ * and the seeded default bundles (which keep their enum value alongside the
+ * definition link), and the AccessRoleDefinition id for custom roles.
+ * Tokens are what the picker submits and what the Full-Admin gate compares.
+ */
+export function accessRoleTokenFromAssignment(
+  item:
+    | AppAccessRole
+    | AccessRole
+    | string
+    | AccessRoleAssignmentInput
+    | null
+    | undefined,
+): string | null {
+  if (item == null) return null;
+  if (typeof item === "string") return item || null;
+  if (item.role) return item.role;
+  return item.roleDefinitionId ?? item.roleDefinition?.id ?? null;
+}
+
+/**
+ * Effective role tokens for a member, ignoring nothing but canLogin=false
+ * (which clears all access). Unlike resolveAccessRoles this keeps
+ * definition-backed custom roles (as definition-id tokens), so privileged
+ * checks see them.
+ */
+export function resolveAccessRoleTokens(input: AccessRoleInput): string[] {
+  if (input.canLogin === false) return [];
+  const tokens: string[] = [];
+  for (const item of input.accessRoles ?? []) {
+    const token = accessRoleTokenFromAssignment(item);
+    if (token && !tokens.includes(token)) tokens.push(token);
+  }
+  return tokens;
 }
 
 export function accessRolesFromCompatibilityFields(
@@ -169,9 +249,10 @@ export function isFullAdmin(input: AccessRoleInput) {
 }
 
 // USER and ORG carry no admin, finance, or lodge access; every other access
-// role is privileged. Scoped admins (e.g. a Membership Officer with
-// membership:edit) may still manage USER/ORG classification and login flags,
-// but must not be able to grant or revoke privileged roles.
+// role token is privileged — including definition-id tokens, so custom roles
+// always fall under the Full-Admin gate. Scoped admins (e.g. a Membership
+// Officer with membership:edit) may still manage USER/ORG classification and
+// login flags, but must not be able to grant or revoke privileged roles.
 function isPrivilegedAccessRole(role: string) {
   return role !== "USER" && role !== "ORG";
 }
@@ -181,10 +262,11 @@ function isPrivilegedAccessRole(role: string) {
  * #1026): identity/credential-relevant edits (the login email) of such an
  * account are Full-Admin-only, because an email change plus a
  * forgot-password request hands the account and its roles to the new
- * address.
+ * address. Evaluated over role tokens so definition-backed custom roles
+ * (which are always privileged) count.
  */
 export function hasPrivilegedAccess(input: AccessRoleInput) {
-  return resolveAccessRoles(input).some(isPrivilegedAccessRole);
+  return resolveAccessRoleTokens(input).some(isPrivilegedAccessRole);
 }
 
 /**
@@ -210,23 +292,26 @@ export function accessRoleChangeRequiresFullAdmin(
 }
 
 /**
- * Every access role a member's stored role fields can confer, ignoring
+ * Every access role token a member's stored role fields can confer, ignoring
  * `canLogin`. Used by the Full Admin gate so a scoped admin can neither
  * change live access nor park a dormant elevated `role`/`financeAccessLevel`
- * on a non-login member for later activation.
+ * on a non-login member for later activation. Definition-backed rows are
+ * included as definition-id tokens.
  */
 export function storedAccessRolesForFullAdminGate(member: {
-  accessRoles?: ReadonlyArray<{ role: AccessRole | string } | string> | null;
+  accessRoles?: ReadonlyArray<AccessRoleAssignmentInput | string> | null;
   role?: Role | string | null;
   financeAccessLevel?: FinanceAccessLevel | string | null;
-}): AppAccessRole[] {
-  return dedupeAccessRoles([
-    ...(member.accessRoles ?? []).map((item) =>
-      typeof item === "string" ? item : item.role,
-    ),
+}): string[] {
+  const tokens: string[] = [];
+  for (const candidate of [
+    ...(member.accessRoles ?? []).map(accessRoleTokenFromAssignment),
     ...legacyRoleToAccessRoles(member.role, true),
     ...financeAccessLevelToAccessRoles(member.financeAccessLevel),
-  ]);
+  ]) {
+    if (candidate && !tokens.includes(candidate)) tokens.push(candidate);
+  }
+  return tokens;
 }
 
 export function hasLodgeAccess(input: AccessRoleInput) {
@@ -234,11 +319,6 @@ export function hasLodgeAccess(input: AccessRoleInput) {
   return roles.includes("LODGE") || roles.includes("ADMIN");
 }
 
-export function hasFinanceViewerAccess(input: AccessRoleInput) {
-  const roles = resolveAccessRoles(input);
-  return roles.includes("FINANCE_USER") || roles.includes("FINANCE_ADMIN");
-}
-
-export function hasFinanceManagerAccess(input: AccessRoleInput) {
-  return hasAccessRole(input, "FINANCE_ADMIN");
-}
+// Finance viewer/manager access is derived from the merged finance area
+// level of the admin permission matrix; see hasFinanceViewerAccess and
+// hasFinanceManagerAccess in @/lib/admin-permissions.

@@ -130,7 +130,7 @@ code should import the focused module. The subsystem groups as:
 | --- | --- |
 | `xero-booking-invoices` | Primary booking invoice create/update (`buildInvoiceLineItems`). |
 | `xero-invoice-payments` | Recording Stripe payments against invoices and Stripe refunds as credit-note payments. |
-| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. |
+| `xero-credit-notes` | Refund credit notes, unapplied (account-credit) credit notes, allocation to invoices. Stripe refunds settle **per delta** (#1162): a payment refunded in several steps gets one credit note per uncovered delta, keyed on a cumulative refunded-cents watermark; non-Stripe refunds keep one note per payment. |
 | `xero-supplementary-invoices` | Positive booking-modification delta invoices. |
 | `xero-modification-credit-notes` | Negative booking-modification credit notes. |
 | `xero-entrance-fee-invoices` | One-off entrance-fee invoices per age tier. |
@@ -352,8 +352,9 @@ Scheduled hardening (cron tasks, all idempotent):
 Admin triage complements this: the failures overview groups FAILED operations
 into actionable states (retryable, requeued, manually resolved,
 non-replayable), the health snapshot lists paid bookings missing invoices and
-refunds missing credit notes, and per-record activity shows the ledger for one
-booking/payment/member.
+refunds missing credit notes (flagged when the refunded amount still exceeds the
+cents already covered by active refund credit notes, so multi-note refunds are
+handled), and per-record activity shows the ledger for one booking/payment/member.
 
 ## OAuth and token lifecycle (supporting flow)
 
