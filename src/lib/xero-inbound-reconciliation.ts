@@ -33,14 +33,16 @@ import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outb
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   callXeroApi,
+  getAuthenticatedXeroClient,
+  XeroDailyLimitError,
+} from "@/lib/xero-api-client";
+import { syncContactsFromXero } from "@/lib/xero-bulk-contact-sync";
+import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
+import {
   checkMembershipStatus,
   findSubscriptionInvoice,
-  getAuthenticatedXeroClient,
   refreshAllMembershipStatuses,
-  refreshXeroContactCachesFromContact,
-  syncContactsFromXero,
-  XeroDailyLimitError,
-} from "@/lib/xero";
+} from "@/lib/xero-membership-sync";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import {

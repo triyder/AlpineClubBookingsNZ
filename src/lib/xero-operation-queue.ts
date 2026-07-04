@@ -1,6 +1,7 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { asRecord } from "@/lib/xero-json";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -25,14 +26,6 @@ interface QueuedRetryPayload {
   originalOperationId?: string;
   originalOperationType?: string;
   originalStatus?: string;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  return value as Record<string, unknown>;
 }
 
 function readQueuedRetryPayload(value: unknown): QueuedRetryPayload | null {

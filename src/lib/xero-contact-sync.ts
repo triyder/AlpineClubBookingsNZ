@@ -1,4 +1,4 @@
-import type { XeroContactUpdateData } from "@/lib/xero";
+import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import { prisma } from "@/lib/prisma";
 import { getXeroContactNameOrderRepair } from "@/lib/xero-contact-link-mismatches";
 

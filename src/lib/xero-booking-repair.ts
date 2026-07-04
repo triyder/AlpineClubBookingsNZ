@@ -31,7 +31,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import {
   markPaymentIntentTransactionFailed,
   refundPaymentTransactions,

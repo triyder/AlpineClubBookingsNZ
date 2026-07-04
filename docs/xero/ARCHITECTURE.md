@@ -86,8 +86,12 @@ Two design rules shape everything below:
 
 ## Module map
 
-`src/lib/xero.ts` is a compatibility facade (re-exports only, no logic). New
-code should import the focused module. The subsystem groups as:
+`src/lib/xero.ts` is a compatibility facade (re-exports only, no logic) for
+external callers. New code should import the focused module. The subsystem's
+own `src/lib/xero-*` modules must import the source domain module directly, not
+the facade — an `eslint.config.mjs` `no-restricted-imports` override enforces
+this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
+`readNumber`) live in `xero-json`. The subsystem groups as:
 
 ### Infrastructure
 
@@ -409,16 +413,19 @@ These are candidates for future issues, not commitments.
 5. **Split `xero-hardening.ts` (1,606 lines).** Link backfill, canonical-link
    cleanup, the reconciliation report, and repeated-failure alerting are four
    unrelated jobs sharing a file name that describes none of them.
-6. **De-duplicate micro-helpers.** `asRecord`/`readString`/`getJsonRecord`/
-   `readJsonRecord`-style guards appear independently in at least
-   `xero-sync`, `xero-operation-queue`, `xero-operation-retry`,
-   `xero-inbound-reconciliation`, and `xero-booking-repair`.
-7. **Finish retiring the `xero.ts` facade inside the subsystem.** Several core
-   modules (`xero-operation-outbox`, `xero-inbound-reconciliation`) still
-   import from `@/lib/xero`, which hides the real dependency graph and invites
-   import cycles. A lint rule forbidding `@/lib/xero` imports from
-   `src/lib/xero-*` files would hold the boundary.
-8. **Minor:** `messageForTask` nested-ternary chain in `xero-cron-runner`;
-   the webhook route's placeholder per-category `if` blocks that only log
-   (the real work happens in the stored-event worker) could be dropped for
-   clarity.
+6. **De-duplicate micro-helpers.** _Partly done (#1208):_ the byte-identical
+   `asRecord`/`readString`/`readNumber` guards that appeared in `xero-sync`,
+   `xero-operation-queue`, `xero-operation-retry`, `xero-admin-failures`, and
+   `xero-operation-outbox-payload` now import from the shared `xero-json`
+   module. The differently-shaped `getJsonRecord`/`readJsonRecord` guards in the
+   money files (`xero-inbound-reconciliation`, `xero-booking-repair`) remain
+   local pending their own splits.
+7. **Finish retiring the `xero.ts` facade inside the subsystem.** _Done
+   (#1208):_ no `src/lib/xero-*` module imports the `@/lib/xero` facade anymore
+   — each imports the source domain module directly, and an `eslint.config.mjs`
+   `no-restricted-imports` override forbids the facade path from `xero-*` files
+   to hold the boundary. The facade stays for external callers.
+8. **Minor:** _Partly done (#1208):_ the `messageForTask` nested-ternary chain
+   in `xero-cron-runner` is now a `switch`. The webhook route's per-category
+   `if` blocks were kept — they emit real observability log lines, so dropping
+   them would change log output rather than being no-ops.

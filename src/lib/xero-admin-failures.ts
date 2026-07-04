@@ -1,5 +1,6 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { asRecord, readString } from "@/lib/xero-json";
 import { parseXeroOperationRequeueOriginalId } from "@/lib/xero-operation-queue";
 
 const REDACTED_SECRET = "[REDACTED]";
@@ -33,18 +34,6 @@ type FailedOperation = Pick<
   | "requestPayload"
   | "createdAt"
 >;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
 
 function readOriginalOperationId(
   operation: Pick<FailedOperation, "correlationKey" | "requestPayload">
