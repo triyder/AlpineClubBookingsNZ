@@ -52,6 +52,7 @@ function RecoveryCodes({
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
+        <h1 className="sr-only">Save your recovery codes</h1>
         <CardTitle>Save your recovery codes</CardTitle>
         <CardDescription>
           Each code works once if your usual two-factor method is unavailable.
@@ -183,6 +184,7 @@ export function TwoFactorEnrollPanel({ callbackUrl }: { callbackUrl: string }) {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
+        <h1 className="sr-only">Set up two-factor authentication</h1>
         <CardTitle>Set up two-factor authentication</CardTitle>
         <CardDescription>
           Choose how you want to verify future sign-ins.
