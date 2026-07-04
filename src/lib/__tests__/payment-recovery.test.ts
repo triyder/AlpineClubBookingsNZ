@@ -672,6 +672,53 @@ describe("payment recovery worker", () => {
     );
   });
 
+  it("replays the inline cancel Stripe key prefix on booking cancellation refund recovery (#1160)", async () => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(
+      makeOperation({
+        id: "recovery-cancel-refund",
+        type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+        amountCents: 4000,
+        idempotencyKey: "booking_cancel_refund_recovery_booking-1",
+        paymentTransactionId: null,
+      }),
+    );
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([
+          makeOperation({
+            id: "recovery-cancel-refund",
+            type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+            status: "PENDING",
+            amountCents: 4000,
+            idempotencyKey: "booking_cancel_refund_recovery_booking-1",
+            paymentTransactionId: null,
+          }),
+        ]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // The recovery reconstructs booking_cancel_refund_<bookingId> (the inline
+    // cancel key), so a refund Stripe already holds under those keys is
+    // replayed, not re-minted.
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        amountCents: 4000,
+        metadata: {
+          bookingId: "booking-1",
+          reason: "booking_cancellation_refund_recovery",
+        },
+        idempotencyKeyPrefix: "booking_cancel_refund_booking-1",
+      }),
+    );
+  });
+
   it("skips the Stripe call when the outstanding refund balance has already been settled", async () => {
     mockPaymentRecoveryFindUnique.mockResolvedValue(
       makeOperation({

@@ -23,6 +23,7 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestLinkedGuestMember,
 } from "@/lib/booking-request";
+import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -58,13 +59,13 @@ export class BookingRequestQuoteError extends Error {
   }
 }
 
-export const bookingRequestGuestNightRateSchema = z.object({
+const bookingRequestGuestNightRateSchema = z.object({
   ageTier: z.enum(AgeTier),
   isMember: z.boolean(),
   rateCents: z.number().int().min(0),
 });
 
-export const bookingRequestQuoteOptionInputSchema = z.object({
+const bookingRequestQuoteOptionInputSchema = z.object({
   id: z.string().min(1).max(40).optional(),
   cateringOption: z.enum(SchoolCateringOption).optional().nullable(),
   totalCents: z.number().int().min(0).optional(),
@@ -85,11 +86,11 @@ export const bookingRequestQuoteInputSchema = z.object({
     .optional(),
 });
 
-export type BookingRequestQuoteInput = z.infer<
+type BookingRequestQuoteInput = z.infer<
   typeof bookingRequestQuoteInputSchema
 >;
 
-export interface NormalizedQuoteOption {
+interface NormalizedQuoteOption {
   id: string;
   label: string;
   cateringOption: SchoolCateringOption | null;
@@ -602,7 +603,7 @@ export async function getBookingRequestQuoteContext(token: string) {
   };
 }
 
-export type BookingRequestQuoteResponseAction =
+type BookingRequestQuoteResponseAction =
   | "ACCEPT"
   | "CANCEL"
   | "MODIFY"
@@ -933,6 +934,18 @@ export async function holdBookingRequestSlots(input: {
         capacityFullNights = getCapacityFullNights(capacity.nightDetails);
         throw new Error("CAPACITY_EXCEEDED_SENTINEL");
       }
+
+      // Block admin-mediated double-books: a request whose guests an admin
+      // linked to real members must not put a member on overlapping nights
+      // (issue #1158, invariant DOMAIN_INVARIANTS.md:35-40). A brand-new held
+      // booking is being created, so there is nothing to exclude.
+      await assertNoBookingMemberNightConflicts(tx, {
+        actorMemberId: input.adminMemberId,
+        actorRole: "ADMIN",
+        checkIn: request.checkIn,
+        checkOut: request.checkOut,
+        guests: guestCreates,
+      });
 
       const ownerName =
         request.type === BookingRequestType.SCHOOL

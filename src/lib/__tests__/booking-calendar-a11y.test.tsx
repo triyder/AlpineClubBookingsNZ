@@ -59,4 +59,23 @@ describe("BookingCalendar accessibility", () => {
     const live = container.querySelector('[aria-live="polite"]');
     expect(live?.textContent).toContain("Select check-in date");
   });
+
+  it("exposes the selected check-in to screen readers", async () => {
+    const date = new Date(now.getFullYear(), now.getMonth(), targetDay);
+    render(<BookingCalendar onDateSelect={() => {}} selectedCheckIn={date} />);
+
+    const dateLabel = date.toLocaleDateString(APP_LOCALE, {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+
+    const selected = await waitFor(() =>
+      screen.getByRole("button", {
+        name: `${dateLabel}, 14 of 20 beds free, selected as check-in`,
+      }),
+    );
+    expect(selected.getAttribute("aria-pressed")).toBe("true");
+  });
 });

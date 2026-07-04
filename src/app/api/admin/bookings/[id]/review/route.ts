@@ -164,6 +164,16 @@ export async function PATCH(
     "card",
   );
 
+  // A concurrent cancel won the single-flight claim (#1160): surface the 409
+  // rather than mislabelling it a 500. The review was already recorded and the
+  // booking is being/has been cancelled, so this is a benign race, not a fault.
+  if (cancelResult.status === 409) {
+    return NextResponse.json(
+      { error: cancelResult.error },
+      { status: 409 },
+    );
+  }
+
   if ("error" in cancelResult) {
     logger.error(
       { bookingId, error: cancelResult.error },

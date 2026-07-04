@@ -29,6 +29,7 @@ import { z } from "zod";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
@@ -51,7 +52,7 @@ import { getSeasonYear } from "@/lib/utils";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
-export const BOOKING_REQUEST_RETENTION_DAYS = 90;
+const BOOKING_REQUEST_RETENTION_DAYS = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -63,7 +64,7 @@ export const bookingRequestGuestSchema = z.object({
 
 export type BookingRequestGuest = z.infer<typeof bookingRequestGuestSchema>;
 
-export const bookingRequestLinkedGuestMemberSchema = z.object({
+const bookingRequestLinkedGuestMemberSchema = z.object({
   guestIndex: z.number().int().min(0),
   memberId: z.string().min(1),
 });
@@ -232,7 +233,7 @@ export async function calculateIndicativeNonMemberPriceCents(input: {
 // Public submission + verification
 // ---------------------------------------------------------------------------
 
-export interface CreateBookingRequestInput {
+interface CreateBookingRequestInput {
   contactFirstName: string;
   contactLastName: string;
   contactEmail: string;
@@ -326,7 +327,7 @@ export async function createBookingRequest(input: CreateBookingRequestInput) {
   return request;
 }
 
-export type VerifyBookingRequestOutcome =
+type VerifyBookingRequestOutcome =
   | { outcome: "verified"; request: BookingRequest }
   | { outcome: "already_verified"; request: BookingRequest }
   | { outcome: "expired" }
@@ -539,7 +540,7 @@ export async function declineBookingRequest(input: {
 // Approval conversion
 // ---------------------------------------------------------------------------
 
-export type ApproveBookingRequestOutcome =
+type ApproveBookingRequestOutcome =
   | {
       type: "approved";
       requestId: string;
@@ -684,6 +685,19 @@ export async function approveBookingRequest(input: {
       await assertMembershipTypeBookingAllowed(tx, {
         guests: guestCreates,
         seasonYear: getSeasonYear(request.checkIn),
+      });
+
+      // Block admin-mediated double-books: a request whose guests an admin
+      // linked to real members must not put a member on overlapping nights
+      // (issue #1158, invariant DOMAIN_INVARIANTS.md:35-40). On the reuse path
+      // exclude the held booking's own soon-to-be-deleted guests.
+      await assertNoBookingMemberNightConflicts(tx, {
+        actorMemberId: input.adminMemberId,
+        actorRole: "ADMIN",
+        checkIn: request.checkIn,
+        checkOut: request.checkOut,
+        guests: guestCreates,
+        excludeBookingId: request.heldBookingId ?? undefined,
       });
 
       let booking: { id: string };
@@ -928,7 +942,7 @@ export async function purgeExpiredBookingRequests(
 // Admin queue serialisation
 // ---------------------------------------------------------------------------
 
-export type AdminBookingRequestStatusFilter =
+type AdminBookingRequestStatusFilter =
   | BookingRequestStatus
   | "QUEUE"
   | "ALL";

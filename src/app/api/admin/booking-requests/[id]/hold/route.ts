@@ -5,6 +5,10 @@ import {
   holdBookingRequestSlots,
 } from "@/lib/booking-request-quotes";
 import { BookingRequestError } from "@/lib/booking-request";
+import {
+  BookingMemberNightConflictError,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 import { requireAdmin } from "@/lib/session-guards";
 
 const holdSchema = z.object({
@@ -58,6 +62,12 @@ export async function POST(
       reused: result.reused,
     });
   } catch (err) {
+    if (err instanceof BookingMemberNightConflictError) {
+      return NextResponse.json(
+        getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
+      );
+    }
     if (err instanceof BookingRequestError || err instanceof BookingRequestQuoteError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

@@ -4,6 +4,59 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- Release classification: anticipated minor public reference release. The change
+  set since `0.9.0` is a large quality-and-hardening wave layered on top of new
+  public booking, membership, and finance capabilities, preserving the existing
+  public deployment shape. Highlights below; individual behavior changes are
+  called out inline.
+- Ran a best-in-class quality wave (epic #1125): dead-code sweeps and a bundle
+  audit, large file splits for the booking wizard, booking create/modify,
+  member detail, and email modules, native UI primitives (confirm/prompt
+  dialogs, loading skeletons) replacing browser `alert`/`confirm`, an
+  observability and cron-health parity pass, database query-performance work, a
+  consolidated settlement-math path, a Xero architecture review, and an
+  access-role/authorization matrix cleanup. New automated test layers landed as
+  part of the wave: a Playwright end-to-end foundation with Critical/High test
+  matrix coverage, an authorization-matrix route test, property-based tests for
+  pricing/settlement invariants, and a typecheck gate that now also covers test
+  files. Notable decision: colour contrast on the configurable site-style
+  palette is now enforced (blocking, server-side, for both hex and `oklch`)
+  rather than left advisory.
+- Added a public booking quote system with a member-facing quote workflow,
+  quote TTL and reminder emails, quote/booking reprice paths, night-price
+  locking, and waitlist-offer repricing.
+- Hardened payment, refund, and settlement recovery: refund recovery
+  allocation, refund revert recovery, credit-note delta handling, refund prefix
+  reuse, a settlement reaper for stale intents with reaped-children expiry,
+  durable payment-intent retry, group-settlement superseded/stale-total fixes,
+  and queuing the Xero invoice after card payment.
+- Expanded membership and family lifecycle: seasonal membership types with a
+  membership-type editor, enforcement, and name guards; a member removal
+  lifecycle with collection handling; committee assignments with contact
+  privacy and committee email; member-import identity contract, address UX, and
+  audit rollback; school attendee confirmation with resendable links and
+  non-member school role types; hut-leader eligibility and look-ahead; and an
+  induction redesign.
+- Added two-factor authentication (TOTP) with server-side verification, and
+  hardened security boundaries: webhook hardening, a privileged-email gate,
+  shared and degraded-mode rate limiting, token URL-scheme tightening, a backup
+  fire-drill, and a migration audit.
+- Reworked public site and content management: a structured public-content
+  editor with a publish/hide toggle, CMS policy pages, site banners and footer
+  content, an FAQ accordion, help screens, public safety-UX parity, an
+  address-autocomplete module, and analytics-consent handling.
+- Improved admin and member UX: an admin dashboard and sidebar refresh, booking
+  filters, a bed-allocation board, member-night conflict surfacing, minors-only
+  booking review, approval person-night handling, loading skeletons, and
+  clearer feedback conventions.
+- Deepened accessibility: a staging accessibility pass with axe findings fixes,
+  booking-calendar keyboard/screen-reader labelling, and a booking-wizard and
+  admin-members deep pass that also enforces the site-style colour contrast
+  described above (epic #1125).
+- Extended Xero and finance surfaces: a Xero architecture review, granular Xero
+  report scopes, a finance report account-mappings UI, finance surfacing, and
+  unpaid-invoice reduction.
+- Refreshed dependencies with minor/patch updates and dependency triage.
 - Added editable admin access roles. The six seeded bundles (Read-only Admin,
   Booking Officer, Membership Officer, Content Manager, Finance Viewer,
   Treasurer) are now database-backed definitions that a Full Admin can rename,

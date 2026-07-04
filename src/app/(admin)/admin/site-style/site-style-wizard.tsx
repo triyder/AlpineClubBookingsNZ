@@ -40,6 +40,7 @@ import {
   clubThemeUpdateSchema,
   fontCssVariable,
   fontLabel,
+  getBlockingContrastWarnings,
   getContrastWarnings,
   isValidLogoDataUrl,
   type ClubThemeColourKey,
@@ -130,6 +131,16 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     return parsed.error.flatten().fieldErrors;
   }, [values]);
   const contrastWarnings = useMemo(() => getContrastWarnings(values), [values]);
+  // Measurable AA failures block saving (mirrors the server gate in the
+  // site-style route); both hex and oklch values are measured.
+  const blockingContrastWarnings = useMemo(
+    () => getBlockingContrastWarnings(values),
+    [values],
+  );
+  const advisoryContrastWarnings = useMemo(
+    () => contrastWarnings.filter((warning) => warning.ratio === null),
+    [contrastWarnings],
+  );
   const cssPreview = useMemo(() => buildClubThemeCss(values), [values]);
 
   function updateColour(key: ClubThemeColourKey, value: string) {
@@ -247,6 +258,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   const hasFieldErrors = Object.values(fieldErrors).some(
     (messages) => messages && messages.length > 0,
   );
+  const saveBlocked = hasFieldErrors || blockingContrastWarnings.length > 0;
 
   return (
     <Card>
@@ -534,14 +546,33 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               </div>
             </div>
 
-            {contrastWarnings.length > 0 && (
+            {blockingContrastWarnings.length > 0 && (
+              <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+                <div className="mb-2 flex items-center gap-2 font-medium">
+                  <AlertTriangle className="h-4 w-4" />
+                  Contrast too low to save
+                </div>
+                <p className="mb-2">
+                  Saving is disabled until these text pairs meet the WCAG AA
+                  4.5:1 minimum. Lighten or darken the colours below and the
+                  warning clears automatically.
+                </p>
+                <ul className="space-y-1">
+                  {blockingContrastWarnings.map((warning) => (
+                    <li key={warning.id}>{warning.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {advisoryContrastWarnings.length > 0 && (
               <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
                 <div className="mb-2 flex items-center gap-2 font-medium">
                   <AlertTriangle className="h-4 w-4" />
                   Contrast warnings
                 </div>
                 <ul className="space-y-1">
-                  {contrastWarnings.map((warning) => (
+                  {advisoryContrastWarnings.map((warning) => (
                     <li key={warning.id}>{warning.message}</li>
                   ))}
                 </ul>
@@ -579,7 +610,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               <Button
                 type="button"
                 onClick={goNext}
-                disabled={saving || hasFieldErrors}
+                disabled={saving || saveBlocked}
               >
                 {saving ? "Saving..." : "Save and next"}
               </Button>
@@ -587,7 +618,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
               <Button
                 type="button"
                 onClick={finish}
-                disabled={saving || hasFieldErrors}
+                disabled={saving || saveBlocked}
               >
                 {saving ? "Saving..." : "Finish setup"}
               </Button>

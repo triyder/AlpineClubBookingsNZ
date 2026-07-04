@@ -66,6 +66,16 @@ vi.mock("bcryptjs", () => ({
   hash: vi.fn().mockResolvedValue("hashed-placeholder"),
 }));
 
+// Keep the real BookingMemberNightConflictError; only the assertion is a spy.
+vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/booking-member-night-conflicts")>();
+  return {
+    ...actual,
+    assertNoBookingMemberNightConflicts: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 import { prisma } from "@/lib/prisma";
 import {
   sendBookingRequestVerificationEmail,
@@ -79,6 +89,10 @@ import {
 } from "@/lib/xero-operation-outbox";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
 import { BookingRequestError } from "@/lib/booking-request";
+import {
+  assertNoBookingMemberNightConflicts,
+  BookingMemberNightConflictError,
+} from "@/lib/booking-member-night-conflicts";
 import {
   approveSchoolBookingRequest,
   createSchoolBookingRequest,
@@ -97,6 +111,26 @@ const mockedEnqueueInvoice = vi.mocked(enqueueXeroBookingInvoiceOperation);
 const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
 const mockedSendPin = vi.mocked(sendHutLeaderAssignmentEmail);
 const mockedSendManualInvoice = vi.mocked(sendAdminSchoolManualInvoiceEmail);
+const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
+
+function memberNightConflictError() {
+  return new BookingMemberNightConflictError([
+    {
+      memberId: "teacher-member-42",
+      memberName: "Linked Teacher",
+      bookingId: "existing-booking",
+      bookingStatus: BookingStatus.CONFIRMED,
+      bookingOwnerName: "Other Owner",
+      bookingCheckIn: "2026-08-01",
+      bookingCheckOut: "2026-08-03",
+      guestId: "existing-guest",
+      conflictingNights: ["2026-08-01"],
+      isOwnBooking: false,
+      canOpenBooking: true,
+      canSelfRemove: false,
+    },
+  ]);
+}
 
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z"); // 2 nights
@@ -292,6 +326,8 @@ describe("approveSchoolBookingRequest", () => {
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.hutLeaderAssignment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+    // Default to no member-night conflict; individual tests override to reject.
+    mockedAssertNoConflicts.mockResolvedValue(undefined);
   });
 
   it("rejects a non-school request", async () => {
@@ -497,5 +533,38 @@ describe("approveSchoolBookingRequest", () => {
       })
     ).rejects.toMatchObject({ status: 422 });
     expect(prisma.member.create).not.toHaveBeenCalled();
+  });
+
+  it("runs the member-night conflict guard with the requested guests and range before creating anything (issue #1158)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    await approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" });
+
+    expect(mockedAssertNoConflicts).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        actorMemberId: "admin-1",
+        actorRole: "ADMIN",
+        checkIn: CHECK_IN,
+        checkOut: CHECK_OUT,
+        excludeBookingId: undefined,
+      })
+    );
+    const guardGuests = mockedAssertNoConflicts.mock.calls[0][1].guests;
+    expect(guardGuests).toHaveLength(3);
+    expect(guardGuests[0]).toMatchObject({ stayStart: CHECK_IN, stayEnd: CHECK_OUT });
+  });
+
+  it("blocks approval and creates nothing when a linked member double-books (issue #1158)", async () => {
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+    mockedAssertNoConflicts.mockRejectedValueOnce(memberNightConflictError());
+
+    await expect(
+      approveSchoolBookingRequest({ requestId: "req-school", adminMemberId: "admin-1" })
+    ).rejects.toBeInstanceOf(BookingMemberNightConflictError);
+
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
   });
 });

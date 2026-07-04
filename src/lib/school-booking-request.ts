@@ -46,6 +46,7 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestGuest,
 } from "@/lib/booking-request";
+import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
@@ -79,7 +80,7 @@ export const SCHOOL_CHILD_TIERS = [
 ] as const;
 
 /** Display name prefix for the generated bulk child guests. */
-export const SCHOOL_CHILD_NAME_PREFIX = "School Child";
+const SCHOOL_CHILD_NAME_PREFIX = "School Child";
 
 // ---------------------------------------------------------------------------
 // Input shapes
@@ -93,7 +94,7 @@ export const schoolTeacherSchema = z.object({
   email: z.string().email().max(200).optional().nullable(),
 });
 
-export type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
+type SchoolTeacherInput = z.infer<typeof schoolTeacherSchema>;
 
 export const schoolChildCountsSchema = z.object({
   INFANT: z.number().int().min(0).max(200).optional(),
@@ -101,9 +102,9 @@ export const schoolChildCountsSchema = z.object({
   YOUTH: z.number().int().min(0).max(200).optional(),
 });
 
-export type SchoolChildCounts = z.infer<typeof schoolChildCountsSchema>;
+type SchoolChildCounts = z.infer<typeof schoolChildCountsSchema>;
 
-export interface CreateSchoolBookingRequestInput {
+interface CreateSchoolBookingRequestInput {
   schoolName: string;
   contactFirstName: string;
   contactLastName: string;
@@ -174,7 +175,7 @@ export function generateSchoolGuests(input: {
   return [...teacherGuests, ...childGuests];
 }
 
-export function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
+function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
   const parsed = z.array(schoolTeacherSchema).safeParse(raw);
   if (!parsed.success) {
     throw new BookingRequestError("Stored school teachers are invalid", 500);
@@ -229,7 +230,7 @@ async function priceSchoolGuests(input: {
   });
 }
 
-export async function calculateSchoolIndicativePriceCents(input: {
+async function calculateSchoolIndicativePriceCents(input: {
   checkIn: Date;
   checkOut: Date;
   guests: Array<{ ageTier: AgeTier }>;
@@ -363,7 +364,7 @@ export async function createSchoolBookingRequest(
 // Approval conversion
 // ---------------------------------------------------------------------------
 
-export type ApproveSchoolBookingRequestOutcome =
+type ApproveSchoolBookingRequestOutcome =
   | {
       type: "approved";
       requestId: string;
@@ -549,6 +550,19 @@ export async function approveSchoolBookingRequest(input: {
       await assertMembershipTypeBookingAllowed(tx, {
         guests: guestCreates,
         seasonYear: getSeasonYear(request.checkIn),
+      });
+
+      // Block admin-mediated double-books: a request whose guests an admin
+      // linked to real members must not put a member on overlapping nights
+      // (issue #1158, invariant DOMAIN_INVARIANTS.md:35-40). On the reuse path
+      // exclude the held booking's own soon-to-be-deleted guests.
+      await assertNoBookingMemberNightConflicts(tx, {
+        actorMemberId: input.adminMemberId,
+        actorRole: "ADMIN",
+        checkIn: request.checkIn,
+        checkOut: request.checkOut,
+        guests: guestCreates,
+        excludeBookingId: request.heldBookingId ?? undefined,
       });
 
       let booking: { id: string };

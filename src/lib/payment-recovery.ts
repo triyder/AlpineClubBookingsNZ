@@ -311,6 +311,38 @@ export async function enqueueRefundRequestRefundRecovery({
   });
 }
 
+export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) {
+  return `booking_cancel_refund_recovery_${bookingId}`;
+}
+
+/**
+ * Durable recovery for a booking cancellation whose inline Stripe card refund
+ * failed (#1160). The cancellation CLAIM (status -> CANCELLED) already stands;
+ * the outstanding refund completes through the recovery cron. The processor
+ * reuses the inline cancel Stripe key prefix (`booking_cancel_refund_<id>`) so
+ * a refund that succeeded on Stripe but was never recorded is replayed by
+ * Stripe, not issued a second time. One row per booking (unique key).
+ */
+export async function enqueueBookingCancellationRefundRecovery({
+  bookingId,
+  paymentId,
+  amountCents,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  amountCents: number;
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+    store,
+  });
+}
+
 async function enqueueSupersededPaymentRefundRecovery({
   bookingId,
   paymentId,
@@ -819,15 +851,34 @@ async function processBookingModificationRefundOperation(
   // Recoveries reuse the route's original Stripe idempotency key prefix so a
   // retry after a refund that succeeded on Stripe but was never recorded
   // replays the same refund instead of issuing a new one: refund-request
-  // recoveries reconstruct it (refund_request_<id>, #1039 item 1) and
-  // modification recoveries read the prefix stored at enqueue time (#1152).
-  // Legacy modification rows without a stored prefix keep their
-  // operation-scoped prefix.
+  // recoveries reconstruct it (refund_request_<id>, #1039 item 1), booking
+  // cancellation recoveries reconstruct the inline cancel prefix
+  // (booking_cancel_refund_<bookingId>, #1160), and modification recoveries
+  // read the prefix stored at enqueue time (#1152). Legacy modification rows
+  // without a stored prefix keep their operation-scoped prefix.
   const refundRequestId = operation.idempotencyKey.startsWith(
     "refund_request_refund_",
   )
     ? operation.idempotencyKey.slice("refund_request_refund_".length)
     : null;
+  const isBookingCancellationRecovery = operation.idempotencyKey.startsWith(
+    "booking_cancel_refund_recovery_",
+  );
+
+  let reason: string;
+  let idempotencyKeyPrefix: string;
+  if (refundRequestId) {
+    reason = "refund_request_refund_recovery";
+    idempotencyKeyPrefix = `refund_request_${refundRequestId}`;
+  } else if (isBookingCancellationRecovery) {
+    reason = "booking_cancellation_refund_recovery";
+    idempotencyKeyPrefix = `booking_cancel_refund_${operation.bookingId}`;
+  } else {
+    reason = "booking_modification_refund_recovery";
+    idempotencyKeyPrefix =
+      operation.stripeKeyPrefix ??
+      `payment_recovery_modification_refund_${operation.id}`;
+  }
 
   await refundPaymentTransactions({
     paymentId: operation.paymentId,
@@ -835,15 +886,10 @@ async function processBookingModificationRefundOperation(
     allocation: plan,
     metadata: {
       bookingId: operation.bookingId,
-      reason: refundRequestId
-        ? "refund_request_refund_recovery"
-        : "booking_modification_refund_recovery",
+      reason,
       ...(refundRequestId ? { refundRequestId } : {}),
     },
-    idempotencyKeyPrefix: refundRequestId
-      ? `refund_request_${refundRequestId}`
-      : (operation.stripeKeyPrefix ??
-        `payment_recovery_modification_refund_${operation.id}`),
+    idempotencyKeyPrefix,
   });
 
   await completePaymentRecoveryOperation(operation.id);

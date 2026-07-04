@@ -19,6 +19,11 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: {
       create: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    bookingGuest: {
+      deleteMany: vi.fn(),
     },
     payment: {
       create: vi.fn(),
@@ -61,6 +66,17 @@ vi.mock("bcryptjs", () => ({
   hash: vi.fn().mockResolvedValue("hashed-placeholder"),
 }));
 
+// Keep the real BookingMemberNightConflictError so `instanceof` checks and the
+// error constructor stay usable; only the assertion is a controllable spy.
+vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/booking-member-night-conflicts")>();
+  return {
+    ...actual,
+    assertNoBookingMemberNightConflicts: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 import { prisma } from "@/lib/prisma";
 import {
   sendBookingRequestVerificationEmail,
@@ -70,6 +86,10 @@ import {
 } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  assertNoBookingMemberNightConflicts,
+  BookingMemberNightConflictError,
+} from "@/lib/booking-member-night-conflicts";
 import { hashActionToken } from "@/lib/action-tokens";
 import {
   approveBookingRequest,
@@ -98,6 +118,26 @@ const mockedSendAdminPending = vi.mocked(sendAdminBookingRequestPendingEmail);
 const mockedSendApproved = vi.mocked(sendBookingRequestApprovedEmail);
 const mockedSendDeclined = vi.mocked(sendBookingRequestDeclinedEmail);
 const mockedLogAudit = vi.mocked(logAudit);
+const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
+
+function memberNightConflictError() {
+  return new BookingMemberNightConflictError([
+    {
+      memberId: "member-42",
+      memberName: "Linked Member",
+      bookingId: "existing-booking",
+      bookingStatus: BookingStatus.CONFIRMED,
+      bookingOwnerName: "Other Owner",
+      bookingCheckIn: "2026-08-01",
+      bookingCheckOut: "2026-08-03",
+      guestId: "existing-guest",
+      conflictingNights: ["2026-08-01"],
+      isOwnBooking: false,
+      canOpenBooking: true,
+      canSelfRemove: false,
+    },
+  ]);
+}
 
 const GUESTS = [{ firstName: "Tara", lastName: "Tester", ageTier: "ADULT" as const }];
 
@@ -468,6 +508,8 @@ describe("approveBookingRequest", () => {
     mockedTransaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
       fn(prisma)
     );
+    // Default to no member-night conflict; individual tests override to reject.
+    mockedAssertNoConflicts.mockResolvedValue(undefined);
   });
 
   it("throws 404 when the request does not exist", async () => {
@@ -567,6 +609,101 @@ describe("approveBookingRequest", () => {
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking_request.approved" })
     );
+  });
+
+  it("runs the member-night conflict guard with linked guests before creating anything (issue #1158)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        linkedGuestMembers: [{ guestIndex: 0, memberId: "member-42" }],
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "member-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    expect(mockedAssertNoConflicts).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        actorMemberId: "admin-1",
+        actorRole: "ADMIN",
+        checkIn: new Date("2026-08-01T00:00:00.000Z"),
+        checkOut: new Date("2026-08-03T00:00:00.000Z"),
+        excludeBookingId: undefined,
+      })
+    );
+    const guardGuests = mockedAssertNoConflicts.mock.calls[0][1].guests;
+    expect(guardGuests).toHaveLength(1);
+    expect(guardGuests[0]).toMatchObject({
+      memberId: "member-42",
+      stayStart: new Date("2026-08-01T00:00:00.000Z"),
+      stayEnd: new Date("2026-08-03T00:00:00.000Z"),
+    });
+  });
+
+  it("blocks approval and creates nothing when a linked member double-books (issue #1158)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        linkedGuestMembers: [{ guestIndex: 0, memberId: "member-42" }],
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedAssertNoConflicts.mockRejectedValueOnce(memberNightConflictError());
+
+    await expect(
+      approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toBeInstanceOf(BookingMemberNightConflictError);
+
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.booking.update).not.toHaveBeenCalled();
+    expect(mockedSendApproved).not.toHaveBeenCalled();
+  });
+
+  it("passes the held booking id as excludeBookingId on the reuse path (issue #1158)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        heldBookingId: "held-1",
+        linkedGuestMembers: [{ guestIndex: 0, memberId: "member-42" }],
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-member",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    vi.mocked(prisma.bookingGuest.deleteMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    expect(mockedAssertNoConflicts).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ excludeBookingId: "held-1" })
+    );
+    // Reuse path updates the held booking rather than creating a fresh one.
+    expect(prisma.booking.update).toHaveBeenCalled();
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
   });
 });
 

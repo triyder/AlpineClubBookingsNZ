@@ -5,7 +5,10 @@ import {
   getClubThemeForAdmin,
   saveClubTheme,
 } from "@/lib/club-theme";
-import { clubThemeUpdateSchema } from "@/lib/club-theme-schema";
+import {
+  clubThemeUpdateSchema,
+  getBlockingContrastWarnings,
+} from "@/lib/club-theme-schema";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -32,6 +35,22 @@ export async function PUT(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  // Enforce WCAG AA text contrast on the configurable palette. The colour schema
+  // only validates format, so without this an admin could save arbitrary colours
+  // (hex or oklch, both measured) that render body/nav/button text unreadable on
+  // the public site.
+  const contrastWarnings = getBlockingContrastWarnings(parsed.data);
+  if (contrastWarnings.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          "These colours don't meet the WCAG AA 4.5:1 minimum contrast for text. Adjust them before saving.",
+        contrastWarnings,
+      },
       { status: 400 },
     );
   }

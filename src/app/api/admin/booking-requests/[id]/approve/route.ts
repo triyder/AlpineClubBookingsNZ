@@ -11,6 +11,10 @@ import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
+import {
+  BookingMemberNightConflictError,
+  getBookingMemberNightConflictResponse,
+} from "@/lib/booking-member-night-conflicts";
 
 export async function POST(
   req: NextRequest,
@@ -100,6 +104,12 @@ export async function POST(
       paymentLinkExpiresAt: result.paymentLinkExpiresAt.toISOString(),
     });
   } catch (err) {
+    if (err instanceof BookingMemberNightConflictError) {
+      return NextResponse.json(
+        getBookingMemberNightConflictResponse(err.conflicts),
+        { status: 409 },
+      );
+    }
     if (err instanceof MembershipTypeBookingPolicyError) {
       return NextResponse.json(
         getMembershipTypeBookingPolicyErrorBody(err),

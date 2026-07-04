@@ -4,6 +4,7 @@ import {
   buildClubThemeCss,
   clubThemeUpdateSchema,
   contrastRatio,
+  getBlockingContrastWarnings,
   getContrastWarnings,
   isValidLogoDataUrl,
   sanitiseRawCss,
@@ -60,6 +61,71 @@ describe("club theme validation", () => {
     expect(warnings.some((warning) => warning.id === "body-on-snow")).toBe(
       true,
     );
+  });
+});
+
+describe("getBlockingContrastWarnings", () => {
+  it("passes the shipped default palette (first-run setup is not blocked)", () => {
+    expect(getBlockingContrastWarnings(DEFAULT_CLUB_THEME_VALUES)).toEqual([]);
+  });
+
+  it("blocks a measurable sub-AA pair", () => {
+    // brand-charcoal button text on a near-identical gold is unreadable.
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandGold: "#33373e",
+      brandCharcoal: "#30343b",
+    });
+
+    expect(blocking.some((warning) => warning.id === "button-on-gold")).toBe(
+      true,
+    );
+    expect(
+      blocking.every(
+        (warning) => warning.ratio !== null && warning.ratio < 4.5,
+      ),
+    ).toBe(true);
+  });
+
+  it("measures oklch() colours and blocks a low-contrast oklch pair", () => {
+    // The site-style value field accepts oklch, so it must be enforced too.
+    const blocking = getBlockingContrastWarnings({
+      ...DEFAULT_CLUB_THEME_VALUES,
+      brandGold: "oklch(0.6 0.1 140)",
+      brandCharcoal: "oklch(0.58 0.09 140)",
+    });
+
+    const buttonWarning = blocking.find(
+      (warning) => warning.id === "button-on-gold",
+    );
+    expect(buttonWarning).toBeDefined();
+    expect(buttonWarning?.ratio).not.toBeNull();
+    expect(buttonWarning?.ratio ?? 0).toBeLessThan(4.5);
+  });
+
+  it("allows an accessible oklch pair", () => {
+    expect(
+      getBlockingContrastWarnings({
+        ...DEFAULT_CLUB_THEME_VALUES,
+        brandGold: "oklch(0.9 0.05 140)",
+        brandCharcoal: "oklch(0.25 0.02 250)",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("contrastRatio oklch support", () => {
+  it("measures oklch luminance (white on black is 21:1)", () => {
+    expect(contrastRatio("oklch(1 0 0)", "oklch(0 0 0)")?.toFixed(2)).toBe(
+      "21.00",
+    );
+  });
+
+  it("agrees with the hex path for the same colour (sRGB red)", () => {
+    // #ff0000 ≈ oklch(0.628 0.2577 29.23); same colour ⇒ ratio ≈ 1.
+    const ratio = contrastRatio("#ff0000", "oklch(0.628 0.2577 29.23)");
+    expect(ratio).not.toBeNull();
+    expect(Math.abs((ratio ?? 0) - 1)).toBeLessThan(0.02);
   });
 });
 
