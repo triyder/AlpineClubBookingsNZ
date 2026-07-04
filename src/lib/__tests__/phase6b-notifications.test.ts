@@ -714,6 +714,7 @@ describe("Email templates - Phase 6b", () => {
         recentPartialOperations: 1,
         unsupportedPartialOperations: 1,
         repeatedFailureCorrelations: 2,
+        failedInboundEvents: 0,
         issueCategoryCount: 11,
         issueTotalCount: 19,
       },

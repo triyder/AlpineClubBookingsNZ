@@ -1,4 +1,4 @@
-import type { XeroSyncOperation } from "@prisma/client";
+import type { XeroInboundEvent, XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -6,6 +6,7 @@ import {
   sendAdminXeroRepeatedFailureAlert,
 } from "@/lib/email";
 import { shouldSendAdminSystemEmail } from "@/lib/notification-delivery-policies";
+import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
@@ -17,6 +18,10 @@ const DEFAULT_REPEATED_FAILURE_WINDOW_HOURS = 24;
 const DEFAULT_STALE_PENDING_MINUTES = 30;
 const DEFAULT_REPORT_LOOKBACK_HOURS = 24;
 const DEFAULT_REPEATED_FAILURE_TOP_LIMIT = 5;
+// Age (not attempt count — the model has no attempt column) that a FAILED
+// inbound webhook event must have persisted for before it is treated as
+// stuck-forever rather than a transient failure the retry loop will clear.
+const DEFAULT_FAILED_INBOUND_MIN_AGE_MINUTES = 60;
 
 type FailureAlertOperation = Pick<
   XeroSyncOperation,
@@ -70,6 +75,17 @@ type StaleOperationSummary = Pick<
   | "xeroObjectNumber"
   | "xeroObjectUrl"
   | "startedAt"
+  | "createdAt"
+>;
+
+type FailedInboundEventSummary = Pick<
+  XeroInboundEvent,
+  | "id"
+  | "correlationKey"
+  | "eventCategory"
+  | "eventType"
+  | "resourceId"
+  | "errorMessage"
   | "createdAt"
 >;
 
@@ -178,6 +194,7 @@ export interface XeroReconciliationReport {
     recentPartialOperations: number;
     unsupportedPartialOperations: number;
     repeatedFailureCorrelations: number;
+    failedInboundEvents: number;
     issueCategoryCount: number;
     issueTotalCount: number;
   };
@@ -228,6 +245,54 @@ function getRepeatedFailureWindowStart(now: Date, windowHours: number) {
 
 function getStalePendingCutoff(now: Date, stalePendingMinutes: number) {
   return new Date(now.getTime() - stalePendingMinutes * 60 * 1000);
+}
+
+function getFailedInboundCutoff(now: Date, minAgeMinutes: number) {
+  return new Date(now.getTime() - minAgeMinutes * 60 * 1000);
+}
+
+function describeAgeSince(now: Date, createdAt: Date) {
+  const totalMinutes = Math.max(
+    0,
+    Math.round((now.getTime() - createdAt.getTime()) / (60 * 1000))
+  );
+  if (totalMinutes < 60) {
+    return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+function buildInboundEventIssueItem(
+  event: FailedInboundEventSummary,
+  now: Date
+): XeroReconciliationIssueItem {
+  const age = describeAgeSince(now, event.createdAt);
+  const eventLabel = event.eventCategory
+    ? `${event.eventCategory} ${event.eventType}`
+    : event.eventType;
+  const resourceSuffix = event.resourceId ? ` for resource ${event.resourceId}` : "";
+
+  return {
+    label: eventLabel,
+    localModel: null,
+    localId: null,
+    localUrl: null,
+    xeroObjectType: null,
+    xeroObjectId: null,
+    xeroObjectNumber: null,
+    xeroObjectUrl: null,
+    operationId: event.id,
+    operationStatus: "FAILED",
+    operationType: eventLabel,
+    correlationKey: event.correlationKey,
+    detail: `Inbound event has been FAILED for ${age} (since ${event.createdAt.toISOString()})${resourceSuffix}.`,
+    latestErrorMessage: event.errorMessage
+      ? redactSensitiveText(event.errorMessage)
+      : null,
+    createdAt: event.createdAt,
+  };
 }
 
 function getRepeatedFailureAlertSubject(correlationKey: string) {
@@ -845,6 +910,7 @@ export async function buildXeroReconciliationReport(options?: {
   lookbackHours?: number;
   stalePendingMinutes?: number;
   repeatedFailureThreshold?: number;
+  failedInboundMinAgeMinutes?: number;
   topLimit?: number;
   now?: Date;
 }): Promise<XeroReconciliationReport> {
@@ -854,9 +920,18 @@ export async function buildXeroReconciliationReport(options?: {
     options?.stalePendingMinutes ?? DEFAULT_STALE_PENDING_MINUTES;
   const repeatedFailureThreshold =
     options?.repeatedFailureThreshold ?? DEFAULT_REPEATED_FAILURE_THRESHOLD;
+  const failedInboundMinAgeMinutes =
+    options?.failedInboundMinAgeMinutes ?? DEFAULT_FAILED_INBOUND_MIN_AGE_MINUTES;
   const topLimit = options?.topLimit ?? DEFAULT_REPEATED_FAILURE_TOP_LIMIT;
   const lookbackStart = getRepeatedFailureWindowStart(now, lookbackHours);
   const stalePendingCutoff = getStalePendingCutoff(now, stalePendingMinutes);
+  const failedInboundCutoff = getFailedInboundCutoff(now, failedInboundMinAgeMinutes);
+  const failedInboundWhere = {
+    status: "FAILED",
+    createdAt: {
+      lt: failedInboundCutoff,
+    },
+  };
   const stalePendingWhere = {
     OR: [
       {
@@ -883,6 +958,8 @@ export async function buildXeroReconciliationReport(options?: {
     recentFailureOperations,
     stalePendingOperations,
     stalePendingOperationExamples,
+    failedInboundEvents,
+    failedInboundEventExamples,
   ] = await Promise.all([
     prisma.member.findMany({
       where: {
@@ -1015,6 +1092,25 @@ export async function buildXeroReconciliationReport(options?: {
         xeroObjectNumber: true,
         xeroObjectUrl: true,
         startedAt: true,
+        createdAt: true,
+      },
+    }),
+    prisma.xeroInboundEvent.count({
+      where: failedInboundWhere,
+    }),
+    prisma.xeroInboundEvent.findMany({
+      where: failedInboundWhere,
+      orderBy: {
+        createdAt: "asc",
+      },
+      take: topLimit,
+      select: {
+        id: true,
+        correlationKey: true,
+        eventCategory: true,
+        eventType: true,
+        resourceId: true,
+        errorMessage: true,
         createdAt: true,
       },
     }),
@@ -1206,6 +1302,7 @@ export async function buildXeroReconciliationReport(options?: {
     recentPartialOperations,
     unsupportedPartialOperations,
     repeatedFailures.length,
+    failedInboundEvents,
   ];
 
   const missingCanonicalItems = missingCanonicalExpectations.map((expectation) =>
@@ -1310,6 +1407,23 @@ export async function buildXeroReconciliationReport(options?: {
           },
         ]
       : []),
+    ...(failedInboundEvents > 0
+      ? [
+          {
+            id: "failed-inbound-events",
+            title: "Persistently failing inbound Xero events",
+            severity: "critical" as const,
+            count: failedInboundEvents,
+            whatWentWrong:
+              "Inbound Xero webhook events have stayed in the FAILED state past the persistence threshold, so the background retry loop is not clearing them and they would otherwise only be visible in the inbound-events drilldown.",
+            howToFix:
+              "Open the Xero inbound events admin area, inspect the failing event's payload and error, and fix the underlying payload-shape or handler gap. These events keep retrying until they succeed or are resolved.",
+            items: failedInboundEventExamples.map((event) =>
+              buildInboundEventIssueItem(event, now)
+            ),
+          },
+        ]
+      : []),
     ...(stalePendingOperations > 0
       ? [
           {
@@ -1395,6 +1509,7 @@ export async function buildXeroReconciliationReport(options?: {
       recentPartialOperations,
       unsupportedPartialOperations,
       repeatedFailureCorrelations: repeatedFailures.length,
+      failedInboundEvents,
       issueCategoryCount: issueCounts.filter((count) => count > 0).length,
       issueTotalCount: issueCounts.reduce((sum, count) => sum + count, 0),
     },
@@ -1408,6 +1523,7 @@ export async function sendXeroReconciliationReport(options?: {
   lookbackHours?: number;
   stalePendingMinutes?: number;
   repeatedFailureThreshold?: number;
+  failedInboundMinAgeMinutes?: number;
   topLimit?: number;
   now?: Date;
 }) {

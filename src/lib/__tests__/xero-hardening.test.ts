@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   operationCount: vi.fn(),
   operationFindMany: vi.fn(),
   operationCreateMany: vi.fn(),
+  inboundEventCount: vi.fn(),
+  inboundEventFindMany: vi.fn(),
   emailFindFirst: vi.fn(),
   notificationDeliveryPolicyFindUnique: vi.fn(),
   sendRepeatedFailureAlert: vi.fn(),
@@ -36,6 +38,10 @@ vi.mock("@/lib/prisma", () => ({
       count: mocks.operationCount,
       findMany: mocks.operationFindMany,
       createMany: mocks.operationCreateMany,
+    },
+    xeroInboundEvent: {
+      count: mocks.inboundEventCount,
+      findMany: mocks.inboundEventFindMany,
     },
     emailLog: {
       findFirst: mocks.emailFindFirst,
@@ -131,6 +137,8 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
 describe("buildXeroReconciliationReport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.inboundEventCount.mockResolvedValue(0);
+    mocks.inboundEventFindMany.mockResolvedValue([]);
   });
 
   it("summarises canonical drift, repeated failures, and unsupported partials", async () => {
@@ -304,6 +312,7 @@ describe("buildXeroReconciliationReport", () => {
       recentPartialOperations: 2,
       unsupportedPartialOperations: 1,
       repeatedFailureCorrelations: 1,
+      failedInboundEvents: 0,
       issueCategoryCount: 9,
       issueTotalCount: 13,
     });
@@ -372,6 +381,122 @@ describe("buildXeroReconciliationReport", () => {
   });
 });
 
+describe("buildXeroReconciliationReport persistently failing inbound events", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.memberFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.operationFindMany.mockResolvedValue([]);
+    mocks.operationCount.mockResolvedValue(0);
+    mocks.inboundEventCount.mockResolvedValue(0);
+    mocks.inboundEventFindMany.mockResolvedValue([]);
+  });
+
+  it("surfaces FAILED inbound events older than the age threshold, with redacted errors", async () => {
+    mocks.inboundEventCount.mockResolvedValue(1);
+    mocks.inboundEventFindMany.mockResolvedValue([
+      {
+        id: "inbound_1",
+        correlationKey: "xero-webhook:INVOICE:inv_stuck_1:UPDATE",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_stuck_1",
+        errorMessage: "Payload rejected: access_token=abcSECRET123 could not be parsed",
+        createdAt: new Date("2026-04-13T09:00:00Z"),
+      },
+    ]);
+
+    const report = await buildXeroReconciliationReport({
+      now: new Date("2026-04-13T12:00:00Z"),
+    });
+
+    expect(report.summary.failedInboundEvents).toBe(1);
+    // Only the inbound section contributes issues here, so the counters are 1/1.
+    expect(report.summary.issueCategoryCount).toBe(1);
+    expect(report.summary.issueTotalCount).toBe(1);
+
+    // Query is age-filtered at the DB layer: only events created before the
+    // now-minus-60-minute cutoff are counted / sampled.
+    expect(mocks.inboundEventCount).toHaveBeenCalledWith({
+      where: {
+        status: "FAILED",
+        createdAt: { lt: new Date("2026-04-13T11:00:00Z") },
+      },
+    });
+    expect(mocks.inboundEventFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: "FAILED",
+          createdAt: { lt: new Date("2026-04-13T11:00:00Z") },
+        },
+        orderBy: { createdAt: "asc" },
+        take: 5,
+      })
+    );
+
+    const inboundSection = report.issueSections.find(
+      (section) => section.id === "failed-inbound-events"
+    );
+    expect(inboundSection).toMatchObject({
+      id: "failed-inbound-events",
+      severity: "critical",
+      count: 1,
+    });
+    expect(inboundSection?.items).toHaveLength(1);
+
+    const item = inboundSection?.items[0];
+    expect(item).toMatchObject({
+      operationId: "inbound_1",
+      operationStatus: "FAILED",
+      correlationKey: "xero-webhook:INVOICE:inv_stuck_1:UPDATE",
+    });
+    expect(item?.detail).toContain("3 hours");
+    // errorMessage is redacted before it reaches the report/email.
+    expect(item?.latestErrorMessage).toBe(
+      "Payload rejected: access_token=[REDACTED] could not be parsed"
+    );
+    expect(item?.latestErrorMessage).not.toContain("abcSECRET123");
+  });
+
+  it("excludes inbound events newer than the default age threshold via the query cutoff", async () => {
+    // A fresh FAILED event (younger than the 60-minute threshold) is filtered
+    // out at the DB layer, so count is 0 and no section is emitted.
+    mocks.inboundEventCount.mockResolvedValue(0);
+    mocks.inboundEventFindMany.mockResolvedValue([]);
+
+    const report = await buildXeroReconciliationReport({
+      now: new Date("2026-04-13T12:00:00Z"),
+    });
+
+    expect(report.summary.failedInboundEvents).toBe(0);
+    expect(
+      report.issueSections.some((section) => section.id === "failed-inbound-events")
+    ).toBe(false);
+    expect(mocks.inboundEventCount).toHaveBeenCalledWith({
+      where: {
+        status: "FAILED",
+        createdAt: { lt: new Date("2026-04-13T11:00:00Z") },
+      },
+    });
+  });
+
+  it("honours a custom failedInboundMinAgeMinutes threshold", async () => {
+    await buildXeroReconciliationReport({
+      now: new Date("2026-04-13T12:00:00Z"),
+      failedInboundMinAgeMinutes: 120,
+    });
+
+    expect(mocks.inboundEventCount).toHaveBeenCalledWith({
+      where: {
+        status: "FAILED",
+        createdAt: { lt: new Date("2026-04-13T10:00:00Z") },
+      },
+    });
+  });
+});
+
 describe("sendXeroReconciliationReport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -381,6 +506,8 @@ describe("sendXeroReconciliationReport", () => {
     mocks.linkFindMany.mockResolvedValue([]);
     mocks.operationFindMany.mockResolvedValue([]);
     mocks.operationCount.mockResolvedValue(0);
+    mocks.inboundEventCount.mockResolvedValue(0);
+    mocks.inboundEventFindMany.mockResolvedValue([]);
     mocks.notificationDeliveryPolicyFindUnique.mockResolvedValue(null);
     mocks.sendReconciliationReportAlert.mockResolvedValue(undefined);
   });

@@ -1083,6 +1083,7 @@ export interface XeroReconciliationReportEmail {
     recentPartialOperations: number;
     unsupportedPartialOperations: number;
     repeatedFailureCorrelations: number;
+    failedInboundEvents: number;
     issueCategoryCount: number;
     issueTotalCount: number;
   };
@@ -1242,6 +1243,7 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
     { label: "Recent partial operations", value: String(report.summary.recentPartialOperations) },
     { label: "Unsupported partial operations", value: String(report.summary.unsupportedPartialOperations) },
     { label: "Repeated-failure correlations", value: String(report.summary.repeatedFailureCorrelations) },
+    { label: "Persistently failing inbound events", value: String(report.summary.failedInboundEvents) },
   ];
 
   const issueSections = report.issueSections ?? [];

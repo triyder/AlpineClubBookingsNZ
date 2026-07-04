@@ -345,7 +345,8 @@ Scheduled hardening (cron tasks, all idempotent):
 - `link-cleanup` — `cleanupStaleCanonicalXeroObjectLinks`: deactivates
   superseded canonical links.
 - `report` — `sendXeroReconciliationReport`: emailed issue digest (repeated
-  failures, unsupported partials, stale pending, link problems).
+  failures, unsupported partials, stale pending, persistently-failing inbound
+  events, link problems).
 - Repeated-failure alerting (`maybeNotifyXeroRepeatedFailure`) and the
   once-per-hour error alert (`notifyXeroSyncError`) keep failure noise bounded.
 
