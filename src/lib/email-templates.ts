@@ -15,6 +15,7 @@ import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { SUPPORT_EMAIL } from "./email-sender";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
 import { formatNZDate, formatNZDateTime } from "./nzst-date";
+import { emailPalette } from "./email-theme";
 
 const BASE_URL = getAppBaseUrl();
 
@@ -28,20 +29,16 @@ export function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const BRAND_COLOR = "#ffcb05";
-const BRAND_CHARCOAL = "#4d4d46";
-const BRAND_DEEP = "#2f2f2b";
-const BRAND_MIST = "#d9d5c2";
-const BRAND_SNOW = "#f7f5ed";
+// Brand colours are pulled per-render from the club (Site Style) theme via
+// `emailPalette()` (see email-theme.ts) so emails match the live site. Each
+// helper/template reads `const p = emailPalette()` once and uses p.gold,
+// p.charcoal, p.deep, p.mist, p.snow, p.ridge. These two are not brand roles
+// and stay fixed.
 const BRAND_LOGO_URL = `${BASE_URL}/branding/logo.png`;
-const BRAND_LIGHT = BRAND_MIST;
-const TEXT_COLOR = BRAND_DEEP;
-const TEXT_MUTED = "#6a6a63";
-const BG_COLOR = BRAND_SNOW;
 const WHITE = "#ffffff";
-const BORDER_COLOR = BRAND_MIST;
 
 function layout(content: string): string {
+  const p = emailPalette();
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -50,14 +47,14 @@ function layout(content: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(CLUB_EMAIL_FROM_NAME)}</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: ${BG_COLOR}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${BG_COLOR};">
+<body style="margin: 0; padding: 0; background-color: ${p.snow}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${p.snow};">
     <tr>
       <td align="center" style="padding: 24px 16px;">
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; width: 100%;">
           <!-- Header -->
           <tr>
-            <td style="background-color: ${BRAND_CHARCOAL}; padding: 28px 32px 24px; border-top: 4px solid ${BRAND_COLOR}; border-radius: 8px 8px 0 0; text-align: center;">
+            <td style="background-color: ${p.charcoal}; padding: 28px 32px 24px; border-top: 4px solid ${p.gold}; border-radius: 8px 8px 0 0; text-align: center;">
               <img
                 src="${BRAND_LOGO_URL}"
                 alt="${escapeHtml(CLUB_NAME)}"
@@ -71,16 +68,16 @@ function layout(content: string): string {
           </tr>
           <!-- Body -->
           <tr>
-            <td style="background-color: ${WHITE}; padding: 32px; border-left: 1px solid ${BORDER_COLOR}; border-right: 1px solid ${BORDER_COLOR};">
+            <td style="background-color: ${WHITE}; padding: 32px; border-left: 1px solid ${p.mist}; border-right: 1px solid ${p.mist};">
               ${content}
             </td>
           </tr>
           <!-- Footer -->
           <tr>
-            <td style="background-color: ${WHITE}; padding: 20px 32px; border-top: 1px solid ${BORDER_COLOR}; border-radius: 0 0 8px 8px; border-left: 1px solid ${BORDER_COLOR}; border-right: 1px solid ${BORDER_COLOR}; border-bottom: 1px solid ${BORDER_COLOR};">
-              <p style="margin: 0; color: ${TEXT_MUTED}; font-size: 12px; text-align: center;">
+            <td style="background-color: ${WHITE}; padding: 20px 32px; border-top: 1px solid ${p.mist}; border-radius: 0 0 8px 8px; border-left: 1px solid ${p.mist}; border-right: 1px solid ${p.mist}; border-bottom: 1px solid ${p.mist};">
+              <p style="margin: 0; color: ${p.ridge}; font-size: 12px; text-align: center;">
                 ${escapeHtml(CLUB_NAME)} &bull; Online Booking System<br>
-                <a href="${BASE_URL}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: none;">${BASE_URL.replace(/^https?:\/\//, "")}</a>
+                <a href="${BASE_URL}" style="color: ${p.charcoal}; font-weight: 600; text-decoration: none;">${BASE_URL.replace(/^https?:\/\//, "")}</a>
               </p>
             </td>
           </tr>
@@ -93,8 +90,9 @@ function layout(content: string): string {
 }
 
 function supportEmailLink(): string {
+  const p = emailPalette();
   const address = escapeHtml(SUPPORT_EMAIL);
-  return `<a href="mailto:${address}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: none;">${address}</a>`;
+  return `<a href="mailto:${address}" style="color: ${p.charcoal}; font-weight: 600; text-decoration: none;">${address}</a>`;
 }
 
 function supportContactMuted(): string {
@@ -110,6 +108,7 @@ function button(
   url: string,
   options?: { sameOrigin?: boolean }
 ): string {
+  const p = emailPalette();
   const safeUrl = sanitizeEmailHref(url, {
     baseUrl: BASE_URL,
     sameOrigin: options?.sameOrigin,
@@ -118,8 +117,8 @@ function button(
   return `
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
   <tr>
-    <td style="background-color: ${BRAND_COLOR}; border-radius: 6px;">
-      <a href="${escapeHtml(safeUrl)}" target="_blank" style="display: inline-block; padding: 12px 28px; color: ${BRAND_CHARCOAL}; text-decoration: none; font-weight: 700; font-size: 14px;">
+    <td style="background-color: ${p.gold}; border-radius: 6px;">
+      <a href="${escapeHtml(safeUrl)}" target="_blank" style="display: inline-block; padding: 12px 28px; color: ${p.charcoal}; text-decoration: none; font-weight: 700; font-size: 14px;">
         ${text}
       </a>
     </td>
@@ -128,28 +127,31 @@ function button(
 }
 
 function infoTable(rows: Array<{ label: string; value: string }>): string {
+  const p = emailPalette();
   const rowsHtml = rows
     .map(
       (r) => `
     <tr>
-      <td style="padding: 8px 12px; font-weight: 600; color: ${TEXT_COLOR}; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; white-space: nowrap;">${r.label}</td>
-      <td style="padding: 8px 12px; color: ${TEXT_COLOR}; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR};">${r.value}</td>
+      <td style="padding: 8px 12px; font-weight: 600; color: ${p.deep}; font-size: 14px; border-bottom: 1px solid ${p.mist}; white-space: nowrap;">${r.label}</td>
+      <td style="padding: 8px 12px; color: ${p.deep}; font-size: 14px; border-bottom: 1px solid ${p.mist};">${r.value}</td>
     </tr>`
     )
     .join("");
 
   return `
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${p.mist}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
   ${rowsHtml}
 </table>`;
 }
 
 function heading(text: string): string {
-  return `<h2 style="margin: 0 0 16px 0; color: ${TEXT_COLOR}; font-size: 22px; font-weight: 700;">${text}</h2>`;
+  const p = emailPalette();
+  return `<h2 style="margin: 0 0 16px 0; color: ${p.deep}; font-size: 22px; font-weight: 700;">${text}</h2>`;
 }
 
 function paragraph(text: string): string {
-  return `<p style="margin: 0 0 12px 0; color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6;">${text}</p>`;
+  const p = emailPalette();
+  return `<p style="margin: 0 0 12px 0; color: ${p.deep}; font-size: 15px; line-height: 1.6;">${text}</p>`;
 }
 
 export function plainTextEmailTemplate(bodyText: string): string {
@@ -172,19 +174,22 @@ export function plainTextEmailTemplate(bodyText: string): string {
 }
 
 function multilineBlock(text: string): string {
-  return `<div style="margin: 0 0 12px 0; color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${text}</div>`;
+  const p = emailPalette();
+  return `<div style="margin: 0 0 12px 0; color: ${p.deep}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${text}</div>`;
 }
 
 function muted(text: string): string {
-  return `<p style="margin: 0 0 8px 0; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.5;">${text}</p>`;
+  const p = emailPalette();
+  return `<p style="margin: 0 0 8px 0; color: ${p.ridge}; font-size: 13px; line-height: 1.5;">${text}</p>`;
 }
 
 function alertBox(
   text: string,
   type: "info" | "warning" | "success" = "info"
 ): string {
+  const p = emailPalette();
   const colors = {
-    info: { bg: "#fff7d6", border: BRAND_COLOR, text: BRAND_DEEP },
+    info: { bg: "#fff7d6", border: p.gold, text: p.deep },
     warning: { bg: "#fef3c7", border: "#fcd34d", text: "#92400e" },
     success: { bg: "#dcfce7", border: "#86efac", text: "#166534" },
   };
@@ -648,6 +653,7 @@ export function hutLeaderAssignmentTemplate(params: {
   endDate: Date;
   pin: string;
 }): string {
+  const p = emailPalette();
   return layout(`
     ${heading("Hut Leader Assignment")}
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on hut leader duties for the lodge.")}
@@ -659,7 +665,7 @@ export function hutLeaderAssignmentTemplate(params: {
     ${paragraph("When you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.")}
     ${alertBox("Please keep this PIN private and share it only with the assigned hut leader team for these dates.", "warning")}
     ${paragraph("Responsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.")}
-    ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/lodge-instructions")}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge.`)}
+    ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/lodge-instructions")}" style="color: ${p.charcoal}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge.`)}
     ${button("Open Lodge View", BASE_URL + "/lodge")}
     ${muted("If you have any issues accessing the kiosk, please contact a club administrator.")}
   `);
@@ -674,8 +680,9 @@ export function checkinReminderTemplate(
   guests: Array<{ firstName: string; lastName: string }>,
   chores: Array<{ name: string; description: string | null }>
 ): string {
+  const p = emailPalette();
   const guestListHtml = guests
-    .map((g) => `<li style="padding: 4px 0; color: ${TEXT_COLOR}; font-size: 14px;">${escapeHtml(g.firstName)} ${escapeHtml(g.lastName)}</li>`)
+    .map((g) => `<li style="padding: 4px 0; color: ${p.deep}; font-size: 14px;">${escapeHtml(g.firstName)} ${escapeHtml(g.lastName)}</li>`)
     .join("");
 
   const choreSection = chores.length > 0
@@ -800,15 +807,16 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
   deadline: Date;
   hoursRemaining: number;
 }>): string {
+  const p = emailPalette();
   const tableRowsHtml = bookings
     .map(
       (b) => `
     <tr>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(b.memberName)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(b.checkIn)} – ${formatNZDate(b.checkOut)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${b.guestCount}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDateTime(b.deadline)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${b.hoursRemaining <= 24 ? "#dc2626" : TEXT_COLOR}; font-weight: ${b.hoursRemaining <= 24 ? "700" : "400"};">${Math.round(b.hoursRemaining)}h</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(b.memberName)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatNZDate(b.checkIn)} – ${formatNZDate(b.checkOut)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${b.guestCount}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatNZDateTime(b.deadline)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${b.hoursRemaining <= 24 ? "#dc2626" : p.deep}; font-weight: ${b.hoursRemaining <= 24 ? "700" : "400"};">${Math.round(b.hoursRemaining)}h</td>
     </tr>`
     )
     .join("");
@@ -816,13 +824,13 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
   return layout(`
     ${heading("Pending Bookings Approaching Deadline")}
     ${alertBox(bookings.length + " pending booking" + (bookings.length > 1 ? "s" : "") + " will reach their hold deadline within 48 hours.", "warning")}
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${p.mist}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Member</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Dates</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Guests</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Deadline</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Remaining</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Member</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Dates</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Guests</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Deadline</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Remaining</th>
       </tr>
       ${tableRowsHtml}
     </table>
@@ -887,6 +895,7 @@ export function adminXeroRepeatedFailureTemplate(data: {
   latestErrorMessage: string | null;
   timestamp: Date;
 }): string {
+  const p = emailPalette();
   const infoRows = [
     { label: "Correlation Key", value: escapeHtml(data.correlationKey) },
     {
@@ -914,10 +923,10 @@ export function adminXeroRepeatedFailureTemplate(data: {
 
   const links: string[] = [];
   if (data.localUrl) {
-    links.push(`<a href="${escapeHtml(BASE_URL + data.localUrl)}" style="color: ${BRAND_COLOR}; text-decoration: underline;">Open local record</a>`);
+    links.push(`<a href="${escapeHtml(BASE_URL + data.localUrl)}" style="color: ${p.gold}; text-decoration: underline;">Open local record</a>`);
   }
   if (data.xeroObjectUrl) {
-    links.push(`<a href="${escapeHtml(data.xeroObjectUrl)}" style="color: ${BRAND_COLOR}; text-decoration: underline;">Open Xero object</a>`);
+    links.push(`<a href="${escapeHtml(data.xeroObjectUrl)}" style="color: ${p.gold}; text-decoration: underline;">Open Xero object</a>`);
   }
 
   return layout(`
@@ -936,19 +945,20 @@ export function adminCapacityWarningTemplate(days: Array<{
   occupiedBeds: number;
   availableBeds: number;
 }>, lodgeCapacity = FALLBACK_LODGE_CAPACITY): string {
+  const p = emailPalette();
   const tableRowsHtml = days
     .map((d) => {
       const pct =
         lodgeCapacity > 0
           ? Math.round((d.occupiedBeds / lodgeCapacity) * 100)
           : 0;
-      const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : TEXT_COLOR;
+      const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : p.deep;
       return `
     <tr>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(d.date)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/${lodgeCapacity}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${pct}%</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatNZDate(d.date)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${d.occupiedBeds}/${lodgeCapacity}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${color}; font-weight: 700;">${pct}%</td>
     </tr>`;
     })
     .join("");
@@ -956,12 +966,12 @@ export function adminCapacityWarningTemplate(days: Array<{
   return layout(`
     ${heading("Capacity Warning")}
     ${alertBox(days.length + " day" + (days.length > 1 ? "s" : "") + " in the next 14 days have high occupancy.", "warning")}
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${p.mist}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Date</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupied</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Available</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupancy</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Date</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Occupied</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Available</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Occupancy</th>
       </tr>
       ${tableRowsHtml}
     </table>
@@ -975,9 +985,10 @@ export function bulkCommunicationTemplate(
   subject: string,
   body: string
 ): string {
+  const p = emailPalette();
   return layout(`
     ${heading(escapeHtml(subject))}
-    <div style="color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(body)}</div>
+    <div style="color: ${p.deep}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(body)}</div>
     ${muted(`This email was sent to you by the ${escapeHtml(CLUB_NAME)} administration. You can update your email preferences in your account settings.`)}
     ${button("Manage Preferences", BASE_URL + "/profile")}
   `);
@@ -994,6 +1005,7 @@ export function adminDailyDigestTemplate(sections: {
   xeroErrors: number;
   totalAlerts: number;
 }): string {
+  const p = emailPalette();
   const rows: Array<{ label: string; value: string; link: string }> = [];
 
   if (sections.newBookings > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: "/admin/bookings" });
@@ -1007,9 +1019,9 @@ export function adminDailyDigestTemplate(sections: {
     .map(
       (r) => `
     <tr>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${r.label}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR}; font-weight: 700;">${r.value}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR};"><a href="${BASE_URL}${r.link}" style="color: ${BRAND_COLOR}; text-decoration: none;">View</a></td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${r.label}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep}; font-weight: 700;">${r.value}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist};"><a href="${BASE_URL}${r.link}" style="color: ${p.gold}; text-decoration: none;">View</a></td>
     </tr>`
     )
     .join("");
@@ -1023,11 +1035,11 @@ export function adminDailyDigestTemplate(sections: {
     ${paragraph("Summary of admin alerts from the past 24 hours.")}
     ${noAlerts}
     ${rows.length > 0 ? `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${p.mist}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Alert Type</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Count</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Action</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Alert Type</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Count</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Action</th>
       </tr>
       ${tableRowsHtml}
     </table>` : ""}
@@ -1142,6 +1154,7 @@ function formatXeroObjectLabel(item: {
 }
 
 function issueSeverityStyle(severity: XeroReconciliationIssueSeverityEmail) {
+  const p = emailPalette();
   switch (severity) {
     case "critical":
       return { bg: "#fef2f2", border: "#fecaca", text: "#991b1b", label: "Action needed" };
@@ -1150,20 +1163,22 @@ function issueSeverityStyle(severity: XeroReconciliationIssueSeverityEmail) {
     case "info":
       return { bg: "#eff6ff", border: "#bfdbfe", text: "#1e40af", label: "Context" };
     default:
-      return { bg: "#f8fafc", border: BORDER_COLOR, text: TEXT_COLOR, label: "Review" };
+      return { bg: "#f8fafc", border: p.mist, text: p.deep, label: "Review" };
   }
 }
 
 function issueLink(text: string, url: string, sameOrigin = false): string {
+  const p = emailPalette();
   const safeUrl = sanitizeEmailHref(url, {
     baseUrl: BASE_URL,
     sameOrigin,
   });
 
-  return `<a href="${escapeHtml(safeUrl)}" target="_blank" style="color: ${BRAND_CHARCOAL}; font-weight: 700; text-decoration: underline;">${escapeHtml(text)}</a>`;
+  return `<a href="${escapeHtml(safeUrl)}" target="_blank" style="color: ${p.charcoal}; font-weight: 700; text-decoration: underline;">${escapeHtml(text)}</a>`;
 }
 
 function renderIssueItem(item: XeroReconciliationIssueItemEmail): string {
+  const p = emailPalette();
   const recordLink = item.localUrl
     ? issueLink("Open booking record", item.localUrl, true)
     : null;
@@ -1185,43 +1200,45 @@ function renderIssueItem(item: XeroReconciliationIssueItemEmail): string {
   ].filter((value): value is string => Boolean(value));
 
   return `
-    <div style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; padding: 12px; margin: 10px 0; background-color: ${WHITE};">
-      <p style="margin: 0 0 6px 0; color: ${TEXT_COLOR}; font-size: 14px; font-weight: 700;">${escapeHtml(item.label)}</p>
+    <div style="border: 1px solid ${p.mist}; border-radius: 6px; padding: 12px; margin: 10px 0; background-color: ${WHITE};">
+      <p style="margin: 0 0 6px 0; color: ${p.deep}; font-size: 14px; font-weight: 700;">${escapeHtml(item.label)}</p>
       ${
         metadata.length > 0
-          ? `<p style="margin: 0 0 6px 0; color: ${TEXT_MUTED}; font-size: 12px; line-height: 1.5;">${metadata.map(escapeHtml).join(" &bull; ")}</p>`
+          ? `<p style="margin: 0 0 6px 0; color: ${p.ridge}; font-size: 12px; line-height: 1.5;">${metadata.map(escapeHtml).join(" &bull; ")}</p>`
           : ""
       }
       ${
         detailRows.length > 0
-          ? `<p style="margin: 0 0 8px 0; color: ${TEXT_COLOR}; font-size: 13px; line-height: 1.5;">${detailRows.map(escapeHtml).join("<br>")}</p>`
+          ? `<p style="margin: 0 0 8px 0; color: ${p.deep}; font-size: 13px; line-height: 1.5;">${detailRows.map(escapeHtml).join("<br>")}</p>`
           : ""
       }
       ${
         links.length > 0
-          ? `<p style="margin: 0; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.5;">${links.join(" &nbsp; ")}</p>`
+          ? `<p style="margin: 0; color: ${p.ridge}; font-size: 13px; line-height: 1.5;">${links.join(" &nbsp; ")}</p>`
           : ""
       }
     </div>`;
 }
 
 function renderIssueSection(section: XeroReconciliationIssueSectionEmail): string {
+  const p = emailPalette();
   const style = issueSeverityStyle(section.severity);
   const itemHtml = section.items.length > 0
     ? section.items.map(renderIssueItem).join("")
-    : `<p style="margin: 0; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.5;">Open the Xero admin area to review the affected records.</p>`;
+    : `<p style="margin: 0; color: ${p.ridge}; font-size: 13px; line-height: 1.5;">Open the Xero admin area to review the affected records.</p>`;
 
   return `
     <div style="background-color: ${style.bg}; border: 1px solid ${style.border}; border-radius: 8px; padding: 16px; margin: 18px 0;">
       <p style="margin: 0 0 8px 0; color: ${style.text}; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;">${escapeHtml(style.label)} &bull; ${section.count}</p>
-      <h3 style="margin: 0 0 10px 0; color: ${TEXT_COLOR}; font-size: 17px; line-height: 1.35;">${escapeHtml(section.title)}</h3>
-      <p style="margin: 0 0 8px 0; color: ${TEXT_COLOR}; font-size: 14px; line-height: 1.5;"><strong>What went wrong:</strong> ${escapeHtml(section.whatWentWrong)}</p>
-      <p style="margin: 0 0 12px 0; color: ${TEXT_COLOR}; font-size: 14px; line-height: 1.5;"><strong>How to fix:</strong> ${escapeHtml(section.howToFix)}</p>
+      <h3 style="margin: 0 0 10px 0; color: ${p.deep}; font-size: 17px; line-height: 1.35;">${escapeHtml(section.title)}</h3>
+      <p style="margin: 0 0 8px 0; color: ${p.deep}; font-size: 14px; line-height: 1.5;"><strong>What went wrong:</strong> ${escapeHtml(section.whatWentWrong)}</p>
+      <p style="margin: 0 0 12px 0; color: ${p.deep}; font-size: 14px; line-height: 1.5;"><strong>How to fix:</strong> ${escapeHtml(section.howToFix)}</p>
       ${itemHtml}
     </div>`;
 }
 
 export function adminXeroReconciliationReportTemplate(report: XeroReconciliationReportEmail): string {
+  const p = emailPalette();
   const summaryRows = [
     { label: "Generated", value: formatOperationalDateTime(report.generatedAt) },
     { label: "Lookback Window", value: `${report.lookbackHours} hour${report.lookbackHours === 1 ? "" : "s"}` },
@@ -1251,10 +1268,10 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
   const repeatedFailureRows = report.repeatedFailures
     .map((failure) => `
       <tr>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(failure.correlationKey)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${failure.failureCount}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(failure.entityType)} ${escapeHtml(failure.operationType)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(failure.correlationKey)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${failure.failureCount}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(failure.entityType)} ${escapeHtml(failure.operationType)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${
           failure.localModel && failure.localId
             ? escapeHtml(`${failure.localModel} ${failure.localId}`)
             : "Unavailable"
@@ -1265,14 +1282,14 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
   const unsupportedPartialRows = report.unsupportedPartials
     .map((partial) => `
       <tr>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(partial.operationId)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(partial.entityType)} ${escapeHtml(partial.operationType)}</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(partial.operationId)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(partial.entityType)} ${escapeHtml(partial.operationType)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${
           partial.localModel && partial.localId
             ? escapeHtml(`${partial.localModel} ${partial.localId}`)
             : "Unavailable"
         }</td>
-        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(partial.reason)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(partial.reason)}</td>
       </tr>`)
     .join("");
 
@@ -1292,12 +1309,12 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
     ${
       issueSections.length === 0 && report.repeatedFailures.length > 0
         ? `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${p.mist}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Correlation Key</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Failures</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Correlation Key</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Failures</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Operation</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Local Record</th>
       </tr>
       ${repeatedFailureRows}
     </table>`
@@ -1306,12 +1323,12 @@ export function adminXeroReconciliationReportTemplate(report: XeroReconciliation
     ${
       issueSections.length === 0 && report.unsupportedPartials.length > 0
         ? `
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${p.mist}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation ID</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Repair Gap</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Operation ID</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Operation</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Local Record</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${p.mist}; color: ${p.deep}; border-bottom: 2px solid ${p.mist};">Repair Gap</th>
       </tr>
       ${unsupportedPartialRows}
     </table>`

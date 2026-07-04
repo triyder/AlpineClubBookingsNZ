@@ -80,6 +80,18 @@ colour into the value field is blocked the same as a hex one. The shipped defaul
 gold is `#8fa87c` (4.8:1 against the default charcoal button text); the earlier
 `#7a8f6a` was 3.55:1 and would now block first-run setup.
 
+Transactional and admin **emails** derive their brand palette from the same club
+theme, so a colour change in `/admin/site-style` also restyles the emails
+(header bar, accents, buttons, tables). Emails read the palette through a
+process-level cache that refreshes at most every five minutes, so a theme change
+propagates to newly sent emails within that window; a freshly started process (or
+a database read failure) renders with the site default palette until the cache
+warms. Emails render **hex** colours only: because email clients cannot render
+`oklch()`, a Site Style colour saved as oklch falls back to the site-default hex
+for that slot in email (a full oklch→hex conversion is a possible follow-up), so
+emails never emit unrenderable oklch. Status colours in warning/success callouts
+stay fixed.
+
 The remaining public image assets are still file-based. Replace the default
 assets in `public/branding/`:
 

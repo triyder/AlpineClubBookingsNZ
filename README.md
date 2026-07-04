@@ -116,7 +116,10 @@ data are in place, log in as an admin and finish the in-app checklist at
 `/admin/setup`, including booking policy, membership cancellation, email, and
 provider readiness settings. Admin Setup and Admin Notifications also expose
 the editable lifecycle email templates and delivery policies used for
-membership cancellation, archive, and safe-delete review alerts.
+membership cancellation, archive, and safe-delete review alerts. Emails also
+inherit their brand palette from the club theme set in `/admin/site-style`
+(via a cache that refreshes at most every five minutes), so they match the live
+site; see `CONFIGURATION.md` → Branding Assets.
 
 See `CONFIGURATION.md` for the full environment and `config/club.json` schema
 reference.

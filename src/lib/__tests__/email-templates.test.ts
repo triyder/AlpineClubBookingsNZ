@@ -35,7 +35,10 @@ describe("email-templates", () => {
       const html = welcomeTemplate("Test");
       expect(html).toContain(CLUB_NAME);
       expect(html).toContain("/branding/logo.png");
-      expect(html).toContain("#ffcb05");
+      // Emails now derive their palette from the club (Site Style) theme; the
+      // default/fallback is the site default brand gold (#8fa87c, #1186), not
+      // the legacy hard-coded email gold (#ffcb05).
+      expect(html).toContain("#8fa87c");
     });
 
     it("uses dark text on light table headers", () => {
@@ -49,8 +52,8 @@ describe("email-templates", () => {
         totalAlerts: 1,
       });
 
-      expect(html).toContain("background-color: #d9d5c2; color: #2f2f2b;");
-      expect(html).not.toContain("background-color: #d9d5c2; color: #ffcb05;");
+      expect(html).toContain("background-color: #d7dde1; color: #1f2933;");
+      expect(html).not.toContain("background-color: #d7dde1; color: #8fa87c;");
     });
 
     it("produces valid HTML structure", () => {
