@@ -164,6 +164,7 @@ function findAlignedBlock(
   return block as HTMLElement;
 }
 
+// test seam
 export function applyTextAlignmentToSelection(
   editor: HTMLElement,
   selection: Selection,

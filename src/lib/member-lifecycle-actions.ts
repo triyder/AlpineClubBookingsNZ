@@ -935,6 +935,7 @@ export async function createMemberArchiveRequest({
   return { request: serializeMemberLifecycleActionRequest(request) };
 }
 
+// test seam
 export async function reviewMemberDeleteRequest({
   requestId,
   reviewedByMemberId,
@@ -1117,6 +1118,7 @@ export async function reviewMemberDeleteRequest({
   return { request: serializeMemberLifecycleActionRequest(approved) };
 }
 
+// test seam
 export async function reviewMemberArchiveRequest({
   requestId,
   reviewedByMemberId,

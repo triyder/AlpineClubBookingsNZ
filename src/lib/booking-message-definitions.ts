@@ -164,6 +164,7 @@ const TOKEN_PATTERN = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 const HTML_TAG_PATTERN = /<\/?[a-z][\s\S]*>/i;
 const MAX_BOOKING_MESSAGE_LENGTH = 4000;
 
+// test seam
 export function extractBookingMessageTokens(template: string): string[] {
   const tokens = new Set<string>();
   for (const match of template.matchAll(TOKEN_PATTERN)) {

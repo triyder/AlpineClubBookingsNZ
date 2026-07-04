@@ -59,11 +59,13 @@ const LEGACY_TOKEN_ALTERNATION = legacySingleBraceTokenNames()
   .join("|");
 const TEXT_TOKEN_ALTERNATION = textTokenNames().map(escapeRegExp).join("|");
 
+// test seam
 export const EMBED_TOKEN_REGEX = new RegExp(
   `\\{\\{\\s*(${EMBED_TOKEN_ALTERNATION})(?:\\s*:\\s*([^{}]+?))?\\s*\\}\\}` +
     `|\\{\\s*(${LEGACY_TOKEN_ALTERNATION})(?:\\s*:\\s*([^{}]+?))?\\s*\\}`,
   "gi",
 );
+// test seam
 export const TEXT_TOKEN_REGEX = new RegExp(
   `\\{\\{\\s*(${TEXT_TOKEN_ALTERNATION})\\s*\\}\\}`,
   "gi",

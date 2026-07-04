@@ -25,6 +25,7 @@ function readJsonIfExists(filePath: string): unknown | null {
   }
 }
 
+// test seam
 /**
  * Read and validate a club config. Tries `<configDir>/club.json` first, then falls back
  * to `<configDir>/club.example.json`. Throws if neither exists or the chosen file fails

@@ -33,6 +33,7 @@ export interface XeroEntranceFeeFormState {
   narration: string;
 }
 
+// test seam
 /**
  * Validate the form state and produce the request payload the admin
  * members API expects. Throws when the inputs are not usable; callers

@@ -194,6 +194,7 @@ export function fontCssVariable(fontKey: ClubThemeFontKey): string {
   );
 }
 
+// test seam
 // Strip any </style...> closing-tag sequence (case-insensitive). This is
 // the only HTML breakout vector from inside a <style> element — browsers use
 // rawtext mode and close the element on </style regardless of nesting. No
@@ -343,6 +344,7 @@ function relativeLuminance(colour: string): number | null {
   );
 }
 
+// test seam
 export function contrastRatio(
   foreground: string,
   background: string,

@@ -31,6 +31,7 @@ export interface RevenueDataPoint {
 
 const MONDAY_WEEK = { weekStartsOn: 1 as const };
 
+// test seam
 export function getRevenueGranularity(rangeStart: Date, rangeEnd: Date): RevenueGranularity {
   const daySpan = differenceInCalendarDays(rangeEnd, rangeStart) + 1;
   if (daySpan <= 14) {

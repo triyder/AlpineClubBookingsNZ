@@ -79,6 +79,7 @@ export interface RateLimitResult {
   resetAt: number;
 }
 
+// test seam
 /**
  * Per-process fallback limiter (the pre-#1039 behaviour). Exported for tests;
  * production traffic goes through `checkRateLimit`, which only lands here
@@ -340,5 +341,6 @@ export const rateLimiters = {
   groupBookingToken: { id: "group-booking-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
 } as const;
 
+// test seam
 // Export for testing
 export { store as _testStore };

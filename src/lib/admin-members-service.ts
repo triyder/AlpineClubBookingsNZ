@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
-import { genderEnum, titleEnum } from "@/lib/member-enums";
+import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import type { AgeTier } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";

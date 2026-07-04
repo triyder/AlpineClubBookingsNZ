@@ -346,6 +346,7 @@ export function normalizeMembershipTypeText(
   return trimmed.length > 0 ? trimmed : null;
 }
 
+// test seam
 export function normalizeMembershipTypeKey(name: string): string {
   const normalized = name
     .trim()
@@ -406,6 +407,7 @@ export function defaultMembershipTypeKeyForRole(
   return "FULL";
 }
 
+// test seam
 export function canonicalMembershipTypeKey(
   key: string | null | undefined,
 ): string | null {
@@ -413,6 +415,7 @@ export function canonicalMembershipTypeKey(
   return LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP[key] ?? key;
 }
 
+// test seam
 export async function ensureBuiltInMembershipTypes(
   db: MembershipTypeSeedClient,
 ): Promise<void> {

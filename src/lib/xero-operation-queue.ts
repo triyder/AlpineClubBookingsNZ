@@ -1,6 +1,7 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { asRecord } from "@/lib/xero-json";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -13,6 +14,7 @@ import {
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
 
+// test seam
 export const XERO_OPERATION_REQUEUE_TYPE = "REQUEUE";
 
 // The requeue correlation key is `${REQUEUE_CORRELATION_KEY_PREFIX}${originalOperationId}`.
@@ -25,14 +27,6 @@ interface QueuedRetryPayload {
   originalOperationId?: string;
   originalOperationType?: string;
   originalStatus?: string;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  return value as Record<string, unknown>;
 }
 
 function readQueuedRetryPayload(value: unknown): QueuedRetryPayload | null {
@@ -50,6 +44,7 @@ function readQueuedRetryPayload(value: unknown): QueuedRetryPayload | null {
   };
 }
 
+// test seam
 export function buildXeroOperationRequeueCorrelationKey(operationId: string) {
   return buildXeroIdempotencyKey("xero-operation", "requeue", operationId);
 }

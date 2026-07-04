@@ -12,6 +12,7 @@ export function getSeasonStartDate(seasonYear: number): Date {
   return new Date(seasonYear, startMonth - 1, 1);
 }
 
+// test seam
 export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
   let age = referenceDate.getFullYear() - dateOfBirth.getFullYear();
   const monthDiff = referenceDate.getMonth() - dateOfBirth.getMonth();

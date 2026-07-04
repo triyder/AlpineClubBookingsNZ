@@ -84,6 +84,7 @@ function getTokenSessionIssuedAtMs(token: {
   return Date.now();
 }
 
+// test seam
 export const authConfig = {
   trustHost: getAuthTrustHost(),
   secret: getAuthSecret(),

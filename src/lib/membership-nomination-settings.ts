@@ -33,6 +33,7 @@ export interface PersistedMembershipNominationSettings {
   updatedAt?: Date | string | null;
 }
 
+// test seam
 export function getDefaultMembershipNominationSettings(): MembershipNominationSettings {
   return {
     gateEnabled: false,

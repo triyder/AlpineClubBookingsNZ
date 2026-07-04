@@ -34,6 +34,7 @@ function hasScrollableOverflow(element: HTMLElement) {
   );
 }
 
+// test seam
 export function getNearestScrollContainer(
   element: HTMLElement | null,
 ): HTMLElement | null {
@@ -55,6 +56,7 @@ function resolveScrollContainer(
   return getNearestScrollContainer(element);
 }
 
+// test seam
 export function scrollToTop(containerRef: ScrollContainerTarget) {
   const container = resolveScrollContainer(containerRef);
   if (typeof container?.scrollTo === "function") {
@@ -62,6 +64,7 @@ export function scrollToTop(containerRef: ScrollContainerTarget) {
   }
 }
 
+// test seam
 export function scrollToError(errorRefOrSelector: ScrollErrorTarget) {
   const errorElement = resolveFeedbackElement(errorRefOrSelector);
   if (!errorElement) return;

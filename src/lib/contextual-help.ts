@@ -1762,6 +1762,7 @@ export function getContextualHelp(
   );
 }
 
+// test seam
 export function getContextualHelpPaths(scope: HelpScope): string[] {
   return (scope === "admin" ? adminHelpEntries : financeHelpEntries).map(
     (candidate) => candidate.path,

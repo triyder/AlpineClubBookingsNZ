@@ -45,6 +45,7 @@ export async function countStaleRunningXeroOperations(
 // certainly orphaned rather than genuinely in flight.
 export const STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES = 15;
 
+// test seam
 /**
  * Prisma `where` filter matching XeroInboundEvent rows stuck in PROCESSING past
  * the staleness threshold. updatedAt is restamped when the row is claimed, so

@@ -138,6 +138,7 @@ export interface FinanceBalanceSheetReportPageModel {
   }>;
 }
 
+// test seam
 export function buildDefaultFinanceBalanceSheetReportFilters() {
   return {
     periods: DEFAULT_FINANCE_BALANCE_SHEET_PERIODS,
@@ -158,6 +159,7 @@ export function buildFinanceBalanceSheetReportHref(
   return `/finance/balance-sheet?${buildFinanceBalanceSheetReportQueryString(filters)}`;
 }
 
+// test seam
 export function resolveFinanceBalanceSheetReportFilters(input: {
   searchParams?: FinanceBalanceSheetReportSearchParams;
 }) {
@@ -195,6 +197,7 @@ export function resolveFinanceBalanceSheetReportFilters(input: {
   return { filters, warnings };
 }
 
+// test seam
 export async function buildFinanceBalanceSheetReportPageModel(input: {
   member: FinanceAccessMember;
   searchParams?: FinanceBalanceSheetReportSearchParams;

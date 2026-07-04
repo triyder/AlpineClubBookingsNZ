@@ -176,6 +176,7 @@ function getGuestPricedNights(
   return getStayNights(guestStayStart, guestStayEnd);
 }
 
+// test seam
 /**
  * Find the rate for a specific night, guest tier, and membership status.
  */
@@ -200,6 +201,7 @@ export function findRateForNight(
   return null;
 }
 
+// test seam
 /**
  * Find the season that contains a given date.
  * Returns null if no season covers that date.
@@ -220,6 +222,7 @@ export function findSeasonForDate(
   return null;
 }
 
+// test seam
 /**
  * Get the nightly rate for a specific guest on a specific date.
  * Returns the price in cents, or null if no rate is found.
@@ -262,6 +265,7 @@ export function isGroupDiscountApplicable(
   return season?.type === "SUMMER";
 }
 
+// test seam
 export function isGroupDiscountAppliedToStay(
   checkIn: Date,
   checkOut: Date,

@@ -1,6 +1,7 @@
 import type { BookingStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
+// test seam
 // Booking statuses that represent a stay that has been committed (paid/confirmed
 // or completed). Drafts, pending, cancelled, bumped and waitlisted bookings do
 // not count toward a member's nights stayed.

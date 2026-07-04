@@ -330,6 +330,7 @@ export async function setCachedChartOfAccounts(
   );
 }
 
+// test seam
 export function clearChartOfAccountsCache() {
   cachedAccounts = null;
 }
@@ -355,6 +356,7 @@ export async function setCachedItems(
   );
 }
 
+// test seam
 export function clearItemsCache() {
   cachedItems = null;
 }

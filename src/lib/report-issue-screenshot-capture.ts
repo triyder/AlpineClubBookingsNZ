@@ -363,6 +363,7 @@ function sanitizeElementStyleForHtml2Canvas(
   }
 }
 
+// test seam
 export function sanitizeClonedDocumentForHtml2Canvas(
   clonedDocument: Document,
   options?: {

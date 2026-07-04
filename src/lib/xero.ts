@@ -34,10 +34,14 @@
 export {
   callXeroApi,
   getAuthenticatedXeroClient,
+  // test seam
   isRetryableXeroContactReferenceError,
+  // test seam
   resetXeroRateLimitStateForTests,
+  // test seam
   withXeroRetry,
   XeroDailyLimitError,
+  // test seam
   XeroTransientOutageError,
 } from "./xero-api-client";
 
@@ -48,7 +52,9 @@ export {
 } from "./xero-oauth";
 
 export {
+  // test seam
   decryptToken,
+  // test seam
   encryptToken,
   getXeroConnectionStatus,
   isXeroConnected,
@@ -60,6 +66,7 @@ export {
 
 export {
   buildEntranceFeeInvoiceIdempotencyKey,
+  // test seam
   getAccountMapping,
   getEntranceFeeContext,
   getResolvedAccountMapping,
@@ -75,6 +82,7 @@ export type {
 export {
   createXeroContactForMember,
   findOrCreateXeroContact,
+  // test seam
   retryXeroWriteWithContactRepair,
   updateXeroContact,
   XeroContactValidationError,
@@ -95,6 +103,7 @@ export {
   getXeroContactGroupMemberships,
   getXeroContactGroups,
   getXeroContactIdsForGroup,
+  // test seam
   refreshXeroContactGroupCache,
   syncManagedXeroContactGroupForMember,
 } from "./xero-contact-groups";
@@ -118,10 +127,12 @@ export {
 
 export {
   checkMembershipStatus,
+  // test seam
   determineSubscriptionStatus,
   findSubscriptionInvoice,
   flushMemberSubscriptionHistory,
   refreshAllMembershipStatuses,
+  // test seam
   shouldBackfillMembershipStatus,
   syncMemberSubscriptionHistoryForLinkedContact,
 } from "./xero-membership-sync";
@@ -132,10 +143,12 @@ export {
 
 export {
   createXeroPaymentForInvoice,
+  // test seam
   createXeroRefundPaymentForInvoice,
 } from "./xero-invoice-payments";
 
 export {
+  // test seam
   buildInvoiceLineItems,
   createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking,
@@ -153,6 +166,7 @@ export { createXeroSupplementaryInvoice } from "./xero-supplementary-invoices";
 export { createXeroCreditNoteForModification } from "./xero-modification-credit-notes";
 
 export {
+  // test seam
   buildEntranceFeeLineItem,
   createXeroEntranceFeeInvoice,
 } from "./xero-entrance-fee-invoices";

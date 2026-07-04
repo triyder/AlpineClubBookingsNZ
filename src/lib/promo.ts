@@ -302,6 +302,7 @@ function normalizeAllocations(
   }];
 }
 
+// test seam
 /**
  * Calculate the promo discount for a booking using the per-guest model.
  * When the promo has member assignments, the benefit is restricted to linked
@@ -678,6 +679,7 @@ export interface PromoRuleCounts {
   allBeneficiariesExhausted?: boolean;
 }
 
+// test seam
 /**
  * Validate promo code rules (pure logic, separated for testing).
  * Returns error message string if invalid, null if valid.

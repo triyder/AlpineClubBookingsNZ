@@ -32,6 +32,7 @@ export const IMMEDIATE_PAYMENT_BOOKING_STATUSES = [
   BookingStatus.PENDING,
 ] as const;
 
+// test seam
 export const MEMBER_MODIFIABLE_BOOKING_STATUSES = [
   BookingStatus.PENDING,
   BookingStatus.PAYMENT_PENDING,
@@ -60,10 +61,12 @@ export function isPaymentOwedBookingStatus(status: string) {
   return (PAYMENT_OWED_BOOKING_STATUSES as readonly string[]).includes(status);
 }
 
+// test seam
 export function isCapacityHoldingBookingStatus(status: string) {
   return (CAPACITY_HOLDING_BOOKING_STATUSES as readonly string[]).includes(status);
 }
 
+// test seam
 export function isOperationalStayBookingStatus(status: string) {
   return (OPERATIONAL_STAY_BOOKING_STATUSES as readonly string[]).includes(status);
 }

@@ -29,12 +29,14 @@ export interface WorkPartyNightWindow {
   endDate: Date;
 }
 
+// test seam
 export const WORK_PARTY_PROMO_CODE_PREFIX = "WORKPARTY-";
 
 // Unambiguous uppercase charset (no I/L/O/0/1) for generated internal codes.
 const CODE_CHARSET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_SUFFIX_LENGTH = 8;
 
+// test seam
 export function generateWorkPartyPromoCode(): string {
   let suffix = "";
   for (let i = 0; i < CODE_SUFFIX_LENGTH; i++) {

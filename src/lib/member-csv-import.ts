@@ -343,6 +343,7 @@ function nextLineBreakIndex(text: string, index: number) {
     : index + 1;
 }
 
+// test seam
 export function parseCsv(text: string): CsvParseResult {
   const records: CsvRecord[] = [];
   let blankLineCount = 0;

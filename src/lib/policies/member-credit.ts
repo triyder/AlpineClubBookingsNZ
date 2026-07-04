@@ -1,3 +1,4 @@
+// test seam
 export const ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT =
   "This idempotency key was already used for a different adjustment request";
 

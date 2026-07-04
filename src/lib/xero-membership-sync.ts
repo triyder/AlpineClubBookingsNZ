@@ -191,6 +191,7 @@ async function listChangedMembershipInvoices(input: {
 // Public helpers
 // ---------------------------------------------------------------------------
 
+// test seam
 export function shouldBackfillMembershipStatus(input: {
   memberUpdatedAt: Date;
   subscription:
@@ -677,6 +678,7 @@ export function findSubscriptionInvoice(
   return null;
 }
 
+// test seam
 /**
  * Determine subscription status from a Xero invoice. Exported for testing.
  */

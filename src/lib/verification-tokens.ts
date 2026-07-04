@@ -4,6 +4,7 @@ import { issueActionToken } from "./action-tokens";
 export const EMAIL_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 export const EMAIL_CHANGE_TTL_MS = 2 * 60 * 60 * 1000;
 
+// test seam
 /**
  * Generate a cryptographically random 64-character hex token.
  */
@@ -29,6 +30,7 @@ export async function createEmailVerificationToken(memberId: string): Promise<st
   return token;
 }
 
+// test seam
 /**
  * Create an email change token for a member.
  * Deletes any existing tokens for the member first.

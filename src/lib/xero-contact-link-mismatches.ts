@@ -251,6 +251,7 @@ export function getMemberXeroContactLinkMismatch(
   };
 }
 
+// test seam
 export function namesAppearToMatchMemberAndContact(
   member: Pick<MemberNameCandidate, "firstName" | "lastName" | "xeroContactId">,
   contact: Pick<

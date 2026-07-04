@@ -13,18 +13,21 @@
  */
 import type { FinanceAccessLevel } from "@prisma/client";
 
+// test seam
 export const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
   NONE: "bg-slate-100 text-slate-700 border-slate-200",
   VIEWER: "bg-amber-100 text-amber-800 border-amber-200",
   MANAGER: "bg-emerald-100 text-emerald-800 border-emerald-200",
 };
 
+// test seam
 export const financeAccessShortLabels: Record<FinanceAccessLevel, string> = {
   NONE: "None",
   VIEWER: "Viewer",
   MANAGER: "Manager",
 };
 
+// test seam
 export const financeAccessLongLabels: Record<FinanceAccessLevel, string> = {
   NONE: "No Finance Access",
   VIEWER: "Finance Viewer",
@@ -74,11 +77,13 @@ export function getLifecycleStatusConfig(
   return LIFECYCLE_CONFIG.Inactive;
 }
 
+// test seam
 export const LOGIN_BADGE = {
   className: "bg-slate-100 text-slate-700 border-slate-200",
   label: "Can Login",
 } as const;
 
+// test seam
 export const NON_LOGIN_BADGE = {
   className: "bg-purple-100 text-purple-800 border-purple-200",
   label: "Non-Login",

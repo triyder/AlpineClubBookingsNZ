@@ -184,6 +184,7 @@ export async function upsertFinanceSnapshot(input: UpsertFinanceSnapshotInput) {
   });
 }
 
+// test seam
 export async function listFinanceSnapshotHeaders(input?: {
   snapshotType?: FinanceSnapshotType;
   scope?: string;

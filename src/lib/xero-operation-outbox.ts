@@ -16,20 +16,24 @@ import {
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import {
-  allocateCreditNoteToInvoice,
-  buildEntranceFeeInvoiceIdempotencyKey,
-  createXeroCreditNote,
-  createXeroCreditNoteForModification,
-  createXeroEntranceFeeInvoice,
   createXeroInvoiceForBooking,
-  createXeroSupplementaryInvoice,
+  updateXeroBookingInvoiceForBooking,
+} from "@/lib/xero-booking-invoices";
+import {
+  allocateCreditNoteToInvoice,
   createUnappliedXeroCreditNote,
   createUnappliedXeroCreditNoteForModification,
+  createXeroCreditNote,
+} from "@/lib/xero-credit-notes";
+import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
+import {
+  buildEntranceFeeInvoiceIdempotencyKey,
   getEntranceFeeContext,
-  isXeroConnected,
-  updateXeroBookingInvoiceForBooking,
   type EntranceFeeContext,
-} from "@/lib/xero";
+} from "@/lib/xero-mappings";
+import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
+import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
 import {
   getQueuedOutboxExpectedOperation,
@@ -1470,6 +1474,7 @@ export async function enqueueXeroCreditNoteAllocationOperation(
   };
 }
 
+// test seam
 export async function enqueueXeroMembershipCancellationCreditNoteOperation(
   params: {
     subscriptionId: string;
@@ -1582,6 +1587,7 @@ export async function enqueueXeroMembershipCancellationCreditNoteOperation(
   };
 }
 
+// test seam
 export async function enqueueXeroMembershipCancellationContactOperation(
   params: {
     memberId: string;

@@ -3,6 +3,7 @@
 // free of real personal data: names, phone numbers, and emails are clearly
 // generic placeholders that a club replaces through the admin screens.
 
+// test seam (seed constant asserted by tests)
 // Placeholder phone number used for every seeded committee entry.
 export const SEED_PLACEHOLDER_PHONE = "+64 21 000 0000";
 

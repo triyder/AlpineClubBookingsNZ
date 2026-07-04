@@ -21,6 +21,7 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+// test seam
 export function getRuntimeConfigIssues(): string[] {
   const issues: string[] = [];
 

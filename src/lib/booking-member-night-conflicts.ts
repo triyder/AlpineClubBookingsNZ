@@ -12,6 +12,7 @@ import {
 export const BOOKING_MEMBER_NIGHT_CONFLICT_CODE =
   "BOOKING_MEMBER_NIGHT_CONFLICT";
 
+// test seam
 export const MEMBER_NIGHT_CONFLICT_BOOKING_STATUSES = [
   BookingStatus.DRAFT,
   BookingStatus.PENDING,

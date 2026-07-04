@@ -14,8 +14,13 @@ const mocks = vi.hoisted(() => ({
   recordCronJobRunSafe: vi.fn(),
 }));
 
-vi.mock("@/lib/xero", () => ({
+// #1208: the cron runner imports these from the source domain modules
+// directly (not the @/lib/xero facade), so the doubles mock those modules.
+vi.mock("@/lib/xero-membership-sync", () => ({
   refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
+}));
+
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 

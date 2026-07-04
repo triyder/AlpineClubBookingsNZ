@@ -12,6 +12,7 @@ import {
   normalizeClubModuleSettings,
 } from "@/lib/module-settings";
 
+// test seam
 export const ADMIN_MODULE_KEYS = MODULE_KEYS;
 export type AdminModuleKey = ModuleKey;
 export type AdminModuleSettingsSnapshot = ModuleSettingsValues;
@@ -26,12 +27,14 @@ interface ClubModuleSettingsClient {
   };
 }
 
+// test seam
 export function getEffectiveModuleState(
   adminActivation: AdminModuleSettingsSnapshot = DEFAULT_ADMIN_MODULE_SETTINGS,
 ): FeatureFlags {
   return getEffectiveModuleFlags(adminActivation);
 }
 
+// test seam
 export async function loadAdminModuleSettings(
   client?: ClubModuleSettingsClient,
 ): Promise<AdminModuleSettingsSnapshot> {

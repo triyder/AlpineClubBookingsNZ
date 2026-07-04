@@ -168,6 +168,7 @@ function assertDatasets(datasets: FinanceSyncDatasetDefinition[]): void {
   }
 }
 
+// test seam
 export async function createFinanceXeroSyncConnection(): Promise<FinanceXeroSyncConnection> {
   // The finance dashboard now reads from the single operational Xero connection
   // (the same one bookings, payments and subscriptions use). The dataset

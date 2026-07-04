@@ -3,6 +3,7 @@ import { hashActionToken, issueActionToken } from "./action-tokens";
 
 const TOKEN_EXPIRY_HOURS = 48;
 
+// test seam
 /**
  * Generate a secure, URL-safe token for guest chore access.
  */

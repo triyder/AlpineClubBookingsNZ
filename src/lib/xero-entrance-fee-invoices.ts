@@ -45,6 +45,7 @@ export interface CreateXeroEntranceFeeInvoiceOptions
   precomputedEntranceFee?: EntranceFeeContext;
 }
 
+// test seam
 export function buildEntranceFeeLineItem(
   categoryLabel: string,
   amountCents: number,

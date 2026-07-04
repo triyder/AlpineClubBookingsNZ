@@ -144,6 +144,7 @@ function createArchiveClient(databaseUrl: string): PrismaClient {
   });
 }
 
+// test seam
 export function getAuditLogRetentionCutoffs(now = new Date()) {
   return {
     requestData: addUtcDays(now, -RAW_REQUEST_DATA_RETENTION_DAYS),
@@ -153,6 +154,7 @@ export function getAuditLogRetentionCutoffs(now = new Date()) {
   };
 }
 
+// test seam
 export function isAuditLogRetentionCritical(input: {
   action: string;
   category?: string | null;
@@ -175,6 +177,7 @@ export function isAuditLogRetentionCritical(input: {
   );
 }
 
+// test seam
 export function isAuditLogArchivable(input: {
   action: string;
   category?: string | null;
@@ -196,6 +199,7 @@ export function isAuditLogArchivable(input: {
   );
 }
 
+// test seam
 export async function anonymizeExpiredAuditRequestData(
   db: AuditRetentionDbClient = prisma,
   now = new Date()
@@ -330,6 +334,7 @@ async function insertAuditArchiveRow(
   `);
 }
 
+// test seam
 export async function archiveEligibleAuditLogs(
   db: AuditRetentionDbClient,
   archiveDb: AuditArchiveDbClient | undefined,
@@ -390,6 +395,7 @@ export async function archiveEligibleAuditLogs(
   };
 }
 
+// test seam
 export async function pruneExpiredAuditLogs(
   db: AuditRetentionDbClient = prisma,
   now = new Date()
@@ -425,6 +431,7 @@ export async function pruneExpiredAuditLogs(
   return { cutoff, deleted: count };
 }
 
+// test seam
 export async function pruneAuditArchive(
   archiveDb: AuditArchiveDbClient | undefined,
   now = new Date()

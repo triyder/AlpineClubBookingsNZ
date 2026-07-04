@@ -80,6 +80,7 @@ export async function getKioskAccessTier(
   return "none";
 }
 
+// test seam
 /**
  * Returns the date range the user can navigate within on the kiosk,
  * or null for unrestricted (ADMIN/LODGE).

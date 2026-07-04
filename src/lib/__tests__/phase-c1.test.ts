@@ -376,20 +376,9 @@ describe("#32: Booking subscription error includes invoice URL", () => {
 // #32: Booking wizard shows payment link
 // ---------------------------------------------------------------------------
 
-describe("#32: Booking wizard shows subscription payment link", () => {
-  it("handles SUBSCRIPTION_REQUIRED error with invoice URL", async () => {
-    const fs = await import("fs");
-    const path = await import("path");
-    const content = fs.readFileSync(
-      path.resolve("src/app/(authenticated)/book/page.tsx"),
-      "utf-8"
-    );
-    expect(content).toContain("subscriptionInvoiceUrl");
-    // SUBSCRIPTION_REQUIRED is handled via getBookingErrorPaymentTargets (imported helper)
-    expect(content).toContain("getBookingErrorPaymentTargets");
-    expect(content).toContain("Pay Your Subscription");
-  });
-});
+// Moved to a real behavior test in book-page-subscription-required.test.tsx (#1209):
+// the old file-text readFileSync assertion pinned page.tsx strings and broke when
+// the wizard state machine was extracted into useBookingWizard.
 
 // ---------------------------------------------------------------------------
 // #26: Xero invoice number saved during invoice creation

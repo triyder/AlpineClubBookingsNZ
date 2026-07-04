@@ -78,6 +78,7 @@ function isPrimaryInvoiceUnsafe(paymentStatus?: PaymentStatus | string | null) {
   return paymentStatus ? UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES.has(paymentStatus) : false;
 }
 
+// test seam
 export function classifyXeroBookingEditSettlement(
   input: ClassifyXeroBookingEditSettlementInput
 ): XeroBookingEditSettlementDecision {

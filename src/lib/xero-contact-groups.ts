@@ -187,6 +187,7 @@ async function repairMissingXeroContactCacheEntriesForGroups(
   }
 }
 
+// test seam
 export async function refreshXeroContactGroupCache(
   options: RefreshXeroContactGroupCacheOptions = {}
 ): Promise<Array<{ id: string; name: string; contactCount: number }>> {

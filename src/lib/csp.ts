@@ -1,7 +1,9 @@
 export const CSP_HEADER = "Content-Security-Policy";
+// test seam
 export const CSP_REPORT_ONLY_HEADER = "Content-Security-Policy-Report-Only";
 export const CSP_NONCE_HEADER = "x-nonce";
 
+// test seam
 export const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",

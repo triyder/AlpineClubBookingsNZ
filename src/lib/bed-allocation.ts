@@ -584,6 +584,7 @@ export function buildFirstFitBedAllocationPlan({
   return { allocations, unallocatedGuestNights };
 }
 
+// test seam
 export async function replaceBedAllocationsForBooking(
   client: BedAllocationPersistenceClient,
   bookingId: string,

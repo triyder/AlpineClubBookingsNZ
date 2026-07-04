@@ -2,6 +2,7 @@ import { PaymentSource, Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
+import { asRecord, readString } from "./xero-json";
 import { buildXeroObjectUrl } from "./xero-links";
 import {
   redactSensitiveJson,
@@ -56,18 +57,6 @@ const SINGLE_ACTIVE_CANONICAL_LINK_SCOPES = [
   { localModel: "Payment", role: "PRIMARY_INVOICE" },
   { localModel: "MemberSubscription", role: "SUBSCRIPTION_INVOICE" },
 ] as const;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
 
 export function sanitizeForJson(value: unknown): Prisma.InputJsonValue | undefined {
   if (value === undefined) {

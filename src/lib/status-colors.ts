@@ -3,6 +3,7 @@
  * Every status must have a unique colour within its category.
  */
 
+// test seam
 export const bookingStatusClasses: Record<string, string> = {
   DRAFT:     "bg-gray-100 text-gray-700",
   PENDING:   "bg-yellow-100 text-yellow-800",
@@ -17,6 +18,7 @@ export const bookingStatusClasses: Record<string, string> = {
   WAITLIST_OFFERED: "bg-teal-100 text-teal-800",
 };
 
+// test seam
 export const bookingStatusLabels: Record<string, string> = {
   DRAFT: "Draft",
   PENDING: "Pending",
@@ -33,6 +35,7 @@ export const bookingStatusLabels: Record<string, string> = {
   WAITLIST_OFFERED: "Waitlist Offered",
 };
 
+// test seam
 export const paymentStatusClasses: Record<string, string> = {
   PENDING:            "bg-yellow-100 text-yellow-800",
   PROCESSING:         "bg-indigo-100 text-indigo-800",
@@ -59,6 +62,7 @@ export function paymentStatusClass(status: string): string {
   return paymentStatusClasses[status] ?? "bg-gray-100 text-gray-700";
 }
 
+// test seam
 export const subscriptionStatusClasses: Record<string, string> = {
   PAID:         "bg-green-100 text-green-800",
   UNPAID:       "bg-yellow-100 text-yellow-800",

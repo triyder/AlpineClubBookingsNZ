@@ -514,6 +514,7 @@ function formatMetadataDescription(
     .join(" · ") || null;
 }
 
+// test seam
 export function inferAuditCategoryFromAction(action: string): string {
   const normalized = action.toLowerCase();
 
@@ -832,6 +833,7 @@ function actionFallbackDrilldownLink(
   return null;
 }
 
+// test seam
 export function buildAuditDrilldownLinks(params: {
   action: string;
   targetId: string | null;

@@ -69,6 +69,7 @@ export class XeroDailyLimitError extends Error {
   }
 }
 
+// test seam
 export class XeroTransientOutageError extends Error {
   retryAfterSec: number;
 
@@ -313,6 +314,7 @@ function rememberXeroTransientOutage(retryAfterSec: number): void {
   }
 }
 
+// test seam
 export function resetXeroRateLimitStateForTests(): void {
   xeroDailyLimitUntilMs = 0;
   xeroTransientOutageUntilMs = 0;
@@ -484,6 +486,7 @@ export async function callXeroApi<T>(
   }
 }
 
+// test seam
 /**
  * Retry wrapper for Xero API calls with rate-limit and transient failure handling.
  * - On daily limit: throws XeroDailyLimitError immediately (no point waiting hours).

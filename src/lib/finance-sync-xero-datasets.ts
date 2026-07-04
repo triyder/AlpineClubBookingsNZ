@@ -927,6 +927,7 @@ function buildFinanceAgedInvoiceSnapshot(input: {
   };
 }
 
+// test seam
 export function buildFinanceReportSnapshot(input: {
   snapshotType: FinanceSnapshotType;
   asOfDate: Date;
@@ -958,6 +959,7 @@ export function buildFinanceReportSnapshot(input: {
   };
 }
 
+// test seam
 export function buildFinanceAgedReceivablesSnapshot(input: {
   asOfDate: Date;
   invoices: Invoice[];
@@ -970,6 +972,7 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
   });
 }
 
+// test seam
 export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
   asOfDate: Date;
   invoices: Invoice[];
@@ -1142,6 +1145,7 @@ export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
   };
 }
 
+// test seam
 export function buildFinanceAgedPayablesSnapshot(input: {
   asOfDate: Date;
   invoices: Invoice[];
@@ -1154,6 +1158,7 @@ export function buildFinanceAgedPayablesSnapshot(input: {
   });
 }
 
+// test seam
 export function buildFinanceAccountsPayableInvoicesSnapshot(input: {
   asOfDate: Date;
   invoices: Invoice[];
@@ -1448,6 +1453,7 @@ interface FinanceChartOfAccountsPayload {
   accounts: FinanceChartOfAccountsEntryPayload[];
 }
 
+// test seam
 /**
  * Map the operational chart of accounts into a JSON-safe snapshot. The stored
  * AccountID-to-GL-code entries let revenue reconciliation match profit-and-loss

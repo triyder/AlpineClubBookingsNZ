@@ -108,6 +108,7 @@ export async function requireFinanceViewer(
   return member;
 }
 
+// test seam
 export async function requireFinanceManager(
   callbackPath: string = "/finance"
 ): Promise<FinanceAccessMember> {

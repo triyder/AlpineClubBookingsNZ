@@ -24,6 +24,7 @@ const DEFAULT_AGE_TIER_OPTIONS: AgeTierOption[] = [
   { tier: "ADULT", label: "Adult (18+)", sortOrder: 3 },
 ];
 
+// test seam
 export function getAgeTierOptionsFromSettings(
   settings?: AgeTierSettingsResponse["settings"]
 ): AgeTierOption[] {

@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import type { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
+// test seam
 export { buildMemberAuditLogWhere } from "./audit-query";
 
 export type AuditCategory =
@@ -337,6 +338,7 @@ export function classifyAuditRetention(params: {
   return "critical";
 }
 
+// test seam
 export function getAuditRetentionExpiresAt(
   retentionClass: AuditRetentionClass,
   from: Date = new Date()

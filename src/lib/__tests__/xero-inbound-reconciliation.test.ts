@@ -215,6 +215,55 @@ vi.mock("@/lib/xero", async (importOriginal) => {
   };
 });
 
+// #1208: xero-inbound-reconciliation now imports these from the source domain
+// modules directly (not the @/lib/xero facade), so the doubles are attached to
+// those modules. The (now-inert) facade mock above is left as-is; real
+// callXeroApi / XeroDailyLimitError from xero-api-client are preserved.
+vi.mock("@/lib/xero-api-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-api-client")>();
+
+  return {
+    ...actual,
+    getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+  };
+});
+
+vi.mock("@/lib/xero-membership-sync", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-membership-sync")>();
+
+  return {
+    ...actual,
+    checkMembershipStatus: mocks.checkMembershipStatus,
+    refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
+    findSubscriptionInvoice: (
+      invoices: Array<{ lineItems?: Array<{ accountCode?: string }>; reference?: string }>
+    ) =>
+      invoices.find(
+        (invoice) =>
+          invoice.lineItems?.some((lineItem) => lineItem.accountCode === "203") ||
+          (invoice.reference ?? "").toLowerCase().includes("annual member subscription")
+      ) ?? null,
+  };
+});
+
+vi.mock("@/lib/xero-contact-cache", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-contact-cache")>();
+
+  return {
+    ...actual,
+    refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
+  };
+});
+
+vi.mock("@/lib/xero-bulk-contact-sync", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-bulk-contact-sync")>();
+
+  return {
+    ...actual,
+    syncContactsFromXero: mocks.syncContactsFromXero,
+  };
+});
+
 import {
   processStoredXeroInboundEvents,
   runXeroInboundReconciliationCycle,

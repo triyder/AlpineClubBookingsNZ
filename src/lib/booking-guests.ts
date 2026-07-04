@@ -87,6 +87,7 @@ export type GuestProfileRequiredMember = {
   action: BookingGuestProfileAction;
 };
 
+// test seam
 export class BookingGuestProfileRequiredError extends BookingGuestValidationError {
   public code = GUEST_PROFILE_REQUIRED_ERROR_CODE;
 

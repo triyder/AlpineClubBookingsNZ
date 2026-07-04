@@ -7,6 +7,7 @@ export {
   calculateDualRefundAmounts,
   calculateRefundAmount,
   daysUntilDate,
+  // test seam
   getRefundTier,
 } from "./policies/cancellation";
 export type { CancellationRule } from "./policies/cancellation";

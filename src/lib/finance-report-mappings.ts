@@ -24,6 +24,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 
+// test seam
 export const UNMAPPED_FINANCE_CATEGORY_ID = "unmapped";
 
 const INCOME_SECTION_KEYWORDS = ["income", "revenue"];
@@ -357,6 +358,7 @@ function normalizeMappingsInput(
   return normalized;
 }
 
+// test seam
 export function validateFinanceReportMappingsInput(
   input: SaveFinanceReportMappingsInput
 ) {

@@ -92,24 +92,43 @@ vi.mock("@/lib/xero-group-settlement-invoices", () => ({
   createXeroInvoiceForGroupSettlement: mocks.createXeroInvoiceForGroupSettlement,
 }));
 
-vi.mock("@/lib/xero", () => ({
+// #1208: xero-operation-outbox now imports from the source domain modules
+// directly (not the @/lib/xero facade), so the doubles mock those modules.
+vi.mock("@/lib/xero-booking-invoices", () => ({
+  createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
+  updateXeroBookingInvoiceForBooking: mocks.updateXeroBookingInvoiceForBooking,
+}));
+
+vi.mock("@/lib/xero-credit-notes", () => ({
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
+  createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
+  createUnappliedXeroCreditNoteForModification:
+    mocks.createUnappliedXeroCreditNoteForModification,
+  createXeroCreditNote: mocks.createXeroCreditNote,
+}));
+
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
+  createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
+}));
+
+vi.mock("@/lib/xero-mappings", () => ({
   buildEntranceFeeInvoiceIdempotencyKey: (
     memberId: string,
     category: string,
     amountCents: number
   ) => `member:${memberId}:entrance-fee-invoice:${category}:${amountCents}:v1`,
-  createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
-  createUnappliedXeroCreditNoteForModification:
-    mocks.createUnappliedXeroCreditNoteForModification,
-  createXeroCreditNote: mocks.createXeroCreditNote,
-  createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
   getEntranceFeeContext: mocks.getEntranceFeeContext,
-  createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
-  createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
+}));
 
-  updateXeroBookingInvoiceForBooking: mocks.updateXeroBookingInvoiceForBooking,
+vi.mock("@/lib/xero-modification-credit-notes", () => ({
+  createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
+}));
+
+vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
+}));
+
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 

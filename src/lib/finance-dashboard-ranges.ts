@@ -230,6 +230,7 @@ function validateCustomWindow(input: {
   };
 }
 
+// test seam
 export function resolvePrimaryFinanceRange(input: {
   option: FinanceDashboardRangeOption;
   searchParams?: SearchParams;
@@ -328,6 +329,7 @@ export function resolveComparisonFinanceRange(input: {
   });
 }
 
+// test seam
 export function resolveForwardFinanceWindow(input: {
   option: FinanceDashboardForwardOption;
   searchParams?: SearchParams;

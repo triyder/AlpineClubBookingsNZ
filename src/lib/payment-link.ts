@@ -117,6 +117,7 @@ async function loadPaymentLinkRecord(token: string): Promise<ResolvedPaymentLink
   return link;
 }
 
+// test seam
 /**
  * Look up and validate a payment link by raw token for the payment path
  * (intent creation). Throws PaymentLinkError with a polite message for every

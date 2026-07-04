@@ -16,6 +16,7 @@ import {
 import { sendEmail } from "./core";
 import { type EmailAttachment } from "./internal";
 
+// test seam
 /** Get all active admin emails */
 export async function getAdminEmails(): Promise<string[]> {
   const admins = await prisma.member.findMany({

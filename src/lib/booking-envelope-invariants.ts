@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 
+// test seam
 /**
  * The deferred constraint triggers that enforce the stay-range envelope at
  * the database layer (see migrations
@@ -11,6 +12,7 @@ export const BOOKING_ENVELOPE_CONSTRAINTS = [
   "Booking_dates_consistent_with_guests",
 ] as const;
 
+// test seam
 export const FLUSH_BOOKING_ENVELOPE_CONSTRAINTS_SQL = `SET CONSTRAINTS ${BOOKING_ENVELOPE_CONSTRAINTS.map(
   (name) => `"${name}"`,
 ).join(", ")} IMMEDIATE`;

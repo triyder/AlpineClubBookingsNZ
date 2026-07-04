@@ -36,6 +36,7 @@ export type HtmlTokenDefinition = {
   contexts: TokenContextId[];
 };
 
+// test seam
 export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
   {
     token: "committee-members-cards",

@@ -1,6 +1,7 @@
-import type { XeroContactUpdateData } from "@/lib/xero";
+import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
   buildXeroContactUpdatePayload,
   shouldRepairXeroContactNameOrder,
@@ -66,33 +67,8 @@ const MEMBER_CONTACT_RETRY_SELECT = {
   postalCountry: true,
 } as const;
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-
-  return value as Record<string, unknown>;
-}
-
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function readNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
 }
 
 function readPayloadContact(operation: Pick<RetryableOperation, "requestPayload">): Record<string, unknown> | null {

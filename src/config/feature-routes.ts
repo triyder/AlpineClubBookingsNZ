@@ -6,6 +6,7 @@ interface FeatureRouteRule {
   patterns?: RegExp[];
 }
 
+// test seam
 export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "kiosk",

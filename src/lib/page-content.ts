@@ -45,6 +45,7 @@ export const BUILTIN_PAGE_SLUGS: ReadonlySet<string> = new Set([
   "faq",
 ]);
 
+// test seam
 export function isBuiltinPageSlug(slug: string): boolean {
   return BUILTIN_PAGE_SLUGS.has(slug);
 }

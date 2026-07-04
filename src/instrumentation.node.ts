@@ -3,6 +3,7 @@ import type { FeatureFlags } from "@/config/schema";
 
 const CRON_TIMEZONE = APP_TIME_ZONE;
 
+// test seam
 export function getOptionalCronRegistrationState(flags?: FeatureFlags) {
   void flags;
 

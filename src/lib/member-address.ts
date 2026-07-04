@@ -54,6 +54,7 @@ export const STREET_TO_POSTAL_FIELD_MAP: Record<
   streetCountry: "postalCountry",
 };
 
+// test seam
 export function normalizeAddressValue(value: AddressValue) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -86,6 +87,7 @@ export function copyStreetAddressToPostal<T>(
   };
 }
 
+// test seam
 export function postalMatchesPhysical(
   values: Partial<Record<MemberAddressField, AddressValue>>
 ) {

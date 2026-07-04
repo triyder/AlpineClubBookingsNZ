@@ -120,6 +120,7 @@ async function processWaitlistCronOnce(): Promise<{
   };
 }
 
+// test seam
 /**
  * Waitlist processor cron job.
  * - Expires stale WAITLIST_OFFERED bookings and re-offers to next candidates

@@ -25,6 +25,7 @@ function getEncryptionKey(): Buffer {
   return buf;
 }
 
+// test seam
 export function encryptToken(plaintext: string): string {
   const key = getEncryptionKey();
   const iv = randomBytes(IV_LENGTH);
@@ -38,6 +39,7 @@ export function encryptToken(plaintext: string): string {
   return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted}`;
 }
 
+// test seam
 export function decryptToken(encrypted: string): string {
   const key = getEncryptionKey();
   const parts = encrypted.split(":");

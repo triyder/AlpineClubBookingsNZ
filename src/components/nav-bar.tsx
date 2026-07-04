@@ -54,10 +54,12 @@ const financeLink = { href: "/finance", label: "Finance" };
 const adminLink = { href: "/admin/dashboard", label: "Admin" };
 const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
 
+// test seam
 export function getAuthenticatedBrandHref() {
   return "/dashboard";
 }
 
+// test seam
 export function getNavBarLinks(
   user: NavBarUser,
   features: FeatureFlags,

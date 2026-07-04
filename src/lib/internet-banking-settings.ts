@@ -9,6 +9,7 @@ export interface InternetBankingPaymentSettingsValues {
   minimumDaysBeforeCheckIn: number;
 }
 
+// test seam
 export const DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS: InternetBankingPaymentSettingsValues = {
   holdBedSlots: false,
   holdDays: 3,

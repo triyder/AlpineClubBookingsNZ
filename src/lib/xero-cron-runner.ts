@@ -14,7 +14,8 @@ import {
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
-import { isXeroConnected, refreshAllMembershipStatuses } from "@/lib/xero";
+import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
+import { isXeroConnected } from "@/lib/xero-token-store";
 
 export const XERO_CRON_TASKS = [
   "memberships",
@@ -192,23 +193,26 @@ function emptyPayload(task: string, connected = false): XeroCronRunnerPayload {
 }
 
 function messageForTask(task: string) {
-  return task === "all"
-    ? "Xero cron tasks completed"
-    : task === "report"
-      ? "Xero reconciliation report completed"
-      : task === "backfill"
-        ? "Historical Xero link maintenance completed"
-        : task === "link-cleanup"
-          ? "Stale Xero canonical links cleaned up"
-          : task === "inbound"
-            ? "Xero inbound reconciliation cycle completed"
-            : task === "outbox"
-              ? "Queued Xero outbox operations processed"
-              : task === "retries"
-                ? "Queued Xero retries processed"
-                : task === "xero-queue"
-                  ? "Queued Xero outbox operations and retries processed"
-                  : "Membership status refresh completed";
+  switch (task) {
+    case "all":
+      return "Xero cron tasks completed";
+    case "report":
+      return "Xero reconciliation report completed";
+    case "backfill":
+      return "Historical Xero link maintenance completed";
+    case "link-cleanup":
+      return "Stale Xero canonical links cleaned up";
+    case "inbound":
+      return "Xero inbound reconciliation cycle completed";
+    case "outbox":
+      return "Queued Xero outbox operations processed";
+    case "retries":
+      return "Queued Xero retries processed";
+    case "xero-queue":
+      return "Queued Xero outbox operations and retries processed";
+    default:
+      return "Membership status refresh completed";
+  }
 }
 
 export async function runXeroCronTaskList(

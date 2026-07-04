@@ -3,9 +3,11 @@ import logger from "@/lib/logger";
 
 export const MEMBERSHIP_CANCELLATION_SETTINGS_ID = "default";
 
+// test seam
 export const DEFAULT_MEMBERSHIP_CANCELLATION_WARNING_TEXT =
   "Cancelling membership removes member booking access once approved. Existing bookings, credits, refunds, and unpaid invoices still need separate committee review.";
 
+// test seam
 export const DEFAULT_MEMBERSHIP_REJOIN_PROCESS_TEXT =
   "Former members can reapply through the normal membership process. The committee will confirm any outstanding balances and restore access only after the rejoin process is approved.";
 
@@ -37,6 +39,7 @@ function trimOptional(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+// test seam
 export function normalizeMembershipCancellationXeroGroups(
   groups?: readonly Partial<MembershipCancellationXeroContactGroupSetting>[] | null,
 ): MembershipCancellationXeroContactGroupSetting[] {

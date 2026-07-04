@@ -304,6 +304,7 @@ const navSections: NavSection[] = [
   },
 ];
 
+// test seam
 export function getVisibleAdminNavSections(
   features: FeatureFlags,
   permissionMatrix?: AdminPermissionMatrix,
@@ -332,6 +333,7 @@ export function getVisibleAdminNavSections(
 
 type AdminNavBadgeMap = Record<string, number>;
 
+// test seam
 export function getRenderedAdminNavSections(
   features: FeatureFlags,
   badges: AdminNavBadgeMap,

@@ -22,6 +22,7 @@ export const TWO_FACTOR_SESSION_CHALLENGE_TTL_MS = 2 * 60 * 1000;
 export const TWO_FACTOR_RECOVERY_CODE_COUNT = 10;
 export const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
 export const TWO_FACTOR_TOTP_WINDOW = 1;
+// test seam
 export const TWO_FACTOR_MAX_FAILED_ATTEMPTS = 5;
 export const TWO_FACTOR_LOCKOUT_MS = 15 * 60 * 1000;
 
@@ -54,6 +55,7 @@ function getHashKey(): Buffer {
     .digest();
 }
 
+// test seam
 export function encryptTwoFactorSecret(plaintext: string): string {
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ENCRYPTION_ALGORITHM, getEncryptionKey(), iv, {
@@ -70,6 +72,7 @@ export function encryptTwoFactorSecret(plaintext: string): string {
   ].join(":");
 }
 
+// test seam
 export function decryptTwoFactorSecret(encrypted: string): string {
   const [version, ivHex, authTagHex, ciphertext] = encrypted.split(":");
   if (version !== ENCRYPTION_VERSION || !ivHex || !authTagHex || !ciphertext) {
@@ -99,14 +102,17 @@ export function normalizeRecoveryCode(code: string) {
   return code.replace(/[\s-]+/g, "").trim().toUpperCase();
 }
 
+// test seam
 export function hashTwoFactorCode(code: string) {
   return createHmac("sha256", getHashKey()).update(code).digest("hex");
 }
 
+// test seam
 export function hashEmailOtpCode(code: string) {
   return hashTwoFactorCode(normalizeOtpCode(code));
 }
 
+// test seam
 export function hashRecoveryCode(code: string) {
   return hashTwoFactorCode(normalizeRecoveryCode(code));
 }

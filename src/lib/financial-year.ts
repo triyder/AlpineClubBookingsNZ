@@ -19,6 +19,7 @@ export const DEFAULT_FINANCIAL_YEAR_END_MONTH = 3;
 // 1-12. Seeded from the DB / Xero by refreshFinancialYearConfig() on the server.
 let cachedYearEndMonth = DEFAULT_FINANCIAL_YEAR_END_MONTH;
 
+// test seam
 /** Clamp an arbitrary value to a valid month (1-12), falling back to March. */
 export function normalizeYearEndMonth(value: number | null | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -29,6 +30,7 @@ export function normalizeYearEndMonth(value: number | null | undefined): number 
   return rounded;
 }
 
+// test seam
 /**
  * Synchronous read of the effective financial year-end month (1-12). Returns
  * the March default until the server seeds the cache. Used by the
@@ -53,6 +55,7 @@ export function getSeasonStartMonth(): number {
   return (getFinancialYearEndMonth() % 12) + 1;
 }
 
+// test seam
 /** Test-only override. Pair with a reset to DEFAULT in a beforeEach. */
 export function __setFinancialYearEndMonthForTesting(month: number): void {
   cachedYearEndMonth = normalizeYearEndMonth(month);

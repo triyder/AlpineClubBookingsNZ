@@ -270,6 +270,7 @@ const CATEGORY_TO_PREFERENCE: Record<
   marketingEmails: "marketingEmails",
 };
 
+// test seam
 export async function shouldSendEmail(
   memberId: string,
   category: string,

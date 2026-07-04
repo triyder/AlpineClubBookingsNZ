@@ -15,6 +15,7 @@ export const MAX_MEDIA_IMAGE_BYTES = 2 * 1024 * 1024;
 // body is fully buffered.
 export const MAX_MEDIA_IMAGE_REQUEST_BYTES = MAX_MEDIA_IMAGE_BYTES + 64 * 1024;
 
+// test seam
 export const ALLOWED_MEDIA_IMAGE_CONTENT_TYPES = [
   "image/png",
   "image/jpeg",

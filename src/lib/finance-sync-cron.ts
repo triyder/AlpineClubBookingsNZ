@@ -17,8 +17,10 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
 export {
+  // test seam (facade re-export; canonical owner is finance-sync-cron-config)
   FINANCE_SYNC_CRON_CHECKIN_CONFIG,
   FINANCE_SYNC_CRON_JOB_NAME,
+  // test seam (facade re-export; canonical owner is finance-sync-cron-config)
   FINANCE_SYNC_CRON_MONITOR_SLUG,
   FINANCE_SYNC_CRON_SCHEDULE,
   FINANCE_SYNC_CRON_TIMEZONE,
@@ -142,6 +144,7 @@ async function recordCronRunSafe(
   }
 }
 
+// test seam
 export function resetFinanceSyncCronRunnerForTests() {
   isFinanceSyncCronRunning = false;
 }
@@ -325,6 +328,7 @@ export async function runDailyFinanceSyncCron(
   }
 }
 
+// test seam
 export function registerDailyFinanceSyncCron(
   scheduler: FinanceSyncCronScheduler,
   dependencies: FinanceSyncCronRunnerDependencies = {}

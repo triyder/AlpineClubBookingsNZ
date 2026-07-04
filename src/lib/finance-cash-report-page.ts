@@ -119,6 +119,7 @@ export interface FinanceCashReportPageModel {
   }>;
 }
 
+// test seam
 export function buildDefaultFinanceCashReportFilters() {
   return {
     periods: DEFAULT_FINANCE_CASH_PERIODS,
@@ -137,6 +138,7 @@ export function buildFinanceCashReportHref(filters: FinanceCashReportFilters) {
   return `/finance/cash?${buildFinanceCashReportQueryString(filters)}`;
 }
 
+// test seam
 export function resolveFinanceCashReportFilters(input: {
   searchParams?: FinanceCashReportSearchParams;
 }) {
@@ -174,6 +176,7 @@ export function resolveFinanceCashReportFilters(input: {
   return { filters, warnings };
 }
 
+// test seam
 export async function buildFinanceCashReportPageModel(input: {
   member: FinanceAccessMember;
   searchParams?: FinanceCashReportSearchParams;

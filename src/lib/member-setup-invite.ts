@@ -1,4 +1,5 @@
 export const MEMBER_SETUP_INVITE_TTL_DAYS = 7;
+// test seam
 export const MEMBER_SETUP_INVITE_TTL_MS =
   MEMBER_SETUP_INVITE_TTL_DAYS * 24 * 60 * 60 * 1000;
 

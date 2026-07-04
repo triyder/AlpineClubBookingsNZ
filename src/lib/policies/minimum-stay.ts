@@ -80,6 +80,7 @@ export function validateMinimumStayWithPolicies(
   return { valid: violations.length === 0, violations };
 }
 
+// test seam
 /**
  * Format a violation into a user-friendly error message.
  */

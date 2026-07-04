@@ -78,11 +78,13 @@ function ageForTier(tier: AgeTier): number {
   }
 }
 
+// test seam
 /** Check if a guest meets the minimum age for a chore */
 export function meetsMinAge(guestAgeTier: AgeTier, minAge: number): boolean {
   return ageForTier(guestAgeTier) >= minAge;
 }
 
+// test seam
 /** Check if a guest is eligible for a chore based on time-of-day routing */
 export function isEligibleForTimeOfDay(
   guest: Pick<GuestInput, "isArriving" | "isDeparting">,
@@ -94,6 +96,7 @@ export function isEligibleForTimeOfDay(
   return true;
 }
 
+// test seam
 /** Check if a guest is eligible for a chore based on age restriction */
 export function isEligibleForChore(
   guestAgeTier: AgeTier,
@@ -116,6 +119,7 @@ export function isEligibleForChore(
   }
 }
 
+// test seam
 /** Determine how many people to assign to a chore based on occupancy */
 export function scalePeopleCount(
   min: number,
@@ -132,6 +136,7 @@ export function scalePeopleCount(
   return Math.max(min, Math.min(max, scaled));
 }
 
+// test seam
 /** Select which chores to roster based on occupancy */
 export function selectChoresForOccupancy(
   chores: ChoreTemplateInput[],
@@ -188,6 +193,7 @@ function buildHistoryDateMap(
 // Frequency Filtering
 // ---------------------------------------------------------------------------
 
+// test seam
 /**
  * Filter chores by their frequency settings.
  * Returns only chores that are "due" on the given date.

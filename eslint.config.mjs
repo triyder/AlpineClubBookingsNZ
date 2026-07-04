@@ -21,6 +21,34 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
+  {
+    // The Xero subsystem's internal modules must depend on the focused domain
+    // module that owns each symbol, not on the `@/lib/xero` compatibility
+    // facade (which exists only for external callers). Importing the facade
+    // from within `src/lib/xero-*` hides the real dependency graph and invites
+    // import cycles (#1208). The exact-path match here does NOT fire on the
+    // `@/lib/xero-*` domain modules — only on the bare facade path.
+    files: ["src/lib/xero-*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/lib/xero",
+              message:
+                "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
+            },
+            {
+              name: "./xero",
+              message:
+                "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

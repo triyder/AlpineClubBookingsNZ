@@ -783,6 +783,7 @@ function buildPlannerRooms(rooms: Awaited<ReturnType<typeof listBedAllocationRoo
   })) satisfies BedAllocationRoom[];
 }
 
+// test seam
 export function buildBedAllocationWarnings(input: {
   allocations: DashboardAllocation[];
 }): AdminBedAllocationWarning[] {

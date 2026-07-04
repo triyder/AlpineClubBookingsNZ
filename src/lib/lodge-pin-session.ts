@@ -213,6 +213,7 @@ export function createLodgePinSessionWithVersion(
   };
 }
 
+// test seam
 export async function getActiveLodgePinSessionForDate(
   date: Date,
   rawCookieValue: string | null,
@@ -370,4 +371,5 @@ export function clearLodgePinFailures(ip: string) {
   failureStore.delete(ip);
 }
 
+// test seam
 export { failureStore as _testLodgePinFailureStore };

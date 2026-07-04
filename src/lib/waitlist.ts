@@ -21,6 +21,7 @@ import { getSeasonYear } from "@/lib/utils";
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
 
+// test seam
 /**
  * Get the FIFO position for a waitlisted booking.
  * Counts WAITLISTED bookings with overlapping dates created before this one.
@@ -47,6 +48,7 @@ export async function getWaitlistPosition(bookingId: string): Promise<number> {
   return ahead + 1;
 }
 
+// test seam
 /**
  * Get all WAITLISTED bookings overlapping a date range, ordered FIFO.
  */
@@ -577,6 +579,7 @@ export async function expireStaleOffers(): Promise<{
   return { expiredCount: staleOffers.length, reofferedCount };
 }
 
+// test seam
 /**
  * Recalculate and update waitlistPosition for all WAITLISTED bookings
  * overlapping the given date range.

@@ -4,7 +4,7 @@ RUN npm install -g npm@11.14.0 && npm cache clean --force
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
 RUN --mount=type=cache,target=/root/.npm npm ci

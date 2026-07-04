@@ -90,6 +90,7 @@ function appendSigningField(
   lines.push(key, value);
 }
 
+// test seam
 export function buildSnsSigningString(envelope: SnsWebhookEnvelope) {
   const lines: string[] = [];
 

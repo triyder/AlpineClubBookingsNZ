@@ -37,6 +37,7 @@ export interface NominatorEligibilityResult {
   };
 }
 
+// test seam
 /** Whole completed months between two dates, using UTC to stay deterministic. */
 export function monthsBetweenUtc(from: Date, to: Date): number {
   let months =
@@ -48,6 +49,7 @@ export function monthsBetweenUtc(from: Date, to: Date): number {
   return months;
 }
 
+// test seam
 /**
  * Pure evaluation of whether a member may nominate a new member. Kept free of IO
  * so it is straightforward to unit test.
