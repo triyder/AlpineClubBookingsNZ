@@ -34,6 +34,21 @@ but does not change capacity-holding status rules. A member can open their own
 conflicting booking, and a linked guest can remove only themselves from another
 future booking when they are not the last guest.
 
+Cancelling a paid booking is single-flight (#1160). The refund plan is frozen
+from a re-read taken under the global booking advisory lock, and the status
+flips to `CANCELLED` atomically with the credit-path ledger writes (refund
+allocation + cancellation credit) inside that same transaction. A concurrent
+cancel or a retry that loses the claim re-reads the already-cancelled booking
+and returns HTTP 409 without moving any money — no description-string
+idempotency guard is needed because the claim itself guarantees the credit
+writers run exactly once. Stripe/Xero work runs only after the claim commits: a
+failed card refund still leaves the booking `CANCELLED` and enqueues the
+outstanding remainder to the durable payment-recovery queue (which replays the
+inline `booking_cancel_refund_<bookingId>` Stripe key, so a
+Stripe-succeeded-but-unrecorded refund is replayed, not repeated), and the
+best-effort cancellation of any outstanding additional PaymentIntent is logged
+rather than allowed to abort the committed claim.
+
 ### BookingEvent Scope
 
 `BookingEvent` is a durable narrative fact store, not the complete transition

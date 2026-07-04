@@ -123,9 +123,16 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
+  PartialRefundError: class PartialRefundError extends Error {
+    completedRefundCents = 0;
+  },
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
+}));
+
+vi.mock("@/lib/payment-recovery", () => ({
+  enqueueBookingCancellationRefundRecovery: vi.fn(),
 }));
 
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -182,7 +189,9 @@ async function runCancel({
   payment: PaymentFixture;
 }) {
   mocks.daysUntilDate.mockReturnValue(days);
-  mocks.bookingFindUnique.mockResolvedValueOnce({
+  // Persistent (not ...Once): both the outer read and the tx1 single-flight
+  // re-read under the advisory lock (#1160) must see this PAID booking.
+  mocks.bookingFindUnique.mockResolvedValue({
     id: "booking_m",
     memberId: "member_1",
     status: "PAID",
@@ -223,8 +232,28 @@ async function runCancel({
 describe("cancel-after-reduction conservation matrix (#1031)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The cancel service uses two $transaction shapes: the callback form for
+    // the paid single-flight critical section (#1160) and the array form for
+    // the pre-payment branches. Support both.
     mocks.prismaTransaction.mockImplementation(
-      async (actions: Array<Promise<unknown>>) => Promise.all(actions)
+      async (
+        arg: ((tx: unknown) => Promise<unknown>) | Array<Promise<unknown>>,
+      ) => {
+        if (typeof arg === "function") {
+          const mockTx = {
+            $executeRaw: vi.fn().mockResolvedValue(undefined),
+            booking: {
+              findUnique: mocks.bookingFindUnique,
+              update: mocks.bookingUpdate,
+            },
+            payment: {
+              update: mocks.paymentUpdate,
+            },
+          };
+          return arg(mockTx);
+        }
+        return Promise.all(arg);
+      },
     );
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});

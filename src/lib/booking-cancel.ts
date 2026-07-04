@@ -23,13 +23,27 @@ import {
   applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed,
   refundPaymentTransactions,
+  PartialRefundError,
 } from "@/lib/payment-transactions";
+import { enqueueBookingCancellationRefundRecovery } from "@/lib/payment-recovery";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 
-export interface CancelBookingResult {
+// Statuses a booking may be cancelled from. Shared by the outer validation
+// guard and the tx1 single-flight re-check so the two can never drift (#1160).
+const CANCELLABLE_BOOKING_STATUSES: readonly string[] = [
+  "PENDING",
+  "PAYMENT_PENDING",
+  "CONFIRMED",
+  "PAID",
+  "WAITLISTED",
+  "WAITLIST_OFFERED",
+  "AWAITING_REVIEW",
+];
+
+interface CancelBookingResult {
   success: boolean;
   refundAmountCents: number;
   refundPercentage: number;
@@ -59,6 +73,7 @@ type CancelBookingResponse =
   | { status: 403; error: string }
   | { status: 404; error: string }
   | { status: 400; error: string }
+  | { status: 409; error: string }
   | { status: 200; data: CancelBookingResult };
 
 /**
@@ -196,7 +211,7 @@ async function performBookingCancellation(
     return { status: 403, error: "Forbidden" };
   }
 
-  if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW"].includes(booking.status)) {
+  if (!CANCELLABLE_BOOKING_STATUSES.includes(booking.status)) {
     return {
       status: 400,
       error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled",
@@ -490,83 +505,190 @@ async function performBookingCancellation(
     };
   }
 
-  // Restore any previously applied credit regardless of refund method
-  let creditRestoredCents = 0;
-  if (booking.payment.creditAppliedCents > 0) {
-    creditRestoredCents = await restoreCreditFromBooking(
-      booking.memberId,
-      bookingId
+  // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
+  //
+  // Phase 1 (tx1) is a DB-only critical section under the global booking
+  // advisory lock. It re-reads the booking under the lock, freezes the refund
+  // plan from that locked read, flips status to CANCELLED, and — for the
+  // credit path — writes the refund-allocation + credit ledger entries
+  // atomically with that flip. NO Stripe/Xero calls happen inside tx1.
+  //
+  // The atomic status flip is the single-flight CLAIM and the only
+  // idempotency guarantee this path needs. The credit writers
+  // (restoreCreditFromBooking / applyLocalRefundAllocation /
+  // createCancellationCredit) run exactly once per successful claim; a retry
+  // or a concurrent cancel re-reads a non-cancellable/non-paid booking here
+  // (or trips the pre-existing status-400 guard above) and returns 409 without
+  // moving any money. That is why we deliberately do NOT add
+  // description-string idempotency guards to the credit writers: restore and
+  // cancellation-credit both legitimately write
+  // CANCELLATION_REFUND/sourceBookingId for one booking, so no
+  // (sourceBookingId,type) unique key is possible, and a description match
+  // would be fragile in money code.
+  const claim = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+    const fresh = await tx.booking.findUnique({
+      where: { id: bookingId },
+      include: { payment: true, member: true },
+    });
+
+    // Single-flight gate: the race loser / a retry lands here.
+    if (
+      !fresh ||
+      !CANCELLABLE_BOOKING_STATUSES.includes(fresh.status) ||
+      !fresh.payment ||
+      fresh.payment.status !== "SUCCEEDED"
+    ) {
+      return { claimed: false as const };
+    }
+    const payment = fresh.payment;
+
+    // Idempotent-by-claim credit restore: only reached once per claim.
+    let creditRestoredCents = 0;
+    if (payment.creditAppliedCents > 0) {
+      creditRestoredCents = await restoreCreditFromBooking(
+        fresh.memberId,
+        bookingId,
+        tx
+      );
+    }
+
+    // Freeze the refund plan from the LOCKED read. Change fees (from prior
+    // booking modifications) are non-refundable per FEE-03. The refundable
+    // base is capped at the booking's current value (#1031): a stale Payment
+    // mirror (credit-settled reductions, IB invoices paid at a reduced amount,
+    // penalty-window retentions) would otherwise pay out more than the booking
+    // is worth. Paid-path twin of the #1015/#1029 unpaid-invoice clearing rule.
+    const paidAmountCents = payment.amountCents - payment.refundedAmountCents;
+    const refundableBaseCents =
+      Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
+      payment.changeFeeCents;
+    const days = daysUntilDate(fresh.checkIn);
+    const policy = await loadCancellationPolicy(fresh.checkIn);
+    const { refundAmountCents, refundPercentage } = calculateRefundAmount(
+      refundableBaseCents,
+      days,
+      policy,
+      refundMethod
     );
+    const shouldFailAdditionalPayment =
+      hasOutstandingAdditionalPaymentIntent(payment);
+
+    // CLAIM: the atomic single-flight commit.
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: { status: "CANCELLED" },
+    });
+
+    // Fail the additional-payment DB state in-tx; the Stripe cancellation of
+    // the additional intent is external and runs best-effort in Phase 2.
+    if (shouldFailAdditionalPayment) {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { additionalPaymentStatus: "FAILED" },
+      });
+      if (payment.additionalPaymentIntentId) {
+        await markPaymentIntentTransactionFailed({
+          paymentIntentId: payment.additionalPaymentIntentId,
+          store: tx,
+        });
+      }
+    }
+
+    await reconcileCancelledBookingBedAllocations(fresh, tx);
+
+    // Credit-path ledger writes, ATOMIC with the claim (fixes hazard #3):
+    // consumed refundable value and the credit entry commit together with the
+    // status flip, so a crash can never leave one without the other.
+    if (refundMethod === "credit" && refundAmountCents > 0) {
+      await applyLocalRefundAllocation({
+        paymentId: payment.id,
+        amountCents: refundAmountCents,
+        store: tx,
+      });
+      await createCancellationCredit(
+        fresh.memberId,
+        refundAmountCents,
+        bookingId,
+        undefined,
+        tx
+      );
+    }
+
+    return {
+      claimed: true as const,
+      fresh,
+      payment,
+      creditRestoredCents,
+      refundAmountCents,
+      refundPercentage,
+      refundableBaseCents,
+      paidAmountCents,
+      days,
+      shouldFailAdditionalPayment,
+    };
+  });
+
+  // Loser contract: a concurrent cancel / retry that failed to claim gets a
+  // real 409. This MUST be non-200 so the outer cancelBooking does not re-run
+  // the group/child cleanup and does not report a false refundAmountCents:0.
+  if (!claim.claimed) {
+    return {
+      status: 409,
+      error: "This booking is already being cancelled or has been cancelled",
+    };
+  }
+
+  const {
+    fresh,
+    payment,
+    creditRestoredCents,
+    refundAmountCents,
+    refundPercentage,
+    refundableBaseCents,
+    paidAmountCents,
+    days,
+    shouldFailAdditionalPayment,
+  } = claim;
+  const paymentId = payment.id;
+
+  if (creditRestoredCents > 0) {
     logger.info(
       { bookingId, creditRestoredCents },
       "Restored previously applied credit on cancellation"
     );
   }
 
-  // Calculate refund based on cancellation policy
-  // Change fees (from prior booking modifications) are non-refundable per FEE-03
-  const paidAmountCents =
-    booking.payment.amountCents - booking.payment.refundedAmountCents;
-  // Cap the refundable base at the booking's current value (#1031). Prior
-  // reductions can leave the Payment mirror stale — credit-settled reductions
-  // recorded before the local allocation existed, Internet Banking invoices
-  // paid at a reduced amount (reconciliation never rewrites amountCents), and
-  // penalty-window retentions persisted nowhere — and refunding from the stale
-  // mirror pays out more than the booking is worth. Paid-path twin of the
-  // #1015/#1029 unpaid-invoice clearing rule above.
-  const refundableBaseCents =
-    Math.min(
-      paidAmountCents,
-      booking.finalPriceCents + booking.payment.changeFeeCents
-    ) - booking.payment.changeFeeCents;
-  const days = daysUntilDate(booking.checkIn);
-  const policy = await loadCancellationPolicy(booking.checkIn);
-  const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-    refundableBaseCents,
-    days,
-    policy,
-    refundMethod
-  );
-  const shouldFailAdditionalPayment = hasOutstandingAdditionalPaymentIntent(booking.payment);
+  // ── Phase 2 — external work, AFTER tx1 committed ──────────────────
+  // The claim already stands; no failure below may abort it.
 
+  // Additional-payment-intent Stripe cancel (best-effort). The DB state was
+  // already flipped to FAILED in tx1; a Stripe cancel failure here is logged,
+  // not rethrown (behaviour change vs pre-#1160, which re-threw and aborted
+  // the whole cancel).
   if (shouldFailAdditionalPayment) {
-    await cancelOutstandingPaymentIntents({
-      primaryPaymentIntentId: null,
-      additionalPaymentIntentId: booking.payment.additionalPaymentIntentId,
-      cancelPrimary: false,
-      cancelAdditional: true,
-    });
-
-    if (booking.payment.additionalPaymentIntentId) {
-      await markPaymentIntentTransactionFailed({
-        paymentIntentId: booking.payment.additionalPaymentIntentId,
+    try {
+      await cancelOutstandingPaymentIntents({
+        primaryPaymentIntentId: null,
+        additionalPaymentIntentId: payment.additionalPaymentIntentId,
+        cancelPrimary: false,
+        cancelAdditional: true,
       });
+    } catch (err) {
+      logger.error(
+        {
+          err,
+          bookingId,
+          additionalPaymentIntentId: payment.additionalPaymentIntentId,
+        },
+        "Failed to cancel additional payment intent after cancellation claim committed"
+      );
     }
   }
 
-  // Process refund based on method
-  if (refundAmountCents > 0 && refundMethod === "credit") {
-    // ── Credit path: skip Stripe, create MemberCredit record ──────────
-    const paymentId = booking.payment.id;
-
-    await applyLocalRefundAllocation({
-      paymentId,
-      amountCents: refundAmountCents,
-    });
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
-    });
-    await reconcileCancelledBookingBedAllocations(booking);
-
-    // Create the local credit ledger entry immediately, then queue the
-    // Xero-side open credit note as background work.
-    await createCancellationCredit(
-      booking.memberId,
-      refundAmountCents,
-      bookingId
-    );
-
+  // ── Credit branch: ledger writes already happened in tx1 ──────────
+  if (refundMethod === "credit" && refundAmountCents > 0) {
     try {
       const queuedCreditNote = await enqueueXeroAccountCreditNoteOperation(
         paymentId,
@@ -594,11 +716,11 @@ async function performBookingCancellation(
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
-      booking,
+      booking: fresh,
       bookingId,
       sessionUserId,
-      details: booking.payment.changeFeeCents > 0
-        ? `Credit ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${booking.payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents as account credit`
+      details: payment.changeFeeCents > 0
+        ? `Credit ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents as account credit`
         : `Credit ${refundPercentage}% = ${refundAmountCents} cents as account credit`,
       ipAddress,
       metadata: {
@@ -606,13 +728,13 @@ async function performBookingCancellation(
         refundAmountCents,
         refundPercentage,
         refundableBaseCents,
-        changeFeeCents: booking.payment.changeFeeCents,
+        changeFeeCents: payment.changeFeeCents,
         creditRestoredCents,
       },
     });
 
     // CANCELLED (post-payment) — the CREDITED settlement event is written by
-    // createCancellationCredit (member-credit.ts) above.
+    // createCancellationCredit (member-credit.ts) inside tx1.
     await recordCancellationEvent({
       bookingId,
       actorMemberId: sessionUserId,
@@ -621,20 +743,20 @@ async function performBookingCancellation(
       refundPercentage,
       paidAmountCents,
       settledAmountCents: refundAmountCents,
-      changeFeeCents: booking.payment.changeFeeCents,
+      changeFeeCents: payment.changeFeeCents,
     });
 
     sendBookingCancelledEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
+      fresh.member.email,
+      fresh.member.firstName,
+      fresh.checkIn,
+      fresh.checkOut,
       refundAmountCents,
       "credit"
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after credit cancellation"));
 
     return {
@@ -651,24 +773,47 @@ async function performBookingCancellation(
     };
   }
 
-  // ── Card path: Stripe refund (existing flow) ──────────────────────
+  // ── Card branch: Stripe refund ────────────────────────────────────
   if (refundAmountCents > 0) {
-    const paymentId = booking.payment.id;
-    const refundResult = await refundPaymentTransactions({
-      paymentId,
-      amountCents: refundAmountCents,
-      metadata: {
-        bookingId: booking.id,
-        reason: "cancellation",
-        refundPercentage: refundPercentage.toString(),
-      },
-      idempotencyKeyPrefix: `booking_cancel_refund_${booking.id}`,
-    });
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
-    });
-    await reconcileCancelledBookingBedAllocations(booking);
+    let stripeRefundId: string | undefined;
+    try {
+      const refundResult = await refundPaymentTransactions({
+        paymentId,
+        amountCents: refundAmountCents,
+        metadata: {
+          bookingId,
+          reason: "cancellation",
+          refundPercentage: refundPercentage.toString(),
+        },
+        idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
+      });
+      stripeRefundId = refundResult.refunds[0]?.refundId;
+    } catch (err) {
+      // The claim already committed. A refund that failed partway has recorded
+      // `completedRefundCents`; anything still outstanding self-heals through
+      // the durable recovery queue, which replays the SAME Stripe key
+      // (booking_cancel_refund_<bookingId>) so a Stripe-succeeded-but-unrecorded
+      // refund is replayed, not repeated. Do NOT rethrow.
+      const completedRefundCents =
+        err instanceof PartialRefundError ? err.completedRefundCents : 0;
+      const remaining = refundAmountCents - completedRefundCents;
+      if (remaining > 0) {
+        await enqueueBookingCancellationRefundRecovery({
+          bookingId,
+          paymentId,
+          amountCents: remaining,
+        }).catch((enqueueErr) =>
+          logger.error(
+            { err: enqueueErr, bookingId, paymentId, remaining },
+            "Failed to enqueue booking cancellation refund recovery"
+          )
+        );
+      }
+      logger.error(
+        { err, bookingId, paymentId, refundAmountCents, completedRefundCents },
+        "Booking cancellation card refund failed; booking stays CANCELLED and the remainder is enqueued for recovery"
+      );
+    }
 
     // Queue the Xero credit note durably (allocated against the original invoice).
     try {
@@ -698,11 +843,11 @@ async function performBookingCancellation(
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
-      booking,
+      booking: fresh,
       bookingId,
       sessionUserId,
-      details: booking.payment.changeFeeCents > 0
-        ? `Refund ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${booking.payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
+      details: payment.changeFeeCents > 0
+        ? `Refund ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
         : `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
       ipAddress,
       metadata: {
@@ -710,9 +855,9 @@ async function performBookingCancellation(
         refundAmountCents,
         refundPercentage,
         refundableBaseCents,
-        changeFeeCents: booking.payment.changeFeeCents,
+        changeFeeCents: payment.changeFeeCents,
         creditRestoredCents,
-        stripeRefundId: refundResult.refunds[0]?.refundId ?? null,
+        stripeRefundId: stripeRefundId ?? null,
       },
     });
 
@@ -724,7 +869,7 @@ async function performBookingCancellation(
       refundPercentage,
       paidAmountCents,
       settledAmountCents: refundAmountCents,
-      changeFeeCents: booking.payment.changeFeeCents,
+      changeFeeCents: payment.changeFeeCents,
     });
     await recordBookingEvent({
       bookingId,
@@ -735,16 +880,16 @@ async function performBookingCancellation(
     });
 
     sendBookingCancelledEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
+      fresh.member.email,
+      fresh.member.firstName,
+      fresh.checkIn,
+      fresh.checkOut,
       refundAmountCents,
       "card"
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after card refund cancellation"));
 
     return {
@@ -755,36 +900,19 @@ async function performBookingCancellation(
         refundPercentage,
         refundMethod: "card",
         creditRestoredCents: creditRestoredCents || undefined,
-        stripeRefundId: refundResult.refunds[0]?.refundId,
+        stripeRefundId,
         message: `Booking cancelled. ${refundPercentage}% refund of $${(refundAmountCents / 100).toFixed(2)} processed.`,
       },
     };
   }
 
-  // No refund (0% policy or no payment intent)
-  if (shouldFailAdditionalPayment) {
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { bookingId: booking.id },
-        data: { additionalPaymentStatus: "FAILED" },
-      }),
-      prisma.booking.update({
-        where: { id: bookingId },
-        data: { status: "CANCELLED" },
-      }),
-    ]);
-    await reconcileCancelledBookingBedAllocations(booking);
-  } else {
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
-    });
-    await reconcileCancelledBookingBedAllocations(booking);
-  }
+  // ── Zero-refund branch (0% policy) ────────────────────────────────
+  // The status flip and additionalPaymentStatus:"FAILED" already committed in
+  // tx1, so there is no money movement left here — only the narrative work.
   await cleanupPromoRedemption(bookingId);
 
   logBookingCancellationAudit({
-    booking,
+    booking: fresh,
     bookingId,
     sessionUserId,
     details: "No refund per cancellation policy",
@@ -806,20 +934,20 @@ async function performBookingCancellation(
     refundPercentage,
     paidAmountCents,
     settledAmountCents: 0,
-    changeFeeCents: booking.payment.changeFeeCents,
+    changeFeeCents: payment.changeFeeCents,
   });
 
   sendBookingCancelledEmail(
-    booking.member.email,
-    booking.member.firstName,
-    booking.checkIn,
-    booking.checkOut,
+    fresh.member.email,
+    fresh.member.firstName,
+    fresh.checkIn,
+    fresh.checkOut,
     0,
     "card"
   ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
   // Trigger waitlist processing for freed dates
-  processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
     .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after no-refund cancellation"));
 
   return {
