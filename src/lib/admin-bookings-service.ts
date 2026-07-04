@@ -13,6 +13,7 @@ import {
   type XeroState,
 } from "@/lib/admin-operational-state";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
+import { bookingStatusLifecycleRank } from "@/lib/booking-status";
 import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
@@ -176,7 +177,7 @@ function sortValue(booking: AdminBookingRow, sortBy: BookingSortBy) {
     case "total":
       return booking.finalPriceCents;
     case "status":
-      return booking.status;
+      return bookingStatusLifecycleRank(booking.status);
     case "lastUpdated":
     default:
       return booking.updatedAt;
@@ -305,7 +306,7 @@ function sortRowValue(row: BookingSortRow, sortBy: BookingSortBy) {
     case "total":
       return row.finalPriceCents;
     case "status":
-      return row.status;
+      return bookingStatusLifecycleRank(row.status);
     case "lastUpdated":
     default:
       return row.updatedAt;
