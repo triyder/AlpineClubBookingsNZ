@@ -39,13 +39,20 @@ test("test-mode card payment succeeds and confirms the booking", async ({
   });
 
   // Money is committed now, so the paid booking must hold its beds
-  // (CAPACITY_HOLDING_BOOKING_STATUSES / issue #737).
-  const occupiedAfter = await fetchOccupiedBeds(page, window.nights);
+  // (CAPACITY_HOLDING_BOOKING_STATUSES / issue #737). The banner renders on
+  // Stripe's client-side confirmation; the server marks the booking PAID and
+  // claims capacity in the success callback just after, so poll instead of
+  // sampling instantly.
   for (const night of window.nights) {
-    expect(
-      occupiedAfter[night],
-      `occupied beds on ${night} after payment`,
-    ).toBe(occupiedBefore[night] + 1);
+    await expect
+      .poll(
+        async () => (await fetchOccupiedBeds(page, window.nights))[night],
+        {
+          message: `occupied beds on ${night} after payment`,
+          timeout: 20_000,
+        },
+      )
+      .toBe(occupiedBefore[night] + 1);
   }
 
   // The booking reaches a confirmed state for the member.
