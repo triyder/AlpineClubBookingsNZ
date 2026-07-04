@@ -21,6 +21,7 @@ import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
+  isOnboardingGateExemptPath,
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
@@ -123,7 +124,13 @@ export default async function AuthenticatedLayout({
     isHutLeader: isHutLeaderActive,
     isStayingGuest,
   };
-  const showOnboardingWizard = shouldShowMemberOnboarding(member);
+  // Single-action token routes (e.g. `/nominations/<token>`) are exempt from the
+  // mandatory onboarding gate so a member can complete that action without first
+  // being forced to supply their own profile details. The gate is unchanged for
+  // every normal authenticated route.
+  const showOnboardingWizard =
+    shouldShowMemberOnboarding(member) &&
+    !isOnboardingGateExemptPath(requestedPath);
   const [effectiveModules, lodgeCapacity, siteBanners] = await Promise.all([
     loadEffectiveModuleFlags(),
     getLodgeCapacity(),

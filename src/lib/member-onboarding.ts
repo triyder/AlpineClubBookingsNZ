@@ -172,3 +172,28 @@ export function shouldShowMemberOnboarding(member: MemberOnboardingProfile) {
 
   return getMemberOnboardingStatus(member).requiresWizard;
 }
+
+// Single-action, token-scoped routes that must render without the mandatory
+// "Confirm member details" onboarding gate. A member who follows a nomination
+// confirmation link (`/nominations/<token>`) is completing an action for
+// someone else's application; trapping them behind a demand for their own DOB
+// and address would block the one thing that page exists to do. This is a
+// narrow allowlist by design — the gate still fires on every normal
+// authenticated route (dashboard, bookings, profile, etc.).
+const ONBOARDING_GATE_EXEMPT_PATH_PREFIXES = ["/nominations/"] as const;
+
+// `pathname` is the value of the `x-pathname` request header, which is
+// `${pathname}${search}`; matching by prefix stays correct even when a query
+// string is present, and the trailing slash keeps `/nominations` (were an index
+// page to exist) and unrelated `/nominations…` paths out of the allowlist.
+export function isOnboardingGateExemptPath(
+  pathname: string | null | undefined,
+): boolean {
+  if (!pathname) {
+    return false;
+  }
+
+  return ONBOARDING_GATE_EXEMPT_PATH_PREFIXES.some((prefix) =>
+    pathname.startsWith(prefix),
+  );
+}
