@@ -1,13 +1,16 @@
-import { z } from "zod";
 import type { Gender, Title } from "@prisma/client";
 
 /**
- * Shared validators, option lists, and display labels for the Member `gender`
+ * Shared option lists, display labels, and CSV parsers for the Member `gender`
  * and `title` enums. The Prisma enums (in schema.prisma) remain the source of
  * truth: the `Record<Gender, string>` / `Record<Title, string>` label maps are
  * exhaustive, so adding a value to the Prisma enum forces a matching label
  * here. Prisma is imported as a type only so this module stays safe to bundle
  * in client components (the runtime `@prisma/client` is server-only).
+ *
+ * The `zod` validators (`genderEnum` / `titleEnum`) intentionally live in the
+ * sibling `member-enums-schema.ts` so this module stays free of any zod value
+ * import and does not pull zod into the admin client bundle.
  */
 
 export const GENDER_LABELS: Record<Gender, string> = {
@@ -31,9 +34,6 @@ export const GENDER_VALUES = Object.keys(GENDER_LABELS) as [
   ...Gender[],
 ];
 export const TITLE_VALUES = Object.keys(TITLE_LABELS) as [Title, ...Title[]];
-
-export const genderEnum = z.enum(GENDER_VALUES);
-export const titleEnum = z.enum(TITLE_VALUES);
 
 export interface EnumOption<T extends string> {
   value: T;
