@@ -151,7 +151,9 @@ stuck-state queries.
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
 shape, keeping its wizard-step views in `src/app/(authenticated)/book/_components`
-while the page shell owns the shared booking state. Shared admin/member logic lives in
+and its state machine (all wizard state, effects, and handlers) in the
+`src/app/(authenticated)/book/_hooks/use-booking-wizard` hook, with the page
+shell as a thin consumer that renders the step views. Shared admin/member logic lives in
 `src/lib/`: `admin-member-xero-actions` wraps the Xero contact actions used by
 both the members list and detail page, `member-serialization` centralises DTO
 shape, `member-lifecycle-actions` owns archive/delete request handling, and
