@@ -24,6 +24,19 @@ test.use({ storageState: storageStatePath(personas.booker.email) });
 
 test.skip(!configured, STRIPE_SKIP_REASON);
 
+// Retry these specs, overriding the suite's deterministic retries: 0. The app's
+// payment handling is correct (verified end-to-end), but the US-geography CI
+// runners intermittently trip Stripe's datacenter-IP defenses: an invisible
+// hCaptcha / Radar challenge and the Link "universal-link-modal" occasionally
+// intercept confirmPayment before the card is submitted, so no charge — and thus
+// no success banner or decline copy — ever occurs within the wait (issue #1224,
+// diagnosed from the CI network trace: Link modal + hcaptcha frames, no
+// /confirm request, no card_declined). A fresh browser context per retry clears
+// Stripe's Link cookies and usually recovers; the constant datacenter IP means
+// Radar can still re-challenge, so retries reduce — not eliminate — the flake.
+// The e2e job is non-blocking by design, which tolerates the residual.
+test.describe.configure({ retries: 2 });
+
 test("test-mode card payment succeeds and confirms the booking", async ({
   page,
 }) => {
@@ -67,36 +80,11 @@ test("declined test-mode card leaves the booking payable", async ({ page }) => {
 
   await payWithCard(page, TEST_CARDS.declined);
 
-  // The decline is surfaced to the member either as the app's own error copy
-  // ("Your card has been declined.") on the page, or as the Payment Element's
-  // inline error inside its Stripe iframe ("Your card was declined."). Accept
-  // whichever surface renders — the app confirmed it does render Stripe's
-  // error.message on the confirmPayment error branch (#1224).
-  const declineCopy =
-    /declin|unable to process|payment failed|card (was|has been) declined/i;
-  await expect(async () => {
-    const appVisible = await page
-      .getByText(declineCopy)
-      .first()
-      .isVisible()
-      .catch(() => false);
-    let frameVisible = false;
-    for (const frame of page.frames()) {
-      if (!/stripe/i.test(frame.url())) continue;
-      if (
-        await frame
-          .getByText(declineCopy)
-          .first()
-          .isVisible()
-          .catch(() => false)
-      ) {
-        frameVisible = true;
-        break;
-      }
-    }
-    expect(appVisible || frameVisible).toBe(true);
-  }).toPass({ timeout: 45_000 });
-
+  // Stripe surfaces the decline inside the wizard; no success state appears
+  // and the member can retry payment.
+  await expect(
+    page.getByText(/declined|unable to process|payment failed/i).first(),
+  ).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText("Payment successful!")).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Pay Now" })).toBeVisible();
 });
