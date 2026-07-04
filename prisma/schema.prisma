@@ -1627,6 +1627,18 @@ model RateLimitCounter {
   @@index([resetAt])
 }
 
+// #1211: cross-instance cooldown for repeat operational admin alerts. One row
+// per alert key; the stale payment-recovery-queue alert atomically claims a
+// fresh window here (conditional updateMany on the id, falling back to a
+// unique-guarded create) before sending, so N app instances raise at most one
+// alert per window instead of one per instance. No @updatedAt and no column
+// default keeps the migration a plain CREATE TABLE and avoids the
+// @updatedAt/DB-default deploy-drift trap.
+model AlertCooldown {
+  key           String   @id
+  lastAlertedAt DateTime
+}
+
 model PaymentRecoveryOperation {
   id                   String                         @id @default(cuid())
   type                 PaymentRecoveryOperationType

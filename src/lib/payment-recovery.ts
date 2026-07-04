@@ -27,6 +27,7 @@ import { attachPaymentIntentToWaitingSupplementaryInvoiceOperations } from "@/li
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -1035,17 +1036,15 @@ async function processPaymentRecoveryOperation(
 
 const PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS = 30 * 60 * 1000;
 const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
-let lastStalePaymentRecoveryAlertAt = 0;
+// #1211: shared AlertCooldown key that all instances contend on so the stale
+// payment-recovery-queue alert fires at most once per cooldown window across
+// the whole fleet, not once per process.
+const STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY = "payment-recovery:stale-queue";
 
 async function alertStalePaymentRecoveryQueueIfNeeded() {
-  if (
-    Date.now() - lastStalePaymentRecoveryAlertAt <
-    PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS
-  ) {
-    return;
-  }
+  const now = new Date();
   const staleThreshold = new Date(
-    Date.now() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
+    now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
   );
   const oldest = await prisma.paymentRecoveryOperation.findFirst({
     where: {
@@ -1056,7 +1055,42 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
     include: { booking: { include: { member: true } } },
   });
   if (!oldest) return;
-  lastStalePaymentRecoveryAlertAt = Date.now();
+
+  // Shared cross-instance cooldown: atomically CLAIM the window before sending
+  // so N instances raise at most one alert per
+  // PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS (not one per instance). The
+  // conditional updateMany only matches when the last alert is older than the
+  // window, so a single caller wins the write.
+  const cooldownStart = new Date(
+    now.getTime() - PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS,
+  );
+  const claimed = await prisma.alertCooldown.updateMany({
+    where: {
+      key: STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY,
+      lastAlertedAt: { lt: cooldownStart },
+    },
+    data: { lastAlertedAt: now },
+  });
+  if (claimed.count === 0) {
+    // Either the row is fresh-within-window (another instance already alerted)
+    // or it does not exist yet (first alert ever). Try to create it; if a
+    // concurrent instance created it first, we lost the race and must not send.
+    try {
+      await prisma.alertCooldown.create({
+        data: {
+          key: STALE_PAYMENT_RECOVERY_ALERT_COOLDOWN_KEY,
+          lastAlertedAt: now,
+        },
+      });
+    } catch (error) {
+      if (isPrismaUniqueConstraintError(error)) return;
+      throw error;
+    }
+  }
+  // We hold the claim → send exactly once cross-instance. The provider call is
+  // claim-first and outside any DB transaction; the tiny residual double-send
+  // window (two instances reading between claim attempts) is bounded and this
+  // is a noise-only alert.
   await sendAdminPaymentFailureAlert({
     memberName: oldest.booking?.member
       ? `${oldest.booking.member.firstName} ${oldest.booking.member.lastName}`

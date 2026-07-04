@@ -13,6 +13,8 @@ const {
   mockPaymentRecoveryUpdateMany,
   mockPaymentRecoveryUpdate,
   mockPaymentRecoveryUpsert,
+  mockAlertCooldownUpdateMany,
+  mockAlertCooldownCreate,
   mockPaymentTransactionUpdateMany,
   mockPaymentTransactionUpdate,
   mockPaymentTransactionFindUnique,
@@ -37,6 +39,8 @@ const {
   mockPaymentRecoveryUpdateMany: vi.fn(),
   mockPaymentRecoveryUpdate: vi.fn(),
   mockPaymentRecoveryUpsert: vi.fn(),
+  mockAlertCooldownUpdateMany: vi.fn(),
+  mockAlertCooldownCreate: vi.fn(),
   mockPaymentTransactionUpdateMany: vi.fn(),
   mockPaymentTransactionUpdate: vi.fn(),
   mockPaymentTransactionFindUnique: vi.fn(),
@@ -70,6 +74,10 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: (...args: unknown[]) => mockPaymentRecoveryUpdateMany(...args),
       update: (...args: unknown[]) => mockPaymentRecoveryUpdate(...args),
       upsert: (...args: unknown[]) => mockPaymentRecoveryUpsert(...args),
+    },
+    alertCooldown: {
+      updateMany: (...args: unknown[]) => mockAlertCooldownUpdateMany(...args),
+      create: (...args: unknown[]) => mockAlertCooldownCreate(...args),
     },
     paymentTransaction: {
       updateMany: (...args: unknown[]) => mockPaymentTransactionUpdateMany(...args),
@@ -180,6 +188,10 @@ describe("payment recovery worker", () => {
     );
     mockPaymentRecoveryUpdate.mockResolvedValue({});
     mockPaymentRecoveryUpsert.mockResolvedValue({});
+    // Default: no cooldown row exists yet, so the conditional claim matches
+    // nothing and the create path wins (first alert ever).
+    mockAlertCooldownUpdateMany.mockResolvedValue({ count: 0 });
+    mockAlertCooldownCreate.mockResolvedValue({});
     mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
     mockPaymentTransactionUpdate.mockResolvedValue({});
     mockPaymentTransactionFindUnique.mockResolvedValue({
@@ -486,6 +498,92 @@ describe("payment recovery worker", () => {
         paymentIntentId: "pi_superseded",
       }),
     );
+  });
+
+  function makeStaleQueueOperation() {
+    return {
+      ...makeOperation({
+        id: "recovery-ancient",
+        status: PaymentRecoveryOperationStatus.PENDING,
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      }),
+      booking: {
+        id: "booking-1",
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-03"),
+        member: { firstName: "Alice", lastName: "Example" },
+      },
+    };
+  }
+
+  it("shared cooldown fires the stale-queue alert once, then suppresses a re-tick within the window (#1211)", async () => {
+    mockPaymentRecoveryFindMany.mockResolvedValue([]);
+    // Both ticks see the same stale op.
+    mockPaymentRecoveryFindFirst.mockResolvedValue(makeStaleQueueOperation());
+    // No row within the window matches the conditional claim on either tick,
+    // so the create path decides ownership: the first tick creates the row and
+    // sends; the second tick loses the unique-constraint race and stays silent.
+    const uniqueViolation = Object.assign(
+      new Error("Unique constraint failed on the fields: (`key`)"),
+      { code: "P2002" },
+    );
+    mockAlertCooldownCreate
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(uniqueViolation);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockAlertCooldownCreate).toHaveBeenCalledTimes(2);
+    expect(mockAlertCooldownCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        key: "payment-recovery:stale-queue",
+        lastAlertedAt: expect.any(Date),
+      }),
+    });
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorMessage: expect.stringContaining("queue is stalled"),
+      }),
+    );
+  });
+
+  it("re-sends the stale-queue alert once the shared cooldown window has elapsed (#1211)", async () => {
+    mockPaymentRecoveryFindMany.mockResolvedValue([]);
+    mockPaymentRecoveryFindFirst.mockResolvedValue(makeStaleQueueOperation());
+    // The existing row's lastAlertedAt is older than the window, so the
+    // conditional claim matches and this caller wins the write directly.
+    mockAlertCooldownUpdateMany.mockResolvedValue({ count: 1 });
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockAlertCooldownUpdateMany).toHaveBeenCalledWith({
+      where: {
+        key: "payment-recovery:stale-queue",
+        lastAlertedAt: { lt: expect.any(Date) },
+      },
+      data: { lastAlertedAt: expect.any(Date) },
+    });
+    // The claim already won, so no create fallback is attempted.
+    expect(mockAlertCooldownCreate).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorMessage: expect.stringContaining("queue is stalled"),
+      }),
+    );
+  });
+
+  it("neither claims the cooldown nor alerts when no stale op exists (#1211)", async () => {
+    mockPaymentRecoveryFindMany.mockResolvedValue([]);
+    mockPaymentRecoveryFindFirst.mockResolvedValue(null);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockAlertCooldownUpdateMany).not.toHaveBeenCalled();
+    expect(mockAlertCooldownCreate).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
   it("processes a booking modification refund recovery by replaying refundPaymentTransactions", async () => {
