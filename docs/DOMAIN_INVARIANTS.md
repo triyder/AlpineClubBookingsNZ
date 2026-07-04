@@ -34,9 +34,11 @@ Future reviews and issues should cite this file when proposing changes.
 - The person-night guard is app-level enforcement by design (#1039 item 3): a
   database unique index cannot express it because liveness is booking-status
   dependent and spans `BookingGuest` to `Booking`, which a Postgres partial
-  unique index cannot reference. It is race-free because every booking
-  creation/edit transaction takes the global booking advisory lock before
-  running the guard; that ordering is frozen by test.
+  unique index cannot reference. It is race-free because every transaction that
+  writes a member-linked `BookingGuest`/`BookingGuestNight` takes the global
+  booking advisory lock (`pg_advisory_xact_lock(1)`) before running the guard
+  (`assertNoBookingMemberNightConflicts`); that lock-before-guard ordering is
+  frozen for every such writer by `review-findings-contracts.test.ts`.
 - A member holds at most one group-join roster row per group
   (`GroupBookingJoin` unique on groupBookingId + joinerMemberId, #1039
   item 2). The roster row is written inside the child booking's transaction:
