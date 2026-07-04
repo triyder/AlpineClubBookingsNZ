@@ -190,11 +190,11 @@ describe("buildInvoiceLineItems properties", () => {
     );
   });
 
-  // Known defect (#1163): a contiguous run with MIXED nightly prices bills
-  // quantity x round(total/nights), which cannot represent the exact total.
-  // This test is expected to fail until #1163 splits runs on price changes;
-  // once it passes, remove the `.fails` marker.
-  it.fails("mixed-price contiguous runs reconcile exactly (#1163 — currently drift by rounding)", () => {
+  // Regression for #1163: a contiguous run with MIXED nightly prices used to
+  // bill quantity x round(total/nights), which cannot represent the exact
+  // total. The price-run splitter now emits one line per price block, so the
+  // lines reconcile exactly.
+  it("mixed-price contiguous runs reconcile exactly (#1163)", () => {
     const checkIn = new Date(2026, 5, 1);
     const checkOut = new Date(2026, 5, 4);
     const guests = [
@@ -219,5 +219,72 @@ describe("buildInvoiceLineItems properties", () => {
       0
     );
     expect(total).toBe(8_000);
+  });
+
+  // #1163: an arbitrary vector of per-night prices must reconcile exactly on
+  // BOTH the per-night path (explicit night rows) and the legacy path (a flat
+  // priceCents with no night rows, split evenly across the nights). This fails
+  // on the pre-#1163 round(total/n)*n maths whenever the prices are mixed or
+  // the total is indivisible.
+  it("arbitrary per-night price vectors reconcile exactly (both paths, #1163)", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 0, max: 20_000 }), {
+          minLength: 1,
+          maxLength: 10,
+        }),
+        fc.boolean(),
+        (nightPricesCents, isMember) => {
+          const checkIn = new Date(Date.UTC(2026, 5, 1));
+          const nights = nightPricesCents.length;
+          const checkOut = new Date(checkIn.getTime() + nights * 24 * 60 * 60 * 1000);
+          const total = nightPricesCents.reduce((s, c) => s + c, 0);
+
+          // Per-night path: contiguous dates carrying the exact per-night prices.
+          const perNightLines = buildInvoiceLineItems(
+            [
+              {
+                firstName: "PerNight",
+                lastName: "Test",
+                ageTier: "ADULT",
+                isMember,
+                priceCents: total,
+                nights: nightPricesCents.map((priceCents, i) => ({
+                  stayDate: new Date(checkIn.getTime() + i * 24 * 60 * 60 * 1000),
+                  priceCents,
+                })),
+              },
+            ],
+            checkIn,
+            checkOut,
+            nights
+          );
+          expect(lineTotalCents(perNightLines)).toBe(total);
+
+          // Legacy path: no per-night rows, one flat priceCents split evenly.
+          const legacyLines = buildInvoiceLineItems(
+            [
+              {
+                firstName: "Legacy",
+                lastName: "Test",
+                ageTier: "ADULT",
+                isMember,
+                priceCents: total,
+                nights: null,
+              },
+            ],
+            checkIn,
+            checkOut,
+            nights
+          );
+          expect(lineTotalCents(legacyLines)).toBe(total);
+
+          for (const line of [...perNightLines, ...legacyLines]) {
+            expect(line.quantity ?? 0).toBeGreaterThanOrEqual(1);
+            expect(line.unitAmount ?? 0).toBeGreaterThanOrEqual(0);
+          }
+        }
+      )
+    );
   });
 });
