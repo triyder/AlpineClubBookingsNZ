@@ -191,7 +191,7 @@ export function MemberAddressFields({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-streetPostalCode`}>Postal code</Label>
+          <Label htmlFor={`${idPrefix}-streetPostalCode`}>Postcode</Label>
           <Input
             className={readOnlyInputClassName}
             disabled={disabled}
@@ -203,7 +203,7 @@ export function MemberAddressFields({
                 event.target.value,
               )
             }
-            placeholder="Postal code"
+            placeholder="Postcode"
             readOnly={readOnly}
             required={required}
             value={values.streetPostalCode}
@@ -313,7 +313,7 @@ export function MemberAddressFields({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-postalPostalCode`}>Postal code</Label>
+          <Label htmlFor={`${idPrefix}-postalPostalCode`}>Postcode</Label>
           <Input
             className={readOnlyInputClassName}
             disabled={disabled}
@@ -322,7 +322,7 @@ export function MemberAddressFields({
             onChange={(event) =>
               handlePostalPatch({ postalPostalCode: event.target.value })
             }
-            placeholder="Postal code"
+            placeholder="Postcode"
             readOnly={readOnly}
             required={required}
             value={values.postalPostalCode}
