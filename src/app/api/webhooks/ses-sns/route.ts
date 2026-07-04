@@ -8,6 +8,7 @@ import {
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
+import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   isWebhookBodyInvalidContentLengthError,
   isWebhookBodyTooLargeError,
@@ -190,7 +191,12 @@ export async function POST(request: NextRequest) {
     }
 
     const message = err instanceof Error ? err.message : String(err);
-    logger.error({ err, eventId, eventType }, "Error processing SES/SNS webhook");
+    reportWebhookError({
+      tag: "ses-sns",
+      err,
+      message: "Error processing SES/SNS webhook",
+      context: { eventId, eventType },
+    });
     await recordSesWebhookLog({
       eventType,
       eventId,

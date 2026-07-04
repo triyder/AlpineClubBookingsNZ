@@ -586,6 +586,26 @@ disable cron with `CRON_ENABLED=false`.
 | `checkin-reminders` | Daily | Send next-day check-in reminders |
 | `backup` | Configurable | Upload PostgreSQL dumps to S3 |
 
+### Failure observability (audit gap G5 — partially closed by design)
+
+Cron and webhook FAILURE paths bridge their `logger.error`/`logger.fatal` catch
+handlers to Sentry through `reportCronError`/`reportWebhookError` in
+`src/lib/observability-bridge.ts`, which log via the pino singleton **and**
+forward to Sentry with a stable `fingerprint`. This is a scoped report-helper,
+not a global pino transport: ordinary route/request loggers never import the
+bridge and stay log-only, so a noisy request path cannot cause alert fatigue —
+the objection #1150 raised against a global bridge. The boundary is deliberate:
+top-level cron catch handlers (including the general cron runner's per-task
+failures) and top-level webhook catch handlers (Stripe, Xero, SES/SNS) are
+bridged, while best-effort per-item failures inside those jobs (e.g. a single
+joiner email that will be retried, waitlist item failures) stay log-only to
+preserve signal-to-noise. An in-process cooldown
+(`OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS`, default 5 minutes) keyed by the
+fingerprint stops a stuck cron/webhook from emitting one Sentry event per tick;
+the Sentry fingerprint dedups grouping across processes. Cross-instance
+exact-once alerting remains future work (#1211), and which fingerprints page
+whom is operator-side Sentry alert-rule configuration.
+
 ## Security and Privacy Boundaries
 
 - Auth uses credentials sessions with explicit admin, admin-area, and finance
