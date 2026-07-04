@@ -2,9 +2,14 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as Sentry from "@sentry/nextjs";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 
 const fetchMock = vi.fn();
+
+vi.mock("@sentry/nextjs", () => ({
+  captureException: vi.fn(),
+}));
 
 vi.mock("@/components/stripe/StripeProvider", () => ({
   default: ({ children }: { children: React.ReactNode }) => (
@@ -64,6 +69,54 @@ describe("BookingPaymentWrapper", () => {
 
     expect(screen.queryByText("payment-form")).not.toBeNull();
     expect(screen.queryByText("Payment Error")).toBeNull();
+  });
+
+  it("shows generic copy and never renders the raw provider error when init fails", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const rawProviderError = "Invalid API Key provided: sk_test_51SecretKeyMaterial";
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: rawProviderError }),
+    });
+
+    render(
+      <BookingPaymentWrapper
+        bookingId="booking-1"
+        amountCents={12500}
+        paymentMode="payment"
+        returnUrl="http://localhost/bookings/booking-1"
+        onPaymentComplete={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(screen.queryByText("Payment Error")).not.toBeNull());
+
+    // Generic, member-safe copy is shown (the pay-later recovery affordance).
+    expect(
+      screen.queryByText(/you can\s+pay later from your booking page/i)
+    ).not.toBeNull();
+
+    // The raw provider detail (and any partial key material) must NOT reach the DOM.
+    expect(document.body.textContent).not.toContain("sk_test");
+    expect(document.body.textContent).not.toContain("Invalid API Key");
+    expect(screen.queryByText(/Invalid API Key/i)).toBeNull();
+
+    // The detail is reported to Sentry (scrubbed by beforeSend), NOT to the
+    // member's browser console — the client console log carries bookingId only,
+    // so no raw provider/key material lands in a member's DevTools (#1223).
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "Booking payment initialization failed",
+      { bookingId: "booking-1" }
+    );
+    const consoleArgs = JSON.stringify(consoleErrorSpy.mock.calls);
+    expect(consoleArgs).not.toContain("sk_test");
+    expect(consoleArgs).not.toContain("Invalid API Key");
+
+    consoleErrorSpy.mockRestore();
   });
 
   it("reconciles a successful payment before refreshing the page", async () => {

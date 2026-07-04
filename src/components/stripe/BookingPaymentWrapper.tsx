@@ -1,10 +1,33 @@
 "use client";
 
 import { useEffect, useEffectEvent, useState } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import StripeProvider from "./StripeProvider";
 import PaymentForm from "./PaymentForm";
 import SetupForm from "./SetupForm";
+
+/**
+ * Report a payment-initialization failure to ops WITHOUT ever surfacing the raw
+ * provider detail to the member (#1223). The raw detail (from the API response
+ * or a thrown error) can contain partial key material such as
+ * "Invalid API Key provided: sk_test_***", so it must never be rendered AND must
+ * not reach the member's browser console — it is sent only to Sentry, whose
+ * `beforeSend` scrubs `sk_*`/secret material before ingestion. The UI shows only
+ * generic, member-safe copy. The client-side console log is intentionally
+ * detail-free (bookingId only) so no key fragment lands in a member's DevTools.
+ */
+function reportPaymentInitError(bookingId: string, detail: unknown) {
+  Sentry.captureException(
+    detail instanceof Error
+      ? detail
+      : new Error(
+          typeof detail === "string" ? detail : "Payment initialization failed"
+        ),
+    { tags: { area: "booking-payment-init" }, extra: { bookingId, detail } }
+  );
+  console.error("Booking payment initialization failed", { bookingId });
+}
 
 interface BookingPaymentWrapperProps {
   bookingId: string;
@@ -27,7 +50,7 @@ export default function BookingPaymentWrapper({
   onPaymentComplete,
 }: BookingPaymentWrapperProps) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [initializationError, setInitializationError] = useState<string | null>(null);
+  const [initFailed, setInitFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const handleAlreadyComplete = useEffectEvent(() => onPaymentComplete());
 
@@ -37,7 +60,7 @@ export default function BookingPaymentWrapper({
     const initializePayment = async () => {
       try {
         setLoading(true);
-        setInitializationError(null);
+        setInitFailed(false);
 
         const endpoint = paymentMode === "setup"
           ? "/api/payments/create-setup-intent"
@@ -52,7 +75,10 @@ export default function BookingPaymentWrapper({
         const data = await response.json();
 
         if (!response.ok) {
-          setInitializationError(data.error || "Failed to initialize payment");
+          // The raw provider detail (data.error) may leak partial key material;
+          // log it for ops, but only ever show generic copy to the member (#1223).
+          reportPaymentInitError(bookingId, data.error || "Failed to initialize payment");
+          setInitFailed(true);
           return;
         }
 
@@ -62,8 +88,9 @@ export default function BookingPaymentWrapper({
         }
 
         setClientSecret(data.clientSecret);
-      } catch {
-        setInitializationError("Failed to connect to payment service");
+      } catch (error) {
+        reportPaymentInitError(bookingId, error);
+        setInitFailed(true);
       } finally {
         setLoading(false);
       }
@@ -91,11 +118,14 @@ export default function BookingPaymentWrapper({
     );
   }
 
-  if (initializationError) {
+  if (initFailed) {
     return (
       <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">
         <p className="font-medium">Payment Error</p>
-        <p className="mt-1">{initializationError}</p>
+        <p className="mt-1">
+          We couldn&apos;t start the card payment. Your booking is saved — you can
+          pay later from your booking page.
+        </p>
       </div>
     );
   }
