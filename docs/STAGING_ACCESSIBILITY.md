@@ -170,3 +170,35 @@ Remaining (moderate/best-practice) — handed to the #1149 deep pass with
 full axe data: missing h1 on `/login/enroll` and the admin pages, and
 website-footer h3 heading order on sparse pages. Screen-reader (NVDA/
 VoiceOver) walkthroughs remain a human task.
+
+## #1149 Deep Pass — Booking Wizard And Admin Members (2026-07-04)
+
+Fixed in this pass (booking wizard, date picker, admin members, plus the
+configurable palette):
+
+- **Colour contrast is now enforced, not just warned.** `getBlockingContrastWarnings`
+  drives both the `/admin/site-style` API (`400` on a measurable sub-AA pair) and
+  the wizard's disabled Save/Finish buttons, so an admin can no longer save a
+  theme whose body/nav/button text falls below AA. Both accepted colour formats
+  are measured — hex directly, and `oklch()` via an oklch→linear-sRGB conversion
+  — because the wizard's value field accepts either, so neither can bypass the
+  gate. The shipped default gold moved from `#7a8f6a` (3.55:1 button-on-gold) to
+  `#8fa87c` (4.8:1) so first-run setup passes its own gate.
+- **Booking calendar** day buttons now expose their selected state to screen
+  readers (`aria-label` gains ", selected as check-in/​check-out/​within your
+  selected stay" and `aria-pressed` on the check-in/out days); previously only
+  the blue highlight conveyed selection.
+- **Booking wizard step indicator** is now a `nav > ol` with `aria-current="step"`
+  on the active step and a visually-hidden `aria-live="polite"` "Step N of 4"
+  region, so screen readers are told when a step auto-advances and its focus
+  target unmounts (e.g. after the check-out date is picked). Errors already use
+  `role="alert"`; dialogs use Radix (focus trap/restore handled).
+- **Admin members table** sortable column headers are now real keyboard-operable
+  `<button>`s inside `<th aria-sort>` cells (previously `<th onClick>` — not
+  tabbable, no sort state announced).
+
+Verified already-good (no change needed): `/book` and `/admin/members` each have
+an `h1`; member filter selects, phone inputs, and row-select checkboxes carry
+accessible names. Out of scope for this pass (booking wizard + admin members):
+the broader admin-page h1s and footer heading order noted above, and NVDA/
+VoiceOver walkthroughs.

@@ -1051,6 +1051,14 @@ export default function BookPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkPartyEventId, checkIn, checkOut, priceQuote, JSON.stringify(reviewGuestPayload)]);
 
+  const wizardSteps: Array<{ id: BookingWizardStep; label: string }> = [
+    { id: "dates", label: "Select Dates" },
+    { id: "guests", label: "Add Guests" },
+    { id: "review", label: "Review & Confirm" },
+    { id: "pay", label: requiresAdminReviewLocal ? "Admin Review" : "Pay" },
+  ];
+  const activeStepIndex = wizardSteps.findIndex((item) => item.id === step);
+
   return (
     <div className="max-w-3xl space-y-6">
       <div className="space-y-1">
@@ -1261,23 +1269,35 @@ export default function BookPage() {
       )}
 
       {/* Step indicator */}
-      <div className="flex items-center gap-2 text-sm">
-        <span className={step === "dates" ? "app-step-active" : "text-gray-600"}>
-          1. Select Dates
-        </span>
-        <span className="text-gray-300">&rarr;</span>
-        <span className={step === "guests" ? "app-step-active" : "text-gray-600"}>
-          2. Add Guests
-        </span>
-        <span className="text-gray-300">&rarr;</span>
-        <span className={step === "review" ? "app-step-active" : "text-gray-600"}>
-          3. Review & Confirm
-        </span>
-        <span className="text-gray-300">&rarr;</span>
-        <span className={step === "pay" ? "app-step-active" : "text-gray-600"}>
-          {requiresAdminReviewLocal ? "4. Admin Review" : "4. Pay"}
-        </span>
-      </div>
+      <nav aria-label="Booking progress">
+        <ol className="flex items-center gap-2 text-sm">
+          {wizardSteps.map((wizardStep, index) => {
+            const isActive = wizardStep.id === step;
+            return (
+              <li key={wizardStep.id} className="flex items-center gap-2">
+                {index > 0 && (
+                  <span aria-hidden="true" className="text-gray-300">
+                    &rarr;
+                  </span>
+                )}
+                <span
+                  aria-current={isActive ? "step" : undefined}
+                  className={isActive ? "app-step-active" : "text-gray-600"}
+                >
+                  {index + 1}. {wizardStep.label}
+                  {isActive && <span className="sr-only"> (current step)</span>}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+        {/* Announce step transitions to screen readers, which otherwise get no
+            signal when a step auto-advances and its focus target unmounts. */}
+        <p aria-live="polite" className="sr-only">
+          Step {activeStepIndex + 1} of {wizardSteps.length}:{" "}
+          {wizardSteps[activeStepIndex]?.label}
+        </p>
+      </nav>
 
       {/* Step 1: Dates */}
       {step === "dates" && (

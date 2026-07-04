@@ -187,11 +187,31 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
             month: "long",
             year: "numeric",
           });
-          const dayLabel = isPast
-            ? `${dateLabel}, unavailable`
-            : available <= 0
-              ? `${dateLabel}, full`
-              : `${dateLabel}, ${available} of ${lodgeCapacity} beds free`;
+          const isCheckIn = Boolean(
+            checkIn && date.getTime() === checkIn.getTime(),
+          );
+          const isCheckOut = Boolean(
+            checkOut && date.getTime() === checkOut.getTime(),
+          );
+          const inRange = Boolean(
+            checkIn && checkOut && date > checkIn && date < checkOut,
+          );
+          // Convey the visual blue selection to screen readers, which otherwise
+          // only hear the availability label and can't tell which day is chosen.
+          const selectionSuffix = isCheckIn
+            ? ", selected as check-in"
+            : isCheckOut
+              ? ", selected as check-out"
+              : inRange
+                ? ", within your selected stay"
+                : "";
+          const dayLabel =
+            (isPast
+              ? `${dateLabel}, unavailable`
+              : available <= 0
+                ? `${dateLabel}, full`
+                : `${dateLabel}, ${available} of ${lodgeCapacity} beds free`) +
+            selectionSuffix;
 
           return (
             <button
@@ -200,6 +220,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
               className={getDayClass(day, available, isPast, dateStr)}
               disabled={isPast || available <= 0}
               aria-label={dayLabel}
+              aria-pressed={isCheckIn || isCheckOut}
             >
               <span aria-hidden="true" className="leading-none">{day}</span>
               {!isPast && (

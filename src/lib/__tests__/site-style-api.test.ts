@@ -78,6 +78,28 @@ describe("site style admin API", () => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
+  it("rejects palettes that fail WCAG AA text contrast", async () => {
+    const response = await PUT(
+      request({
+        ...DEFAULT_CLUB_THEME_VALUES,
+        // brand-charcoal button text on a near-identical gold: unreadable.
+        brandGold: "#33373e",
+        brandCharcoal: "#30343b",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/contrast/i);
+    expect(body.contrastWarnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "button-on-gold" }),
+      ]),
+    );
+    expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
   it("saves completion and revalidates the website layout", async () => {
     const response = await PUT(
       request({
