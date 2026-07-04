@@ -142,6 +142,10 @@ upgrade") has no upgrade target. Follow-ups filed instead:
 - **next-auth dependency hygiene** — remove the unused `@auth/prisma-adapter`;
   swap blanket `legacy-peer-deps=true` for the targeted nodemailer override;
   keep `next-auth` exact-pinned. Small, mechanical, fully testable.
+  _✅ Resolved by #1182 (2026-07-04): `@auth/prisma-adapter` removed, `.npmrc`
+  deleted, `overrides."next-auth".nodemailer` added; strict `npm install`
+  succeeds. The "Current state" table above is a point-in-time snapshot of the
+  pre-#1182 tree and is retained as historical record._
 - **Evaluate Better Auth migration** — scoped evaluation of option C with a
   prototype behind the module-flag system, feature-parity matrix for the five
   load-bearing behaviours, and a phased cutover plan.
