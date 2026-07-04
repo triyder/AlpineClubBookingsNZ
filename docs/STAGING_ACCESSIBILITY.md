@@ -183,7 +183,11 @@ configurable palette):
   are measured — hex directly, and `oklch()` via an oklch→linear-sRGB conversion
   — because the wizard's value field accepts either, so neither can bypass the
   gate. The shipped default gold moved from `#7a8f6a` (3.55:1 button-on-gold) to
-  `#8fa87c` (4.8:1) so first-run setup passes its own gate.
+  `#8fa87c` (4.8:1) so first-run setup passes its own gate. A one-time,
+  idempotent data migration (#1244,
+  `20260705120000_bump_sub_aa_club_theme_gold`) bumps any persisted `ClubTheme`
+  colour still holding `#7a8f6a` to `#8fa87c`, so existing installs converge on
+  the compliant default without an admin re-save.
 - **Booking calendar** day buttons now expose their selected state to screen
   readers (`aria-label` gains ", selected as check-in/​check-out/​within your
   selected stay" and `aria-pressed` on the check-in/out days); previously only
