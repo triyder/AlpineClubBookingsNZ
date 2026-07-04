@@ -2,7 +2,7 @@
 
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, X } from "lucide-react";
+import { CircleDashed, GripVertical, Lock, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 import { cn } from "@/lib/utils";
 import {
   type BedOption,
@@ -43,12 +44,23 @@ export function AllocationChip({
 
   const otherBeds = bedOptions.filter((bed) => bed.id !== allocation.bedId);
 
+  // Issue #1251: a bed on a capacity-holding booking (booked/confirmed) holds
+  // the night; a bed on a provisional booking (PENDING / PAYMENT_PENDING /
+  // WAITLIST_OFFERED) does NOT. Derive the state from the shared capacity set
+  // so it auto-tracks any future capacity-status change (#1254). The signal is
+  // NOT colour-only — border style, icon, and label all differ — so it survives
+  // in either theme and for colour-blind staff.
+  const holdsCapacity = isCapacityHoldingBookingStatus(allocation.bookingStatus);
+
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        "flex w-full max-w-full items-start gap-1 rounded-md border bg-white p-1.5 text-xs shadow-sm",
+        "flex w-full max-w-full items-start gap-1 rounded-md border p-1.5 text-xs shadow-sm",
+        holdsCapacity
+          ? "border-border bg-card text-card-foreground"
+          : "border-dashed border-muted-foreground/50 bg-muted/40 text-foreground",
         isDragging && "opacity-50",
         pending && "opacity-60",
       )}
@@ -68,6 +80,27 @@ export function AllocationChip({
           {allocation.bookingId}
         </div>
         <div className="mt-1 flex flex-wrap gap-1">
+          <Badge
+            variant="outline"
+            className={cn(
+              "gap-1 px-1 py-0 text-[10px]",
+              holdsCapacity
+                ? "border-transparent bg-foreground/10 font-semibold text-foreground"
+                : "border-dashed border-muted-foreground/60 text-muted-foreground",
+            )}
+            title={
+              holdsCapacity
+                ? "Held — this booking holds the bed for the night."
+                : "Provisional — this booking does not hold the night; the bed can still be booked by someone else."
+            }
+          >
+            {holdsCapacity ? (
+              <Lock className="h-2.5 w-2.5" aria-hidden />
+            ) : (
+              <CircleDashed className="h-2.5 w-2.5" aria-hidden />
+            )}
+            {holdsCapacity ? "Held" : "Provisional"}
+          </Badge>
           <Badge
             variant={allocation.source === "MANUAL" ? "warning" : "secondary"}
             className="px-1 py-0 text-[10px]"

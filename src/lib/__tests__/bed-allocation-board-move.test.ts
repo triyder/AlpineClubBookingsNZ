@@ -26,6 +26,7 @@ function buildAllocation(
     source: "AUTO",
     approvedAt: "2026-06-01T00:00:00.000Z",
     approvedByName: "Allocator",
+    bookingStatus: "CONFIRMED",
     ...overrides,
   };
 }

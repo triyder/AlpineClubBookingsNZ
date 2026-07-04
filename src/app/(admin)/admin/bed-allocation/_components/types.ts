@@ -29,6 +29,10 @@ export interface DashboardAllocation {
   source: "AUTO" | "MANUAL";
   approvedAt: string | null;
   approvedByName: string | null;
+  // Raw booking status (#1251). The board derives the "Held" vs "Provisional"
+  // badge from isCapacityHoldingBookingStatus() so it auto-tracks the capacity
+  // set (#1254) without duplicating the list here.
+  bookingStatus: string;
 }
 
 export interface DashboardGuestNight {

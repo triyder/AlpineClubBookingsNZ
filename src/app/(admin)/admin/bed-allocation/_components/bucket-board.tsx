@@ -1,6 +1,8 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
+import { CircleDashed, Lock } from "lucide-react";
+import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 import { cn } from "@/lib/utils";
 import { GuestChip } from "./guest-chip";
 import {
@@ -65,6 +67,9 @@ export function BucketBoard({
       ) : (
         bookingsWithGroups.map((booking) => {
           const groups = groupsByBooking.get(booking.id) ?? [];
+          // Match the board's Held/Provisional state (#1251) so a booking reads
+          // the same before and after its guests are placed on beds.
+          const holdsCapacity = isCapacityHoldingBookingStatus(booking.status);
           return (
             <div
               key={booking.id}
@@ -80,6 +85,26 @@ export function BucketBoard({
                 </span>
                 <span className="text-xs text-muted-foreground">
                   {booking.checkIn} – {booking.checkOut}
+                </span>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                    holdsCapacity
+                      ? "bg-foreground/10 text-foreground"
+                      : "border border-dashed border-muted-foreground/60 text-muted-foreground",
+                  )}
+                  title={
+                    holdsCapacity
+                      ? "Held — this booking holds its beds for the night."
+                      : "Provisional — this booking does not hold the night; beds can still be booked by someone else."
+                  }
+                >
+                  {holdsCapacity ? (
+                    <Lock className="h-3 w-3" aria-hidden />
+                  ) : (
+                    <CircleDashed className="h-3 w-3" aria-hidden />
+                  )}
+                  {holdsCapacity ? "Held" : "Provisional"}
                 </span>
                 {booking.parentBookingId ? (
                   <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800">
