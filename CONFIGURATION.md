@@ -73,11 +73,12 @@ Saved palettes must meet the **WCAG AA 4.5:1** minimum text-contrast ratio on
 the three key public-site pairs — body text on the page background, header text
 on the navigation bar, and button text on the primary-action colour. The wizard
 disables its Save/Finish buttons and the `/admin/site-style` API rejects the
-request (`400`) while any measurable pair falls short, so an admin cannot ship an
-unreadable theme. OKLCH colours can't be measured with the sRGB formula and stay
-advisory-only rather than blocking a save. The shipped default gold is `#8fa87c`
-(4.8:1 against the default charcoal button text); the earlier `#7a8f6a` was
-3.55:1 and would now block first-run setup.
+request (`400`) while any pair falls short, so an admin cannot ship an unreadable
+theme. Both accepted colour formats are measured — hex directly, and `oklch()`
+values via an oklch→linear-sRGB conversion — so pasting a low-contrast oklch
+colour into the value field is blocked the same as a hex one. The shipped default
+gold is `#8fa87c` (4.8:1 against the default charcoal button text); the earlier
+`#7a8f6a` was 3.55:1 and would now block first-run setup.
 
 The remaining public image assets are still file-based. Replace the default
 assets in `public/branding/`:

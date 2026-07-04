@@ -132,7 +132,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   }, [values]);
   const contrastWarnings = useMemo(() => getContrastWarnings(values), [values]);
   // Measurable AA failures block saving (mirrors the server gate in the
-  // site-style route); OKLCH pairs can't be measured and stay advisory-only.
+  // site-style route); both hex and oklch values are measured.
   const blockingContrastWarnings = useMemo(
     () => getBlockingContrastWarnings(values),
     [values],

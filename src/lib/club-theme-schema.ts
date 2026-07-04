@@ -285,10 +285,55 @@ function channelToLinear(value: number) {
     : ((normalized + 0.055) / 1.055) ** 2.4;
 }
 
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+// WCAG relative luminance for an oklch() colour. The value field on the
+// site-style wizard accepts any schema-valid colour (hex or oklch), so contrast
+// enforcement has to measure oklch too — otherwise an admin could paste a
+// low-contrast oklch pair straight through the gate. oklch -> oklab -> linear
+// sRGB uses Björn Ottosson's matrices; the linear RGB it yields is exactly what
+// the luminance sum needs (no extra gamma step), clamped for out-of-gamut hues.
+function oklchLuminance(colour: string): number | null {
+  const match = colour
+    .trim()
+    .match(/^oklch\(\s*([^\s]+)\s+([^\s]+)\s+([^\s)]+)\s*\)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const lightnessToken = match[1];
+  const L = lightnessToken.endsWith("%")
+    ? Number.parseFloat(lightnessToken) / 100
+    : Number.parseFloat(lightnessToken);
+  const C = Number.parseFloat(match[2]);
+  const hueDegrees = Number.parseFloat(match[3]);
+  if (!Number.isFinite(L) || !Number.isFinite(C) || !Number.isFinite(hueDegrees)) {
+    return null;
+  }
+
+  const hueRadians = (hueDegrees * Math.PI) / 180;
+  const a = C * Math.cos(hueRadians);
+  const b = C * Math.sin(hueRadians);
+
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+
+  const l = l_ ** 3;
+  const m = m_ ** 3;
+  const s = s_ ** 3;
+
+  const rLin = clamp01(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s);
+  const gLin = clamp01(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s);
+  const bLin = clamp01(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s);
+
+  return clamp01(0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin);
+}
+
 function relativeLuminance(colour: string): number | null {
   const rgb = hexToRgb(colour);
   if (!rgb) {
-    return null;
+    return oklchLuminance(colour);
   }
 
   return (
@@ -372,10 +417,10 @@ export function getContrastWarnings(
 
 /**
  * The subset of contrast warnings that must block a save: pairs whose ratio is
- * measurable and below the WCAG AA 4.5:1 text minimum. OKLCH colours can't be
- * measured with the sRGB luminance formula (ratio === null) and stay advisory
- * rather than blocking an otherwise-legitimate theme, so callers can enforce a
- * hard gate without rejecting valid oklch() palettes.
+ * measurable and below the WCAG AA 4.5:1 text minimum. Both accepted colour
+ * formats (hex and oklch) are measured, so this covers every value an admin can
+ * enter. The ratio === null guard is a defensive fallback for a value that
+ * somehow parses to neither; such a pair stays advisory rather than blocking.
  */
 export function getBlockingContrastWarnings(
   value: Partial<Record<keyof ClubThemeValues, unknown>>,

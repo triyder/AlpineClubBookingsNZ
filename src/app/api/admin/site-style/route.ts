@@ -41,8 +41,8 @@ export async function PUT(request: NextRequest) {
 
   // Enforce WCAG AA text contrast on the configurable palette. The colour schema
   // only validates format, so without this an admin could save arbitrary colours
-  // that render body/nav/button text unreadable on the public site. OKLCH pairs
-  // stay advisory (see getBlockingContrastWarnings) and are not rejected here.
+  // (hex or oklch, both measured) that render body/nav/button text unreadable on
+  // the public site.
   const contrastWarnings = getBlockingContrastWarnings(parsed.data);
   if (contrastWarnings.length > 0) {
     return NextResponse.json(

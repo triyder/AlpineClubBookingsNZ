@@ -179,10 +179,11 @@ configurable palette):
 - **Colour contrast is now enforced, not just warned.** `getBlockingContrastWarnings`
   drives both the `/admin/site-style` API (`400` on a measurable sub-AA pair) and
   the wizard's disabled Save/Finish buttons, so an admin can no longer save a
-  theme whose body/nav/button text falls below AA. OKLCH pairs stay advisory
-  because the sRGB luminance formula can't measure them. The shipped default gold
-  moved from `#7a8f6a` (3.55:1 button-on-gold) to `#8fa87c` (4.8:1) so first-run
-  setup passes its own gate.
+  theme whose body/nav/button text falls below AA. Both accepted colour formats
+  are measured — hex directly, and `oklch()` via an oklch→linear-sRGB conversion
+  — because the wizard's value field accepts either, so neither can bypass the
+  gate. The shipped default gold moved from `#7a8f6a` (3.55:1 button-on-gold) to
+  `#8fa87c` (4.8:1) so first-run setup passes its own gate.
 - **Booking calendar** day buttons now expose their selected state to screen
   readers (`aria-label` gains ", selected as check-in/​check-out/​within your
   selected stay" and `aria-pressed` on the check-in/out days); previously only
