@@ -340,6 +340,104 @@ describe("calculatePromoDiscount properties", () => {
     );
   });
 
+  it("PERCENTAGE: per-member allocations sum to the capped total even when percentOff > 100 forces the cap to bind (#1206)", () => {
+    fc.assert(
+      fc.property(
+        allMemberPromoGuestsArb,
+        // Deliberately allow percentOff > 100 so the total-price cap binds and
+        // the per-member allocations must be rescaled to stay in lockstep.
+        fc.integer({ min: 1, max: 300 }),
+        guestCapArb,
+        nightlyCapArb,
+        (guests, percentOff, maxGuestsPerBooking, maxNightlyValueCents) => {
+          const promo: PromoCodeInput = {
+            type: "PERCENTAGE",
+            percentOff,
+            maxGuestsPerBooking,
+            maxNightlyValueCents,
+          };
+          const totalPriceCents = totalOf(guests);
+          const result = calculatePromoDiscount(promo, {
+            totalPriceCents,
+            guests,
+          });
+
+          // Universal invariants (hold whether or not the cap binds).
+          expect(result.discountCents).toBeGreaterThanOrEqual(0);
+          expect(result.discountCents).toBeLessThanOrEqual(totalPriceCents);
+          expect(result.priceAdjustmentCents + result.discountCents).toBe(0);
+          expect(Number.isInteger(result.discountCents)).toBe(true);
+
+          // The #1206 core invariant: the per-member split sums exactly to the
+          // (possibly capped) total — no drift when the cap binds.
+          const allocated = result.allocations.reduce(
+            (s, a) => s + a.discountCents,
+            0
+          );
+          expect(allocated).toBe(result.discountCents);
+
+          for (const allocation of result.allocations) {
+            expect(allocation.discountCents).toBeGreaterThanOrEqual(0);
+            expect(Number.isInteger(allocation.discountCents)).toBe(true);
+            // priceAdjustmentCents mirrors discountCents per member after rescale.
+            expect(allocation.priceAdjustmentCents).toBe(
+              -allocation.discountCents
+            );
+          }
+
+          // A member can only be discounted beyond their own subtotal when
+          // percentOff > 100 pushes a raw per-night discount above the night's
+          // rate; proportional rescale preserves that over-representation. In the
+          // reachable regime (percentOff <= 100) each allocation stays within the
+          // member's subtotal.
+          if (percentOff <= 100) {
+            for (const allocation of result.allocations) {
+              const guest = guests.find(
+                (g) => g.memberId === allocation.memberId
+              );
+              expect(guest).toBeDefined();
+              const subtotal = guest!.perNightRates.reduce((s, r) => s + r, 0);
+              expect(allocation.discountCents).toBeLessThanOrEqual(subtotal);
+            }
+          }
+        }
+      )
+    );
+  });
+
+  it("PERCENTAGE: largest-remainder rescale keeps the split exact when the cap binds (#1206 fixed case)", () => {
+    // percentOff 150 makes each raw per-night discount exceed the night's rate,
+    // so the uncapped discount (5 + 8 = 13) overshoots the 8c booking total and
+    // the cap binds. The rescale must bring the split back to sum to 8 while
+    // keeping each member within their own subtotal.
+    const guests: PromoDiscountGuest[] = [
+      { memberId: "member-0", isMember: true, perNightRates: [3] },
+      { memberId: "member-1", isMember: true, perNightRates: [5] },
+    ];
+    const totalPriceCents = totalOf(guests);
+    expect(totalPriceCents).toBe(8);
+
+    const result = calculatePromoDiscount(
+      { type: "PERCENTAGE", percentOff: 150 },
+      { totalPriceCents, guests }
+    );
+
+    expect(result.discountCents).toBe(8);
+    expect(result.priceAdjustmentCents).toBe(-8);
+
+    const byMember = new Map(result.allocations.map((a) => [a.memberId, a]));
+    expect(byMember.get("member-0")?.discountCents).toBe(3);
+    expect(byMember.get("member-1")?.discountCents).toBe(5);
+    expect(byMember.get("member-0")?.priceAdjustmentCents).toBe(-3);
+    expect(byMember.get("member-1")?.priceAdjustmentCents).toBe(-5);
+
+    const allocated = result.allocations.reduce(
+      (s, a) => s + a.discountCents,
+      0
+    );
+    expect(allocated).toBe(result.discountCents);
+  });
+
   it("FIXED_AMOUNT: each guest is discounted at most their own stay total", () => {
     fc.assert(
       fc.property(

@@ -412,6 +412,41 @@ function addPromoAllocation(
 }
 
 /**
+ * Cap the total promo discount at totalPriceCents and, when the cap binds, rescale each member's
+ * discountCents proportionally (largest-remainder, integer cents) so the per-member allocations sum
+ * exactly to the capped total. Keeps priceAdjustmentCents = -discountCents in lockstep. Defensive:
+ * only binds when the uncapped discount exceeds the booking total (needs percentOff > 100 to survive
+ * validation). (#1206)
+ */
+function capPromoDiscountAcrossAllocations(
+  allocations: Map<string, PromoDiscountAllocation>,
+  uncappedDiscountCents: number,
+  totalPriceCents: number
+): number {
+  const cappedCents = Math.min(uncappedDiscountCents, totalPriceCents);
+  if (uncappedDiscountCents <= 0 || cappedCents >= uncappedDiscountCents) {
+    return cappedCents; // no binding cap → allocations already sum to the total
+  }
+  // Largest-remainder rescale so Σ round-down + distributed remainder === cappedCents.
+  const entries = [...allocations.values()].filter((a) => a.discountCents > 0);
+  const floored = entries.map((a) => {
+    const exact = (a.discountCents * cappedCents) / uncappedDiscountCents;
+    const floor = Math.floor(exact);
+    return { alloc: a, floor, frac: exact - floor };
+  });
+  let remainder = cappedCents - floored.reduce((s, f) => s + f.floor, 0);
+  floored.sort((x, y) => y.frac - x.frac);
+  for (const f of floored) {
+    const add = remainder > 0 ? 1 : 0;
+    remainder -= add;
+    const newDiscount = f.floor + add;
+    f.alloc.discountCents = newDiscount;
+    f.alloc.priceAdjustmentCents = -newDiscount;
+  }
+  return cappedCents;
+}
+
+/**
  * Apply a promo code discount to a booking. All promo types are applied
  * per eligible guest.
  *
@@ -471,7 +506,7 @@ export function calculatePromoDiscount(
         addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
       }
       // Cap at total booking price as a safety rail.
-      const discountCents = Math.min(discount, totalPriceCents);
+      const discountCents = capPromoDiscountAcrossAllocations(allocations, discount, totalPriceCents);
       return {
         discountCents,
         priceAdjustmentCents: -discountCents,
@@ -492,7 +527,7 @@ export function calculatePromoDiscount(
         discount += guestDiscount;
         addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
       }
-      const discountCents = Math.min(discount, totalPriceCents);
+      const discountCents = capPromoDiscountAcrossAllocations(allocations, discount, totalPriceCents);
       return {
         discountCents,
         priceAdjustmentCents: -discountCents,
@@ -554,7 +589,7 @@ export function calculatePromoDiscount(
         freeNightsUsed += 1;
         addPromoAllocation(allocations, memberId, capped, -capped, 1);
       }
-      const discountCents = Math.min(discount, totalPriceCents);
+      const discountCents = capPromoDiscountAcrossAllocations(allocations, discount, totalPriceCents);
       return {
         discountCents,
         priceAdjustmentCents: -discountCents,
