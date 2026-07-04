@@ -13,9 +13,27 @@ the demo seed (`prisma/demo-seed.ts`).
 | `e2e/two-factor-login.spec.ts` | Global two-factor enforcement (Critical) | Forced TOTP enrollment on first login, recovery codes, protected-route gating for unverified sessions, wrong-code rejection, TOTP re-login, single-use recovery codes |
 | `e2e/booking.spec.ts` | Create booking with capacity lock (Critical) | Member books a bed through `/book` (confirm-details gate → dates → guests → review → payment step); while payment is owed the booking holds **no** bed (issue #737 — only committed money reserves capacity); the same member cannot hold the same lodge night twice |
 | `e2e/stripe-payment.spec.ts` | Stripe payment success/failure (Critical) | In-wizard step-4 card payment with Stripe test cards: `4242…` confirms the booking and the paid booking occupies its beds; `4000 0000 0000 0002` declines and leaves it payable. **Skips unless genuine Stripe test-mode keys are configured** |
+| `e2e/admin-roles.spec.ts` | Role boundaries (High) | One persona per bundled access role (ADMIN_READONLY, ADMIN_BOOKINGS, ADMIN_MEMBERSHIP, ADMIN_CONTENT, FINANCE_USER, FINANCE_ADMIN, LODGE). Each asserts an in-area page renders and an out-of-area page is blocked (redirect), per the authoritative matrix in `src/lib/admin-permissions.ts` and the `/finance` (finance-auth) and `/lodge` (kiosk) gates |
+| `e2e/waitlist.spec.ts` | Waitlist / force-confirm / offer (High) | Member is refused a seeded-full night and joins the waitlist (WAITLISTED); admin force-confirms it off the waitlist (overbook branch) through `/admin/waitlist`; member accepts a seeded, non-expired offer through the offer card; the admin waitlist surfaces offer + expiry state |
+| `e2e/internet-banking.spec.ts` | Internet Banking settlement (Critical) | With Xero **absent**, a card PAYMENT_PENDING booking is switched to Internet Banking; the detail page shows the Internet Banking card with a `BOOKING-…` reference and does not crash (the Xero invoice is queued but never sent while disconnected). Toggles the Xero + Internet Banking modules on for its run and restores them |
+| `e2e/membership-application.spec.ts` | Membership application (High) | Public application submit; both nominators agree through the real `/nominations/<token>` pages; admin approves; the applicant then exists as a member |
 
-Not covered yet (follow-ups): email-code two-factor enrollment (needs an SMTP
-capture container), waitlist/refund/Xero journeys, admin-role journeys.
+Not covered by browser tests (by design):
+
+- **Email-code two-factor enrollment** — needs an SMTP capture container; TOTP is
+  covered, email-code is a manual browser check.
+- **Waitlist offer creation + expiry** — run only by the in-process scheduler
+  (`src/lib/cron-waitlist.ts` via `instrumentation.node.ts`); `CRON_ENABLED` is
+  off in staging and there is **no** HTTP waitlist-cron endpoint, so these are not
+  browser-reachable. The offer/expiry *state* is asserted via the admin UI on the
+  seeded (expired) offer; the transitions themselves are unit-tested
+  (`src/lib/__tests__/waitlist.test.ts`).
+- **Webhook signature classes** (Stripe/Xero/SES valid/duplicate/malformed/
+  oversized/wrong-signature) — covered by targeted route tests (issue #1133), not
+  browser flows.
+- **The email delivery of nomination links** — email is unconfigured on staging;
+  the membership spec drives the confirmation pages using seeded tokens instead
+  (see below).
 
 ## Running locally
 
@@ -30,9 +48,15 @@ npm run test:e2e                       # prepare stack + run suite
    default 5433 — **never** the production 5432).
 2. Drops and recreates the `public` schema, then runs `prisma migrate deploy`,
    the base seed, and the demo seed, so every run starts from a known state.
-   It then enables the global two-factor module
-   (`e2e/setup/enable-two-factor-module.ts`) — a fresh database defaults it
-   off, and the two-factor journey needs enforcement on.
+   It then enables the modules the E2E journeys need
+   (`e2e/setup/enable-e2e-modules.ts`) — a fresh database defaults these off:
+   `twoFactor` (two-factor enforcement), `waitlist` (`/admin/waitlist`,
+   force-confirm, waitlist-confirm), `kiosk` + `chores` (`/lodge/*` and the
+   roster, for the LODGE role boundary), and `financeDashboard` (`/finance`, for
+   the finance role boundaries). `internetBankingPayments` and `xeroIntegration`
+   stay off; the internet-banking spec toggles them on for its own run (via
+   `PUT /api/admin/modules`) and restores them, so the rest of the suite keeps
+   the default card-payment flow.
 3. Builds (unless `E2E_SKIP_APP_BUILD=1`) and starts the staging app on
    `STAGING_HTTP_PORT` (default 3001), waiting for `/api/health/ready`.
 4. Runs `playwright test` with `E2E_BASE_URL` pointed at the staging app.
@@ -74,17 +98,81 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   2026–Mar 2027; a run whose windows fall in a season gap fails loudly at the
   season assertion — extend the seeded seasons if that happens.
 
+## Seeded fixtures and personas
+
+The demo seed (`prisma/demo-seed.ts`) writes deterministic E2E fixtures behind
+its localhost-only guard, shared with the specs through
+`e2e/helpers/fixtures.ts` so seed data and assertions never drift:
+
+- **Scoped-role personas** — one member per bundled access role
+  (`readonly-admin@`, `booking-officer@`, `membership-officer@`,
+  `content-manager@`, `finance-viewer@`, `treasurer@`, `lodge-user@`
+  `demo.alpineclub.test`), each seeded with a single `MemberAccessRole` row via
+  `ensureMemberAccessRoles`. `admin-roles.spec.ts` derives its expectations
+  straight from `src/lib/admin-permissions.ts`, not hand-written rules.
+- **`e2e-admin@demo.alpineclub.test`** — a full ADMIN with the demo password.
+  The base seed admin forces a password change and uses an unknown password, so
+  it cannot drive logins; this persona approves applications and toggles modules.
+- **Waitlist fixtures** — a September window filled to capacity (lodge capacity
+  is 20, from `config/club.example.json`) so a fresh booking there is refused,
+  plus a ready-to-accept `WAITLIST_OFFERED` booking. Both are owned by
+  **`wanda-waitlist@demo.alpineclub.test`**, a member seeded PAID with a
+  **complete, self-confirmed profile** so she can create a booking through the
+  API without the member-details gate. (alice is intentionally left with an
+  unconfirmed profile so `booking.spec.ts` keeps exercising that gate, #1124.)
+- **Internet-banking fixture** — a card (Stripe) `PAYMENT_PENDING` booking owned
+  by the complete-profile `wanda-waitlist@` member, far enough out to clear the
+  internet-banking lead-time cutoff.
+- **Membership application** — a `PENDING_NOMINATORS` application whose two
+  nomination tokens have **known raw values**. `src/lib/action-tokens` hashes
+  tokens with a plain SHA-256 (no secret), so the seed stores
+  `sha256(<known token>)` and the spec drives `/nominations/<token>` directly —
+  the email that would normally carry the link is unconfigured on staging. Both
+  seeded nominators (`wanda-waitlist@`, `nadia@`) have complete, confirmed
+  profiles so the onboarding modal never blocks their nomination pages.
+
+Because these fixtures (and the two-factor enrollment) mutate seeded state, the
+suite is designed to run against a **fresh** prepare each time; re-running
+`test:e2e:run` without a preceding `test:e2e:prepare` is not supported.
+
+## Browser system dependencies
+
+Playwright's Chromium needs the usual Linux browser libraries. On a host that
+is missing one (commonly `libasound.so.2`, which surfaces as
+`error while loading shared libraries: libasound.so.2`), install them with
+`npx playwright install-deps chromium` (needs root), or, without root, extract
+the package and point the loader at it:
+
+```bash
+apt-get download libasound2t64 && dpkg -x libasound2t64*.deb extracted
+LD_LIBRARY_PATH="$PWD/extracted/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" \
+  npm run test:e2e:run
+```
+
+CI installs the deps with `npx playwright install --with-deps`.
+
 ## Enabling the Stripe payment specs
 
 The Payment Element requires a genuine Stripe **test-mode** account; the
-payment specs skip when the keys look like placeholders.
+payment specs skip (loudly) when the keys look like placeholders and refuse to
+run at all against `sk_live`/`pk_live` keys (both `scripts/e2e-stack.sh` and
+`e2e/helpers/stripe.ts` guard this).
 
-- Locally: put real `sk_test_…` / `pk_test_…` keys in `.env.staging`
-  (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`) and rerun
-  `npm run test:e2e` (the publishable key is baked into the app image at build
-  time, so the app must be rebuilt).
-- CI: add `STRIPE_TEST_SECRET_KEY` and `STRIPE_TEST_PUBLISHABLE_KEY`
-  repository secrets. The workflow refuses live keys.
+Two env vars carry the keys, and they flow into the stack differently:
+
+| Var | Kind | How it flows |
+| --- | --- | --- |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (`pk_test_…`) | Build arg | `docker-compose.yml` passes it as a Docker build `arg`; Next.js **inlines** it at build time, so the app image must be **rebuilt** when it changes. |
+| `STRIPE_SECRET_KEY` (`sk_test_…`) | Runtime env | Passed to the `app` container at runtime; picked up on restart, no rebuild needed. |
+
+- **Locally**: put both real test-mode keys in `.env.staging`, then run
+  `npm run test:e2e` (not `test:e2e:prepare` with `E2E_SKIP_APP_BUILD=1`) so the
+  app image is rebuilt with the new publishable key. `e2e-stack.sh` parses
+  `.env.staging` and exports both vars, so the Playwright process also sees them
+  and stops skipping.
+- **CI**: provide `STRIPE_TEST_SECRET_KEY` and `STRIPE_TEST_PUBLISHABLE_KEY`
+  repository secrets; `.github/workflows/e2e.yml` maps them onto the two vars
+  above. The workflow refuses live keys. **Never commit real keys anywhere.**
 
 ## CI
 

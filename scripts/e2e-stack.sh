@@ -74,8 +74,8 @@ prepare() {
   echo "==> Seeding demo data"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/demo-seed.ts
 
-  echo "==> Enabling two-factor module for the E2E journeys"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-two-factor-module.ts
+  echo "==> Enabling the modules the E2E journeys need"
+  DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
 
   echo "==> Starting app (http://localhost:${STAGING_HTTP_PORT})"
   if [[ "${E2E_SKIP_APP_BUILD:-}" == "1" ]]; then

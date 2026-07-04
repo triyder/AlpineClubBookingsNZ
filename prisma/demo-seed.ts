@@ -17,11 +17,32 @@
 //
 // SAFETY GUARD: refuses to run unless DATABASE_URL points at localhost.
 // ---------------------------------------------------------------------------
+import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
+import {
+  ensureMemberAccessRoles,
+  ensureMemberAccessRolesFromCompatibilityFields,
+} from "../src/lib/member-access-role-writes";
 import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membership-types";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
+import {
+  E2E_ADMIN,
+  IB_BOOKING_ID,
+  IB_WINDOW,
+  LODGE_FILL_OWNER,
+  MEMBERSHIP_APPLICANT,
+  MEMBERSHIP_APPLICATION_ID,
+  NOMINATION_TOKEN_ONE,
+  NOMINATION_TOKEN_TWO,
+  NOMINATOR_TWO,
+  ROLE_PERSONAS,
+  WAITLIST_FILL_GUEST_COUNT,
+  WAITLIST_FULL_WINDOW,
+  WAITLIST_OFFER_BOOKING_ID,
+  WAITLIST_OFFER_WINDOW,
+  WAITLISTER,
+} from "../e2e/helpers/fixtures";
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
@@ -720,6 +741,212 @@ async function main() {
     },
   });
   console.log("Public booking requests seeded (all statuses, GENERAL + SCHOOL)");
+
+  // -------------------------------------------------------------------------
+  // E2E fixtures (Playwright suite; see e2e/helpers/fixtures.ts). Deterministic
+  // personas + bookings + a membership application the browser specs drive.
+  // Guarded by the same localhost-only check as the rest of this seed.
+  // -------------------------------------------------------------------------
+  // Scoped access-role personas: one bundled role each (plus baseline USER) so
+  // the admin-permission matrix (src/lib/admin-permissions.ts) governs access.
+  for (const [role, persona] of Object.entries(ROLE_PERSONAS)) {
+    const scoped = await makeMember(persona.email.split("@")[0], persona.firstName, persona.lastName);
+    await ensureMemberAccessRoles(prisma, {
+      memberId: scoped.id,
+      roles: [role],
+      canLogin: true,
+    });
+  }
+
+  // A full ADMIN with a known password (the base seed admin forces a password
+  // change), for approving applications and toggling modules from specs.
+  await makeMember(E2E_ADMIN.email.split("@")[0], E2E_ADMIN.firstName, E2E_ADMIN.lastName, {
+    role: "ADMIN",
+  });
+
+  // Members who drive member-facing PAGES in the E2E specs need a PAID,
+  // COMPLETE, self-confirmed profile so the onboarding "Confirm member details"
+  // modal never blocks the page (and, for API-created bookings, so the booking
+  // guest-profile gate passes). alice is deliberately NOT one of these: she is
+  // kept unconfirmed so booking.spec keeps exercising that gate (#1124).
+  const nowConfirmed = new Date();
+  const seedConfirmedPaidMember = async (
+    local: string,
+    first: string,
+    last: string,
+    dobIso: string,
+    phoneNumber: string,
+  ) => {
+    const member = await makeMember(local, first, last, {
+      dateOfBirth: d(dobIso),
+      phoneCountryCode: "64",
+      phoneAreaCode: "21",
+      phoneNumber,
+      streetAddressLine1: "8 Summit Way",
+      streetCity: "Alpine Village",
+      streetRegion: "Waikato",
+      streetPostalCode: "3420",
+      streetCountry: "New Zealand",
+      postalAddressLine1: "8 Summit Way",
+      postalCity: "Alpine Village",
+      postalRegion: "Waikato",
+      postalPostalCode: "3420",
+      postalCountry: "New Zealand",
+      profileCompletedAt: nowConfirmed,
+      detailsConfirmedAt: nowConfirmed,
+      onboardingConfirmedAt: nowConfirmed,
+    });
+    await prisma.member.update({
+      where: { id: member.id },
+      data: { detailsConfirmedByMemberId: member.id },
+    });
+    await prisma.memberSubscription.create({
+      data: { memberId: member.id, seasonYear: SEASON_YEAR, status: "PAID", paidAt: d("2026-01-20") },
+    });
+    return member;
+  };
+
+  // Complete-profile driver: owns the waitlist + Internet Banking bookings and
+  // acts as nomination #1 — all member-page journeys that must not hit the modal.
+  const wanda = await seedConfirmedPaidMember(
+    WAITLISTER.email.split("@")[0],
+    WAITLISTER.firstName,
+    WAITLISTER.lastName,
+    "1988-06-06",
+    "5552002",
+  );
+
+  // Second paid-up nominator (nomination #2), also complete-profile so its
+  // /nominations page is not blocked by the onboarding modal.
+  const nadia = await seedConfirmedPaidMember(
+    NOMINATOR_TWO.email.split("@")[0],
+    NOMINATOR_TWO.firstName,
+    NOMINATOR_TWO.lastName,
+    "1979-11-03",
+    "5552003",
+  );
+
+  // Waitlist spec: fill a September window to capacity (lodge capacity is 20)
+  // so a fresh booking there is refused and can be waitlisted.
+  const fillOwner = await makeMember(
+    LODGE_FILL_OWNER.email.split("@")[0],
+    LODGE_FILL_OWNER.firstName,
+    LODGE_FILL_OWNER.lastName,
+    { canLogin: false },
+  );
+  const fillNights = nightsBetween(WAITLIST_FULL_WINDOW.checkIn, WAITLIST_FULL_WINDOW.checkOut).length;
+  const fillBooking = await prisma.booking.create({
+    data: {
+      memberId: fillOwner.id,
+      checkIn: d(WAITLIST_FULL_WINDOW.checkIn),
+      checkOut: d(WAITLIST_FULL_WINDOW.checkOut),
+      status: "CONFIRMED",
+      totalPriceCents: NIGHTLY * fillNights * WAITLIST_FILL_GUEST_COUNT,
+      finalPriceCents: NIGHTLY * fillNights * WAITLIST_FILL_GUEST_COUNT,
+    },
+  });
+  for (let i = 1; i <= WAITLIST_FILL_GUEST_COUNT; i += 1) {
+    await addGuest(
+      fillBooking.id,
+      { firstName: "Filler", lastName: `Guest${i}`, ageTier: "ADULT", isMember: false },
+      WAITLIST_FULL_WINDOW.checkIn,
+      WAITLIST_FULL_WINDOW.checkOut,
+      NIGHTLY,
+    );
+  }
+  await prisma.payment.create({
+    data: {
+      bookingId: fillBooking.id,
+      amountCents: fillBooking.finalPriceCents,
+      source: "INTERNET_BANKING",
+      reference: "BANK-REF-FILL",
+      status: "SUCCEEDED",
+    },
+  });
+
+  // Waitlist spec: a ready-to-accept offer owned by Wanda on an empty window
+  // (capacity is free, so accepting confirms). Future expiry.
+  const offerNights = nightsBetween(WAITLIST_OFFER_WINDOW.checkIn, WAITLIST_OFFER_WINDOW.checkOut).length;
+  const offerBooking = await prisma.booking.create({
+    data: {
+      id: WAITLIST_OFFER_BOOKING_ID,
+      memberId: wanda.id,
+      checkIn: d(WAITLIST_OFFER_WINDOW.checkIn),
+      checkOut: d(WAITLIST_OFFER_WINDOW.checkOut),
+      status: "WAITLIST_OFFERED",
+      waitlistPosition: 1,
+      waitlistOfferedAt: new Date(),
+      waitlistOfferExpiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      totalPriceCents: NIGHTLY * offerNights,
+      finalPriceCents: NIGHTLY * offerNights,
+    },
+  });
+  await addGuest(
+    offerBooking.id,
+    { firstName: WAITLISTER.firstName, lastName: WAITLISTER.lastName, ageTier: "ADULT", isMember: true, memberId: wanda.id },
+    WAITLIST_OFFER_WINDOW.checkIn,
+    WAITLIST_OFFER_WINDOW.checkOut,
+    NIGHTLY,
+  );
+
+  // Internet Banking spec: a card (Stripe) PAYMENT_PENDING booking owned by
+  // Wanda (complete profile → no onboarding modal on the booking page), far
+  // enough out to clear the IB lead-time cutoff.
+  const ibNights = nightsBetween(IB_WINDOW.checkIn, IB_WINDOW.checkOut).length;
+  const ibBooking = await prisma.booking.create({
+    data: {
+      id: IB_BOOKING_ID,
+      memberId: wanda.id,
+      checkIn: d(IB_WINDOW.checkIn),
+      checkOut: d(IB_WINDOW.checkOut),
+      status: "PAYMENT_PENDING",
+      totalPriceCents: NIGHTLY * ibNights,
+      finalPriceCents: NIGHTLY * ibNights,
+    },
+  });
+  await addGuest(
+    ibBooking.id,
+    { firstName: WAITLISTER.firstName, lastName: WAITLISTER.lastName, ageTier: "ADULT", isMember: true, memberId: wanda.id },
+    IB_WINDOW.checkIn,
+    IB_WINDOW.checkOut,
+    NIGHTLY,
+  );
+  await prisma.payment.create({
+    data: {
+      bookingId: ibBooking.id,
+      amountCents: ibBooking.finalPriceCents,
+      source: "STRIPE",
+      status: "PROCESSING",
+      stripePaymentIntentId: "pi_e2e_ib_pending",
+    },
+  });
+
+  // Membership application spec: PENDING_NOMINATORS with two nomination tokens
+  // whose raw values are known (SHA-256 stored, matching action-tokens.ts), so
+  // the spec can drive /nominations/<token> without the (disabled) email link.
+  const membershipApp = await prisma.memberApplication.create({
+    data: {
+      id: MEMBERSHIP_APPLICATION_ID,
+      applicantFirstName: MEMBERSHIP_APPLICANT.firstName,
+      applicantLastName: MEMBERSHIP_APPLICANT.lastName,
+      applicantEmail: MEMBERSHIP_APPLICANT.email,
+      applicantDateOfBirth: d(MEMBERSHIP_APPLICANT.dateOfBirth),
+      nominator1Email: wanda.email,
+      nominator2Email: nadia.email,
+      nominator1Id: wanda.id,
+      nominator2Id: nadia.id,
+      status: "PENDING_NOMINATORS",
+    },
+  });
+  const nominationTokenExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const sha256Hex = (value: string) => createHash("sha256").update(value).digest("hex");
+  await prisma.nominationToken.createMany({
+    data: [
+      { tokenHash: sha256Hex(NOMINATION_TOKEN_ONE), applicationId: membershipApp.id, nominatorMemberId: wanda.id, expiresAt: nominationTokenExpiry, reminderCount: 0, lastSentAt: new Date() },
+      { tokenHash: sha256Hex(NOMINATION_TOKEN_TWO), applicationId: membershipApp.id, nominatorMemberId: nadia.id, expiresAt: nominationTokenExpiry, reminderCount: 0, lastSentAt: new Date() },
+    ],
+  });
+  console.log("E2E fixtures seeded (role personas, admin, waitlist, internet banking, membership application)");
 
   // Notification preference example (differs from defaults).
   await prisma.notificationPreference.create({ data: { memberId: alice.id, marketingEmails: true } });
