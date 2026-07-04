@@ -37,13 +37,35 @@ export const TEST_CARDS = {
   declined: "4000000000000002",
 };
 
-function paymentElementFrame(page: Page): FrameLocator {
-  return page.frameLocator('iframe[title="Secure payment input frame"]');
+// Current Stripe.js mounts more than one iframe with this title (an
+// accessory frame plus the card "easel"), so a bare title locator trips
+// strict mode. Probe the matching frames for the one actually hosting the
+// card inputs instead of relying on Stripe's internal frame layout.
+async function paymentElementFrame(page: Page): Promise<FrameLocator> {
+  const candidates = page.locator('iframe[title="Secure payment input frame"]');
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const count = await candidates.count();
+    for (let i = 0; i < count; i++) {
+      const frame = page.frameLocator(
+        `iframe[title="Secure payment input frame"] >> nth=${i}`,
+      );
+      const visible = await frame
+        .getByPlaceholder("1234 1234 1234 1234")
+        .isVisible()
+        .catch(() => false);
+      if (visible) return frame;
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error(
+    "Stripe Payment Element card frame did not appear within 30s",
+  );
 }
 
 // Fills the Payment Element card form and submits the wizard's Pay button.
 export async function payWithCard(page: Page, cardNumber: string): Promise<void> {
-  const frame = paymentElementFrame(page);
+  const frame = await paymentElementFrame(page);
   const cardField = frame.getByPlaceholder("1234 1234 1234 1234");
   await expect(cardField).toBeVisible({ timeout: 30_000 });
   await cardField.fill(cardNumber);
