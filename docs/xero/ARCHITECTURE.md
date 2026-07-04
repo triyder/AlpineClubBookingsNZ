@@ -160,7 +160,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-inbound-reconciliation` | Stored-event worker + per-entity reconcilers + incremental cursor reconciliation (see Flow 2). |
 | `xero-booking-repair` | Booking-vs-Xero audit and self-repair (see Flow 3). CLI entry: `scripts/xero-booking-repair.ts`. Split into cohesive `xero-booking-repair-*` sub-modules (#1208 item 2, entry re-exports the public surface); see refactor item 2 for the module map. |
-| `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. |
+| `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. |
 | `xero-cron-runner` | Maps the 7 cron tasks to the workers above, records `CronJobRun` rows, gates on module + connection. |
 | `xero-admin-failures`, `xero-admin-health`, `xero-record-activity`, `xero-admin-cache` | Admin overviews: failed-operation triage states, missing-invoice/missing-credit-note health snapshot, per-record activity timeline, cached chart-of-accounts/items. |
 
@@ -420,9 +420,28 @@ These are candidates for future issues, not commitments.
    describe one lifecycle across four files. A single operation-lifecycle
    module owning claim/complete/fail/requeue/stale semantics would shrink the
    surface admins and agents must understand.
-5. **Split `xero-hardening.ts` (1,606 lines).** Link backfill, canonical-link
-   cleanup, the reconciliation report, and repeated-failure alerting are four
-   unrelated jobs sharing a file name that describes none of them.
+5. **Split `xero-hardening.ts` (1,606 lines).** _Done (#1208 item 5):_ the
+   private helpers were extracted verbatim (behavior preserving) into cohesive
+   `xero-hardening-<concern>.ts` sub-modules with an acyclic import graph —
+   `-types` (all public type contracts plus the two shared private
+   record types) and `-shared` (the failure-window/scope-key helpers and the
+   REQUEUE/threshold constants used by more than one concern) are leaves;
+   `-canonical-links` (`cleanupStaleCanonicalXeroObjectLinks`),
+   `-repeated-failure` (`maybeNotifyXeroRepeatedFailure`), `-report`
+   (`buildXeroReconciliationReport` + `sendXeroReconciliationReport`, including
+   the #1196 persistently-failing inbound-events section), and `-backfill`
+   (`backfillHistoricalXeroObjectLinks`) each depend only on the two leaves.
+   `xero-hardening.ts` remains the entry and re-exports the unchanged public
+   surface (5 functions + 9 types) so `xero-cron-runner`, the admin
+   link-maintenance route, `xero-sync`, and the tests resolve unchanged.
+   `-report` stays above the LOC soft cap (~960 lines) because it is
+   irreducible under this split's own rules: `buildXeroReconciliationReport` is
+   a single ~610-line function that must stay whole (carving it would break
+   behavior preservation), and its remaining report-only helpers
+   (`groupRepeatedFailures`, the issue-item/URL builders, the age/cutoff
+   helpers) and report-only `Pick` types are consumed nowhere else, so moving
+   them out would force exporting private helpers rather than keeping them
+   module-internal.
 6. **De-duplicate micro-helpers.** _Partly done (#1208):_ the byte-identical
    `asRecord`/`readString`/`readNumber` guards that appeared in `xero-sync`,
    `xero-operation-queue`, `xero-operation-retry`, `xero-admin-failures`, and
