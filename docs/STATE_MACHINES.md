@@ -125,7 +125,9 @@ SENT  -> ACCEPTED (requester accepts an option; booking conversion runs; the hel
                booking stays capacity-holding until payment)
 SENT  -> CANCELLED (requester cancels; the held booking is released and heldBookingId detached)
 SENT  -> SUPERSEDED (requester asks a question / requests changes, or admin issues a newer quote;
-               the hold is retained across a re-quote for the same dates)
+               the hold is retained across a re-quote for the same dates, but if the request
+               settles in MODIFICATION_REQUESTED / QUERY_PENDING with no outstanding quote the
+               quote-expiry cron auto-releases the hold once the last response window lapses, #1254)
 SENT  -> (link expires; the quote-expiry cron releases the held booking, frees the beds, and
           detaches heldBookingId — the request stays QUOTE_SENT so an admin can re-quote)
 ```
@@ -161,7 +163,18 @@ rotating the response token so the reminder email carries a fresh working link
 the auto-hold behind any SENT quote whose link has expired (#1254): it cancels
 the AWAITING_REVIEW held booking, reconciles away its beds, and detaches
 `heldBookingId` so the freed capacity is reusable and a re-quote never reuses a
-released row. This release runs even when reminders are disabled.
+released row. This release runs even when reminders are disabled. The same cron
+phase also frees holds stuck behind a MODIFICATION_REQUESTED / QUERY_PENDING
+request that has no outstanding SENT quote, once the latest response window
+(`max(responseTokenExpiresAt)` across its quotes) has lapsed — otherwise a
+"please change X" / "I have a question" bounce would hold a bed indefinitely.
+
+Because an admin can cancel a held booking directly (every sent quote leaves one,
+tagged "Held" on the bed board), `heldBookingId` is detached wherever such a hold
+is cancelled — both in the booking-cancel service and defensively in
+`holdBookingRequestSlots`, which re-validates the pointed-to booking is still a
+live AWAITING_REVIEW hold before reusing it and otherwise creates a fresh hold.
+This stops a re-quote from reusing a cancelled row and 409-ing on accept (#1254).
 
 School group requests share this quote lifecycle. The public form shows a soft
 warning above 25 total students, teachers, and parent helpers because a club

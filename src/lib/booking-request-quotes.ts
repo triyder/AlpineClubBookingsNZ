@@ -889,7 +889,28 @@ export async function holdBookingRequestSlots(input: {
     throw new BookingRequestError("This booking request cannot be held", 409);
   }
   if (request.heldBookingId) {
-    return { type: "held" as const, bookingId: request.heldBookingId, reused: true };
+    // Re-validate before reusing (#1254). An admin can now cancel a held
+    // booking directly — every sent quote leaves one, tagged "Held" on the bed
+    // board — which would leave this pointer dangling. Reusing a cancelled or
+    // missing row would promise a quote for beds nothing reserves and then 409
+    // on accept. If the hold is no longer a live AWAITING_REVIEW booking,
+    // detach it and fall through to create a fresh hold.
+    const existingHold = await prisma.booking.findUnique({
+      where: { id: request.heldBookingId },
+      select: { status: true },
+    });
+    if (existingHold?.status === BookingStatus.AWAITING_REVIEW) {
+      return {
+        type: "held" as const,
+        bookingId: request.heldBookingId,
+        reused: true,
+      };
+    }
+    await prisma.bookingRequest.updateMany({
+      where: { id: request.id, heldBookingId: request.heldBookingId },
+      data: { heldBookingId: null },
+    });
+    request.heldBookingId = null;
   }
 
   const guests = parseBookingRequestGuests(request.guests);

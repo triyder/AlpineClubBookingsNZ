@@ -1,16 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingRequestType, BookingStatus } from "@prisma/client";
+import {
+  BookingRequestStatus,
+  BookingRequestType,
+  BookingStatus,
+} from "@prisma/client";
 
 const mocks = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(),
     bookingRequest: { findUnique: vi.fn(), update: vi.fn() },
     booking: { findUnique: vi.fn(), update: vi.fn() },
+    bookingRequestQuote: { count: vi.fn() },
   };
   return {
     tx,
     prismaMock: {
       $transaction: vi.fn(async (cb: (t: typeof tx) => unknown) => cb(tx)),
+      bookingRequest: {
+        findMany: vi.fn(),
+      },
       bookingRequestQuote: {
         findMany: vi.fn(),
         update: vi.fn(),
@@ -81,6 +89,8 @@ beforeEach(() => {
     async (cb: (t: typeof mocks.tx) => unknown) => cb(mocks.tx),
   );
   stubQuoteFindMany({ reminderQuotes: [], releaseQuotes: [] });
+  // Phase 3 (stale MODIFY/QUERY hold release, #1254) is a no-op by default.
+  vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([] as never);
 });
 
 describe("sendQuoteExpiryReminders — reminders", () => {
@@ -250,5 +260,93 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
 
     expect(result.releasedHoldCount).toBe(0);
     expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1254)", () => {
+  const past = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const future = () => new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  beforeEach(() => {
+    mocks.mockGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 0,
+    });
+  });
+
+  it("releases the hold once the last quote window has lapsed and no quote is outstanding", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-m",
+        heldBookingId: "held-m",
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-m",
+      status: BookingRequestStatus.MODIFICATION_REQUESTED,
+    });
+    mocks.tx.bookingRequestQuote.count.mockResolvedValue(0);
+    mocks.tx.booking.findUnique.mockResolvedValue({
+      status: BookingStatus.AWAITING_REVIEW,
+    });
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(1);
+    expect(mocks.tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "held-m" },
+        data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
+      }),
+    );
+    expect(mocks.mockReconcile).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "held-m" }),
+    );
+    expect(mocks.tx.bookingRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "req-m" },
+        data: { heldBookingId: null },
+      }),
+    );
+  });
+
+  it("does NOT release while the last quote window is still open", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-m2",
+        heldBookingId: "held-m2",
+        quotes: [{ responseTokenExpiresAt: future() }],
+      },
+    ] as never);
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+    expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("does NOT release when a fresh quote is outstanding by the time the lock is held", async () => {
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-m3",
+        heldBookingId: "held-m3",
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+    mocks.tx.bookingRequest.findUnique.mockResolvedValue({
+      heldBookingId: "held-m3",
+      status: BookingRequestStatus.QUERY_PENDING,
+    });
+    // An admin re-sent a quote between the scan and the lock.
+    mocks.tx.bookingRequestQuote.count.mockResolvedValue(1);
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+    expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
   });
 });

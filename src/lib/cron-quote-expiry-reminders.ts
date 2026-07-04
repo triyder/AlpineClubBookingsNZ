@@ -1,4 +1,8 @@
-import { BookingRequestQuoteStatus, BookingStatus } from "@prisma/client";
+import {
+  BookingRequestQuoteStatus,
+  BookingRequestStatus,
+  BookingStatus,
+} from "@prisma/client";
 import { issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -119,9 +123,21 @@ export async function sendQuoteExpiryReminders(): Promise<{
   // sterilise a bed until check-in; free it once the link lapses. The request
   // stays QUOTE_SENT so an admin can re-quote (which re-holds); nothing here
   // charges, emails, or cancels the request.
-  const releasedHoldCount = await releaseExpiredQuoteHolds(now);
+  const releasedExpiredCount = await releaseExpiredQuoteHolds(now);
 
-  return { remindedCount, failedCount, releasedHoldCount };
+  // Phase 3: release beds still held for requests the requester sent back into
+  // MODIFICATION_REQUESTED / QUERY_PENDING (their quote was superseded) once
+  // their last response window has lapsed and no fresh quote is outstanding
+  // (#1254 follow-up). Without this the hold would never auto-release — the
+  // expiry phase above only selects SENT quotes.
+  const releasedStaleModificationCount =
+    await releaseStaleModificationHolds(now);
+
+  return {
+    remindedCount,
+    failedCount,
+    releasedHoldCount: releasedExpiredCount + releasedStaleModificationCount,
+  };
 }
 
 /**
@@ -211,6 +227,142 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
       logger.error(
         { err, quoteId: quote.id, bookingRequestId: quote.bookingRequestId },
         "Failed to release expired quote hold",
+      );
+    }
+  }
+
+  return releasedHoldCount;
+}
+
+/**
+ * Free the AWAITING_REVIEW hold behind a request the requester bounced into
+ * MODIFICATION_REQUESTED / QUERY_PENDING (its quote was superseded) once its
+ * last response window has lapsed and no fresh quote is outstanding
+ * (#1254 follow-up). The expiry phase only selects SENT quotes, so without
+ * this a "please change X / I have a question" request would hold its bed
+ * indefinitely.
+ *
+ * The deadline mirrors the sent-quote window: we release only once the latest
+ * response-token window across the request's quotes (`max(responseTokenExpiresAt)`)
+ * has passed. An active DRAFT (null window) never keeps a hold alive on its own,
+ * but a currently-SENT quote does — those requests are excluded and handled by
+ * the expiry/accept paths instead.
+ *
+ * Idempotent and concurrency-safe: each release runs under the shared booking
+ * advisory lock and re-verifies the request is still in a modify/query state
+ * with no SENT quote and a live AWAITING_REVIEW hold, so a race with a re-quote
+ * or an accept is a no-op rather than cancelling a live booking.
+ */
+async function releaseStaleModificationHolds(now: Date): Promise<number> {
+  const candidates = await prisma.bookingRequest.findMany({
+    where: {
+      status: {
+        in: [
+          BookingRequestStatus.MODIFICATION_REQUESTED,
+          BookingRequestStatus.QUERY_PENDING,
+        ],
+      },
+      heldBookingId: { not: null },
+      // No quote is currently outstanding — a live SENT quote means the ball is
+      // back in the requester's court and the expiry phase owns that hold.
+      quotes: { none: { status: BookingRequestQuoteStatus.SENT } },
+    },
+    select: {
+      id: true,
+      heldBookingId: true,
+      quotes: { select: { responseTokenExpiresAt: true } },
+    },
+  });
+
+  let releasedHoldCount = 0;
+
+  for (const request of candidates) {
+    const heldBookingId = request.heldBookingId;
+    if (!heldBookingId) continue;
+
+    // Deadline = the latest response window ever offered on this request. If a
+    // quote was never sent (no window) or the newest window is still open, keep
+    // holding.
+    const windows = request.quotes
+      .map((quote) => quote.responseTokenExpiresAt)
+      .filter((date): date is Date => date != null);
+    if (windows.length === 0) continue;
+    const deadline = new Date(
+      Math.max(...windows.map((date) => date.getTime())),
+    );
+    if (deadline > now) continue;
+
+    try {
+      const released = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+        // Re-read under the lock. Bail unless the request still points at this
+        // exact hold, is still in a modify/query state, still has no SENT quote,
+        // and the hold is still an unaccepted AWAITING_REVIEW row.
+        const current = await tx.bookingRequest.findUnique({
+          where: { id: request.id },
+          select: { heldBookingId: true, status: true },
+        });
+        if (current?.heldBookingId !== heldBookingId) return false;
+        if (
+          current.status !== BookingRequestStatus.MODIFICATION_REQUESTED &&
+          current.status !== BookingRequestStatus.QUERY_PENDING
+        ) {
+          return false;
+        }
+
+        const activeSentQuotes = await tx.bookingRequestQuote.count({
+          where: {
+            bookingRequestId: request.id,
+            status: BookingRequestQuoteStatus.SENT,
+          },
+        });
+        if (activeSentQuotes > 0) return false;
+
+        const held = await tx.booking.findUnique({
+          where: { id: heldBookingId },
+          select: { status: true },
+        });
+        if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
+          return false;
+        }
+
+        await tx.booking.update({
+          where: { id: heldBookingId },
+          data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
+        });
+        await reconcileBedAllocationsForBooking({
+          bookingId: heldBookingId,
+          db: tx,
+        });
+        await tx.bookingRequest.update({
+          where: { id: request.id },
+          data: { heldBookingId: null },
+        });
+        return true;
+      });
+
+      if (released) {
+        releasedHoldCount += 1;
+        logAudit({
+          action: "booking_request.quote_hold_released_stale_modification",
+          targetId: request.id,
+          entityType: "BookingRequest",
+          entityId: request.id,
+          category: "booking",
+          outcome: "success",
+          summary:
+            "Released the bed held for a modification/query request after its last quote window lapsed with no outstanding quote",
+          metadata: {
+            releasedBookingId: heldBookingId,
+            deadline: deadline.toISOString(),
+          },
+        });
+      }
+    } catch (err) {
+      logger.error(
+        { err, bookingRequestId: request.id },
+        "Failed to release stale modification/query quote hold",
       );
     }
   }

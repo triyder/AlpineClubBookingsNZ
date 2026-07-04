@@ -242,6 +242,16 @@ async function performBookingCancellation(
         waitlistPosition: null,
       },
     });
+    if (wasAwaitingReview) {
+      // Detach any booking-request pointer to this hold so a later re-quote
+      // creates a fresh hold instead of reusing this now-cancelled row
+      // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates
+      // defensively, but detaching at the source keeps the pointer honest.
+      await prisma.bookingRequest.updateMany({
+        where: { heldBookingId: bookingId },
+        data: { heldBookingId: null },
+      });
+    }
     await reconcileCancelledBookingBedAllocations(booking);
     await cleanupPromoRedemption(bookingId);
 

@@ -349,11 +349,15 @@ describe("sendBookingRequestQuote", () => {
       options: [],
       responseTokenExpiresAt: new Date("2026-08-01T00:00:00.000Z"),
     } as never);
-    // Auto-hold on send (#1254): the request already holds, so holdBookingRequestSlots
-    // short-circuits (reused) and the send proceeds.
+    // Auto-hold on send (#1254): the request already holds a live
+    // AWAITING_REVIEW booking, so holdBookingRequestSlots re-validates it and
+    // short-circuits (reused); the send proceeds.
     vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
       baseRequest({ heldBookingId: "held-1", quotes: [] }) as never
     );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      status: "AWAITING_REVIEW",
+    } as never);
 
     await sendBookingRequestQuote({ requestId: "req-1", adminMemberId: "admin-1" });
 
@@ -390,11 +394,15 @@ describe("sendBookingRequestQuote", () => {
       options: [],
       responseTokenExpiresAt: new Date("2026-08-01T00:00:00.000Z"),
     } as never);
-    // Auto-hold on send (#1254): the request already holds, so the hold
-    // short-circuits (reused) and the send proceeds.
+    // Auto-hold on send (#1254): the request already holds a live
+    // AWAITING_REVIEW booking, so the hold re-validates and short-circuits
+    // (reused); the send proceeds.
     vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
       baseRequest({ heldBookingId: "held-1", quotes: [] }) as never
     );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      status: "AWAITING_REVIEW",
+    } as never);
   }
 
   it("reports emailDelivered true when the quote email sends", async () => {
@@ -790,5 +798,69 @@ describe("holdBookingRequestSlots owner role", () => {
 
     expect(prisma.member.create).not.toHaveBeenCalled();
     expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("reuses the existing hold when the held booking is still AWAITING_REVIEW (issue #1254)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+        heldBookingId: "held-live",
+      }) as never
+    );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      status: "AWAITING_REVIEW",
+    } as never);
+
+    const result = await holdBookingRequestSlots({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toEqual({
+      type: "held",
+      bookingId: "held-live",
+      reused: true,
+    });
+    // A live hold is reused verbatim — nothing detached, nothing recreated.
+    expect(prisma.bookingRequest.updateMany).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("detaches a dead heldBookingId and creates a fresh hold when the pointed-to booking is no longer AWAITING_REVIEW (issue #1254)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+        heldBookingId: "dead-hold",
+      }) as never
+    );
+    // The pointed-to hold was cancelled (e.g. an admin cancelled it on the
+    // bed board), so the pointer is stale.
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      status: "CANCELLED",
+    } as never);
+
+    const result = await holdBookingRequestSlots({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    // The dangling pointer is detached...
+    expect(prisma.bookingRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "req-1", heldBookingId: "dead-hold" },
+        data: { heldBookingId: null },
+      })
+    );
+    // ...and a brand-new hold is created rather than reusing the dead row.
+    expect(prisma.booking.create).toHaveBeenCalled();
+    expect(result).toEqual({
+      type: "held",
+      bookingId: "held-1",
+      reused: false,
+    });
   });
 });
