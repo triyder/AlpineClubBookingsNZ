@@ -14,6 +14,10 @@ export default async function SiteStylePage() {
         <p className="mt-1 text-sm text-slate-500">
           Set the public website colours, fonts, and logo for this club.
         </p>
+        <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          The public site — including the membership application form — stays
+          hidden until this is saved.
+        </p>
       </div>
 
       <Card>
