@@ -44,7 +44,7 @@ import {
   getMemberDeleteLifecycleRequests,
 } from "@/lib/member-lifecycle-actions";
 import { nameField } from "@/lib/zod-helpers";
-import { genderEnum, titleEnum } from "@/lib/member-enums";
+import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import { ROLE_VALUES } from "@/lib/member-roles";
 import {
   accessRoleChangeRequiresFullAdmin,
