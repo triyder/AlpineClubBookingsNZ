@@ -29,6 +29,20 @@
  * best-effort and idempotent: the Stripe refund carries an idempotency key, the
  * settlement guards on its own status, and already-CANCELLED children are skipped
  * by the status filter, so a re-run never double-refunds or double-cancels.
+ *
+ * Re-drivability (#1236): the first run persists the per-child refund plan
+ * ({childId: cents}) on the settlement BEFORE the Stripe refund and BEFORE the
+ * settlement flips to REFUNDED/PARTIALLY_REFUNDED. A crash-interrupted re-drive
+ * (the group-settlement-reaper resume phase re-invokes this function)
+ * reconstructs that plan verbatim rather than recomputing it: the per-child
+ * refundedAmountCents mirror is the record of record for these organiser-settled
+ * refunds, and daysUntilDate can land in a different cancellation tier on a >24h
+ * re-drive, so recomputing the mirror amount would be unsafe. A resume completes
+ * the local booking/capacity/refund-mirror cleanup; it does NOT heal the Xero
+ * mirror — a child whose booking committed CANCELLED but crashed before its Xero
+ * refund credit note was enqueued is excluded from re-drive by the
+ * ACTIVE_CHILD_STATUSES filter, so its credit note is never enqueued
+ * (pre-existing books-drift of the #1233 reconcile class, out of scope here).
  */
 import {
   BookingEventType,
@@ -36,6 +50,7 @@ import {
   GroupBookingPaymentMode,
   GroupBookingStatus,
   PaymentStatus,
+  Prisma,
 } from "@prisma/client";
 import { prisma } from "./prisma";
 import { processRefund, cancelPaymentIntentIfCancellable } from "./stripe";
@@ -63,6 +78,28 @@ const ACTIVE_CHILD_STATUSES = [
   BookingStatus.CONFIRMED,
   BookingStatus.PAID,
 ] as const;
+
+/**
+ * Deserialize a persisted refund plan ({childId: cents}) into a Map, defensively.
+ * Only finite non-negative integer cent values survive; malformed entries are
+ * skipped and a non-object never throws. The plan is applied verbatim on a
+ * re-drive, so a corrupt entry must degrade to "no refund for that child" rather
+ * than crash the cleanup.
+ */
+function deserializeRefundPlan(value: unknown): Map<string, number> {
+  const plan = new Map<string, number>();
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return plan;
+  }
+  for (const [childId, cents] of Object.entries(
+    value as Record<string, unknown>
+  )) {
+    if (typeof cents === "number" && Number.isInteger(cents) && cents >= 0) {
+      plan.set(childId, cents);
+    }
+  }
+  return plan;
+}
 
 async function markGroupCancelled(groupBookingId: string): Promise<void> {
   await prisma.groupBooking.update({
@@ -135,11 +172,24 @@ export async function settleGroupBookingOnOrganiserCancel(
   // Refund the organiser when the group was already settled. Only genuinely PAID
   // children were charged (a member could have joined after settlement and still
   // be unpaid), so the policy refund is computed per paid child and summed.
+  //
+  // The plan is reconstructed UNCONDITIONALLY from any persisted refundPlan: a
+  // previous (crash-interrupted) run flips the settlement to REFUNDED before the
+  // child-loop finishes, so gating the reconstruct on `settled` would lose the
+  // plan and cancel the remaining paid children WITHOUT their refund mirror.
+  // Reconstruct never recomputes — see the header (tier drift on a >24h re-drive).
   const settled = settlement?.status === PaymentStatus.SUCCEEDED;
-  const refundByChildId = new Map<string, number>();
+  let refundByChildId = new Map<string, number>();
   let totalRefundCents = 0;
 
-  if (settled && children.length > 0) {
+  if (settlement?.refundPlan != null) {
+    // A previous (crash-interrupted) run already computed + persisted the plan.
+    // Reuse it verbatim; NEVER recompute.
+    refundByChildId = deserializeRefundPlan(settlement.refundPlan);
+    for (const cents of refundByChildId.values()) {
+      totalRefundCents += cents;
+    }
+  } else if (settled && children.length > 0) {
     const checkIn = children[0].checkIn;
     const days = daysUntilDate(checkIn);
     const policy = await loadCancellationPolicy(checkIn);
@@ -162,48 +212,72 @@ export async function settleGroupBookingOnOrganiserCancel(
       }
     }
 
-    if (
-      totalRefundCents > 0 &&
-      settlement?.stripePaymentIntentId &&
-      settlement.status === PaymentStatus.SUCCEEDED
-    ) {
-      try {
-        await processRefund({
-          paymentIntentId: settlement.stripePaymentIntentId,
-          amountCents: totalRefundCents,
-          metadata: {
-            groupBookingId: group.id,
-            reason: "organiser_cancellation",
-          },
-          // Key by the stable settlement id, not the tier-dependent amount.
-          // The amount-in-key was a foot-gun: a >24h re-run in a different policy
-          // tier would compute a different amount -> a different key -> a second
-          // refund, and within 24h the same-key/different-params call errors.
-          // Keying by settlement id removes the foot-gun (belt-and-suspenders),
-          // but the real guarantee this refund runs once is #1160's upstream
-          // single-flight cancel — settleGroupBookingOnOrganiserCancel is called
-          // only on the winning cancel (booking-cancel.ts) — not this key.
-          idempotencyKey: `group_cancel_refund_${settlement.id}`,
-        });
-        await prisma.groupBookingSettlement.update({
-          where: { id: settlement.id },
-          data: {
-            status:
-              totalRefundCents >= settlement.amountCents
-                ? PaymentStatus.REFUNDED
-                : PaymentStatus.PARTIALLY_REFUNDED,
-          },
-        });
-      } catch (err) {
-        // Leave the settlement SUCCEEDED for an operator to reconcile; still
-        // release the beds below so capacity is not held by the orphaned group.
-        logger.error(
-          { err, groupBookingId: group.id, totalRefundCents },
-          "Failed to refund group settlement on organiser cancel"
-        );
-        refundByChildId.clear();
-        totalRefundCents = 0;
-      }
+    // Persist the plan BEFORE the refund + flip so a crash anywhere downstream
+    // re-drives with the RECORDED per-child amounts instead of recomputing.
+    if (totalRefundCents > 0) {
+      await prisma.groupBookingSettlement.update({
+        where: { id: settlement!.id },
+        data: {
+          refundPlan: Object.fromEntries(
+            refundByChildId
+          ) as unknown as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+
+  // Refund + settlement flip, guarded on SUCCEEDED so it fires exactly once
+  // across re-drives: the plan survives this flip, so a re-drive after the flip
+  // skips this block and only applies the reconstructed mirror below (crash after
+  // flip). The Stripe idempotency key dedups a crash between refund and flip.
+  if (
+    totalRefundCents > 0 &&
+    settlement?.stripePaymentIntentId &&
+    settlement.status === PaymentStatus.SUCCEEDED
+  ) {
+    try {
+      await processRefund({
+        paymentIntentId: settlement.stripePaymentIntentId,
+        amountCents: totalRefundCents,
+        metadata: {
+          groupBookingId: group.id,
+          reason: "organiser_cancellation",
+        },
+        // Key by the stable settlement id, not the tier-dependent amount.
+        // The amount-in-key was a foot-gun: a >24h re-run in a different policy
+        // tier would compute a different amount -> a different key -> a second
+        // refund, and within 24h the same-key/different-params call errors.
+        // Keying by settlement id removes the foot-gun (belt-and-suspenders),
+        // but the real guarantee this refund runs once is #1160's upstream
+        // single-flight cancel plus this SUCCEEDED guard — the persisted plan
+        // makes the re-drive skip this block rather than re-refund.
+        idempotencyKey: `group_cancel_refund_${settlement.id}`,
+      });
+      await prisma.groupBookingSettlement.update({
+        where: { id: settlement.id },
+        data: {
+          status:
+            totalRefundCents >= settlement.amountCents
+              ? PaymentStatus.REFUNDED
+              : PaymentStatus.PARTIALLY_REFUNDED,
+        },
+      });
+    } catch (err) {
+      // Leave the settlement SUCCEEDED for an operator to reconcile; still
+      // release the beds below so capacity is not held by the orphaned group.
+      // Null the persisted plan too: this run goes on to cancel the children
+      // unrefunded, so a later re-drive must NOT re-apply (or re-attempt) a
+      // refund whose per-child mirror can no longer be written.
+      logger.error(
+        { err, groupBookingId: group.id, totalRefundCents },
+        "Failed to refund group settlement on organiser cancel"
+      );
+      refundByChildId.clear();
+      totalRefundCents = 0;
+      await prisma.groupBookingSettlement.update({
+        where: { id: settlement.id },
+        data: { refundPlan: Prisma.DbNull },
+      });
     }
   }
 

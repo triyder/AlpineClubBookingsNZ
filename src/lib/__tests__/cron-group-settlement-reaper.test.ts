@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingEventType, BookingStatus, PaymentStatus } from "@prisma/client";
+import {
+  BookingEventType,
+  BookingStatus,
+  GroupBookingPaymentMode,
+  GroupBookingStatus,
+  PaymentStatus,
+} from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   settlementFindMany: vi.fn(),
@@ -7,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   settlementUpdate: vi.fn(),
   bookingFindMany: vi.fn(),
   bookingUpdate: vi.fn(),
+  groupBookingFindMany: vi.fn(),
   txExecuteRaw: vi.fn(),
   transaction: vi.fn(),
   cancelPaymentIntent: vi.fn(),
@@ -16,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   sendSettlementExpired: vi.fn(),
   sendJoinReleased: vi.fn(),
   sendJoinCancelled: vi.fn(),
+  settleGroupBookingOnOrganiserCancel: vi.fn(),
 }));
 
 const txClient = {
@@ -33,11 +41,16 @@ const txClient = {
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     groupBookingSettlement: { findMany: mocks.settlementFindMany },
+    groupBooking: { findMany: mocks.groupBookingFindMany },
     $transaction: mocks.transaction,
   },
 }));
 vi.mock("@/lib/stripe", () => ({
   cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntent,
+}));
+vi.mock("@/lib/group-cancel", () => ({
+  settleGroupBookingOnOrganiserCancel:
+    mocks.settleGroupBookingOnOrganiserCancel,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBooking: mocks.reconcileBedAllocations,
@@ -116,6 +129,9 @@ beforeEach(() => {
   mocks.sendJoinReleased.mockResolvedValue(undefined);
   mocks.sendJoinCancelled.mockResolvedValue(undefined);
   mocks.cancelPaymentIntent.mockResolvedValue(null);
+  // Resume phase (#1236): default to no interrupted organiser-cancel cleanups.
+  mocks.groupBookingFindMany.mockResolvedValue([]);
+  mocks.settleGroupBookingOnOrganiserCancel.mockResolvedValue(undefined);
 });
 
 describe("groupSettlementReapDeadline", () => {
@@ -159,6 +175,8 @@ describe("reapStaleGroupSettlements", () => {
       releasedChildBookings: 2,
       expiredSettlements: 0,
       cancelledChildBookings: 0,
+      scannedInterruptedCancels: 0,
+      resumedInterruptedCancels: 0,
     });
     // Children revert to their pre-commit, non-capacity-holding state.
     expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
@@ -210,6 +228,8 @@ describe("reapStaleGroupSettlements", () => {
       releasedChildBookings: 0,
       expiredSettlements: 0,
       cancelledChildBookings: 0,
+      scannedInterruptedCancels: 0,
+      resumedInterruptedCancels: 0,
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.sendSettlementExpired).not.toHaveBeenCalled();
@@ -256,6 +276,8 @@ describe("reapStaleGroupSettlements", () => {
       releasedChildBookings: 0,
       expiredSettlements: 0,
       cancelledChildBookings: 0,
+      scannedInterruptedCancels: 0,
+      resumedInterruptedCancels: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.settlementUpdate).not.toHaveBeenCalled();
@@ -284,6 +306,8 @@ describe("reapStaleGroupSettlements", () => {
       releasedChildBookings: 0,
       expiredSettlements: 0,
       cancelledChildBookings: 0,
+      scannedInterruptedCancels: 0,
+      resumedInterruptedCancels: 0,
     });
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     // No-op passes must not rewrite the settlement: that would bump
@@ -439,5 +463,79 @@ describe("expiry of reaped organiser-pays children (#1094)", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
     expect(mocks.sendJoinCancelled).not.toHaveBeenCalled();
+  });
+});
+
+describe("resume of interrupted organiser-cancel cleanups (#1236)", () => {
+  it("re-drives an interrupted cleanup with the organiser member as actor", async () => {
+    mocks.settlementFindMany.mockResolvedValue([]);
+    mocks.groupBookingFindMany.mockResolvedValue([
+      { organiserBookingId: "org-booking-9", organiserMemberId: "member-9" },
+    ]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.settleGroupBookingOnOrganiserCancel).toHaveBeenCalledTimes(1);
+    // Actor is the real organiser Member FK; the cron tag stands in for an IP.
+    expect(mocks.settleGroupBookingOnOrganiserCancel).toHaveBeenCalledWith(
+      "org-booking-9",
+      "member-9",
+      "cron:group-cancel-resume"
+    );
+    expect(result.scannedInterruptedCancels).toBe(1);
+    expect(result.resumedInterruptedCancels).toBe(1);
+  });
+
+  it("scans only ORGANISER_PAYS groups still open under a cancelled organiser booking older than the grace window", async () => {
+    mocks.settlementFindMany.mockResolvedValue([]);
+
+    await reapStaleGroupSettlements(NOW);
+
+    // The DB query is the whole filter: EACH_PAYS_OWN (paymentMode),
+    // already-CANCELLED groups (status), and just-started/within-grace cleanups
+    // (organiser booking updatedAt < now - 15m default) are all excluded here.
+    expect(mocks.groupBookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+          status: { not: GroupBookingStatus.CANCELLED },
+          organiserBooking: {
+            status: BookingStatus.CANCELLED,
+            deletedAt: null,
+            updatedAt: { lt: new Date(NOW.getTime() - 15 * 60 * 1000) },
+          },
+        },
+        select: { organiserBookingId: true, organiserMemberId: true },
+      })
+    );
+  });
+
+  it("keeps re-driving the rest when one resume throws", async () => {
+    mocks.settlementFindMany.mockResolvedValue([]);
+    mocks.groupBookingFindMany.mockResolvedValue([
+      { organiserBookingId: "org-bad", organiserMemberId: "member-bad" },
+      { organiserBookingId: "org-good", organiserMemberId: "member-good" },
+    ]);
+    mocks.settleGroupBookingOnOrganiserCancel
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.settleGroupBookingOnOrganiserCancel).toHaveBeenCalledTimes(2);
+    expect(result.scannedInterruptedCancels).toBe(2);
+    // Only the successful re-drive increments the resumed counter.
+    expect(result.resumedInterruptedCancels).toBe(1);
+  });
+
+  it("does nothing when there are no interrupted cleanups", async () => {
+    mocks.settlementFindMany.mockResolvedValue([]);
+    mocks.groupBookingFindMany.mockResolvedValue([]);
+
+    const result = await reapStaleGroupSettlements(NOW);
+
+    expect(mocks.settleGroupBookingOnOrganiserCancel).not.toHaveBeenCalled();
+    expect(result.scannedInterruptedCancels).toBe(0);
+    expect(result.resumedInterruptedCancels).toBe(0);
   });
 });

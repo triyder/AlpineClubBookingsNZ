@@ -1248,6 +1248,10 @@ model GroupBookingSettlement {
   xeroInvoiceNumber     String?
   amountCents           Int
   status                PaymentStatus @default(PENDING)
+  // Per-child refund plan {childId: cents} persisted on the organiser-cancel
+  // first run so a crash-interrupted re-drive applies the RECORDED amounts
+  // (never recomputes — tier drift is unsafe). #1236
+  refundPlan            Json?
   paidAt                DateTime?
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt

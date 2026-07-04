@@ -4,6 +4,7 @@ import {
   GroupBookingPaymentMode,
   GroupBookingStatus,
   PaymentStatus,
+  Prisma,
 } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
@@ -366,5 +367,237 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
     // Both children cancelled and beds released.
     expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
+  function paidChild(id: string, paymentId: string) {
+    return child({
+      id,
+      status: BookingStatus.PAID,
+      finalPriceCents: 4500,
+      payment: {
+        id: paymentId,
+        amountCents: 4500,
+        refundedAmountCents: 0,
+        status: PaymentStatus.SUCCEEDED,
+      },
+    });
+  }
+
+  it("first run persists the refund plan before issuing the Stripe refund", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: null,
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // The plan (record of record) is persisted before any money moves.
+    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
+      where: { id: "settle-1" },
+      data: { refundPlan: { "child-1": 4500 } },
+    });
+    const persistCallIdx = mocks.settlementUpdate.mock.calls.findIndex(
+      ([arg]) => arg?.data?.refundPlan !== undefined
+    );
+    const persistOrder =
+      mocks.settlementUpdate.mock.invocationCallOrder[persistCallIdx];
+    const refundOrder = mocks.processRefund.mock.invocationCallOrder[0];
+    expect(persistOrder).toBeLessThan(refundOrder);
+    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-drive after the flip applies the plan mirror without a new refund", async () => {
+    // Crash-after-flip: settlement already REFUNDED, plan persisted, the paid
+    // child is still active (the child-loop had not reached it). This is the
+    // core fix — the mirror must be reconstructed from the plan, not skipped.
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.REFUNDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: { "child-1": 4500 },
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // No new money move — the refund already ran on the interrupted first run.
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+    // The plan is reused verbatim, never recomputed (policy never consulted).
+    expect(mocks.calculateRefundAmount).not.toHaveBeenCalled();
+    // The per-child mirror is still applied from the plan.
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
+    });
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "child-1" },
+      data: { status: BookingStatus.CANCELLED },
+    });
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
+      createdByMemberId: ORGANISER,
+    });
+    expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
+      where: { id: GROUP_ID },
+      data: { status: GroupBookingStatus.CANCELLED },
+    });
+  });
+
+  it("re-drive before the refund issues the refund once, then applies the plan", async () => {
+    // Crash-after-persist-before-refund: plan set but settlement still SUCCEEDED.
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: { "child-1": 4500 },
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // Reused, not recomputed.
+    expect(mocks.calculateRefundAmount).not.toHaveBeenCalled();
+    // The refund runs exactly once (Stripe dedups the retried key upstream).
+    expect(mocks.processRefund).toHaveBeenCalledTimes(1);
+    expect(mocks.processRefund).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 4500,
+        idempotencyKey: "group_cancel_refund_settle-1",
+      })
+    );
+    // Settlement flips, mirror applied.
+    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
+      where: { id: "settle-1" },
+      data: { status: PaymentStatus.REFUNDED },
+    });
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
+    });
+  });
+
+  it("nulls the persisted plan and cancels children unrefunded when the refund fails", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: { "child-1": 4500 },
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+    mocks.processRefund.mockRejectedValueOnce(new Error("stripe down"));
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // The persisted plan is cleared (DbNull) so a later re-drive cannot re-apply
+    // a mirror — or re-attempt a refund — for money that never moved.
+    expect(mocks.settlementUpdate).toHaveBeenCalledWith({
+      where: { id: "settle-1" },
+      data: { refundPlan: Prisma.DbNull },
+    });
+    // The settlement is left SUCCEEDED for an operator (never flipped).
+    expect(mocks.settlementUpdate).not.toHaveBeenCalledWith({
+      where: { id: "settle-1" },
+      data: { status: PaymentStatus.REFUNDED },
+    });
+    // The child is still cancelled and its bed released, but with no refund.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "child-1" },
+      data: { status: BookingStatus.CANCELLED },
+    });
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroRefund).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "joiner@example.com",
+      "Jo",
+      CHECK_IN,
+      CHECK_OUT,
+      0,
+      "card"
+    );
+  });
+
+  it("skips malformed persisted refund-plan entries without throwing", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.REFUNDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        // Only the valid integer entry survives; negative, non-integer and
+        // non-numeric values are skipped.
+        refundPlan: {
+          "child-1": 4500,
+          "child-neg": -1,
+          "child-float": 1.5,
+          "child-str": "9000",
+        },
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      paidChild("child-1", "pay-1"),
+      paidChild("child-neg", "pay-neg"),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+    // Only the valid entry applies a mirror.
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay-1" },
+      data: { refundedAmountCents: 4500, status: PaymentStatus.REFUNDED },
+    });
+    expect(mocks.paymentUpdate).toHaveBeenCalledTimes(1);
+    // Both children are still cancelled.
+    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats an empty persisted refund plan as no refunds", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.REFUNDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+        refundPlan: {},
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([paidChild("child-1", "pay-1")]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "child-1" },
+      data: { status: BookingStatus.CANCELLED },
+    });
   });
 });

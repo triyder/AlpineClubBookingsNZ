@@ -77,6 +77,21 @@ Future reviews and issues should cite this file when proposing changes.
   settlement retry (which flips the row back to PENDING and resets its clock)
   always keeps the children alive — both are re-checked on the fresh row
   under the shared lock.
+- An organiser-cancel group cleanup must be re-drivable after a crash (#1236).
+  Cancelling the organiser booking is single-flight, so a re-invoked cancel
+  409s and cannot re-enter the joiner cleanup; the `group-settlement-reaper`
+  resumes it (an ORGANISER_PAYS group still not CANCELLED under a CANCELLED
+  organiser booking, older than a short grace). The per-child refund plan
+  (`{childId: cents}`) persisted on the settlement is the **record of record**
+  for the organiser-settled per-child `refundedAmountCents` mirror: a re-drive
+  **reconstructs it verbatim and never recomputes** — a >24h re-drive can land
+  in a different cancellation tier, so recomputing the mirror amount would be
+  unsafe. The plan is written before the Stripe refund and before the
+  settlement flips, so the refund fires at most once across re-drives. (Resume
+  completes the local booking/capacity/refund-mirror cleanup only; it does not
+  re-enqueue a Xero refund credit note for a child that crashed after its
+  cancel committed but before its credit note was queued — pre-existing
+  books-drift of the #1233 reconcile class.)
 
 ## Booking Modifications
 

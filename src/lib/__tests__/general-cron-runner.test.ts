@@ -56,6 +56,8 @@ describe("general cron runner", () => {
           releasedChildBookings: 2,
           expiredSettlements: 0,
           cancelledChildBookings: 0,
+          scannedInterruptedCancels: 0,
+          resumedInterruptedCancels: 0,
         })),
         sendPreArrivalReminders: vi.fn(async () => ({
           reminderDays: 3,
@@ -97,6 +99,8 @@ describe("general cron runner", () => {
       releasedChildBookings: 2,
       expiredSettlements: 0,
       cancelledChildBookings: 0,
+      scannedInterruptedCancels: 0,
+      resumedInterruptedCancels: 0,
     });
     expect(result.schoolAttendeeConfirmations).toEqual({
       scanned: 0,
@@ -166,6 +170,8 @@ describe("general cron runner", () => {
       releasedChildBookings: 0,
       expiredSettlements: 0,
       cancelledChildBookings: 0,
+      scannedInterruptedCancels: 0,
+      resumedInterruptedCancels: 0,
     }));
     const sendSchoolAttendeeConfirmationPrompts = vi.fn(async () => ({
       scanned: 0,

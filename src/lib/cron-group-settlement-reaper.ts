@@ -35,14 +35,27 @@
  * always keeps the children alive; both are re-checked on the fresh row
  * inside the advisory lock so a retry racing the cron wins. No capacity or
  * waitlist work is needed — PAYMENT_PENDING holds no beds.
+ *
+ * Third phase (#1236): resume an organiser-cancel group cleanup that a crash
+ * interrupted. A re-invoked cancel 409s upstream (#1160) and never re-enters
+ * the cleanup, so this phase re-drives it: an ORGANISER_PAYS group still not
+ * CANCELLED under a CANCELLED organiser booking (older than a short grace) is an
+ * unfinished cleanup. It re-invokes the same idempotent
+ * settleGroupBookingOnOrganiserCancel, whose persisted refund plan reconstructs
+ * (never recomputes) the per-child refund mirror. This completes the local
+ * booking/capacity/refund-mirror cleanup but does NOT heal the Xero mirror (see
+ * resumeInterruptedOrganiserCancels' Xero residual note).
  */
 import {
   BookingEventType,
   BookingStatus,
+  GroupBookingPaymentMode,
+  GroupBookingStatus,
   PaymentStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
+import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { processWaitlistForDates } from "@/lib/waitlist";
@@ -56,6 +69,15 @@ import logger from "@/lib/logger";
 export const GROUP_SETTLEMENT_REAP_HOURS =
   Number(process.env.GROUP_SETTLEMENT_REAP_HOURS) || 48;
 
+/**
+ * Grace before the resume phase re-drives an interrupted organiser-cancel
+ * cleanup. The organiser Booking's `updatedAt` is not touched by
+ * settleGroupBookingOnOrganiserCancel, so `updatedAt < now - grace` cleanly
+ * excludes a cleanup that has only just started (default 15 minutes).
+ */
+export const GROUP_CANCEL_RESUME_GRACE_MINUTES =
+  Number(process.env.GROUP_CANCEL_RESUME_GRACE_MINUTES) || 15;
+
 /** Floor so an arrival-day settlement is not reaped while mid-payment. */
 const MIN_GRACE_MS = 2 * 60 * 60 * 1000;
 
@@ -66,6 +88,10 @@ export interface GroupSettlementReapResult {
   /** FAILED settlements whose reverted children were cancelled this run. */
   expiredSettlements: number;
   cancelledChildBookings: number;
+  /** Interrupted organiser-cancel cleanups found by the resume phase (#1236). */
+  scannedInterruptedCancels: number;
+  /** Interrupted organiser-cancel cleanups this run re-drove to completion. */
+  resumedInterruptedCancels: number;
 }
 
 /** The reap deadline for one settlement (exported for the operator dashboard). */
@@ -118,6 +144,8 @@ export async function reapStaleGroupSettlements(
     releasedChildBookings: 0,
     expiredSettlements: 0,
     cancelledChildBookings: 0,
+    scannedInterruptedCancels: 0,
+    resumedInterruptedCancels: 0,
   };
 
   for (const settlement of candidates) {
@@ -156,7 +184,70 @@ export async function reapStaleGroupSettlements(
 
   await expireReapedChildren(now, result);
 
+  await resumeInterruptedOrganiserCancels(now, result);
+
   return result;
+}
+
+/**
+ * Resume phase (#1236): re-drive an organiser-cancel group cleanup that a crash
+ * interrupted. Since #1160 the cancel path claims the organiser booking to
+ * CANCELLED atomically and calls settleGroupBookingOnOrganiserCancel only on the
+ * winning cancel; a re-invoked cancel 409s and never re-enters cleanup, so a
+ * crash mid-cleanup leaves ORGANISER_PAYS joiner children holding beds / PAID
+ * under a CANCELLED organiser booking with nothing to re-drive them.
+ *
+ * markGroupCancelled is the LAST cleanup step, so an ORGANISER_PAYS group whose
+ * status is not yet CANCELLED under a CANCELLED organiser booking is exactly an
+ * unfinished cleanup. The organiser Booking's `updatedAt` is untouched by the
+ * cleanup, so `updatedAt < now - grace` excludes a cleanup that has only just
+ * started. Each match re-invokes the same idempotent cleanup — the persisted
+ * refund plan makes it reconstruct (never recompute) the per-child refund mirror
+ * and the SUCCEEDED guard fires the Stripe refund at most once across re-drives.
+ *
+ * Known residual (out of scope, #1233 reconcile class): a child whose booking
+ * committed CANCELLED but crashed before its Xero refund credit note was
+ * enqueued is excluded from re-drive by settleGroupBookingOnOrganiserCancel's
+ * ACTIVE_CHILD_STATUSES filter, so its credit note is never re-enqueued here.
+ */
+async function resumeInterruptedOrganiserCancels(
+  now: Date,
+  result: GroupSettlementReapResult
+): Promise<void> {
+  const graceMs = GROUP_CANCEL_RESUME_GRACE_MINUTES * 60 * 1000;
+  const cutoff = new Date(now.getTime() - graceMs);
+
+  const interrupted = await prisma.groupBooking.findMany({
+    where: {
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      status: { not: GroupBookingStatus.CANCELLED },
+      organiserBooking: {
+        status: BookingStatus.CANCELLED,
+        deletedAt: null,
+        updatedAt: { lt: cutoff },
+      },
+    },
+    select: { organiserBookingId: true, organiserMemberId: true },
+  });
+
+  result.scannedInterruptedCancels += interrupted.length;
+
+  for (const group of interrupted) {
+    try {
+      // Actor = organiserMemberId (a real Member FK); ipAddress is the cron tag.
+      await settleGroupBookingOnOrganiserCancel(
+        group.organiserBookingId,
+        group.organiserMemberId,
+        "cron:group-cancel-resume"
+      );
+      result.resumedInterruptedCancels += 1;
+    } catch (err) {
+      logger.error(
+        { err, organiserBookingId: group.organiserBookingId },
+        "Failed to resume interrupted organiser-cancel group cleanup"
+      );
+    }
+  }
 }
 
 /**

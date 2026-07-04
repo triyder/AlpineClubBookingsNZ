@@ -105,7 +105,10 @@ export async function cancelBooking(
     // If this booking hosts a group, clean up the joiners the PENDING-only sweep
     // above never touches (ORGANISER_PAYS children, group closure). Best-effort:
     // the organiser's own cancel has already committed, so a failure here is
-    // logged rather than surfaced, and the work is idempotent.
+    // logged rather than surfaced, and the work is idempotent. A re-invoked
+    // cancel 409s upstream (#1160) and never re-enters this path, so a crash
+    // mid-cleanup is re-driven by the group-settlement-reaper resume phase
+    // (#1236), not by cancelling again.
     await settleGroupBookingOnOrganiserCancel(
       bookingId,
       sessionUserId,

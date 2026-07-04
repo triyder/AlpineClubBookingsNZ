@@ -94,7 +94,7 @@ describe("listAdminBookings fast path (#1146)", () => {
     expect(calls[1][0]?.where).toEqual({ id: { in: ["b1", "b3", "b2"] } });
   });
 
-  it("orders every sort key exactly like the legacy comparator", async () => {
+  it("orders every sort key identically on the fast and full comparators", async () => {
     const fixtures = [
       makeBooking("b1", {
         finalPriceCents: 300,
@@ -129,7 +129,10 @@ describe("listAdminBookings fast path (#1146)", () => {
       ["total", "desc", ["b1", "b3", "b2"]],
       ["guests", "asc", ["b3", "b1", "b2"]],
       ["checkIn", "asc", ["b2", "b3", "b1"]],
-      ["status", "asc", ["b2", "b1", "b3"]],
+      // Status sorts by lifecycle rank (#1215), not alphabetically:
+      // PENDING(b3) < CONFIRMED(b2) < PAID(b1). Alphabetical would be
+      // CONFIRMED(b2), PAID(b1), PENDING(b3).
+      ["status", "asc", ["b3", "b2", "b1"]],
     ];
 
     for (const [sortBy, sortDir, expected] of expectations) {
@@ -158,5 +161,66 @@ describe("listAdminBookings fast path (#1146)", () => {
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toHaveProperty("include");
+  });
+
+  it("sorts the status column by lifecycle order, not alphabetically (#1215)", async () => {
+    // Distinct lifecycle ranks so the id tie-break never fires:
+    // PENDING(1) < CONFIRMED(3) < PAID(4) < CANCELLED(9). Alphabetical asc
+    // would instead lead with CANCELLED, so the two orderings diverge cleanly.
+    const fixtures = [
+      makeBooking("b-confirmed", { status: "CONFIRMED" }),
+      makeBooking("b-cancelled", { status: "CANCELLED" }),
+      makeBooking("b-pending", { status: "PENDING" }),
+      makeBooking("b-paid", { status: "PAID" }),
+    ];
+    vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
+
+    const result = await listAdminBookings(
+      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" })
+    );
+
+    const order = result.bookings.map((b) => b.id);
+    expect(order).toEqual(["b-pending", "b-confirmed", "b-paid", "b-cancelled"]);
+    // Lifecycle-specific relationships called out in the spec.
+    expect(order.indexOf("b-confirmed")).toBeLessThan(order.indexOf("b-cancelled"));
+    expect(order.indexOf("b-pending")).toBeLessThan(order.indexOf("b-paid"));
+    // Guard against a regression to alphabetical ordering, which would lead
+    // with CANCELLED.
+    expect(order[0]).not.toBe("b-cancelled");
+  });
+
+  it("orders the status column identically on the fast and full paths (#1215)", async () => {
+    // Zero-guest fixtures keep every row's derived bedState "complete", so the
+    // bedState:"complete" filter forces the full-scan path yet drops no rows —
+    // letting us compare the sortRowValue (fast) and sortValue (full)
+    // comparators on the same set for sortBy:"status".
+    const makeFixtures = () => [
+      makeBooking("b-confirmed", { status: "CONFIRMED" }),
+      makeBooking("b-cancelled", { status: "CANCELLED" }),
+      makeBooking("b-pending", { status: "PENDING" }),
+      makeBooking("b-paid", { status: "PAID" }),
+    ];
+
+    vi.mocked(prisma.booking.findMany).mockResolvedValue(makeFixtures() as never);
+    const fastResult = await listAdminBookings(
+      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" })
+    );
+    // Fast path: projection pass + page load = two findMany calls.
+    expect(vi.mocked(prisma.booking.findMany).mock.calls).toHaveLength(2);
+
+    vi.mocked(prisma.booking.findMany).mockClear();
+    vi.mocked(prisma.booking.findMany).mockResolvedValue(makeFixtures() as never);
+    const fullResult = await listAdminBookings(
+      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc", bedState: "complete" })
+    );
+    // Full path: single scan with heavy relation include.
+    const fullCalls = vi.mocked(prisma.booking.findMany).mock.calls;
+    expect(fullCalls).toHaveLength(1);
+    expect(fullCalls[0][0]).toHaveProperty("include");
+
+    const fastOrder = fastResult.bookings.map((b) => b.id);
+    const fullOrder = fullResult.bookings.map((b) => b.id);
+    expect(fullOrder).toEqual(fastOrder);
+    expect(fastOrder).toEqual(["b-pending", "b-confirmed", "b-paid", "b-cancelled"]);
   });
 });

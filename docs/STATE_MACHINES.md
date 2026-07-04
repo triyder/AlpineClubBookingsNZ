@@ -27,6 +27,19 @@ Organiser-pays group children add one cron-driven back path: the
 children (`PAYMENT_PENDING -> CANCELLED`, #1094) if the settlement is still
 FAILED after a second full window — a settlement retry always wins.
 
+The same cron also resumes an organiser-cancel group cleanup interrupted by a
+crash (#1236). Cancelling the organiser booking is single-flight, so a
+re-invoked cancel 409s and never re-enters the joiner cleanup; a third reaper
+phase re-drives it, keying on an ORGANISER_PAYS group still not `CANCELLED`
+under a `CANCELLED` organiser booking older than a short grace. The re-drive is
+idempotent because the first run persists the per-child refund plan
+(`{childId: cents}`) on the settlement **before** the Stripe refund and
+**before** the settlement flips to `REFUNDED`/`PARTIALLY_REFUNDED`: a re-drive
+reconstructs that plan verbatim (never recomputes — a >24h re-drive can land in
+a different cancellation tier) and applies the per-child `refundedAmountCents`
+mirror, and the `SUCCEEDED` guard plus the Stripe idempotency key fire the
+refund at most once.
+
 Booking quote and create paths reject a linked member who is already present on
 another live booking for any requested lodge night. The guard covers draft,
 pending, confirmed/paid/completed, waitlist, offered, and admin-review bookings,
