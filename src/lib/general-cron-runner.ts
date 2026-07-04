@@ -8,7 +8,7 @@ import { reapStaleGroupSettlements } from "@/lib/cron-group-settlement-reaper";
 import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
 import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
 import { sendSchoolAttendeeConfirmationPrompts } from "@/lib/school-attendee-confirmation";
-import logger from "@/lib/logger";
+import { reportCronError } from "@/lib/observability-bridge";
 
 export const GENERAL_CRON_JOB_NAMES = [
   "confirm-pending",
@@ -43,7 +43,6 @@ type GeneralCronTask<T> = {
 
 export interface GeneralCronRunnerDependencies {
   recordCronRun?: (input: RecordCronJobRunInput) => Promise<void> | void;
-  log?: Pick<typeof logger, "error" | "info">;
   tasks?: Partial<{
     confirmPendingBookings: typeof confirmPendingBookings;
     reapStaleGroupSettlements: typeof reapStaleGroupSettlements;
@@ -82,11 +81,9 @@ function toErrorMessage(error: unknown) {
 async function runRecordedTask<T>({
   task,
   recordCronRun,
-  log,
 }: {
   task: GeneralCronTask<T>;
   recordCronRun: (input: RecordCronJobRunInput) => Promise<void> | void;
-  log: Pick<typeof logger, "error" | "info">;
 }): Promise<T> {
   const startedAt = new Date();
   try {
@@ -100,7 +97,15 @@ async function runRecordedTask<T>({
     return result;
   } catch (error) {
     const message = toErrorMessage(error);
-    log.error({ err: error, job: task.jobName }, task.failureMessage);
+    // Top-level cron-task FAILURE: log at error AND page Sentry via the scoped
+    // bridge (deduped per job). Per-item best-effort failures inside tasks stay
+    // log-only.
+    reportCronError({
+      tag: task.jobName,
+      err: error,
+      message: task.failureMessage,
+      context: { job: task.jobName },
+    });
     await recordCronRun({
       jobName: task.jobName,
       startedAt,
@@ -115,7 +120,6 @@ export async function runGeneralCronCycle(
   dependencies: GeneralCronRunnerDependencies = {}
 ): Promise<GeneralCronCycleResult> {
   const recordCronRun = dependencies.recordCronRun ?? recordCronJobRunSafe;
-  const log = dependencies.log ?? logger;
   const taskDependencies = dependencies.tasks ?? {};
   const result: GeneralCronCycleResult = {
     confirmPending: null,
@@ -182,7 +186,6 @@ export async function runGeneralCronCycle(
       const taskResult = await runRecordedTask({
         task,
         recordCronRun,
-        log,
       });
       (result as Record<GeneralCronResultKey, unknown>)[task.resultKey] =
         taskResult;

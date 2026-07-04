@@ -57,6 +57,7 @@ export async function register() {
     const { deleteDraftBookingDependents } = await import("./lib/draft-booking-cleanup");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
     const { isEffectiveModuleEnabled } = await import("./lib/admin-modules");
+    const { reportCronError } = await import("./lib/observability-bridge");
     const optionalCron = getOptionalCronRegistrationState();
 
     // Verify Prisma client is ready before starting cron jobs
@@ -143,8 +144,10 @@ export async function register() {
         );
         Sentry.captureCheckIn({ checkInId, monitorSlug: "confirm-pending-bookings", status: "ok" });
       } catch (err) {
+        // Each failed task already bridged to Sentry per-job inside the general
+        // cron runner (reportCronError), so the cycle-level catch only logs the
+        // aggregate + marks the monitor check-in to avoid a double-send.
         logger.error({ err, job: "general-cron" }, "Error in booking and public-request cron cycle");
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "confirm-pending-bookings", status: "error" });
       } finally {
         isGeneralCronRunning = false;
@@ -179,8 +182,7 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "payment-recovery" }, "Error in payment recovery cron");
-        Sentry.captureException(err);
+        reportCronError({ tag: "payment-recovery", err, message: "Error in payment recovery cron" });
         await recordCronRun("payment-recovery", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "payment-recovery", status: "error" });
       } finally {
@@ -220,11 +222,11 @@ export async function register() {
             );
             Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
           } catch (err) {
-            logger.error(
-              { err, job: "xero-membership-refresh" },
-              "Error running Xero membership safety-net refresh"
-            );
-            Sentry.captureException(err);
+            reportCronError({
+              tag: "xero-membership-refresh",
+              err,
+              message: "Error running Xero membership safety-net refresh",
+            });
             Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
           } finally {
             isXeroCronRunning = false;
@@ -269,8 +271,7 @@ export async function register() {
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-backfill", status: "ok" });
         } catch (err) {
-          logger.error({ err, job: "xero-link-backfill" }, "Error backfilling historical Xero links");
-          Sentry.captureException(err);
+          reportCronError({ tag: "xero-link-backfill", err, message: "Error backfilling historical Xero links" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-backfill", status: "error" });
         } finally {
           isXeroBackfillCronRunning = false;
@@ -304,8 +305,7 @@ export async function register() {
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-cleanup", status: "ok" });
         } catch (err) {
-          logger.error({ err, job: "xero-link-cleanup" }, "Error cleaning stale Xero links");
-          Sentry.captureException(err);
+          reportCronError({ tag: "xero-link-cleanup", err, message: "Error cleaning stale Xero links" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-link-cleanup", status: "error" });
         } finally {
           isXeroLinkCleanupCronRunning = false;
@@ -339,8 +339,7 @@ export async function register() {
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-reconciliation-report", status: "ok" });
         } catch (err) {
-          logger.error({ err, job: "xero-reconciliation-report" }, "Error building Xero reconciliation report");
-          Sentry.captureException(err);
+          reportCronError({ tag: "xero-reconciliation-report", err, message: "Error building Xero reconciliation report" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-reconciliation-report", status: "error" });
         } finally {
           isXeroReportCronRunning = false;
@@ -386,8 +385,7 @@ export async function register() {
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
         } catch (err) {
-          logger.error({ err, job: "xero-operation-replay" }, "Error processing queued Xero work");
-          Sentry.captureException(err);
+          reportCronError({ tag: "xero-operation-replay", err, message: "Error processing queued Xero work" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "error" });
         } finally {
           isXeroReplayCronRunning = false;
@@ -427,8 +425,7 @@ export async function register() {
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "ok" });
         } catch (err) {
-          logger.error({ err, job: "xero-inbound-reconcile" }, "Error processing stored Xero inbound events");
-          Sentry.captureException(err);
+          reportCronError({ tag: "xero-inbound-reconcile", err, message: "Error processing stored Xero inbound events" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "error" });
         } finally {
           isXeroInboundCronRunning = false;
@@ -523,8 +520,7 @@ export async function register() {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "backup" }, "Error running database backup");
-        Sentry.captureException(err);
+        reportCronError({ tag: "backup", err, message: "Error running database backup" });
         await recordCronRun("backup", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "error" });
       } finally {
@@ -580,10 +576,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "data-pruning" }, "Error in data pruning");
-        Sentry.captureException(err);
+        reportCronError({ tag: "data-pruning", err, message: "Error in data pruning" });
         await recordCronRun("data-pruning", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "data-pruning", status: "error" });
       } finally {
         isPruningRunning = false;
@@ -642,9 +636,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "draft-cleanup", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "draft-cleanup" }, "Failed to delete expired draft bookings");
+        reportCronError({ tag: "draft-cleanup", err, message: "Failed to delete expired draft bookings" });
         await recordCronRun("draft-cleanup", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "draft-cleanup", status: "error" });
       } finally {
         isDraftCleanupRunning = false;
@@ -677,8 +670,7 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "pending-deadline-alerts", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "pending-deadline-alerts" }, "Error in pending deadline alerts");
-        Sentry.captureException(err);
+        reportCronError({ tag: "pending-deadline-alerts", err, message: "Error in pending deadline alerts" });
         await recordCronRun("pending-deadline-alerts", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "pending-deadline-alerts", status: "error" });
       } finally {
@@ -712,8 +704,7 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "nomination-reminders", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "nomination-reminders" }, "Error in nomination reminders");
-        Sentry.captureException(err);
+        reportCronError({ tag: "nomination-reminders", err, message: "Error in nomination reminders" });
         await recordCronRun("nomination-reminders", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "nomination-reminders", status: "error" });
       } finally {
@@ -747,8 +738,7 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "checkin-reminders", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "checkin-reminders" }, "Error in check-in reminders");
-        Sentry.captureException(err);
+        reportCronError({ tag: "checkin-reminders", err, message: "Error in check-in reminders" });
         await recordCronRun("checkin-reminders", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "checkin-reminders", status: "error" });
       } finally {
@@ -782,8 +772,7 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "capacity-warnings", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "capacity-warnings" }, "Error in capacity warnings");
-        Sentry.captureException(err);
+        reportCronError({ tag: "capacity-warnings", err, message: "Error in capacity warnings" });
         await recordCronRun("capacity-warnings", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "capacity-warnings", status: "error" });
       } finally {
@@ -816,10 +805,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "admin-digest", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "admin-digest" }, "Error in admin daily digest");
-        Sentry.captureException(err);
+        reportCronError({ tag: "admin-digest", err, message: "Error in admin daily digest" });
         await recordCronRun("admin-digest", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "admin-digest", status: "error" });
       } finally {
         isAdminDigestRunning = false;
@@ -853,8 +840,7 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "email-retry", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "email-retry" }, "Error in email retry");
-        Sentry.captureException(err);
+        reportCronError({ tag: "email-retry", err, message: "Error in email retry" });
         await recordCronRun("email-retry", startedAt, "FAILURE", undefined, message);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "email-retry", status: "error" });
       } finally {
@@ -888,10 +874,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "complete-bookings", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "complete-bookings" }, "Error in complete bookings cron");
-        Sentry.captureException(err);
+        reportCronError({ tag: "complete-bookings", err, message: "Error in complete bookings cron" });
         await recordCronRun("complete-bookings", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "complete-bookings", status: "error" });
       } finally {
         isCompleteBookingsRunning = false;
@@ -923,10 +907,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "hut-leader-auto-assign", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "hut-leader-auto-assign" }, "Error in hut leader auto-assign");
-        Sentry.captureException(err);
+        reportCronError({ tag: "hut-leader-auto-assign", err, message: "Error in hut leader auto-assign" });
         await recordCronRun("hut-leader-auto-assign", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "hut-leader-auto-assign", status: "error" });
       } finally {
         isHutLeaderAutoAssignRunning = false;
@@ -958,10 +940,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "age-up", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "age-up" }, "Error in age-up check");
-        Sentry.captureException(err);
+        reportCronError({ tag: "age-up", err, message: "Error in age-up check" });
         await recordCronRun("age-up", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "age-up", status: "error" });
       } finally {
         isAgeUpRunning = false;
@@ -995,10 +975,8 @@ export async function register() {
         Sentry.captureCheckIn({ checkInId, monitorSlug: "credit-reconciliation", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "credit-reconciliation" }, "Error in credit reconciliation");
-        Sentry.captureException(err);
+        reportCronError({ tag: "credit-reconciliation", err, message: "Error in credit reconciliation" });
         await recordCronRun("credit-reconciliation", startedAt, "FAILURE", undefined, message);
-        Sentry.captureException(err);
         Sentry.captureCheckIn({ checkInId, monitorSlug: "credit-reconciliation", status: "error" });
       } finally {
         isCreditReconRunning = false;
@@ -1041,8 +1019,7 @@ export async function register() {
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "waitlist-processor" }, "Error processing waitlist");
-        Sentry.captureException(err);
+        reportCronError({ tag: "waitlist-processor", err, message: "Error processing waitlist" });
         Sentry.captureCheckIn({ checkInId, monitorSlug: "waitlist-processor", status: "error" });
         await recordCronRun("waitlist-processor", startedAt, "FAILURE", undefined, message);
       } finally {
