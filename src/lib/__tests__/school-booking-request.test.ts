@@ -430,6 +430,61 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
   });
 
+  it("is idempotent on a re-armed convertedBookingId: a replayed accept returns the existing booking and raises no second Xero invoice or PIN (#1232)", async () => {
+    // First accept: a clean VERIFIED request confirms once and queues one invoice.
+    mockedFindUnique.mockResolvedValue(schoolRequest() as never);
+
+    const first = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+    expect(first).toMatchObject({
+      type: "approved",
+      bookingId: "booking-1",
+      schoolMemberId: "school-member",
+      invoiceMode: "xero",
+    });
+    expect(prisma.booking.create).toHaveBeenCalledTimes(1);
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+    expect(mockedEnqueueInvoice).toHaveBeenCalledTimes(1);
+    expect(mockedSendPin).toHaveBeenCalledTimes(1);
+
+    // Simulate the caller's line-~729 re-arm: PRICED (with priceCents, as the
+    // real caller writes) WITHOUT clearing convertedBookingId/convertedMemberId.
+    // Do NOT reset mock history — the money proof is that the counts stay at one.
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 20000,
+        convertedBookingId: "booking-1",
+        convertedMemberId: "school-member",
+      }) as never
+    );
+
+    const replay = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    // Returns the SAME booking; no second booking/payment; and — money-critical —
+    // no second Xero invoice and no re-sent teacher PIN.
+    expect(replay).toMatchObject({
+      type: "approved",
+      bookingId: "booking-1",
+      schoolMemberId: "school-member",
+    });
+    expect(prisma.booking.create).toHaveBeenCalledTimes(1);
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+    expect(mockedEnqueueInvoice).toHaveBeenCalledTimes(1);
+    expect(mockedSendPin).toHaveBeenCalledTimes(1);
+    // The claim updateMany ran for the first accept only, never the replay.
+    expect(mockedUpdateMany).toHaveBeenCalledTimes(1);
+    // Under the lock the replay re-asserts the terminal status to CONVERTED.
+    const lastUpdate = vi.mocked(prisma.bookingRequest.update).mock.calls.at(-1)?.[0]
+      .data as Record<string, unknown>;
+    expect(lastUpdate.status).toBe(BookingRequestStatus.CONVERTED);
+  });
+
   it("falls back to a manual-invoice admin alert when the Xero module is off", async () => {
     mockedFindUnique.mockResolvedValue(schoolRequest() as never);
     mockedModuleEnabled.mockResolvedValue(false);

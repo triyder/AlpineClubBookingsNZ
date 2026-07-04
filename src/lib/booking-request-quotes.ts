@@ -726,6 +726,9 @@ export async function respondToBookingRequestQuote(input: {
     );
   }
 
+  // Re-arming a just-converted request back to PRICED here is safe: approve is
+  // idempotent on convertedBookingId (#1232), so a concurrent double-accept
+  // returns the existing booking instead of creating a second one.
   await prisma.bookingRequest.update({
     where: { id: quote.bookingRequestId },
     data: {

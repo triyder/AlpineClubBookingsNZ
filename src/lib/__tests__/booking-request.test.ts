@@ -611,6 +611,68 @@ describe("approveBookingRequest", () => {
     );
   });
 
+  it("is idempotent on a re-armed convertedBookingId: a replayed accept returns the existing booking and fires no second side effect (#1232)", async () => {
+    // First accept: a clean PRICED request converts exactly once.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "member-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const first = await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+    expect(first).toMatchObject({ type: "approved", bookingId: "booking-1", memberId: "member-1" });
+    expect(prisma.member.create).toHaveBeenCalledTimes(1);
+    expect(prisma.booking.create).toHaveBeenCalledTimes(1);
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+    expect(prisma.paymentLink.create).toHaveBeenCalledTimes(1);
+    expect(mockedSendApproved).toHaveBeenCalledTimes(1);
+
+    // Simulate the caller's line-~729 re-arm: the request is set back to PRICED
+    // WITHOUT clearing convertedBookingId/convertedMemberId. Deliberately do NOT
+    // reset mock history here — the whole money proof is that these counts stay
+    // at one across the replay.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        convertedBookingId: "booking-1",
+        convertedMemberId: "member-1",
+      }) as never
+    );
+
+    const replay = await approveBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    // Returns the SAME booking; nothing new is created; no second email.
+    expect(replay).toMatchObject({
+      type: "approved",
+      bookingId: "booking-1",
+      memberId: "member-1",
+    });
+    expect(prisma.member.create).toHaveBeenCalledTimes(1);
+    expect(prisma.booking.create).toHaveBeenCalledTimes(1);
+    expect(prisma.payment.create).toHaveBeenCalledTimes(1);
+    expect(prisma.paymentLink.create).toHaveBeenCalledTimes(1);
+    expect(mockedSendApproved).toHaveBeenCalledTimes(1);
+    // The claim updateMany ran for the first accept only, never the replay.
+    expect(mockedUpdateMany).toHaveBeenCalledTimes(1);
+    // Under the lock the replay re-asserts the terminal status to CONVERTED.
+    const lastUpdate = vi.mocked(prisma.bookingRequest.update).mock.calls.at(-1)?.[0]
+      .data as Record<string, unknown>;
+    expect(lastUpdate.status).toBe(BookingRequestStatus.CONVERTED);
+    expect(mockedLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "booking_request.approve_idempotent_replay" })
+    );
+  });
+
   it("runs the member-night conflict guard with linked guests before creating anything (issue #1158)", async () => {
     mockedFindUnique.mockResolvedValue(
       baseRequest({
