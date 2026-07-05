@@ -16,6 +16,7 @@ const {
   mockEnqueueXeroRefundCreditNoteOperation,
   mockKickQueuedXeroOutboxOperationsIfConnected,
   mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+  mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   mockNotifyXeroSyncError,
   mockSendBookingConfirmedEmail,
   mockSendAdminPaymentFailureAlert,
@@ -66,6 +67,9 @@ const {
     released: 0,
     queueOperationIds: [],
   }),
+  mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent: vi
+    .fn()
+    .mockResolvedValue(false),
   mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
   mockSendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
@@ -175,6 +179,9 @@ vi.mock("@/lib/xero", () => ({
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
     mockEnqueueXeroBookingInvoiceOperation(...args),
+  hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent: (
+    ...args: unknown[]
+  ) => mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(...args),
   enqueueXeroRefundCreditNoteOperation: (...args: unknown[]) =>
     mockEnqueueXeroRefundCreditNoteOperation(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
@@ -241,6 +248,9 @@ describe("Stripe webhook Xero alerting", () => {
     });
     mockMarkGroupSettlementIntentFailed.mockResolvedValue(undefined);
     mockGroupBookingFindUnique.mockResolvedValue(null);
+    mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent.mockResolvedValue(
+      false,
+    );
     mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         payment: {
@@ -1084,6 +1094,216 @@ describe("Stripe webhook Xero alerting", () => {
     );
     expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
       where: { eventId: "evt_group_refund_fail", source: "stripe" },
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F1 (#1350): a late Stripe capture of an ADDITIONAL modification payment on
+  // a CANCELLED booking must be refunded + alerted, never recorded as paid,
+  // and the supplementary Xero invoice must never be released.
+  // ---------------------------------------------------------------------------
+  describe("late additional capture on a cancelled booking (#1350)", () => {
+    function additionalSucceededEvent(id = "evt_add_cancelled") {
+      return {
+        id,
+        type: "payment_intent.succeeded",
+        data: {
+          object: {
+            id: "pi_additional_late",
+            amount: 2500,
+            payment_method: "pm_late",
+            metadata: {
+              bookingId: "booking-9",
+              type: "modification_additional",
+            },
+          },
+        },
+      } as any;
+    }
+
+    function armCancelledBooking(xeroInvoiceId: string | null = null) {
+      mockBookingFindUnique.mockResolvedValue({
+        id: "booking-9",
+        status: "CANCELLED",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        member: { firstName: "Alice", lastName: "Example" },
+        payment: { id: "payment-9", xeroInvoiceId },
+      });
+    }
+
+    it("refunds and alerts instead of recording the capture and releasing the supplementary invoice", async () => {
+      mockConstructWebhookEvent.mockReturnValue(additionalSucceededEvent());
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-9",
+        paymentId: "payment-9",
+        kind: "ADDITIONAL",
+        amountCents: 2500,
+        // The cancel claim marked it FAILED — exactly the state the old code
+        // flipped straight to SUCCEEDED and released the invoice for.
+        status: "FAILED",
+      });
+      armCancelledBooking();
+      mockRefundPaymentTransactions.mockResolvedValue({
+        refunds: [
+          { paymentIntentId: "pi_additional_late", refundId: "re_late_9", amountCents: 2500 },
+        ],
+        totalRefundedAmountCents: 2500,
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      // The capture is recorded truthfully, then refunded in full under the
+      // idempotent late-cancel key pinned to this transaction.
+      expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
+        paymentIntentId: "pi_additional_late",
+        amountCents: 2500,
+        paymentMethodId: "pm_late",
+      });
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith({
+        paymentId: "payment-9",
+        amountCents: 2500,
+        allocation: [{ paymentTransactionId: "txn-9", amountCents: 2500 }],
+        metadata: {
+          bookingId: "booking-9",
+          reason: "cancelled_booking_late_capture",
+        },
+        idempotencyKeyPrefix: "late_cancel_refund_booking-9_pi_additional_late",
+      });
+      expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 2500,
+          paymentIntentId: "pi_additional_late",
+        }),
+      );
+      expect(mockLogAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "booking.payment.refunded_after_cancellation",
+          targetId: "booking-9",
+        }),
+      );
+      // The supplementary Xero invoice is NEVER released on this path.
+      expect(
+        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+      ).not.toHaveBeenCalled();
+      // No Xero presence -> no corrective credit note.
+      expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    });
+
+    it("does not flip an already-refunded transaction back on webhook replay, and still never releases the invoice", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        additionalSucceededEvent("evt_add_cancelled_replay"),
+      );
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-9",
+        paymentId: "payment-9",
+        kind: "ADDITIONAL",
+        amountCents: 2500,
+        status: "REFUNDED",
+      });
+      armCancelledBooking();
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
+      // The refund replays the identical keys; Stripe answers with the
+      // original refund and the ledger dedupes.
+      expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKeyPrefix:
+            "late_cancel_refund_booking-9_pi_additional_late",
+        }),
+      );
+      expect(
+        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("enqueues the corrective refund credit note when the supplementary invoice was already released in a race", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        additionalSucceededEvent("evt_add_cancelled_raced"),
+      );
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-9",
+        paymentId: "payment-9",
+        kind: "ADDITIONAL",
+        amountCents: 2500,
+        status: "FAILED",
+      });
+      armCancelledBooking();
+      mockHasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent.mockResolvedValue(
+        true,
+      );
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+        "payment-9",
+        2500,
+      );
+    });
+
+    it("fails the webhook (retryable) when the refund cannot be issued, instead of swallowing the debt", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        additionalSucceededEvent("evt_add_cancelled_refund_down"),
+      );
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-9",
+        paymentId: "payment-9",
+        kind: "ADDITIONAL",
+        amountCents: 2500,
+        status: "FAILED",
+      });
+      armCancelledBooking();
+      mockRefundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      // The processed-event marker is cleared so Stripe's retry re-runs the
+      // handler with the same idempotent refund keys.
+      expect(mockProcessedWebhookDeleteMany).toHaveBeenCalled();
+      expect(
+        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+      ).not.toHaveBeenCalled();
+    });
+
+    it("keeps the live-booking additional payment path unchanged (mark + release, no refund)", async () => {
+      mockConstructWebhookEvent.mockReturnValue(
+        additionalSucceededEvent("evt_add_live"),
+      );
+      mockFindPaymentTransactionByIntentId.mockResolvedValue({
+        id: "txn-9",
+        paymentId: "payment-9",
+        kind: "ADDITIONAL",
+        amountCents: 2500,
+        status: "PENDING",
+      });
+      mockBookingFindUnique.mockResolvedValue({
+        id: "booking-9",
+        status: "PAID",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        member: { firstName: "Alice", lastName: "Example" },
+        payment: { id: "payment-9", xeroInvoiceId: null },
+      });
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith({
+        paymentIntentId: "pi_additional_late",
+        amountCents: 2500,
+        paymentMethodId: "pm_late",
+      });
+      expect(
+        mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
+      ).toHaveBeenCalledWith("pi_additional_late");
+      expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+      expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
     });
   });
 });

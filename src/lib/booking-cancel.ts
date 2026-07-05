@@ -30,6 +30,7 @@ import {
 } from "@/lib/payment-transactions";
 import {
   enqueueBookingCancellationRefundRecovery,
+  enqueuePaymentIntentCancellationRecovery,
   markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError,
 } from "@/lib/payment-recovery";
@@ -753,6 +754,45 @@ async function performBookingCancellation(
           paymentIntentId: payment.additionalPaymentIntentId,
           store: tx,
         });
+        // F1 (#1350): persist a durable CANCEL_PAYMENT_INTENT recovery
+        // operation ATOMICALLY with the claim. The Phase-2 Stripe cancel of
+        // this intent is best-effort only, so without this row a member
+        // confirming the additional payment in a stale tab as/after the
+        // cancel commits was charged for a CANCELLED booking with no refund
+        // and no alert. With the row, the recovery cron cancels the intent
+        // (or, if Stripe already captured, hands it off to a full refund),
+        // and the payment_intent.succeeded webhook's superseded-intent hook
+        // routes a racing capture straight to refund recovery.
+        const additionalTransaction = await tx.paymentTransaction.findFirst({
+          where: {
+            paymentId: payment.id,
+            stripePaymentIntentId: payment.additionalPaymentIntentId,
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, amountCents: true },
+        });
+        if (additionalTransaction) {
+          await enqueuePaymentIntentCancellationRecovery({
+            bookingId,
+            paymentId: payment.id,
+            paymentTransactionId: additionalTransaction.id,
+            paymentIntentId: payment.additionalPaymentIntentId,
+            amountCents: additionalTransaction.amountCents,
+            store: tx,
+          });
+        } else {
+          // No ledger row for the outstanding intent (legacy mirror-only
+          // payment): the webhook status guard (#1350 part 1) remains the
+          // backstop for a late capture.
+          logger.warn(
+            {
+              bookingId,
+              paymentId: payment.id,
+              additionalPaymentIntentId: payment.additionalPaymentIntentId,
+            },
+            "No payment transaction row for outstanding additional intent; skipping durable cancellation recovery enqueue"
+          );
+        }
       }
     }
 
@@ -864,7 +904,11 @@ async function performBookingCancellation(
   // Additional-payment-intent Stripe cancel (best-effort). The DB state was
   // already flipped to FAILED in tx1; a Stripe cancel failure here is logged,
   // not rethrown (behaviour change vs pre-#1160, which re-threw and aborted
-  // the whole cancel).
+  // the whole cancel). Durability no longer rests on this call: tx1 persisted
+  // a CANCEL_PAYMENT_INTENT recovery operation (F1, #1350), so a failure here
+  // is retried by the recovery cron, and a capture that wins the race is
+  // handed off to a full refund by the cron or the webhook's
+  // superseded-intent hook.
   if (shouldFailAdditionalPayment) {
     try {
       await cancelOutstandingPaymentIntents({

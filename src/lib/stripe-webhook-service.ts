@@ -4,6 +4,7 @@ import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/
 import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroRefundCreditNoteOperation,
+  hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent,
   kickQueuedXeroOutboxOperationsIfConnected,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
@@ -578,6 +579,30 @@ async function handleAdditionalModificationPaymentSucceeded(
     return;
   }
 
+  // F1 (#1350): the CANCELLED-booking guard must run BEFORE the
+  // already-captured replay guard and the mark/release below — this dispatch
+  // sits ahead of the primary path's cancelled-booking check, so without it a
+  // stale-tab confirm of the additional payment racing (or following) a
+  // cancel was recorded as paid, released the supplementary Xero invoice,
+  // and was never refunded or alerted. Route it through the same
+  // refund-and-alert treatment as the primary late-capture path instead.
+  const bookingRecord = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      member: true,
+      payment: true,
+    },
+  });
+
+  if (bookingRecord?.status === "CANCELLED") {
+    await handleCancelledBookingAdditionalPaymentSucceeded(
+      bookingRecord,
+      paymentIntent,
+      paymentTransaction
+    );
+    return;
+  }
+
   if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
     const released = await releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
       paymentIntent.id
@@ -935,6 +960,139 @@ async function alertSupersededGroupSettlementIntent(
       "Failed to send admin alert for superseded group settlement PaymentIntent"
     );
   }
+}
+
+/**
+ * Late Stripe capture of an outstanding ADDITIONAL modification payment on a
+ * booking that is already CANCELLED (F1, #1350). Mirrors
+ * handleCancelledBookingPaymentSucceeded: record the capture truthfully
+ * (Stripe holds the money; an unrecorded capture would break money
+ * conservation), refund it in full under an idempotent per-intent key, alert
+ * the admins, and NEVER release the supplementary Xero invoice — the
+ * modification was voided by the cancellation, so releasing it would post a
+ * paid invoice for a refunded charge. If a race already released the invoice
+ * operation, enqueue the corrective refund credit note (delta-capped against
+ * the payment's recorded refunds).
+ *
+ * A refund failure is deliberately NOT swallowed: the webhook returns 500,
+ * the processed-event marker is cleared, and Stripe's retry replays the same
+ * refund keys (already-completed slices are answered by Stripe, not
+ * repeated).
+ */
+async function handleCancelledBookingAdditionalPaymentSucceeded(
+  booking: {
+    id: string;
+    checkIn: Date;
+    checkOut: Date;
+    member: {
+      firstName: string;
+      lastName: string;
+    };
+    payment: {
+      id: string;
+      xeroInvoiceId: string | null;
+    } | null;
+  },
+  paymentIntent: Stripe.PaymentIntent,
+  paymentTransaction: { id: string; status: PaymentStatus }
+) {
+  if (!booking.payment) {
+    logger.error(
+      { bookingId: booking.id, paymentIntentId: paymentIntent.id },
+      "Cancelled booking received a successful additional Stripe payment without a local payment record"
+    );
+    return;
+  }
+
+  // The cancel claim marked this transaction FAILED; Stripe has now proven it
+  // captured. Record the capture before refunding (the refund allocates
+  // against a captured transaction). Skipped on replays where the row is
+  // already captured/refunded so a completed refund is not flipped back.
+  if (!isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
+    await markPaymentIntentTransactionSucceeded({
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      paymentMethodId: getStripePaymentMethodId(paymentIntent),
+    });
+  }
+
+  const refundResult = await refundPaymentTransactions({
+    paymentId: booking.payment.id,
+    amountCents: paymentIntent.amount,
+    // Pin the refund to THIS transaction so replays mint identical Stripe
+    // keys regardless of the payment's other transactions.
+    allocation: [
+      {
+        paymentTransactionId: paymentTransaction.id,
+        amountCents: paymentIntent.amount,
+      },
+    ],
+    metadata: {
+      bookingId: booking.id,
+      reason: "cancelled_booking_late_capture",
+    },
+    idempotencyKeyPrefix: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+  });
+  const refundId = refundResult.refunds[0]?.refundId;
+
+  logAudit({
+    action: "booking.payment.refunded_after_cancellation",
+    targetId: booking.id,
+    details: JSON.stringify({
+      paymentIntentId: paymentIntent.id,
+      refundId,
+      amountCents: paymentIntent.amount,
+      kind: "modification_additional",
+    }),
+  });
+
+  sendAdminPaymentFailureAlert({
+    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    amountCents: paymentIntent.amount,
+    errorMessage:
+      "Stripe captured an additional modification payment after the booking had already been cancelled. TAC Bookings auto-refunded the capture and did not release the supplementary Xero invoice.",
+    paymentIntentId: paymentIntent.id,
+  }).catch((err) =>
+    logger.error(
+      { err, bookingId: booking.id },
+      "Failed to send late additional-capture cancellation alert"
+    )
+  );
+
+  // The supplementary invoice operation for this intent is left in
+  // WAITING_PAYMENT on purpose (the stale-WAITING_PAYMENT reaper retires it).
+  // Only when a race already released it — or the payment carries a primary
+  // Xero invoice — does the refund need a corrective credit note; the
+  // enqueue is delta-capped against payment.refundedAmountCents, so replays
+  // and already-covered states collapse to a no-op.
+  try {
+    const needsCorrectiveCreditNote =
+      booking.payment.xeroInvoiceId !== null ||
+      (await hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(
+        paymentIntent.id
+      ));
+    if (needsCorrectiveCreditNote) {
+      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
+        booking.payment.id,
+        paymentIntent.amount
+      );
+      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      }
+    }
+  } catch (xeroErr) {
+    logger.error(
+      { err: xeroErr, bookingId: booking.id, paymentId: booking.payment.id },
+      "Failed to queue corrective Xero refund credit note after late additional capture on a cancelled booking"
+    );
+  }
+
+  logger.warn(
+    { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId },
+    "Automatically refunded an additional modification payment captured after booking cancellation"
+  );
 }
 
 async function handleCancelledBookingPaymentSucceeded(

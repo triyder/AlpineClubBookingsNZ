@@ -672,10 +672,17 @@ export default async function BookingDetailPage({
   // (#1371 F28): the exact per-booking amount already shows inside the cancel
   // flow, but the full tier schedule previously lived only in the admin policy
   // preview, so members first learned the refund consequences at cancel time.
+  //
+  // Only show the refund schedule when a payment has actually been captured —
+  // otherwise the tier percentages imply a refund the member will never get.
+  // For an unpaid-but-cancellable booking, say so plainly instead (owner review
+  // of PR #1389).
+  const showCancellationInfo = canCancel && !isDeleted;
   const cancellationSchedule =
-    canCancel && !isDeleted
+    showCancellationInfo && originalPaymentCaptured
       ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn))
       : undefined;
+  const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -683,7 +690,10 @@ export default async function BookingDetailPage({
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
-          <BookingHelpDialog cancellationSchedule={cancellationSchedule} />
+          <BookingHelpDialog
+            cancellationSchedule={cancellationSchedule}
+            cancellationHasNoPayment={cancellationHasNoPayment}
+          />
           <Link href={backHref}>
             <Button variant="outline">Back to Bookings</Button>
           </Link>

@@ -80,12 +80,24 @@ if the refund *threw*). The inline refund executes the operation's frozen
 slices and marks it `SUCCEEDED` on completion; inline and cron therefore mint
 identical `booking_cancel_refund_<bookingId>` Stripe idempotency keys, so a
 Stripe-succeeded-but-unrecorded refund (or a cron tick racing the inline call)
-is replayed by Stripe, never repeated. The best-effort cancellation of any
-outstanding additional PaymentIntent is logged rather than allowed to abort
-the committed claim. As a backstop detector, the admin stuck-state dashboard
-flags recent `CANCELLED` bookings whose captured payment shows no recorded
-refund, no recovery operation, and no cancellation narrative event — the
-crash-window signature that previously fired nothing.
+is replayed by Stripe, never repeated. An outstanding additional
+PaymentIntent is retired durably (#1350): the claim transaction persists a
+`CANCEL_PAYMENT_INTENT` recovery operation alongside the FAILED flip, the
+Phase-2 inline Stripe cancel stays best-effort (logged, never allowed to
+abort the committed claim), and the recovery cron finishes the job — a
+still-cancellable intent is cancelled, while one Stripe already captured is
+handed off to a full refund. A capture that races the webhook is caught
+twice over: the `payment_intent.succeeded` superseded-intent hook routes
+intents with a cancellation-recovery row straight to refund recovery, and the
+`modification_additional` handler status-guards CANCELLED bookings — the
+capture is recorded truthfully, refunded in full under the idempotent
+`late_cancel_refund_<bookingId>_<intentId>` key, alerted to admins, and the
+supplementary Xero invoice is never released (a race that already released it
+gets a delta-capped corrective refund credit note instead). As a backstop
+detector, the admin stuck-state dashboard flags recent `CANCELLED` bookings
+whose captured payment shows no recorded refund, no recovery operation, and
+no cancellation narrative event — the crash-window signature that previously
+fired nothing.
 
 Cancelling a no-payment booking (`WAITLISTED`, `WAITLIST_OFFERED`,
 `AWAITING_REVIEW`) is likewise status-guarded claim-first under the SAME global

@@ -853,6 +853,33 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
   };
 }
 
+/**
+ * Whether any supplementary-invoice outbox operation tied to this
+ * PaymentIntent has left WAITING_PAYMENT (was released, is running, already
+ * SUCCEEDED, or FAILED-but-replayable) — i.e. a Xero invoice for the
+ * additional amount exists or may still be created (#1350). Used by the
+ * cancelled-booking late-capture webhook path to decide whether a corrective
+ * refund credit note is needed; a still-WAITING_PAYMENT (or CANCELLED)
+ * operation produces no invoice, so crediting it would over-credit the books.
+ */
+export async function hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  paymentIntentId: string
+): Promise<boolean> {
+  const releasedCount = await prisma.xeroSyncOperation.count({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      status: { notIn: ["WAITING_PAYMENT", "CANCELLED"] },
+      requestPayload: {
+        path: ["paymentIntentId"],
+        equals: paymentIntentId,
+      },
+    },
+  });
+  return releasedCount > 0;
+}
+
 export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
   paymentIntentId: string
 ) {
