@@ -56,6 +56,8 @@ describe("token catalogue contents", () => {
       "club-name",
       "currency",
       "lodge-capacity",
+      "hut-leader",
+      "hut-leader-lower",
       "facebook-url",
     ]);
   });
@@ -87,6 +89,8 @@ describe("token catalogue contents", () => {
       "club-name",
       "currency",
       "lodge-capacity",
+      "hut-leader",
+      "hut-leader-lower",
     ]);
   });
 

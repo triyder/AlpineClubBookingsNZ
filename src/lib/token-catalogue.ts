@@ -159,6 +159,27 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body", "lodge-instructions", "site-footer"],
   },
   {
+    token: "hut-leader",
+    kind: "text",
+    description:
+      "Replaced with the club's configured hut-leader label (default " +
+      '"Hut Leader") when the content renders. Use it for headings or ' +
+      "standalone references.",
+    example: "{{hut-leader}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body", "lodge-instructions"],
+  },
+  {
+    token: "hut-leader-lower",
+    kind: "text",
+    description:
+      'Lower-cased form of the hut-leader label (default "hut leader"). ' +
+      "Use it mid-sentence so the configured label reads naturally in prose.",
+    example: "{{hut-leader-lower}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body", "lodge-instructions"],
+  },
+  {
     token: "facebook-url",
     kind: "text",
     description:
