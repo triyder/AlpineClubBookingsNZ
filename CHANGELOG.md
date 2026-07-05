@@ -76,6 +76,62 @@ All notable public reference-release changes should be recorded here.
 - Renamed the `ADMIN_BOOKINGS` access-role display label from "Booking
   Office" to "Booking Officer" (display copy only; the stored enum value is
   unchanged).
+- Ran a second hardening wave (epic #1204) that closed out every wave-1
+  residual surfaced by the quality-epic audits. Grouped highlights below.
+- Money and booking correctness: made booking cancellation single-flight
+  (#1160); extended the person-night conflict guard to the date-change flow
+  (#1157) and to booking-request approval, quote-hold, and school-request
+  approval (#1158), and froze the advisory-lock-before-guard ordering for every
+  member-linked guest-night writer by test (#1159); fixed Xero invoice-line
+  rounding drift (#1163); hardened group settlement/cancel and the cancellation
+  tier boundary (#1165, #1166); added a defensive promo-cap allocation assertion
+  (#1206); added layered money-path idempotency defenses — atomic
+  credit-allocation repair under the booking advisory lock and a
+  supplementary-invoice idempotency-key guard, with the Xero outbox dedup kept
+  status-based by design (#1234); made group-cancel refunds resumable via
+  a persisted refund plan and reaper (#1236); and de-duplicated stale
+  payment-recovery alerts with a claim-first cooldown (#1211). Behavior/policy
+  change: credit-paid bookings now follow the same cancellation-penalty tiers as
+  card-paid bookings (#1164); the cancellation help text and email copy shipped
+  with it and the committee was flagged for a heads-up.
+- Xero and books integrity: a second refund on a payment now always receives a
+  refund credit note, with a health check (#1162); the reconciliation report
+  surfaces failing inbound events (#1196); the money-path invariant audit was
+  extended to the previously-unaudited surfaces (#1205); and the Xero subsystem
+  was split into cohesive modules behaviour-identically (#1208).
+- Platform, security, and hygiene: next-auth dependency hygiene (dropped a dead
+  adapter and narrowed an override) (#1182); fixed the React Compiler lint
+  findings (#1175); cut the admin client zod bundle (#1197); root-caused and
+  fixed the login-page hydration double-render behind the flaky 2FA E2E spec
+  (#1207); added a scoped `pino → Sentry` bridge for the cron and webhook
+  loggers (#1214); made the Stripe payment E2E robust to Stripe's inline-vs-
+  redirect confirmation path (#1220); and stopped raw Stripe initialization
+  errors (which could carry partial key material) from reaching members on the
+  pay step — generic copy is shown and the detail goes only to scrubbed Sentry
+  telemetry (#1223).
+- Maintainability: extracted the `/book` wizard state machine into a hook
+  (#1209); split the admin-alerts email module (#1210); made admin bookings sort
+  by lifecycle status (#1215); and triaged the 197 used-only-by-tests exports,
+  annotating each as an intentional test seam (#1216).
+- Accessibility, UX, and copy: exempted the single-action nomination
+  confirmation flow from the mandatory profile-completion gate (#1221); fixed
+  the duplicated "Postal Postal Code" address labels and aligned them to
+  "Postcode" (#1222); added the remaining page `h1`s and fixed the website-footer
+  heading order, then verified the booking-wizard and admin-members keyboard
+  accessibility live (#1242, #1295); and noted on the site-style setup screen
+  that the public site — including the membership application form — stays hidden
+  until saved (#1245). Config: a one-time idempotent data migration bumps any
+  persisted site-style theme still on the old sub-AA default gold `#7a8f6a` to
+  the AA-compliant `#8fa87c` so those installs can save again (#1244).
+- Verification and docs: refreshed `DOMAIN_INVARIANTS.md` and
+  `SECURITY-ATTACK-SURFACE.md` to the true wave-2 end state and re-ran the
+  concurrency audit (#1212, #1159).
+- Recorded as deliberately-unchanged, owner-ratified wave-1 trade-offs
+  (decision-menu rows D1, D2, D3, D5, D8, D9b): the CSP `style-src
+  'unsafe-inline'` and broad `img-src https:` breadth; `getClientIp` trusting
+  `x-real-ip` under the "Caddy always fronts" deployment invariant; deferring a
+  finer split of `booking-modify-plan.ts` until after #1159; and holding the
+  Node 26 LTS + `@types/node` 26 upgrade for its own maintenance window (#1176).
 
 ## 0.9.0 - 2026-06-27
 
