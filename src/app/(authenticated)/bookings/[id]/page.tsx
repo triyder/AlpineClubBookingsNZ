@@ -239,6 +239,25 @@ export default async function BookingDetailPage({
   if (!canManageBooking && !isLinkedGuestViewer && !canViewAsAdmin) {
     redirect("/bookings");
   }
+  // Issue #1313: a Booking Officer (the ADMIN_BOOKINGS bundle carries
+  // bookings:edit) may operate the admin-tooling cluster on ANY booking, not
+  // just one they own. Deliberately ORTHOGONAL to canManageBooking: it only
+  // fronts controls whose backing route lives under /api/admin/bookings/* and
+  // authorizes on bookings:edit (copy, confirm-pending-guests, admin
+  // requested-room). Member-facing /api/bookings/[id]/* routes (cancel, modify,
+  // notes, arrival-time) stay Full-Admin-or-owner, so their controls remain on
+  // canManageBooking/isAdmin — widening those buttons here would 403 an officer
+  // against an un-widened API.
+  const canAdminEditBookings = hasAdminAreaAccess(session.user, {
+    area: "bookings",
+    level: "edit",
+  });
+  // Full Admins and Booking Officers both see the admin-operational tooling.
+  const canSeeAdminTools = isAdmin || canAdminEditBookings;
+  // A non-owner admin-type viewer (Full Admin, Booking Officer, or read-only
+  // admin) must not be addressed with owner second-person copy ("your place /
+  // your stay") — issue #1289. Linked guests keep the member framing.
+  const nonOwnerAdminViewer = !isBookingOwner && canViewAsAdmin;
 
   const bookingAuditLogs = await prisma.auditLog.findMany({
     where: {
@@ -336,12 +355,18 @@ export default async function BookingDetailPage({
     ? false
     : isAdmin
       ? canModify
-      : // Members (owners) may request a room before and after payment, until
-        // the lodge confirms beds. Not tied to the paid/edit policy.
-        isBookingOwner &&
-        modules.bedAllocation &&
-        requestedRoomEditableStatus &&
-        !bedAllocationLocked;
+      : canAdminEditBookings
+        ? // Issue #1313: Booking Officers set the requested room through the
+          // admin route (/api/admin/bookings/[id]/requested-room, bookings:edit),
+          // which mirrors these exact conditions and ignores the member-facing
+          // allocation lock.
+          modules.bedAllocation && requestedRoomEditableStatus
+        : // Members (owners) may request a room before and after payment, until
+          // the lodge confirms beds. Not tied to the paid/edit policy.
+          isBookingOwner &&
+          modules.bedAllocation &&
+          requestedRoomEditableStatus &&
+          !bedAllocationLocked;
   const canEditNonMemberGuestNames =
     canModify && !isBookingFullyPaidForGuestNameEdits(booking);
   const cancellationSettlement = booking.payment
@@ -494,12 +519,13 @@ export default async function BookingDetailPage({
   // Suppress when a more specific provisional banner already explains the
   // on-hold/no-charge state (the split-booking child and the bumped-guest
   // flagged-provisional notices both render near the top of the page). Also
-  // suppress for a non-owner admin: the notice is owner-second-person
-  // ("your place/your guests/your stay") and, before the owner-only save-card
-  // gate above, an admin never reached it (#1303).
+  // suppress for any non-owner admin-type viewer: the notice is owner-second-
+  // person ("your place/your guests/your stay"), so a Full Admin, Booking
+  // Officer, or read-only admin viewing someone else's booking never sees it
+  // (#1303/#1289). nonOwnerAdminViewer subsumes the earlier actingAsAdmin case.
   const showPaymentOnHoldNotice =
     !isDeleted &&
-    !actingAsAdmin &&
+    !nonOwnerAdminViewer &&
     booking.status === "PENDING" &&
     !showSavePaymentMethodCard &&
     !isProvisionalChild &&
@@ -639,7 +665,7 @@ export default async function BookingDetailPage({
         </div>
       </div>
 
-      {isAdmin && (
+      {canSeeAdminTools && (
         <AdminBookingToolsCard
           bookingId={booking.id}
           memberId={booking.memberId}
@@ -714,13 +740,22 @@ export default async function BookingDetailPage({
             {provisionalChildGuestCount} non-member guest
             {provisionalChildGuestCount === 1 ? "" : "s"} held provisionally
           </p>
-          <p>
-            Your own place is confirmed once you pay for this booking. Your
-            non-member guests are held in a linked provisional booking —{" "}
-            <strong>no beds are reserved for them</strong> until they are
-            confirmed and paid for closer to your stay. We&apos;ll be in touch
-            before then.
-          </p>
+          {nonOwnerAdminViewer ? (
+            <p>
+              The member&apos;s own place is confirmed once they pay for this
+              booking. Their non-member guests are held in a linked provisional
+              booking — <strong>no beds are reserved for them</strong> until
+              they are confirmed and paid for closer to the stay.
+            </p>
+          ) : (
+            <p>
+              Your own place is confirmed once you pay for this booking. Your
+              non-member guests are held in a linked provisional booking —{" "}
+              <strong>no beds are reserved for them</strong> until they are
+              confirmed and paid for closer to your stay. We&apos;ll be in touch
+              before then.
+            </p>
+          )}
         </div>
       ) : null}
 
@@ -728,7 +763,9 @@ export default async function BookingDetailPage({
         <div className="space-y-1 rounded-md border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
           <p className="font-medium">Provisional non-member guests</p>
           <p>
-            This is the non-member portion of your party, linked to your{" "}
+            This is the non-member portion of{" "}
+            {nonOwnerAdminViewer ? "the" : "your"} party, linked to{" "}
+            {nonOwnerAdminViewer ? "the" : "your"}{" "}
             <Link
               href={`/bookings/${booking.parentBooking!.id}`}
               className="font-medium underline"
@@ -744,12 +781,22 @@ export default async function BookingDetailPage({
       {isFlaggedProvisional ? (
         <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <p className="font-medium">Provisional booking — no beds held yet</p>
-          <p>
-            You asked us to only confirm this booking if your guests can come,
-            so <strong>no beds are held and nothing has been charged</strong>.
-            We&apos;ll confirm the whole party — you and your guests — once your
-            guests are confirmed and paid for closer to your stay.
-          </p>
+          {nonOwnerAdminViewer ? (
+            <p>
+              The member asked us to only confirm this booking if their guests
+              can come, so{" "}
+              <strong>no beds are held and nothing has been charged</strong>.
+              The whole party — the member and their guests — is confirmed once
+              the guests are confirmed and paid for closer to the stay.
+            </p>
+          ) : (
+            <p>
+              You asked us to only confirm this booking if your guests can come,
+              so <strong>no beds are held and nothing has been charged</strong>.
+              We&apos;ll confirm the whole party — you and your guests — once
+              your guests are confirmed and paid for closer to your stay.
+            </p>
+          )}
         </div>
       ) : null}
 
@@ -865,7 +912,7 @@ export default async function BookingDetailPage({
             <CardTitle>Room Request</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {canEditRequestedRoom && !isAdmin ? (
+            {canEditRequestedRoom && !canSeeAdminTools ? (
               <p className="text-sm text-slate-600">
                 Let us know if you&apos;d prefer a particular room. This is a
                 request, not a guaranteed allocation. The lodge confirms beds
@@ -877,12 +924,12 @@ export default async function BookingDetailPage({
               initialRoom={booking.requestedRoom}
               canEdit={canEditRequestedRoom}
               endpoint={
-                isAdmin
+                canSeeAdminTools
                   ? undefined
                   : `/api/bookings/${booking.id}/requested-room`
               }
               lockedNote={
-                bedAllocationLocked && !isAdmin
+                bedAllocationLocked && !canSeeAdminTools
                   ? "Your beds have been allocated by the lodge and can no longer be changed here."
                   : undefined
               }
@@ -919,8 +966,12 @@ export default async function BookingDetailPage({
         <ConfirmDraftButton bookingId={booking.id} />
       )}
 
-      {/* Draft booking with non-zero price: show payment section to complete */}
-      {canManageBooking && !isDeleted && isDraft && booking.finalPriceCents > 0 && (
+      {/* Draft booking with non-zero price: show payment section to complete.
+          Member-personal payment (Stripe card entry) — owner-only so a non-owner
+          admin/officer never sees the member's save-card/confirm controls
+          (#1303). The $0 ConfirmDraftButton above has no card entry and stays on
+          canManageBooking. */}
+      {isBookingOwner && !isDeleted && isDraft && booking.finalPriceCents > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Booking</CardTitle>
@@ -956,8 +1007,17 @@ export default async function BookingDetailPage({
               </p>
             )}
             <p className="text-sm text-purple-700">
-              We&apos;ll email you when a spot opens up. You&apos;ll have{" "}
-              {WAITLIST_OFFER_HOURS} hours to confirm your booking.
+              {nonOwnerAdminViewer ? (
+                <>
+                  We&apos;ll email the member when a spot opens up. They&apos;ll
+                  have {WAITLIST_OFFER_HOURS} hours to confirm the booking.
+                </>
+              ) : (
+                <>
+                  We&apos;ll email you when a spot opens up. You&apos;ll have{" "}
+                  {WAITLIST_OFFER_HOURS} hours to confirm your booking.
+                </>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -1101,9 +1161,11 @@ export default async function BookingDetailPage({
         </Card>
       )}
 
-      {/* Additional payment required after a modification that increased the price */}
+      {/* Additional payment required after a modification that increased the
+          price. Member-personal payment (Stripe card entry) — owner-only so a
+          non-owner admin/officer never sees the member's pay controls (#1303). */}
       {booking.payment &&
-        canManageBooking &&
+        isBookingOwner &&
         !isDeleted &&
         booking.payment.additionalAmountCents > 0 &&
         booking.payment.additionalPaymentStatus !== "SUCCEEDED" && (
@@ -1137,7 +1199,14 @@ export default async function BookingDetailPage({
         />
       ) : null}
 
-      {!isDeleted &&
+      {/* Refund appeal: owner-or-Full-Admin only, matching its backing route
+          (/api/bookings/[id]/refund-request, owner-or-hasAdminAccess). The
+          #1289 read-only guard now admits Booking Officers / read-only admins to
+          this page, and this control previously carried no viewer gate, so it
+          would have shown them a button that 403s. canManageBooking restores the
+          intended owner + Full-Admin audience. */}
+      {canManageBooking &&
+        !isDeleted &&
         booking.status === "CANCELLED" &&
         booking.payment &&
         booking.payment.status !== "REFUNDED" &&

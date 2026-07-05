@@ -15,7 +15,11 @@ import {
   type AdminPermissionArea,
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
-import { hasAdminAccess, type AppAccessRole } from "@/lib/access-roles";
+import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+  type AppAccessRole,
+} from "@/lib/access-roles";
 
 const LODGE_ONLY_DEFINITION = {
   overviewLevel: "NONE",
@@ -172,6 +176,134 @@ describe("booking detail read-only admin-view guard (issue #1289)", () => {
         isLinkedGuestViewer: false,
       }),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Booking detail write-surface gates (issue #1313).
+//
+// A Booking Officer (the ADMIN_BOOKINGS bundle carries bookings:edit) may
+// operate the admin-tooling cluster on ANY booking — but only where the
+// backing route accepts bookings:edit. The admin-tooling controls
+// (AdminBookingToolsCard: copy + confirm-pending-guests; the admin
+// requested-room editor) POST/PUT/DELETE to /api/admin/bookings/*, which the
+// route matrix authorizes on bookings:edit. Member-facing /api/bookings/[id]/*
+// routes (cancel, modify, admin notes, arrival-time) authorize on
+// owner-or-Full-Admin (hasAdminAccess); a Booking Officer resolves to the
+// legacy USER role and is refused there, so those controls stay un-widened.
+//
+// These mirror the exact page gates AND pin the backing-route authz, so a
+// widened button can never front a route that would 403 the officer.
+// ---------------------------------------------------------------------------
+describe("booking detail write-surface gates (issue #1313)", () => {
+  const identity = (accessRoles: AppAccessRole[], isBookingOwner: boolean) => {
+    const subject = { accessRoles };
+    const isAdmin = hasAdminAccess(subject);
+    return {
+      // Admin-operational tooling cluster: Full Admin OR Booking Officer.
+      canSeeAdminTools:
+        isAdmin ||
+        hasAdminAreaAccess(subject, { area: "bookings", level: "edit" }),
+      // Member-personal payment section (save-card / complete / draft /
+      // additional payment): owner only.
+      showMemberPayment: isBookingOwner,
+      // Member-facing admin-operational controls whose API is
+      // owner-or-Full-Admin (cancel, admin notes, modify, arrival-time).
+      canOperateOwnerOrFullAdminControls: isBookingOwner || isAdmin,
+      // Owner second-person copy must not address a non-owner admin viewer.
+      nonOwnerAdminViewer:
+        !isBookingOwner &&
+        hasAdminAreaAccess(subject, { area: "bookings", level: "view" }),
+    };
+  };
+
+  it("grants the admin-tooling cluster to a non-owner Booking Officer", () => {
+    expect(identity(["ADMIN_BOOKINGS"], false).canSeeAdminTools).toBe(true);
+  });
+
+  it("grants the admin-tooling cluster to a non-owner Full Admin", () => {
+    expect(identity(["ADMIN"], false).canSeeAdminTools).toBe(true);
+  });
+
+  it("withholds the admin-tooling cluster from a read-only admin (view only)", () => {
+    expect(identity(["ADMIN_READONLY"], false).canSeeAdminTools).toBe(false);
+  });
+
+  it("withholds the admin-tooling cluster from a plain member on their own booking", () => {
+    expect(identity(["USER"], true).canSeeAdminTools).toBe(false);
+  });
+
+  it("shows the member payment section only to the owner, never a non-owner admin/officer", () => {
+    expect(identity(["USER"], true).showMemberPayment).toBe(true);
+    expect(identity(["ADMIN"], false).showMemberPayment).toBe(false);
+    expect(identity(["ADMIN_BOOKINGS"], false).showMemberPayment).toBe(false);
+  });
+
+  it("keeps Full-Admin-or-owner controls (cancel, notes, modify) hidden from a non-owner officer", () => {
+    expect(
+      identity(["ADMIN_BOOKINGS"], false).canOperateOwnerOrFullAdminControls,
+    ).toBe(false);
+    // Full Admin and the owner still operate them.
+    expect(
+      identity(["ADMIN"], false).canOperateOwnerOrFullAdminControls,
+    ).toBe(true);
+    expect(
+      identity(["USER"], true).canOperateOwnerOrFullAdminControls,
+    ).toBe(true);
+  });
+
+  it("treats every non-owner admin-type viewer as needing neutral copy (#1289)", () => {
+    expect(identity(["ADMIN"], false).nonOwnerAdminViewer).toBe(true);
+    expect(identity(["ADMIN_BOOKINGS"], false).nonOwnerAdminViewer).toBe(true);
+    expect(identity(["ADMIN_READONLY"], false).nonOwnerAdminViewer).toBe(true);
+    expect(identity(["USER"], true).nonOwnerAdminViewer).toBe(false);
+    expect(identity(["USER"], false).nonOwnerAdminViewer).toBe(false);
+  });
+
+  // Button↔API consistency (the lynchpin): the three widened admin-tooling
+  // controls front routes that already grant bookings:edit.
+  it("routes the widened admin-tooling buttons to bookings:edit APIs", () => {
+    for (const path of [
+      "/api/admin/bookings/BID/confirm-pending-guests",
+      "/api/admin/bookings/BID/copy",
+    ]) {
+      expect(getAdminRouteRequirement(path, "POST")).toEqual({
+        area: "bookings",
+        level: "edit",
+      });
+    }
+    expect(
+      getAdminRouteRequirement("/api/admin/bookings/BID/requested-room", "PUT"),
+    ).toEqual({ area: "bookings", level: "edit" });
+    expect(
+      getAdminRouteRequirement(
+        "/api/admin/bookings/BID/requested-room",
+        "DELETE",
+      ),
+    ).toEqual({ area: "bookings", level: "edit" });
+  });
+
+  it("confirms a Booking Officer satisfies the widened admin-tooling APIs", () => {
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_BOOKINGS"] },
+        { area: "bookings", level: "edit" },
+      ),
+    ).toBe(true);
+  });
+
+  it("confirms a Booking Officer is NOT a Full Admin, so member-facing /api/bookings/[id]/* routes still refuse them", () => {
+    // cancel/modify/notes/arrival-time authorize on hasAdminAccess (Full
+    // Admin) or the booking owner; a Booking Officer is neither.
+    expect(hasAdminAccess({ accessRoles: ["ADMIN_BOOKINGS"] })).toBe(false);
+    expect(
+      authorizationRoleFromAccessRoles({ accessRoles: ["ADMIN_BOOKINGS"] }),
+    ).not.toBe("ADMIN");
+    // A Full Admin does satisfy them.
+    expect(hasAdminAccess({ accessRoles: ["ADMIN"] })).toBe(true);
+    expect(
+      authorizationRoleFromAccessRoles({ accessRoles: ["ADMIN"] }),
+    ).toBe("ADMIN");
   });
 });
 
