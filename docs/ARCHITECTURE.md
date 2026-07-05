@@ -370,6 +370,26 @@ resolve client-side. Editing a definition applies to every holder on their
 next request — guards re-read roles and definitions from the database and
 never trust the JWT.
 
+When you add a new admin page (`src/app/(admin)`) or `/api/admin/**` route,
+update **both** central route maps: the permission-area map in
+`src/lib/admin-permissions.ts` (`ROUTE_AREA_PREFIXES`, or
+`SPECIAL_ROUTE_AREA_PATTERNS` when the route needs a different area than its
+prefix) so `getAdminRouteRequirement()` gives it the right area/level, and — if
+it belongs to an optional module — the feature-gate map
+`FEATURE_ROUTE_RULES` in `src/config/feature-routes.ts`. The permission map's
+last entry, `overview`, is a catch-all (`/admin`, `/api/admin`): a route that
+matches no more specific area silently resolves to `overview`, so a
+finance-sensitive route that forgets its prefix would be readable at plain
+overview access. `src/lib/__tests__/admin-route-map-drift.test.ts` enforces
+this: it enumerates every admin page and `/api/admin` route and fails the build
+if one lands on the overview catch-all without an intentional entry in that
+test's small, justified `OVERVIEW_ALLOWLIST`. The guard catches *unmapped*
+routes; it cannot catch a route *mis-mapped* by inheriting an existing wrong
+prefix, so still add a `SPECIAL_ROUTE_AREA_PATTERNS` entry by hand when a
+sensitive action lands under a broader prefix. New optional-module surfaces at
+brand-new prefixes must be added to `FEATURE_ROUTE_RULES` by hand — the guard
+only verifies existing feature prefixes still point at real files.
+
 Managing the definitions themselves is Full-Admin-only: the
 `/api/admin/access-roles` mutation handlers enforce an explicit `isFullAdmin`
 check on top of `requireAdmin()` (an editable role could otherwise widen
