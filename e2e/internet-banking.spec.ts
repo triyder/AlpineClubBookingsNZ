@@ -63,27 +63,23 @@ test("member switches a card booking to Internet Banking with Xero absent", asyn
   await expect(switchButton).toBeVisible();
   await switchButton.click();
 
-  // The detail page refreshes to the Internet Banking card: source Internet
-  // Banking with a BOOKING-… reference, and no crash despite Xero being
-  // unconfigured (the Xero invoice is queued but never sent while disconnected).
-  // The client-side router.refresh() can lose the race under load, and the
-  // page intermittently re-renders the pre-switch layout for one paint even
-  // after the IB card has shown (render inconsistency — recorded as a UX
-  // finding for #1148). Assert the whole post-switch card atomically per
-  // reload attempt so one consistent render proves the durable state.
-  await expect(async () => {
-    await page.reload();
-    await expect(page.getByText("Internet Banking Payment")).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByText(/Reference:/)).toBeVisible({ timeout: 2_000 });
-    await expect(
-      page.getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
-        exact: true,
-      }),
-    ).toBeVisible({ timeout: 2_000 });
-    // Already on Internet Banking, so the switch affordance is gone in the
-    // same render. The booking stays payment-owed (holdBedSlots defaults off
-    // → no bed held, per #737).
-    await expect(switchButton).toHaveCount(0, { timeout: 2_000 });
-  }).toPass({ timeout: 45_000 });
+  // Deterministic client outcome: the switch affordance retires immediately on
+  // success — it can no longer stick on "Switching…" or flash the pre-switch
+  // layout back for a paint (the #1148 / #1371 F28 fix). The detail page then
+  // refreshes to the Internet Banking card: source Internet Banking with a
+  // BOOKING-… reference, and no crash despite Xero being unconfigured (the Xero
+  // invoice is queued but never sent while disconnected). The booking stays
+  // payment-owed (holdBedSlots defaults off → no bed held, per #737). Asserted
+  // against the live DOM with no reload crutch, so a regression fails loudly.
+  await expect(switchButton).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByText("Internet Banking Payment")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText(/Reference:/)).toBeVisible();
+  await expect(
+    page.getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.close();
 });

@@ -370,9 +370,19 @@ view/edit requirements centrally, selecting assignment rows with their
 definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in
 `src/lib/access-role-definitions.ts`); the admin layout precomputes the
 matrix server-side and passes it to the sidebar, because definitions cannot
-resolve client-side. Editing a definition applies to every holder on their
-next request — guards re-read roles and definitions from the database and
-never trust the JWT.
+resolve client-side. Member-facing surfaces that gate on `session.user`
+(the `/bookings/[id]` detail page and the widened member-facing booking APIs
+from #1289/#1313) resolve through the session's embedded
+`adminPermissionMatrix` (#1367): `session.user.accessRoles` is enum-only —
+definition-backed custom roles carry `role: NULL` and vanish from it — so the
+auth `jwt` callback computes the merged matrix from the DB-joined member on
+every token refresh and embeds it, and `getAdminPermissionMatrix` treats an
+embedded matrix as authoritative (never widened by enum-bundle fallback, so a
+club-narrowed seeded definition stays narrowed). Editing a definition applies
+to every holder on their next request — `requireAdmin()` and the layouts
+re-read roles and definitions from the database, and the session-embedded
+matrix is itself recomputed from that same database join per request rather
+than trusted from an old token.
 
 When you add a new admin page (`src/app/(admin)`) or `/api/admin/**` route,
 update **both** central route maps: the permission-area map in

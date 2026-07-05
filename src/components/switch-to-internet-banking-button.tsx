@@ -20,6 +20,7 @@ export function SwitchToInternetBankingButton({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [switched, setSwitched] = useState(false);
   const [error, setError] = useState("");
 
   async function switchToInternetBanking() {
@@ -35,6 +36,11 @@ export function SwitchToInternetBankingButton({
       if (!res.ok) {
         throw new Error(data.error || "Unable to switch to internet banking right now.");
       }
+      // Terminal state: retire the switch affordance immediately so a slow
+      // router.refresh() can neither leave the button stuck on "Switching…" nor
+      // flash the pre-switch layout back before the Internet Banking card renders
+      // (render inconsistency, #1148 / #1371 F28).
+      setSwitched(true);
       router.refresh();
     } catch (err) {
       setError(
@@ -48,12 +54,18 @@ export function SwitchToInternetBankingButton({
 
   return (
     <div className="mt-4 border-t pt-4">
-      <p className="mb-2 text-sm text-muted-foreground">
-        {description}
-      </p>
-      <Button variant="outline" onClick={switchToInternetBanking} disabled={busy}>
-        {busy ? "Switching..." : "Pay by internet banking instead"}
-      </Button>
+      {switched ? (
+        <p className="text-sm font-medium text-muted-foreground">
+          Switching to internet banking…
+        </p>
+      ) : (
+        <>
+          <p className="mb-2 text-sm text-muted-foreground">{description}</p>
+          <Button variant="outline" onClick={switchToInternetBanking} disabled={busy}>
+            {busy ? "Switching..." : "Pay by internet banking instead"}
+          </Button>
+        </>
+      )}
       {error ? (
         <p className="mt-2 text-sm text-destructive">{error}</p>
       ) : null}

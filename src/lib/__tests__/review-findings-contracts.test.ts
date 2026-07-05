@@ -649,4 +649,83 @@ describe("review finding source/schema contracts", () => {
       rmSync(fixture.tempDir, { recursive: true, force: true });
     }
   });
+
+  it("remaps the darkest neutral text tier so the door code is legible in dark mode (F28)", () => {
+    // #1371 F28: the lodge door code renders text-slate-950 on a dark card, but
+    // the dark neutral remap only covered the -900/-800..-300 tiers, leaving -950
+    // near-black on dark. The -950 tier must map to --foreground.
+    const globals = readRepoFile("src/app/globals.css");
+    const foregroundRemap = sliceFrom(
+      globals,
+      ".text-slate-950",
+      "color: var(--foreground)",
+    );
+    expect(foregroundRemap).toContain(".text-gray-950");
+    expect(foregroundRemap).toContain(".text-neutral-950");
+    expect(foregroundRemap).toContain(".text-stone-950");
+  });
+
+  it("gives the promo review-step callout a dark-mode text colour (F28)", () => {
+    const reviewStep = readRepoFile(
+      "src/app/(authenticated)/book/_components/review-step.tsx",
+    );
+    expect(reviewStep).toContain("text-brand-charcoal dark:text-brand-gold");
+    expect(reviewStep).toContain("text-brand-charcoal/75 dark:text-brand-gold/75");
+  });
+
+  it("resolves the waitlist confirm CTA to a terminal state instead of sticking on Confirming (F28)", () => {
+    const card = readRepoFile("src/components/waitlist-offer-card.tsx");
+    expect(card).toContain("setConfirmed(true)");
+    // On success the whole card is replaced by a terminal confirmed state, so the
+    // CTA cannot stay stuck on "Confirming…" and the offer text clears at once.
+    expect(card).toContain("Spot Confirmed");
+    expect(card).toMatch(/if \(confirmed\) \{\s*return \(/);
+  });
+
+  it("retires the internet-banking switch affordance after a successful switch (F28)", () => {
+    const button = readRepoFile(
+      "src/components/switch-to-internet-banking-button.tsx",
+    );
+    expect(button).toContain("setSwitched(true)");
+    expect(button).toContain("Switching to internet banking…");
+  });
+
+  it("guards the public quote cancel behind a confirmation dialog (F28)", () => {
+    const respondPage = readRepoFile(
+      "src/app/(public)/booking-requests/respond/[token]/page.tsx",
+    );
+    expect(respondPage).toContain("useConfirm");
+    expect(respondPage).toContain("cancelWithConfirmation");
+    // The one-click destructive path must be gone.
+    expect(respondPage).not.toContain('onClick={() => respond("CANCEL")}');
+  });
+
+  it("surfaces the booking status glossary and cancellation schedule to members (F28)", () => {
+    const contextualHelp = readRepoFile("src/lib/contextual-help.ts");
+    expect(contextualHelp).toContain("export const BOOKING_STATUS_GLOSSARY");
+    // Admin help still renders the same shared glossary (no divergent copy).
+    expect(contextualHelp).toContain("details: BOOKING_STATUS_GLOSSARY,");
+
+    const helpDialog = readRepoFile("src/components/booking-help-dialog.tsx");
+    expect(helpDialog).toContain("BOOKING_STATUS_GLOSSARY");
+    expect(helpDialog).toContain("Cancellation refund schedule");
+
+    const bookingDetail = readRepoFile(
+      "src/app/(authenticated)/bookings/[id]/page.tsx",
+    );
+    expect(bookingDetail).toContain("<BookingHelpDialog");
+    expect(bookingDetail).toContain("describeCancellationSchedule");
+  });
+
+  it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {
+    const waitlistSpec = readRepoFile("e2e/waitlist.spec.ts");
+    expect(waitlistSpec).not.toContain("assert the durable server state via reload");
+    expect(waitlistSpec).toContain('getByText("Spot Confirmed")');
+
+    const ibSpec = readRepoFile("e2e/internet-banking.spec.ts");
+    expect(ibSpec).not.toContain(
+      "Assert the whole post-switch card atomically per",
+    );
+    expect(ibSpec).not.toContain("await page.reload()");
+  });
 });

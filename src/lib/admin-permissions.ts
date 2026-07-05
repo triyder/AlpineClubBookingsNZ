@@ -321,6 +321,40 @@ function cloneEmptyMatrix(): AdminPermissionMatrix {
   return { ...EMPTY_MATRIX };
 }
 
+/** All-none matrix; the fail-closed default for session projection (#1367). */
+export function emptyAdminPermissionMatrix(): AdminPermissionMatrix {
+  return cloneEmptyMatrix();
+}
+
+function isAdminPermissionLevel(value: unknown): value is AdminPermissionLevel {
+  return ADMIN_PERMISSION_LEVELS.includes(value as AdminPermissionLevel);
+}
+
+/**
+ * Validate a matrix that travelled through an untyped channel (the JWT /
+ * session, #1367). Returns null when the value is not an object at all;
+ * otherwise every known area is kept only when it carries a valid level and
+ * falls to "none" when missing or malformed — fail closed per area, so a
+ * matrix minted before a new area existed denies that area instead of being
+ * discarded (which would fall back to the wider enum-bundle derivation).
+ */
+export function sanitizeAdminPermissionMatrix(
+  value: unknown,
+): AdminPermissionMatrix | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+
+  const matrix = cloneEmptyMatrix();
+  for (const area of ADMIN_PERMISSION_AREAS) {
+    const level = (value as Record<string, unknown>)[area.key];
+    if (isAdminPermissionLevel(level)) {
+      matrix[area.key] = level;
+    }
+  }
+  return matrix;
+}
+
 function maxLevel(
   current: AdminPermissionLevel,
   candidate: AdminPermissionLevel,
@@ -371,9 +405,28 @@ export function mergeAdminPermissionMatrices(
 }
 
 /**
+ * AccessRoleInput extended with the matrix a JWT session carries (#1367).
+ * `session.user.accessRoles` is enum-only (definition-backed custom roles
+ * have `role: null` and vanish from it), so the auth `jwt` callback embeds
+ * the merged matrix computed from the DB-joined member instead, and every
+ * session.user-based check reads it here.
+ */
+export type AdminPermissionInput = AccessRoleInput & {
+  adminPermissionMatrix?: unknown;
+};
+
+/**
  * Merged permission matrix for a member's access-role assignments.
  *
- * Per-row resolution, strictly in this order:
+ * An embedded `adminPermissionMatrix` (a session.user, #1367) is
+ * AUTHORITATIVE and short-circuits role derivation: it was computed from the
+ * DB-joined member — custom and club-edited definitions included — at the
+ * per-request token refresh, so re-deriving from the enum-only role list
+ * here could only be wrong in both directions (dropping custom roles,
+ * or widening a seeded role whose definition the club narrowed below the
+ * legacy bundle).
+ *
+ * Otherwise, per-row resolution, strictly in this order:
  * 1. `ADMIN` → the hardcoded Full Admin bundle, never the database.
  * 2. A joined `roleDefinition` (definition-backed or seeded-default row
  *    selected with the definition include) → that definition's matrix.
@@ -384,9 +437,14 @@ export function mergeAdminPermissionMatrices(
  *    definition) contributes nothing — fail closed, never wider.
  */
 export function getAdminPermissionMatrix(
-  input: AccessRoleInput,
+  input: AdminPermissionInput,
 ): AdminPermissionMatrix {
   if (input.canLogin === false) return cloneEmptyMatrix();
+
+  if ("adminPermissionMatrix" in input) {
+    const embedded = sanitizeAdminPermissionMatrix(input.adminPermissionMatrix);
+    if (embedded) return embedded;
+  }
 
   const matrices: Array<Partial<AdminPermissionMatrix>> = [];
   for (const item of input.accessRoles ?? []) {
@@ -413,13 +471,13 @@ export function getAdminPermissionMatrix(
 
 // test seam
 export function getAdminPermissionLevel(
-  input: AccessRoleInput,
+  input: AdminPermissionInput,
   area: AdminPermissionArea,
 ): AdminPermissionLevel {
   return getAdminPermissionMatrix(input)[area];
 }
 
-export function hasAdminPortalAccess(input: AccessRoleInput) {
+export function hasAdminPortalAccess(input: AdminPermissionInput) {
   const matrix = getAdminPermissionMatrix(input);
   return ADMIN_PERMISSION_AREAS.some(
     (area) => matrix[area.key] !== "none" && area.key !== "finance",
@@ -427,7 +485,7 @@ export function hasAdminPortalAccess(input: AccessRoleInput) {
 }
 
 export function hasAdminAreaAccess(
-  input: AccessRoleInput,
+  input: AdminPermissionInput,
   requirement: AdminAccessRequirement,
 ) {
   return (
@@ -436,7 +494,7 @@ export function hasAdminAreaAccess(
   );
 }
 
-export function getFirstAccessibleAdminHref(input: AccessRoleInput) {
+export function getFirstAccessibleAdminHref(input: AdminPermissionInput) {
   const matrix = getAdminPermissionMatrix(input);
   if (matrix.overview !== "none") return "/admin/dashboard";
   if (matrix.bookings !== "none") return "/admin/bookings";
@@ -489,7 +547,7 @@ export function getAdminRouteRequirement(
   };
 }
 
-export function canViewAdminHref(input: AccessRoleInput, href: string) {
+export function canViewAdminHref(input: AdminPermissionInput, href: string) {
   const requirement = getAdminRouteRequirement(href, "GET");
   return requirement ? hasAdminAreaAccess(input, requirement) : false;
 }
@@ -514,11 +572,11 @@ export function canViewAdminHrefWithMatrix(
  * Seeded "Treasurer" is finance edit and "Finance Viewer" is finance view,
  * both club-editable like any other definition-backed role.
  */
-export function hasFinanceViewerAccess(input: AccessRoleInput) {
+export function hasFinanceViewerAccess(input: AdminPermissionInput) {
   return LEVEL_RANK[getAdminPermissionMatrix(input).finance] >= LEVEL_RANK.view;
 }
 
-export function hasFinanceManagerAccess(input: AccessRoleInput) {
+export function hasFinanceManagerAccess(input: AdminPermissionInput) {
   return getAdminPermissionMatrix(input).finance === "edit";
 }
 
@@ -552,7 +610,7 @@ export function financeAccessLevelFromMatrix(
  * already keys off (`role === "ADMIN"`), so an officer and a Full Admin drive
  * byte-identical modify/quote/change-request behaviour.
  */
-export function bookingManagementAuthorizationRole(input: AccessRoleInput): Role {
+export function bookingManagementAuthorizationRole(input: AdminPermissionInput): Role {
   if (hasAdminAreaAccess(input, { area: "bookings", level: "edit" })) {
     return "ADMIN";
   }

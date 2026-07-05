@@ -504,7 +504,7 @@ export function ReviewStep({
           )}
           {availablePromoCodes.length > 0 && !appliedPromo && !attendingWorkParty && (
             <div className="app-callout-brand p-4">
-              <p className="mb-2 text-sm font-medium text-brand-charcoal">
+              <p className="mb-2 text-sm font-medium text-brand-charcoal dark:text-brand-gold">
                 You have promo codes available:
               </p>
               <div className="flex flex-wrap gap-2">
@@ -517,7 +517,7 @@ export function ReviewStep({
                   >
                     {pc.code}
                     {pc.description && (
-                      <span className="font-sans font-normal text-brand-charcoal/75">
+                      <span className="font-sans font-normal text-brand-charcoal/75 dark:text-brand-gold/75">
                         — {pc.description}
                       </span>
                     )}

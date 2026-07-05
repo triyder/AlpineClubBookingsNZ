@@ -128,14 +128,14 @@ test("a member accepts a waitlist offer and owes payment", async () => {
   await expect(offerCard).toBeVisible();
   await memberPage.getByRole("button", { name: "Confirm Booking" }).click();
 
-  // Accepting transitions the booking off WAITLIST_OFFERED to PAYMENT_PENDING.
-  // The card's own router.refresh() can lose the race under load (the confirm
-  // POST succeeds server-side but the card sticks on "Confirming…" — noted as
-  // a UX finding), so assert the durable server state via reload.
-  await expect(async () => {
-    await memberPage.reload();
-    await expect(offerCard).toHaveCount(0);
-  }).toPass({ timeout: 30_000 });
+  // Deterministic client outcome: on success the offer card is immediately
+  // replaced by a terminal "Spot Confirmed" state, so the CTA never sticks on
+  // "Confirming…" and the "A Spot Has Opened Up!" offer clears without any reload
+  // (the #1371 F28 fix). The accepted offer then refreshes the booking off
+  // WAITLIST_OFFERED to PAYMENT_PENDING. Asserted against the live DOM with no
+  // reload crutch, so a regression of either fix fails loudly.
+  await expect(memberPage.getByText("Spot Confirmed")).toBeVisible();
+  await expect(offerCard).toHaveCount(0);
   await expect(memberPage.getByText(/payment/i).first()).toBeVisible();
   await memberPage.close();
 });

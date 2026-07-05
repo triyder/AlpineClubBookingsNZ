@@ -73,6 +73,19 @@ vi.mock("@/lib/two-factor", () => ({
 }));
 
 import { auth, authConfig } from "@/lib/auth";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { hasAdminAccess } from "@/lib/access-roles";
+
+const ALL_NONE_MATRIX = {
+  overview: "none",
+  bookings: "none",
+  membership: "none",
+  finance: "none",
+  lodge: "none",
+  content: "none",
+  support: "none",
+};
 
 describe("auth session refresh", () => {
   beforeEach(() => {
@@ -111,7 +124,10 @@ describe("auth session refresh", () => {
       where: { id: "member-1" },
       select: {
         role: true,
-        accessRoles: { select: { role: true } },
+        canLogin: true,
+        // Joined definitions (#1367) so the refresh can compute the merged
+        // admin-permission matrix over definition-backed roles.
+        accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
         forcePasswordChange: true,
         emailVerified: true,
         passwordChangedAt: true,
@@ -368,6 +384,8 @@ describe("auth session refresh", () => {
       name: "Admin User",
       role: "MEMBER",
       accessRoles: ["USER"],
+      // The token carried no matrix, so the projection fails closed (#1367).
+      adminPermissionMatrix: ALL_NONE_MATRIX,
       forcePasswordChange: true,
       isEmailVerified: true,
       sessionInvalidated: true,
@@ -375,6 +393,149 @@ describe("auth session refresh", () => {
       twoFactorVerified: false,
       twoFactorEnrolled: false,
       twoFactorMethod: null,
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #1367 (F14): definition-backed custom access roles must reach every
+  // session.user-based admin check. The enum-only accessRoles claim drops them
+  // (role: null), so the jwt callback embeds the merged admin-permission
+  // matrix computed from the DB-joined member, and the session projects it.
+  // ---------------------------------------------------------------------------
+  describe("definition-backed custom roles in the session (#1367)", () => {
+    const customBookingOfficerRow = {
+      role: null,
+      roleDefinitionId: "def-custom-bookings",
+      roleDefinition: {
+        id: "def-custom-bookings",
+        key: "custom-booking-officer",
+        systemRole: null,
+        label: "Custom Booking Officer",
+        description: "Club-defined booking role",
+        overviewLevel: "NONE",
+        bookingsLevel: "EDIT",
+        membershipLevel: "NONE",
+        financeLevel: "NONE",
+        lodgeLevel: "NONE",
+        contentLevel: "NONE",
+        supportLevel: "NONE",
+        sortOrder: 10,
+      },
+    };
+
+    it("embeds the custom role's matrix in the token even though the enum claim drops it", async () => {
+      mockFindUnique.mockResolvedValue({
+        role: "USER",
+        canLogin: true,
+        accessRoles: [customBookingOfficerRow],
+        forcePasswordChange: false,
+        emailVerified: true,
+        passwordChangedAt: null,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      });
+
+      const token = await authConfig.callbacks.jwt?.({
+        token: {
+          id: "member-custom",
+          role: "USER",
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionIssuedAt: Date.now(),
+        },
+      } as never);
+
+      // The enum-only claim still drops the custom role (documented)...
+      expect(token?.accessRoles).toEqual([]);
+      // ...but the matrix carries its definition levels.
+      expect(token?.adminPermissionMatrix).toEqual({
+        ...ALL_NONE_MATRIX,
+        bookings: "edit",
+      });
+    });
+
+    it("passes the #1289/#1313 session.user gates exactly as a seeded Booking Officer does", async () => {
+      mockFindUnique.mockResolvedValue({
+        role: "USER",
+        canLogin: true,
+        accessRoles: [customBookingOfficerRow],
+        forcePasswordChange: false,
+        emailVerified: true,
+        passwordChangedAt: null,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      });
+
+      const token = await authConfig.callbacks.jwt?.({
+        token: {
+          id: "member-custom",
+          role: "USER",
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionIssuedAt: Date.now(),
+        },
+      } as never);
+
+      const session = await authConfig.callbacks.session?.({
+        session: {
+          user: {
+            id: "member-custom",
+            email: "custom@example.com",
+            name: "Custom Officer",
+          },
+        },
+        token,
+      } as never);
+
+      // The exact predicates the booking detail page (#1289) and the widened
+      // member-facing booking APIs (#1313) evaluate on session.user:
+      expect(
+        hasAdminAreaAccess(session!.user, { area: "bookings", level: "view" }),
+      ).toBe(true);
+      expect(
+        hasAdminAreaAccess(session!.user, { area: "bookings", level: "edit" }),
+      ).toBe(true);
+      // Not a Full Admin: separation-of-duties gates stay closed.
+      expect(hasAdminAccess(session!.user)).toBe(false);
+      // No leakage into other areas.
+      expect(
+        hasAdminAreaAccess(session!.user, { area: "finance", level: "view" }),
+      ).toBe(false);
+    });
+
+    it("keeps a plain member's matrix all-none end to end", async () => {
+      mockFindUnique.mockResolvedValue({
+        role: "USER",
+        canLogin: true,
+        accessRoles: [{ role: "USER", roleDefinitionId: null, roleDefinition: null }],
+        forcePasswordChange: false,
+        emailVerified: true,
+        passwordChangedAt: null,
+        twoFactorEnabled: false,
+        twoFactorMethod: null,
+      });
+
+      const token = await authConfig.callbacks.jwt?.({
+        token: {
+          id: "member-plain",
+          role: "USER",
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionIssuedAt: Date.now(),
+        },
+      } as never);
+
+      expect(token?.adminPermissionMatrix).toEqual(ALL_NONE_MATRIX);
+
+      const session = await authConfig.callbacks.session?.({
+        session: {
+          user: { id: "member-plain", email: "m@example.com", name: "M" },
+        },
+        token,
+      } as never);
+      expect(
+        hasAdminAreaAccess(session!.user, { area: "bookings", level: "view" }),
+      ).toBe(false);
     });
   });
 

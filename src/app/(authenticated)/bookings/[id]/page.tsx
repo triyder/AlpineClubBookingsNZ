@@ -23,6 +23,9 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
+import { BookingHelpDialog } from "@/components/booking-help-dialog";
+import { loadCancellationPolicy } from "@/lib/cancellation";
+import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
 import {
   getCancellationSettlementBreakdown,
@@ -665,12 +668,22 @@ export default async function BookingDetailPage({
     ? await getBookingProviderMismatches(booking.id)
     : [];
 
+  // Surface the applicable cancellation refund schedule to the member up front
+  // (#1371 F28): the exact per-booking amount already shows inside the cancel
+  // flow, but the full tier schedule previously lived only in the admin policy
+  // preview, so members first learned the refund consequences at cancel time.
+  const cancellationSchedule =
+    canCancel && !isDeleted
+      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn))
+      : undefined;
+
   return (
     <div className="max-w-2xl space-y-6">
       <ScrollToHash />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
+          <BookingHelpDialog cancellationSchedule={cancellationSchedule} />
           <Link href={backHref}>
             <Button variant="outline">Back to Bookings</Button>
           </Link>

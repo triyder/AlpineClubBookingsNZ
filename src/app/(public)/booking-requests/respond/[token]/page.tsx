@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
@@ -101,6 +102,24 @@ export default function BookingRequestQuoteResponsePage() {
     const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
     return days <= 1 ? "expires today" : `expires in ${days} days`;
   }, [context, contextLoadedAt]);
+
+  const { confirm, confirmDialog } = useConfirm();
+
+  async function cancelWithConfirmation() {
+    // Cancel Request is destructive and fires from a token link with no undo, so
+    // gate it behind an explicit confirmation (#1371 F28 — previously one click).
+    const confirmed = await confirm({
+      title: "Cancel this booking request?",
+      description:
+        "This withdraws your quote and tells the booking team you no longer want this booking. You cannot undo this from this link.",
+      confirmLabel: "Cancel request",
+      cancelLabel: "Keep request",
+      destructive: true,
+    });
+    if (confirmed) {
+      void respond("CANCEL");
+    }
+  }
 
   async function respond(action: Action) {
     setActioning(action);
@@ -287,7 +306,7 @@ export default function BookingRequestQuoteResponsePage() {
               </Button>
               <Button
                 variant="destructive"
-                onClick={() => respond("CANCEL")}
+                onClick={() => void cancelWithConfirmation()}
                 disabled={Boolean(actioning)}
               >
                 Cancel Request
@@ -296,6 +315,7 @@ export default function BookingRequestQuoteResponsePage() {
           </>
         )}
       </CardContent>
+      {confirmDialog}
     </Card>
   );
 }

@@ -19,6 +19,26 @@ export type ContextualHelpContent = {
   notes?: string[];
 };
 
+/**
+ * Booking status glossary — the plain-English meaning of every booking status
+ * badge a member (or operator) can see. Exported as a single source of truth so
+ * both the admin/finance contextual help below and the member booking pages
+ * (#1371 F28 / #1072) render the identical text.
+ */
+export const BOOKING_STATUS_GLOSSARY: string[] = [
+  "Draft — saved but not submitted; holds no beds.",
+  "Pending — provisional non-member hold; does not consume capacity.",
+  "Awaiting Review — waiting on an admin decision; keeps its beds so approval cannot overbook.",
+  "Payment Pending — awaiting payment; beds are not reserved until money is committed.",
+  "Confirmed (Unpaid) — pay-on-account booking; the lodge is reserved while the emailed Xero invoice is outstanding, and it flips to Paid on reconciliation.",
+  "Paid — paid in full; holds capacity.",
+  "Completed — the stay has started or finished; keeps consuming capacity until checkout.",
+  "Waitlisted — queued for a spot; no beds held.",
+  "Waitlist Offered — a spot opened; time-limited offer to confirm and pay.",
+  "Bumped — displaced when capacity changed; no beds held.",
+  "Cancelled — cancelled; no beds held.",
+];
+
 type HelpEntry = {
   path: string;
   content: ContextualHelpContent;
@@ -382,19 +402,7 @@ const adminHelpEntries: HelpEntry[] = [
       [
         {
           title: "Booking status glossary",
-          details: [
-            "Draft — saved but not submitted; holds no beds.",
-            "Pending — provisional non-member hold; does not consume capacity.",
-            "Awaiting Review — waiting on an admin decision; keeps its beds so approval cannot overbook.",
-            "Payment Pending — awaiting payment; beds are not reserved until money is committed.",
-            "Confirmed (Unpaid) — pay-on-account booking; the lodge is reserved while the emailed Xero invoice is outstanding, and it flips to Paid on reconciliation.",
-            "Paid — paid in full; holds capacity.",
-            "Completed — the stay has started or finished; keeps consuming capacity until checkout.",
-            "Waitlisted — queued for a spot; no beds held.",
-            "Waitlist Offered — a spot opened; time-limited offer to confirm and pay.",
-            "Bumped — displaced when capacity changed; no beds held.",
-            "Cancelled — cancelled; no beds held.",
-          ],
+          details: BOOKING_STATUS_GLOSSARY,
         },
       ],
     ),

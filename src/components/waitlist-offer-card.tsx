@@ -14,6 +14,7 @@ interface WaitlistOfferCardProps {
 export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: WaitlistOfferCardProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [timeLeft, setTimeLeft] = useState("");
 
@@ -49,7 +50,12 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
     const data = await res.json();
 
     if (res.ok && data.success) {
-      // Refresh the page to show the new status (CONFIRMED/PENDING/PAID)
+      // Terminal success state: the confirm POST succeeded server-side, so the
+      // CTA must never stick on "Confirming…" while router.refresh() re-renders
+      // the page to the new status (CONFIRMED/PENDING/PAID). Previously the
+      // success path only called router.refresh() and left `confirming` true, so
+      // a slow refresh left the button frozen on "Confirming…" (#1371 F28).
+      setConfirmed(true);
       router.refresh();
     } else {
       setError(data.error || "Failed to confirm booking");
@@ -58,6 +64,25 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
   }
 
   const isExpired = timeLeft === "Expired";
+
+  // Terminal success state: the moment the confirm POST succeeds the offer card
+  // is replaced by a confirmed state, so the CTA can never stick on "Confirming…"
+  // and the "A Spot Has Opened Up!" offer clears immediately — independent of how
+  // long router.refresh() takes to re-render the page (#1371 F28).
+  if (confirmed) {
+    return (
+      <Card className="border-teal-200 bg-teal-50">
+        <CardHeader>
+          <CardTitle className="text-teal-900">Spot Confirmed</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-teal-800">
+            Your spot is confirmed. Updating your booking…
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="border-teal-200 bg-teal-50">
