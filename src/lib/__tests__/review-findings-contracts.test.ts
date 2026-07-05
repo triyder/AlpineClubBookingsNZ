@@ -72,6 +72,40 @@ function runMigrationSafetyValidator(
   });
 }
 
+const LEDGER_HEADER =
+  "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan";
+
+function createTempMigrationsTree(
+  migrations: { name: string; sql: string }[],
+  ledger: string
+) {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-coverage-"));
+  const migrationsDir = path.join(tempDir, "migrations");
+  const ledgerPath = path.join(tempDir, "safety.tsv");
+
+  for (const migration of migrations) {
+    const dir = path.join(migrationsDir, migration.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "migration.sql"), migration.sql);
+  }
+  writeFileSync(ledgerPath, ledger);
+
+  return { tempDir, migrationsDir, ledgerPath };
+}
+
+function runMigrationSafetyCoverage(
+  env: Record<string, string> = {}
+) {
+  return spawnSync("bash", ["scripts/check-migration-safety-coverage.sh"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ...env,
+    },
+    encoding: "utf8",
+  });
+}
+
 describe("review finding source/schema contracts", () => {
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
@@ -519,6 +553,98 @@ describe("review finding source/schema contracts", () => {
       expect(blocked.status).not.toBe(0);
       expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
       expect(allowed.status).toBe(0);
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("flags hot-table trigger operations in the blue/green validator", () => {
+    // #1359 (finding F8): 20260704100000 ran DROP TRIGGER / CREATE CONSTRAINT
+    // TRIGGER on hot tables Booking/BookingGuest, but the validator's hot-table
+    // regex did not cover TRIGGER operations, so it passed the deploy gate with
+    // no ledger entry. The regex must now require a ledger entry for them.
+    const missing = createTempMigration(
+      'DROP TRIGGER "Booking_dates_consistent_with_guests" ON "Booking";\n',
+      `${LEDGER_HEADER}\n`
+    );
+    try {
+      const result = runMigrationSafetyValidator(
+        missing.migrationPath,
+        missing.ledgerPath
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("blue/green migration safety review");
+    } finally {
+      rmSync(missing.tempDir, { recursive: true, force: true });
+    }
+
+    const documented = createTempMigration(
+      'DROP TRIGGER "Booking_dates_consistent_with_guests" ON "Booking";\n',
+      [
+        LEDGER_HEADER,
+        "20990101000000_test_migration\texpand\tn/a\tyes\tSwaps a Booking trigger for a deferred constraint trigger; brief lock, no row scan.",
+      ].join("\n")
+    );
+    try {
+      const result = runMigrationSafetyValidator(
+        documented.migrationPath,
+        documented.ledgerPath
+      );
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(documented.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the committed migration tree covered by the blue/green safety ledger", () => {
+    // Regression guard for #1359: the real prisma/migrations tree + real ledger
+    // must pass the PR-time coverage gate (both backfilled rows present, and no
+    // new duplicate timestamp prefix beyond the grandfathered set).
+    const result = runMigrationSafetyCoverage();
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("fails ledger coverage when a hot-table migration at/after baseline is unledgered", () => {
+    const fixture = createTempMigrationsTree(
+      [
+        {
+          name: "20990101000000_unledgered_hot",
+          sql: 'ALTER TABLE "Payment" ADD COLUMN "processorRef" TEXT;\n',
+        },
+      ],
+      [LEDGER_HEADER, "20260507000000_base\texpand\tn/a\tyes\tbaseline row"].join(
+        "\n"
+      )
+    );
+    try {
+      const result = runMigrationSafetyCoverage({
+        MIGRATIONS_DIR: fixture.migrationsDir,
+        MIGRATION_SAFETY_LEDGER: fixture.ledgerPath,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Ledger coverage check FAILED");
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails the timestamp ratchet when a new migration reuses a timestamp prefix", () => {
+    const fixture = createTempMigrationsTree(
+      [
+        { name: "20990101000000_alpha", sql: 'CREATE TABLE "Foo" ("id" TEXT);\n' },
+        { name: "20990101000000_beta", sql: 'CREATE TABLE "Bar" ("id" TEXT);\n' },
+      ],
+      [LEDGER_HEADER, "20260507000000_base\texpand\tn/a\tyes\tbaseline row"].join(
+        "\n"
+      )
+    );
+    try {
+      const result = runMigrationSafetyCoverage({
+        MIGRATIONS_DIR: fixture.migrationsDir,
+        MIGRATION_SAFETY_LEDGER: fixture.ledgerPath,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Timestamp hygiene check FAILED");
     } finally {
       rmSync(fixture.tempDir, { recursive: true, force: true });
     }
