@@ -47,15 +47,28 @@ test("test-mode card payment succeeds and confirms the booking", async ({
 
   await payWithCard(page, TEST_CARDS.success);
 
-  await expect(page.getByText("Payment successful!")).toBeVisible({
-    timeout: 45_000,
-  });
+  // Stripe's confirmPayment (redirect: "if_required") resolves one of two ways,
+  // both of which mean the charge succeeded and the booking is paid:
+  //   • INLINE — the intent returns `succeeded` and PaymentForm shows the
+  //     "Payment successful!" banner in place (the residential-IP path #1217 saw
+  //     locally); or
+  //   • REDIRECT — Stripe requires additional action (3D Secure / risk-based
+  //     step-up, which its risk engine is markedly more likely to trigger for a
+  //     CI runner's datacenter IP than for a residential one), so the page
+  //     navigates to the return_url booking page, which shows "Payment received".
+  // Assert the success OUTCOME rather than one specific confirmation path, so the
+  // spec is robust to whichever path Stripe takes in a given environment (#1220).
+  await expect(
+    page
+      .getByText("Payment successful!")
+      .or(page.getByText("Payment received"))
+      .first(),
+  ).toBeVisible({ timeout: 45_000 });
 
   // Money is committed now, so the paid booking must hold its beds
-  // (CAPACITY_HOLDING_BOOKING_STATUSES / issue #737). The banner renders on
-  // Stripe's client-side confirmation; the server marks the booking PAID and
-  // claims capacity in the success callback just after, so poll instead of
-  // sampling instantly.
+  // (CAPACITY_HOLDING_BOOKING_STATUSES / issue #737). The server marks the
+  // booking PAID and claims capacity in the success callback just after, so poll
+  // instead of sampling instantly.
   for (const night of window.nights) {
     await expect
       .poll(
