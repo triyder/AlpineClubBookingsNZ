@@ -125,6 +125,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-operation-outbox-payload` | The 12 queue-type constants (plus the `XERO_OUTBOX_QUEUE_TYPES` list the pending scan filters on), payload schemas, and payload→expected-operation mapping used to claim rows safely. |
 | `xero-operation-retry` | `retryXeroSyncOperation`: immediate replay of a failed operation (admin "Retry"), including contact-payload rebuild for member contact ops. |
 | `xero-operation-queue` | Background replay: a REQUEUE `XeroSyncOperation` wraps the original id; `processQueuedXeroOperationRetries` claims and executes them via `retryXeroSyncOperation`. |
+| `xero-operation-claim` | The shared `claimXeroSyncOperationToRunning(id, guard)` single-flight (#1272 part 2): one conditional `updateMany` that flips a PENDING row to RUNNING (with the four error/timestamp resets) only when `count === 1`. Both the outbox scan and the retry scan delegate their claim to it; only the caller's guard predicate differs. |
 | `xero-booking-invoice-queue` | Thin helper: enqueue booking invoice + immediate kick, for callers that want one line. |
 | `xero-booking-edit-settlement` | Classifies an admin booking edit into the right financial follow-up (update invoice / supplementary invoice / credit note) and queues it. |
 
@@ -515,19 +516,30 @@ These are candidates for future issues, not commitments.
 4. **Unify the operation-replay stack.** `xero-operation-outbox`,
    `xero-operation-outbox-payload`, `xero-operation-queue`, and
    `xero-operation-retry` describe one lifecycle (enqueue → scan/dispatch →
-   execute → retry/replay → payload). _Part 1 done (#1272):_ the PENDING outbox
-   scan (`processQueuedXeroOutboxOperations`) now filters on the indexed
-   `queueType` column (using the `(queueType, status, createdAt)` index) instead
-   of a hand-written 12-branch `requestPayload->>'queueType'` OR predicate, and
-   the 12 queue-type values are consolidated into one exported
-   `XERO_OUTBOX_QUEUE_TYPES` list in `xero-operation-outbox-payload` that the
-   scan's `IN` consumes (single source of truth; per-type dispatch routing and
-   the payload parse switch are byte-identical). _Remaining (PR-b, owner-gated):_
-   physically co-locate the four files behind one `xero-operation-replay`
-   boundary and extract the duplicated claim-to-RUNNING `updateMany` pattern
-   (outbox + queue) — plus `xero-stale-operations` — into one shared
-   operation-lifecycle helper owning claim/complete/fail/requeue/stale
-   semantics.
+   execute → retry/replay → payload). _Done (#1272), in two owner-reviewed
+   parts:_
+   - _Part 1:_ the PENDING outbox scan
+     (`processQueuedXeroOutboxOperations`) now filters on the indexed
+     `queueType` column (using the `(queueType, status, createdAt)` index)
+     instead of a hand-written 12-branch `requestPayload->>'queueType'` OR
+     predicate, and the 12 queue-type values are consolidated into one exported
+     `XERO_OUTBOX_QUEUE_TYPES` list in `xero-operation-outbox-payload` that the
+     scan's `IN` consumes (single source of truth; per-type dispatch routing and
+     the payload parse switch are byte-identical).
+   - _Part 2:_ the duplicated claim-to-RUNNING `updateMany` in the outbox scan
+     and the retry scan is extracted verbatim into one shared
+     `claimXeroSyncOperationToRunning(id, guard)` primitive
+     (`xero-operation-claim`); both callers delegate, passing only their
+     guard predicate, so each resulting `WHERE` (and the atomic `count === 1`
+     single-flight) is identical to before. A dispatch-domain test now drives the
+     real if/else chain to prove it routes exactly `XERO_OUTBOX_QUEUE_TYPES`.
+
+   _Deliberately not pursued (owner decision):_ physically co-locating the four
+   files behind one `xero-operation-replay` boundary and folding
+   `xero-stale-operations` plus complete/fail/requeue/stale into a single
+   lifecycle god-helper — the column scan (part 1) and the shared claim helper
+   (part 2) are the consolidations that de-duplicate real logic and close #1272;
+   the rest would be churn without a behavioral payoff.
 5. **Split `xero-hardening.ts` (1,606 lines).** _Done (#1208 item 5):_ the
    private helpers were extracted verbatim (behavior preserving) into cohesive
    `xero-hardening-<concern>.ts` sub-modules with an acyclic import graph —

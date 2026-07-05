@@ -5,6 +5,7 @@ import {
   syncXeroMembershipCancellationContact,
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
+import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { getSeasonYear } from "@/lib/utils";
 import {
   buildXeroIdempotencyKey,
@@ -60,27 +61,18 @@ async function claimQueuedOutboxOperation(
   operationId: string,
   expectedOperation: QueuedOutboxExpectedOperation
 ) {
-  const result = await prisma.xeroSyncOperation.updateMany({
-    where: {
-      id: operationId,
-      status: "PENDING",
-      direction: "OUTBOUND",
-      entityType: expectedOperation.entityType,
-      operationType: expectedOperation.operationType,
-      localModel: {
-        in: [...expectedOperation.localModels],
-      },
-    },
-    data: {
-      status: "RUNNING",
-      startedAt: new Date(),
-      completedAt: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
+  // Delegates to the shared claim-to-RUNNING single-flight (#1272). The guard
+  // below is the outbound-outbox predicate; combined with the helper's
+  // `status: "PENDING"` precondition the resulting WHERE is identical to the
+  // pre-consolidation inline claim.
+  return claimXeroSyncOperationToRunning(operationId, {
+    direction: "OUTBOUND",
+    entityType: expectedOperation.entityType,
+    operationType: expectedOperation.operationType,
+    localModel: {
+      in: [...expectedOperation.localModels],
     },
   });
-
-  return result.count === 1;
 }
 
 function buildPrecomputedEntranceFeeContext(

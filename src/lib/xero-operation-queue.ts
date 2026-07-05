@@ -1,6 +1,7 @@
 import type { XeroSyncOperation } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { asRecord } from "@/lib/xero-json";
 import {
   buildXeroIdempotencyKey,
@@ -67,22 +68,13 @@ export function parseXeroOperationRequeueOriginalId(
 }
 
 async function claimQueuedRetryOperation(operationId: string) {
-  const result = await prisma.xeroSyncOperation.updateMany({
-    where: {
-      id: operationId,
-      status: "PENDING",
-      operationType: XERO_OPERATION_REQUEUE_TYPE,
-    },
-    data: {
-      status: "RUNNING",
-      startedAt: new Date(),
-      completedAt: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-    },
+  // Delegates to the shared claim-to-RUNNING single-flight (#1272). The guard
+  // is the REQUEUE predicate; combined with the helper's `status: "PENDING"`
+  // precondition the resulting WHERE is identical to the pre-consolidation
+  // inline claim.
+  return claimXeroSyncOperationToRunning(operationId, {
+    operationType: XERO_OPERATION_REQUEUE_TYPE,
   });
-
-  return result.count === 1;
 }
 
 export async function enqueueXeroSyncOperationRetry(

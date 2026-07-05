@@ -257,4 +257,23 @@ describe("processQueuedXeroOperationRetries", () => {
       })
     );
   });
+
+  it("skips a queued retry it loses the claim race for (updateMany matched zero PENDING rows)", async () => {
+    // A concurrent worker already claimed the requeue row, so the conditional
+    // claim matches nothing. The single-flight must skip it, never replaying the
+    // original operation twice.
+    mocks.findManyQueued.mockResolvedValue([makeQueuedOperation()]);
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+
+    await expect(processQueuedXeroOperationRetries({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+
+    expect(mocks.retryXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).not.toHaveBeenCalled();
+  });
 });
