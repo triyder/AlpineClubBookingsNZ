@@ -755,6 +755,109 @@ export async function syncRefundsFromStripeCharge({
   };
 }
 
+type RefundableStripeTransaction = {
+  id: string;
+  source: PaymentSource;
+  stripePaymentIntentId: string | null;
+  status: PaymentStatus;
+  amountCents: number;
+  refundedAmountCents: number;
+  createdAt: Date;
+};
+
+/**
+ * The single derivation of newest-first per-transaction refund slices, shared
+ * by refundPaymentTransactions (when no explicit allocation is passed) and
+ * planStripeRefundAllocation (#1349). Sharing it is load-bearing: a plan frozen
+ * at cancellation-claim time must produce byte-identical slices — and therefore
+ * identical `${prefix}_${transactionId}_${amount}` Stripe idempotency keys — to
+ * what an inline refund would derive, so a replay is answered by Stripe with
+ * the original refunds instead of minting new ones. Slices are capped at what
+ * the ledger shows refundable; callers decide whether a shortfall throws.
+ */
+function buildRefundAllocationSlices<T extends RefundableStripeTransaction>(
+  transactions: readonly T[],
+  amountCents: number
+): {
+  slices: Array<{ transaction: T; amountCents: number }>;
+  totalRefundableCents: number;
+} {
+  const refundableTransactions = transactions
+    .filter(isStripeTransaction)
+    .filter((transaction) => isCapturedTransactionStatus(transaction.status))
+    .filter(
+      (transaction) =>
+        transaction.amountCents - transaction.refundedAmountCents > 0
+    )
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  const totalRefundableCents = refundableTransactions.reduce(
+    (sum, transaction) =>
+      sum + (transaction.amountCents - transaction.refundedAmountCents),
+    0
+  );
+
+  let remainingAmountCents = amountCents;
+  const slices: Array<{ transaction: T; amountCents: number }> = [];
+  for (const transaction of refundableTransactions) {
+    if (remainingAmountCents <= 0) break;
+    const refundableAmountCents =
+      transaction.amountCents - transaction.refundedAmountCents;
+    const sliceAmountCents = Math.min(
+      remainingAmountCents,
+      refundableAmountCents
+    );
+    slices.push({ transaction, amountCents: sliceAmountCents });
+    remainingAmountCents -= sliceAmountCents;
+  }
+
+  return { slices, totalRefundableCents };
+}
+
+/**
+ * Freeze the refund allocation a later refundPaymentTransactions call would
+ * derive, without touching Stripe (#1349). Used inside the booking-cancel
+ * claim transaction to persist the refund debt (recovery operation + plan)
+ * atomically with the CANCELLED flip, before any external call. Backfills
+ * legacy payments' transaction rows so the plan exists even for pre-ledger
+ * payments. Never throws on a shortfall: the plan covers min(amountCents,
+ * refundable) and the caller surfaces any gap.
+ */
+export async function planStripeRefundAllocation({
+  paymentId,
+  amountCents,
+  store = prisma,
+}: {
+  paymentId: string;
+  amountCents: number;
+  store?: PaymentStore;
+}): Promise<{
+  slices: RefundAllocationSlice[];
+  plannedAmountCents: number;
+  totalRefundableCents: number;
+}> {
+  const payment = await ensurePaymentTransactionsBackfilled(store, paymentId);
+  if (!payment) {
+    throw new Error("Payment not found");
+  }
+
+  const { slices, totalRefundableCents } = buildRefundAllocationSlices(
+    payment.transactions,
+    amountCents
+  );
+
+  const plan = slices.map((slice) => ({
+    paymentTransactionId: slice.transaction.id,
+    amountCents: slice.amountCents,
+  }));
+
+  return {
+    slices: plan,
+    plannedAmountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
+    totalRefundableCents,
+  };
+}
+
 export interface RefundAllocationSlice {
   paymentTransactionId: string;
   amountCents: number;
@@ -850,42 +953,16 @@ export async function refundPaymentTransactions({
       return { transaction, amountCents: slice.amountCents };
     });
   } else {
-    const refundableTransactions = [...stripeTransactions]
-      .filter(
-        (transaction) =>
-          transaction.amountCents - transaction.refundedAmountCents > 0
-      )
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    // Shared with planStripeRefundAllocation (#1349) so a plan frozen at
+    // cancellation-claim time derives the exact slices (and Stripe keys) this
+    // inline path would.
+    const derived = buildRefundAllocationSlices(stripeTransactions, amountCents);
 
-    const totalRefundableCents = refundableTransactions.reduce(
-      (sum, transaction) =>
-        sum + (transaction.amountCents - transaction.refundedAmountCents),
-      0
-    );
-
-    if (amountCents > totalRefundableCents) {
+    if (amountCents > derived.totalRefundableCents) {
       throw new Error("Refund amount exceeds captured Stripe payments");
     }
 
-    let remainingAmountCents = amountCents;
-    slices = [];
-    for (const transaction of refundableTransactions) {
-      if (remainingAmountCents <= 0) break;
-      const refundableAmountCents =
-        transaction.amountCents - transaction.refundedAmountCents;
-      const sliceAmountCents = Math.min(
-        remainingAmountCents,
-        refundableAmountCents
-      );
-      slices.push({ transaction, amountCents: sliceAmountCents });
-      remainingAmountCents -= sliceAmountCents;
-    }
-
-    if (remainingAmountCents > 0) {
-      throw new Error(
-        `Refund partially processed; ${remainingAmountCents} cents still need manual reconciliation`
-      );
-    }
+    slices = derived.slices;
   }
 
   const refunds: Array<{

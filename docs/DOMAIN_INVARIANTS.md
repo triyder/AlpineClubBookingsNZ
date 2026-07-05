@@ -334,6 +334,17 @@ method, and no ordering of edit/cancel operations may produce a different
 total payout (refunds plus credits) than another ordering reaching the same
 final state.
 
+A cancellation's card-refund debt must be durable before any external call
+(#1349): the claim transaction that flips the booking to `CANCELLED` also
+writes the payment-recovery operation, carrying the per-transaction refund
+allocation frozen from the under-lock read. No crash point between the claim
+commit and the Stripe refund may leave the debt unrecorded, and no combination
+of the inline refund and the recovery cron may pay it twice — both execute the
+same frozen slices, so they mint identical Stripe idempotency keys and Stripe
+replays rather than repeats. The mirror of this rule is the group-cancel
+settlement, which persists its per-child `refundPlan` before its Stripe refund
+for the same reason.
+
 Cancelled-booking soft-delete may hide an operational duplicate only when it
 preserves the booking row and no external money/Xero history needs to remain
 operator-visible by default. Balanced internal modification deltas that net to

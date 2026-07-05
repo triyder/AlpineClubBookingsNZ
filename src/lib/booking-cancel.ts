@@ -23,10 +23,16 @@ import logger from "@/lib/logger";
 import {
   applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed,
+  planStripeRefundAllocation,
   refundPaymentTransactions,
   PartialRefundError,
+  type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { enqueueBookingCancellationRefundRecovery } from "@/lib/payment-recovery";
+import {
+  enqueueBookingCancellationRefundRecovery,
+  markBookingCancellationRefundRecoverySucceeded,
+  recordBookingCancellationRefundRecoveryInlineError,
+} from "@/lib/payment-recovery";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
@@ -647,9 +653,10 @@ async function performBookingCancellation(
   //
   // Phase 1 (tx1) is a DB-only critical section under the global booking
   // advisory lock. It re-reads the booking under the lock, freezes the refund
-  // plan from that locked read, flips status to CANCELLED, and — for the
-  // credit path — writes the refund-allocation + credit ledger entries
-  // atomically with that flip. NO Stripe/Xero calls happen inside tx1.
+  // plan from that locked read, flips status to CANCELLED, and — atomically
+  // with that flip — writes the refund-allocation + credit ledger entries
+  // (credit path) or the refund-recovery operation with its frozen allocation
+  // plan (card path, F2 #1349). NO Stripe/Xero calls happen inside tx1.
   //
   // The atomic status flip is the single-flight CLAIM and the only
   // idempotency guarantee this path needs. The credit writers
@@ -769,6 +776,40 @@ async function performBookingCancellation(
       );
     }
 
+    // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the
+    // recovery operation — with the refund allocation frozen from this locked
+    // read — BEFORE any external call, mirroring group-cancel's
+    // persist-the-plan-first pattern. A process death anywhere between this
+    // commit and the Stripe refund (a window that includes the Phase-2
+    // best-effort Stripe cancel of any additional intent, i.e. a network
+    // call) now leaves a PENDING operation the recovery cron replays instead
+    // of a silently lost refund; a re-invoked cancel 409s by design and could
+    // never re-drive it. The frozen plan makes inline-vs-cron replay
+    // exactly-once by construction: both execute the identical slices, so
+    // they mint identical `booking_cancel_refund_<bookingId>_<txn>_<amount>`
+    // Stripe keys, Stripe answers repeats with the original refunds, and the
+    // ledger dedupes on refund id.
+    let cardRefundPlan: RefundAllocationSlice[] | null = null;
+    let plannedCardRefundCents = 0;
+    if (refundMethod === "card" && refundAmountCents > 0) {
+      const { slices, plannedAmountCents } = await planStripeRefundAllocation({
+        paymentId: payment.id,
+        amountCents: refundAmountCents,
+        store: tx,
+      });
+      cardRefundPlan = slices;
+      plannedCardRefundCents = plannedAmountCents;
+      if (plannedCardRefundCents > 0) {
+        await enqueueBookingCancellationRefundRecovery({
+          bookingId,
+          paymentId: payment.id,
+          amountCents: plannedCardRefundCents,
+          allocationPlan: slices,
+          store: tx,
+        });
+      }
+    }
+
     return {
       claimed: true as const,
       fresh,
@@ -780,6 +821,8 @@ async function performBookingCancellation(
       paidAmountCents,
       days,
       shouldFailAdditionalPayment,
+      cardRefundPlan,
+      plannedCardRefundCents,
     };
   });
 
@@ -803,6 +846,8 @@ async function performBookingCancellation(
     paidAmountCents,
     days,
     shouldFailAdditionalPayment,
+    cardRefundPlan,
+    plannedCardRefundCents,
   } = claim;
   const paymentId = payment.id;
 
@@ -930,43 +975,71 @@ async function performBookingCancellation(
   // ── Card branch: Stripe refund ────────────────────────────────────
   if (refundAmountCents > 0) {
     let stripeRefundId: string | undefined;
-    try {
-      const refundResult = await refundPaymentTransactions({
-        paymentId,
-        amountCents: refundAmountCents,
-        metadata: {
-          bookingId,
-          reason: "cancellation",
-          refundPercentage: refundPercentage.toString(),
-        },
-        idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
-      });
-      stripeRefundId = refundResult.refunds[0]?.refundId;
-    } catch (err) {
-      // The claim already committed. A refund that failed partway has recorded
-      // `completedRefundCents`; anything still outstanding self-heals through
-      // the durable recovery queue, which replays the SAME Stripe key
-      // (booking_cancel_refund_<bookingId>) so a Stripe-succeeded-but-unrecorded
-      // refund is replayed, not repeated. Do NOT rethrow.
-      const completedRefundCents =
-        err instanceof PartialRefundError ? err.completedRefundCents : 0;
-      const remaining = refundAmountCents - completedRefundCents;
-      if (remaining > 0) {
-        await enqueueBookingCancellationRefundRecovery({
-          bookingId,
+
+    // The refund debt was persisted INSIDE the claim transaction (F2, #1349):
+    // a recovery operation carrying the frozen per-transaction plan committed
+    // atomically with the CANCELLED flip, so nothing below can silently lose
+    // the member's refund. The mirror-vs-ledger drift case where the plan
+    // covers less than the policy-due amount is logged here and refunds what
+    // the ledger actually shows refundable — the same net outcome the old
+    // inline derive reached via its recovery path.
+    if (plannedCardRefundCents < refundAmountCents) {
+      logger.error(
+        { bookingId, paymentId, refundAmountCents, plannedCardRefundCents },
+        "Cancellation refund plan covers less than the policy-due amount; refunding what the payment ledger shows refundable"
+      );
+    }
+
+    if (cardRefundPlan && plannedCardRefundCents > 0) {
+      try {
+        const refundResult = await refundPaymentTransactions({
           paymentId,
-          amountCents: remaining,
-        }).catch((enqueueErr) =>
+          amountCents: plannedCardRefundCents,
+          allocation: cardRefundPlan,
+          metadata: {
+            bookingId,
+            reason: "cancellation",
+            refundPercentage: refundPercentage.toString(),
+          },
+          idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
+        });
+        stripeRefundId = refundResult.refunds[0]?.refundId;
+        // Happy-path close of the pre-persisted operation. Best-effort: if
+        // this write is lost the cron replays the frozen plan, Stripe answers
+        // the repeated keys with the original refunds, and the operation
+        // completes with no second money movement.
+        await markBookingCancellationRefundRecoverySucceeded({
+          bookingId,
+        }).catch((markErr) =>
           logger.error(
-            { err: enqueueErr, bookingId, paymentId, remaining },
-            "Failed to enqueue booking cancellation refund recovery"
+            { err: markErr, bookingId, paymentId },
+            "Failed to mark booking cancellation refund recovery succeeded; the cron will replay the frozen plan idempotently"
           )
         );
+      } catch (err) {
+        // The claim already committed and the recovery operation already
+        // exists with the frozen plan, so there is nothing to enqueue here
+        // (pre-#1349 this catch was the ONLY place the debt was recorded —
+        // and its own failure was swallowed). A partial success has recorded
+        // its completed slices; the cron replays the SAME plan and keys, so
+        // completed slices are replayed by Stripe, not repeated, and only the
+        // remainder moves money. Do NOT rethrow.
+        const completedRefundCents =
+          err instanceof PartialRefundError ? err.completedRefundCents : 0;
+        await recordBookingCancellationRefundRecoveryInlineError({
+          bookingId,
+          message: err instanceof Error ? err.message : String(err),
+        }).catch((recordErr) =>
+          logger.error(
+            { err: recordErr, bookingId, paymentId },
+            "Failed to record inline cancellation refund failure on the recovery operation"
+          )
+        );
+        logger.error(
+          { err, bookingId, paymentId, refundAmountCents, completedRefundCents },
+          "Booking cancellation card refund failed; booking stays CANCELLED and the pre-persisted recovery operation replays the remainder"
+        );
       }
-      logger.error(
-        { err, bookingId, paymentId, refundAmountCents, completedRefundCents },
-        "Booking cancellation card refund failed; booking stays CANCELLED and the remainder is enqueued for recovery"
-      );
     }
 
     // Queue the Xero credit note durably (allocated against the original invoice).

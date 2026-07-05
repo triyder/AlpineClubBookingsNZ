@@ -148,6 +148,7 @@ async function enqueueLedgerRefundRecovery({
   amountCents,
   idempotencyKey,
   stripeKeyPrefix,
+  allocationPlan,
   store = prisma,
 }: {
   bookingId: string;
@@ -155,6 +156,15 @@ async function enqueueLedgerRefundRecovery({
   stripeKeyPrefix?: string | null;
   amountCents: number;
   idempotencyKey: string;
+  /**
+   * Per-transaction slices frozen by the caller BEFORE any Stripe call
+   * (#1349). When present, the processor replays exactly these slices with
+   * their `${prefix}_${transactionId}_${amount}` Stripe keys instead of
+   * deriving an allocation from whatever progress happens to be recorded, so
+   * an enqueue-then-execute caller (booking cancel) is exactly-once even when
+   * the recovery cron races or resumes the inline refund.
+   */
+  allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
   const payment = await store.payment.findUnique({
@@ -183,6 +193,11 @@ async function enqueueLedgerRefundRecovery({
     );
   }
 
+  const allocationPlanJson =
+    allocationPlan && allocationPlan.length > 0
+      ? (allocationPlan as unknown as Prisma.InputJsonValue)
+      : undefined;
+
   return store.paymentRecoveryOperation.upsert({
     where: { idempotencyKey },
     create: {
@@ -194,6 +209,7 @@ async function enqueueLedgerRefundRecovery({
       amountCents,
       idempotencyKey,
       stripeKeyPrefix: stripeKeyPrefix ?? null,
+      allocationPlan: allocationPlanJson,
       nextRetryAt: new Date(),
     },
     update: {
@@ -202,6 +218,12 @@ async function enqueueLedgerRefundRecovery({
       paymentIntentId: representativePaymentIntentId,
       amountCents,
       stripeKeyPrefix: stripeKeyPrefix ?? null,
+      // Only overwrite a frozen plan when the caller supplies a fresh one; an
+      // update without a plan must not clobber slices a previous processing
+      // pass already replayed against Stripe.
+      ...(allocationPlanJson !== undefined
+        ? { allocationPlan: allocationPlanJson }
+        : {}),
     },
   });
 }
@@ -328,11 +350,14 @@ export async function enqueueBookingCancellationRefundRecovery({
   bookingId,
   paymentId,
   amountCents,
+  allocationPlan,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
   amountCents: number;
+  /** Slices frozen inside the cancellation claim transaction (#1349). */
+  allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
   return enqueueLedgerRefundRecovery({
@@ -340,7 +365,65 @@ export async function enqueueBookingCancellationRefundRecovery({
     paymentId,
     amountCents,
     idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+    allocationPlan,
     store,
+  });
+}
+
+/**
+ * Mark the booking-cancellation refund recovery operation SUCCEEDED after the
+ * inline refund completed (#1349). The operation is persisted inside the
+ * claim transaction BEFORE the Stripe call; this is the happy-path close. If
+ * this update is lost (crash, DB blip) the operation stays PENDING and the
+ * recovery cron replays the frozen plan — Stripe answers the replayed keys
+ * with the original refunds and the ledger dedupes on refund id, so the close
+ * being best-effort is safe.
+ */
+export async function markBookingCancellationRefundRecoverySucceeded({
+  bookingId,
+  store = prisma,
+}: {
+  bookingId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Record why the inline cancellation refund failed on the already-persisted
+ * recovery operation (#1349), for operator visibility on the health surfaces.
+ * Only touches a PENDING row: once the cron has claimed (PROCESSING) or
+ * resolved the operation, its own lifecycle owns lastError.
+ */
+export async function recordBookingCancellationRefundRecoveryInlineError({
+  bookingId,
+  message,
+  store = prisma,
+}: {
+  bookingId: string;
+  message: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+      status: PaymentRecoveryOperationStatus.PENDING,
+    },
+    data: {
+      lastError: message,
+    },
   });
 }
 

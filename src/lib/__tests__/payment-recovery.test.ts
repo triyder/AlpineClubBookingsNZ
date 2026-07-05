@@ -142,6 +142,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
@@ -813,6 +814,87 @@ describe("payment recovery worker", () => {
           reason: "booking_cancellation_refund_recovery",
         },
         idempotencyKeyPrefix: "booking_cancel_refund_booking-1",
+      }),
+    );
+  });
+
+  it("replays a claim-frozen allocation plan for a crashed booking cancellation refund (#1349)", async () => {
+    // #1349: booking-cancel persists this operation INSIDE the claim
+    // transaction, with the allocation frozen from the under-lock read. A
+    // process death before (or during) the inline Stripe call leaves it
+    // PENDING; the cron must execute EXACTLY the frozen slices under the
+    // inline cancel key prefix — identical Stripe idempotency keys — so any
+    // slice the inline path already completed is replayed by Stripe, never
+    // repeated.
+    const crashed = makeOperation({
+      id: "recovery-cancel-crash",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+      idempotencyKey: "booking_cancel_refund_recovery_booking-1",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        amountCents: 4000,
+        allocation: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        idempotencyKeyPrefix: "booking_cancel_refund_booking-1",
+      }),
+    );
+    // The frozen plan is authoritative — no re-derivation/re-freeze.
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ allocationPlan: expect.anything() }),
+      }),
+    );
+    // Replayed to completion.
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-cancel-crash" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        }),
+      }),
+    );
+  });
+
+  it("enqueueBookingCancellationRefundRecovery persists the claim-frozen allocation plan (#1349)", async () => {
+    await enqueueBookingCancellationRefundRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: "booking_cancel_refund_recovery_booking-1" },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "booking-1",
+          paymentId: "payment-1",
+          amountCents: 4000,
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
+        update: expect.objectContaining({
+          amountCents: 4000,
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
       }),
     );
   });

@@ -29,6 +29,11 @@ import {
 const PAYMENT_PROCESSING_STALE_MINUTES = 30;
 const PAYMENT_PENDING_OVERDUE_MINUTES = 15;
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
+// #1349 (F2): lookback window for the cancelled-with-unrecorded-refund
+// detector. Bounds noise from historical deliberate zero-refund cancellations
+// that predate BookingEvent narratives while still catching any recent cancel
+// that crashed between its claim commit and the Stripe refund.
+const CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS = 90;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
 
@@ -89,7 +94,7 @@ type FindManyDelegate = {
 
 type StuckStateDashboardDb = {
   paymentRecoveryOperation: CountDelegate;
-  booking: FindManyDelegate;
+  booking: FindManyDelegate & CountDelegate;
   groupBookingSettlement: FindManyDelegate;
   issueReport: CountDelegate;
 };
@@ -235,7 +240,23 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
   staleProcessing: number;
   overduePending: number;
   staleSettlements: number;
+  cancelledUnrecordedRefunds: number;
 }) {
+  addItem(items, {
+    id: "payment-cancelled-refund-unrecorded",
+    domain: "payment",
+    title: "Cancelled bookings with unrecorded refunds",
+    severity: "critical",
+    owner: "Finance",
+    count: counts.cancelledUnrecordedRefunds,
+    href: "/admin/health",
+    summary: `${counts.cancelledUnrecordedRefunds} cancelled ${plural(
+      counts.cancelledUnrecordedRefunds,
+      "booking",
+    )} in the last ${CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS} days ${
+      counts.cancelledUnrecordedRefunds === 1 ? "holds" : "hold"
+    } a captured payment with no recorded refund, no recovery operation, and no cancellation settlement record — the cancel may have crashed before the card refund; verify the member was refunded.`,
+  });
   addItem(items, {
     id: "payment-recovery-exhausted",
     domain: "payment",
@@ -670,7 +691,17 @@ async function getPaymentCounts(
       ),
   ).length;
 
-  const [exhaustedFailed, staleProcessing, overduePending] = await Promise.all([
+  const cancelledRefundLookbackThreshold = new Date(
+    now.getTime() -
+      CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  const [
+    exhaustedFailed,
+    staleProcessing,
+    overduePending,
+    cancelledUnrecordedRefunds,
+  ] = await Promise.all([
     deps.db.paymentRecoveryOperation.count({
       where: {
         status: "FAILED",
@@ -689,9 +720,42 @@ async function getPaymentCounts(
         nextRetryAt: { lte: pendingOverdueThreshold },
       },
     }),
+    // #1349 (F2) crash-window detector: a CANCELLED booking that kept a fully
+    // captured, unrefunded payment with NO refund-recovery operation and NO
+    // cancellation narrative event can only be a cancel that died between the
+    // claim commit and Phase 2 (deliberate zero-refund cancels write their
+    // CANCELLED BookingEvent; refunds bump refundedAmountCents; the #1349
+    // in-transaction enqueue leaves a recovery operation). Before #1349
+    // NOTHING fired for this state — the member's refund was silently lost.
+    deps.db.booking.count({
+      where: {
+        status: "CANCELLED",
+        deletedAt: null,
+        updatedAt: { gte: cancelledRefundLookbackThreshold },
+        payment: {
+          is: {
+            status: "SUCCEEDED",
+            refundedAmountCents: 0,
+            amountCents: { gt: 0 },
+          },
+        },
+        paymentRecoveryOperations: {
+          none: { type: "REFUND_BOOKING_MODIFICATION" },
+        },
+        events: {
+          none: { type: "CANCELLED" },
+        },
+      },
+    }),
   ]);
 
-  return { exhaustedFailed, staleProcessing, overduePending, staleSettlements };
+  return {
+    exhaustedFailed,
+    staleProcessing,
+    overduePending,
+    staleSettlements,
+    cancelledUnrecordedRefunds,
+  };
 }
 
 function isModuleEnabled(modules: FeatureFlags, key: keyof FeatureFlags) {

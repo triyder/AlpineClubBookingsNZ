@@ -75,6 +75,7 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
       },
       booking: {
         findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
       },
       groupBookingSettlement: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -167,6 +168,9 @@ describe("getStuckStateDashboard", () => {
         paymentRecoveryOperation: { count: paymentCount },
         booking: {
           findMany: vi.fn().mockResolvedValue(waitlistBookings),
+          // #1349 crash-window detector: cancelled bookings holding a captured
+          // payment with no recorded refund, recovery op, or narrative event.
+          count: vi.fn().mockResolvedValue(4),
         },
         groupBookingSettlement: {
           findMany: vi.fn().mockResolvedValue([]),
@@ -260,6 +264,15 @@ describe("getStuckStateDashboard", () => {
           severity: "critical",
           owner: "Finance",
           count: 2,
+        }),
+        // #1349 (F2): CANCELLED bookings whose captured payment shows no
+        // recorded refund, no recovery operation, and no cancellation
+        // narrative — the crash-window signature that previously fired nothing.
+        expect.objectContaining({
+          id: "payment-cancelled-refund-unrecorded",
+          severity: "critical",
+          owner: "Finance",
+          count: 4,
         }),
         expect.objectContaining({
           id: "xero-refunds-missing-credit-notes",
@@ -360,5 +373,61 @@ describe("getStuckStateDashboard", () => {
     expect(deps.db.booking.findMany).not.toHaveBeenCalled();
     expect(deps.getBedAllocationDashboard).not.toHaveBeenCalled();
     expect(dashboard.items).toEqual([]);
+  });
+
+  it("scopes the cancelled-with-unrecorded-refund detector to the crash-window signature (#1349)", async () => {
+    const bookingCount = vi.fn().mockResolvedValue(1);
+    const deps = buildDeps({
+      db: {
+        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0) },
+        booking: {
+          findMany: vi.fn().mockResolvedValue([]),
+          count: bookingCount,
+        },
+        groupBookingSettlement: { findMany: vi.fn().mockResolvedValue([]) },
+        issueReport: { count: vi.fn().mockResolvedValue(0) },
+      },
+    });
+
+    const dashboard = await getStuckStateDashboard({
+      deps,
+      now: new Date("2026-06-22T00:00:00.000Z"),
+    });
+
+    // A flagged booking is CANCELLED with a fully captured, unrefunded
+    // payment and shows NO refund-recovery operation and NO cancellation
+    // narrative event — deliberate zero-refund cancels (which write their
+    // CANCELLED BookingEvent), refunded cancels (refundedAmountCents > 0),
+    // and #1349 in-transaction enqueues (recovery op exists) are all excluded.
+    expect(bookingCount).toHaveBeenCalledWith({
+      where: {
+        status: "CANCELLED",
+        deletedAt: null,
+        // 90-day lookback from `now`.
+        updatedAt: { gte: new Date("2026-03-24T00:00:00.000Z") },
+        payment: {
+          is: {
+            status: "SUCCEEDED",
+            refundedAmountCents: 0,
+            amountCents: { gt: 0 },
+          },
+        },
+        paymentRecoveryOperations: {
+          none: { type: "REFUND_BOOKING_MODIFICATION" },
+        },
+        events: {
+          none: { type: "CANCELLED" },
+        },
+      },
+    });
+    expect(
+      dashboard.items.find(
+        (item) => item.id === "payment-cancelled-refund-unrecorded",
+      ),
+    ).toMatchObject({
+      severity: "critical",
+      owner: "Finance",
+      count: 1,
+    });
   });
 });

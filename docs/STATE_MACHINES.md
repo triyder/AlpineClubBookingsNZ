@@ -65,17 +65,27 @@ future booking when they are not the last guest.
 Cancelling a paid booking is single-flight (#1160). The refund plan is frozen
 from a re-read taken under the global booking advisory lock, and the status
 flips to `CANCELLED` atomically with the credit-path ledger writes (refund
-allocation + cancellation credit) inside that same transaction. A concurrent
+allocation + cancellation credit) — or, on the card path, with the durable
+refund-recovery operation carrying the per-transaction allocation frozen from
+that same locked read (#1349) — inside that same transaction. A concurrent
 cancel or a retry that loses the claim re-reads the already-cancelled booking
 and returns HTTP 409 without moving any money — no description-string
 idempotency guard is needed because the claim itself guarantees the credit
-writers run exactly once. Stripe/Xero work runs only after the claim commits: a
-failed card refund still leaves the booking `CANCELLED` and enqueues the
-outstanding remainder to the durable payment-recovery queue (which replays the
-inline `booking_cancel_refund_<bookingId>` Stripe key, so a
-Stripe-succeeded-but-unrecorded refund is replayed, not repeated), and the
-best-effort cancellation of any outstanding additional PaymentIntent is logged
-rather than allowed to abort the committed claim.
+writers run exactly once. Stripe/Xero work runs only after the claim commits.
+Because the card-refund debt is persisted *before* the inline Stripe call, a
+process death anywhere between the claim commit and the refund leaves a
+`PENDING` recovery operation the payment-recovery cron replays — not a
+silently lost refund (the pre-#1349 catch-only enqueue recorded the debt only
+if the refund *threw*). The inline refund executes the operation's frozen
+slices and marks it `SUCCEEDED` on completion; inline and cron therefore mint
+identical `booking_cancel_refund_<bookingId>` Stripe idempotency keys, so a
+Stripe-succeeded-but-unrecorded refund (or a cron tick racing the inline call)
+is replayed by Stripe, never repeated. The best-effort cancellation of any
+outstanding additional PaymentIntent is logged rather than allowed to abort
+the committed claim. As a backstop detector, the admin stuck-state dashboard
+flags recent `CANCELLED` bookings whose captured payment shows no recorded
+refund, no recovery operation, and no cancellation narrative event — the
+crash-window signature that previously fired nothing.
 
 Cancelling a no-payment booking (`WAITLISTED`, `WAITLIST_OFFERED`,
 `AWAITING_REVIEW`) is likewise status-guarded claim-first under the SAME global
