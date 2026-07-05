@@ -238,15 +238,16 @@ export default async function BookingDetailPage({
   if (!canManageBooking && !isLinkedGuestViewer && !canViewAsAdmin) {
     redirect("/bookings");
   }
-  // Issue #1313: a Booking Officer (the ADMIN_BOOKINGS bundle carries
-  // bookings:edit) may operate the admin-tooling cluster on ANY booking, not
-  // just one they own. Deliberately ORTHOGONAL to canManageBooking: it only
-  // fronts controls whose backing route lives under /api/admin/bookings/* and
-  // authorizes on bookings:edit (copy, confirm-pending-guests, admin
-  // requested-room). Member-facing /api/bookings/[id]/* routes (cancel, modify,
-  // notes, arrival-time) stay Full-Admin-or-owner, so their controls remain on
-  // canManageBooking/isAdmin — widening those buttons here would 403 an officer
-  // against an un-widened API.
+  // Issue #1313 (option A2): a Booking Officer (the ADMIN_BOOKINGS bundle carries
+  // bookings:edit) may operate the admin-tooling cluster AND the member-facing
+  // write controls on ANY booking, not just one they own. The admin-tooling
+  // controls front routes under /api/admin/bookings/* (copy,
+  // confirm-pending-guests, admin requested-room) that already authorize on
+  // bookings:edit. The member-facing /api/bookings/[id]/* routes (cancel, modify,
+  // notes, arrival-time) are now widened to also accept bookings:edit (this PR),
+  // so their buttons include canAdminEditBookings and flow through the same
+  // admin-on-behalf path as a Full Admin (see actingOnBehalf below) — the button
+  // and its backing API widen together, never a button ahead of its route.
   const canAdminEditBookings = hasAdminAreaAccess(session.user, {
     area: "bookings",
     level: "edit",
