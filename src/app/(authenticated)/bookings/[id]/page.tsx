@@ -55,6 +55,7 @@ import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
 } from "@/lib/access-roles";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
   OrganiserGroupBookingCard,
   type OrganiserGroupState,
@@ -220,7 +221,17 @@ export default async function BookingDetailPage({
     !isAdmin &&
     booking.guests.some((guest) => guest.memberId === session.user.id);
   const canManageBooking = isBookingOwner || isAdmin;
-  if (!canManageBooking && !isLinkedGuestViewer) {
+  // Issue #1289: Booking Officer / Read-only Admin reach the admin bookings
+  // list and calendar (gated on bookings-area view), so the member-facing
+  // detail route must admit the same viewers read-only for list/detail parity.
+  // This is a genuinely read-only path (same shape as isLinkedGuestViewer):
+  // every write/cancel/pay/modify/notes/admin-tools control below stays gated
+  // on canManageBooking or isAdmin, so this predicate never widens a mutation.
+  const canViewAsAdmin = hasAdminAreaAccess(session.user, {
+    area: "bookings",
+    level: "view",
+  });
+  if (!canManageBooking && !isLinkedGuestViewer && !canViewAsAdmin) {
     redirect("/bookings");
   }
 

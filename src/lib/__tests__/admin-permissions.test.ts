@@ -15,7 +15,7 @@ import {
   type AdminPermissionArea,
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
-import { type AppAccessRole } from "@/lib/access-roles";
+import { hasAdminAccess, type AppAccessRole } from "@/lib/access-roles";
 
 const LODGE_ONLY_DEFINITION = {
   overviewLevel: "NONE",
@@ -71,6 +71,107 @@ describe("admin permission bundles", () => {
         { area: "finance", level: "edit" },
       ),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Booking detail read-only admin-view guard (issue #1289).
+//
+// The admin bookings list/calendar is gated on bookings-area view, but the
+// member-facing detail route src/app/(authenticated)/bookings/[id]/page.tsx
+// previously gated on the narrow full-admin hasAdminAccess, so a Booking
+// Officer / Read-only Admin reached the calendar but was redirected to
+// "My Bookings". The guard now also admits bookings-area view holders
+// read-only. This mirrors the exact redirect predicate from that page.
+// ---------------------------------------------------------------------------
+describe("booking detail read-only admin-view guard (issue #1289)", () => {
+  // Mirrors the redirect guard in the booking detail page: a viewer loads the
+  // detail when they can manage it, are a linked guest, or hold read-only
+  // bookings-area admin access.
+  const wouldRedirect = (viewer: {
+    accessRoles: AppAccessRole[];
+    isBookingOwner: boolean;
+    isLinkedGuestViewer: boolean;
+  }) => {
+    const isAdmin = hasAdminAccess({ accessRoles: viewer.accessRoles });
+    const canManageBooking = viewer.isBookingOwner || isAdmin;
+    const canViewAsAdmin = hasAdminAreaAccess(
+      { accessRoles: viewer.accessRoles },
+      { area: "bookings", level: "view" },
+    );
+    return (
+      !canManageBooking && !viewer.isLinkedGuestViewer && !canViewAsAdmin
+    );
+  };
+
+  it("resolves the exact predicate the page evaluates for booking admins", () => {
+    // Pins the precise call the page makes, so removing the canViewAsAdmin
+    // wiring cannot pass on the mirror alone.
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_BOOKINGS"] },
+        { area: "bookings", level: "view" },
+      ),
+    ).toBe(true);
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_READONLY"] },
+        { area: "bookings", level: "view" },
+      ),
+    ).toBe(true);
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["USER"] },
+        { area: "bookings", level: "view" },
+      ),
+    ).toBe(false);
+  });
+
+  it("lets a Booking Officer (ADMIN_BOOKINGS) open a booking they do not own", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["ADMIN_BOOKINGS"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("lets a Read-only Admin (ADMIN_READONLY) open a booking they do not own", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["ADMIN_READONLY"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("still redirects an unrelated plain member away from a booking they do not own", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["USER"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the booking owner and full admin able to open the detail", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["USER"],
+        isBookingOwner: true,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+    expect(
+      wouldRedirect({
+        accessRoles: ["ADMIN"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
   });
 });
 
