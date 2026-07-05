@@ -177,6 +177,10 @@ export default async function AdminDashboardPage() {
   ].filter(Boolean) as string[];
   const hasPendingBookingApprovals =
     stats.pendingBookingReviews > 0 || stats.pendingBookingChangeRequests > 0;
+  const bookingRequestsHref =
+    stats.pendingBookingReviews > 0
+      ? "/admin/booking-requests?tab=approvals"
+      : "/admin/booking-requests?tab=changes";
   const bookingApprovalSummary = [
     stats.pendingBookingReviews > 0
       ? `${stats.pendingBookingReviews} new booking review${stats.pendingBookingReviews === 1 ? "" : "s"}`
@@ -224,7 +228,7 @@ export default async function AdminDashboardPage() {
       )}
 
       {hasPendingBookingApprovals && (
-        <Link href="/admin/booking-requests">
+        <Link href={bookingRequestsHref}>
           <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
