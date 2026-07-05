@@ -44,6 +44,18 @@ const CANCELLABLE_BOOKING_STATUSES: readonly string[] = [
   "AWAITING_REVIEW",
 ];
 
+// The no-payment / holding statuses the shared cancel path may flip straight to
+// CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
+// subset of CANCELLABLE_BOOKING_STATUSES. This is the exact WHERE set for the
+// #1311 status-guarded claim-first: a booking that has left this set under the
+// advisory lock (e.g. a concurrent quote-accept converting AWAITING_REVIEW ->
+// PENDING) must NOT be clobbered to CANCELLED.
+const NO_PAYMENT_CANCELLABLE_STATUSES: readonly string[] = [
+  "WAITLISTED",
+  "WAITLIST_OFFERED",
+  "AWAITING_REVIEW",
+];
+
 interface CancelBookingResult {
   success: boolean;
   refundAmountCents: number;
@@ -235,35 +247,93 @@ async function performBookingCancellation(
 
   // Bookings awaiting admin review have no payment yet; same no-payment
   // shape as waitlisted/offered. Reuse that path.
-  if (
-    booking.status === "WAITLISTED" ||
-    booking.status === "WAITLIST_OFFERED" ||
-    booking.status === "AWAITING_REVIEW"
-  ) {
-    const wasOffered = booking.status === "WAITLIST_OFFERED";
-    const wasAwaitingReview = booking.status === "AWAITING_REVIEW";
-    const priorStatus = booking.status;
+  if (NO_PAYMENT_CANCELLABLE_STATUSES.includes(booking.status)) {
+    // ── #1311: status-guarded claim-first under the booking advisory lock ──
+    //
+    // This branch has NO payment and makes NO external-provider (Stripe/Xero)
+    // call, so the only hazard is a state CLOBBER, not a double money-move —
+    // the "claim-first without durable recovery inverts a crash into money
+    // LOSS" caveat does not apply here. The clobber: a held AWAITING_REVIEW
+    // booking can be converted to PENDING by a concurrent quote-accept
+    // (`convertBookingRequestToBooking` in booking-request.ts). That accept
+    // takes `pg_advisory_xact_lock(1)`, re-reads the held booking's status
+    // under the lock (booking-request.ts:903), and — if still AWAITING_REVIEW
+    // — updates it by id ONLY, with no status guard (booking-request.ts:951).
+    // A plain, lockless `booking.update` here could be sequenced between that
+    // accept's status re-read and its id-only write, clobbering the
+    // just-accepted PENDING booking back to CANCELLED (a guarded updateMany
+    // WITHOUT the lock does NOT close this, because the accept's id-only write
+    // would overwrite the CANCELLED it committed). Taking the SAME advisory
+    // lock and re-reading the status under it makes cancel and accept mutually
+    // exclude; the race loser observes a non-cancellable status and aborts
+    // cleanly with a 409, running none of the side effects below. This mirrors
+    // the paid single-flight claim (#1160) further down.
+    const claim = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: "CANCELLED",
-        waitlistOfferedAt: null,
-        waitlistOfferExpiresAt: null,
-        waitlistPosition: null,
-      },
-    });
-    if (wasAwaitingReview) {
-      // Detach any booking-request pointer to this hold so a later re-quote
-      // creates a fresh hold instead of reusing this now-cancelled row
-      // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates
-      // defensively, but detaching at the source keeps the pointer honest.
-      await prisma.bookingRequest.updateMany({
-        where: { heldBookingId: bookingId },
-        data: { heldBookingId: null },
+      const fresh = await tx.booking.findUnique({
+        where: { id: bookingId },
+        select: { status: true },
       });
+      // Race loser / retry: under the lock the booking has left the no-payment
+      // set (a concurrent quote-accept converted it, or another cancel already
+      // claimed it). Do NOT flip status, detach, reconcile, or run any side
+      // effects.
+      if (!fresh || !NO_PAYMENT_CANCELLABLE_STATUSES.includes(fresh.status)) {
+        return { claimed: false as const };
+      }
+
+      const wasOffered = fresh.status === "WAITLIST_OFFERED";
+      const wasAwaitingReview = fresh.status === "AWAITING_REVIEW";
+
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: "CANCELLED",
+          waitlistOfferedAt: null,
+          waitlistOfferExpiresAt: null,
+          waitlistPosition: null,
+        },
+      });
+      if (wasAwaitingReview) {
+        // Detach any booking-request pointer to this hold so a later re-quote
+        // creates a fresh hold instead of reusing this now-cancelled row
+        // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates
+        // defensively, but detaching at the source keeps the pointer honest.
+        await tx.bookingRequest.updateMany({
+          where: { heldBookingId: bookingId },
+          data: { heldBookingId: null },
+        });
+      }
+      // Bed release is now ATOMIC with the status flip under the lock.
+      await reconcileCancelledBookingBedAllocations(booking, tx);
+
+      return {
+        claimed: true as const,
+        wasOffered,
+        wasAwaitingReview,
+        priorStatus: fresh.status,
+      };
+    });
+
+    // Loser contract (mirrors the paid single-flight path, #1160): a concurrent
+    // quote-accept / cancel that transitioned the row out of the no-payment set
+    // gets a real 409. This MUST be non-200 so a caller never treats a clobbered
+    // accept as a successful cancel. Every cancelBooking caller forwards this
+    // 409 (release-hold, member cancel, admin review-reject) or aborts safely
+    // (deletion-requests, which never passes a no-payment-holding status).
+    if (!claim.claimed) {
+      return {
+        status: 409,
+        error:
+          "This booking was concurrently accepted or cancelled and can no longer be cancelled",
+      };
     }
-    await reconcileCancelledBookingBedAllocations(booking);
+
+    const { wasOffered, wasAwaitingReview, priorStatus } = claim;
+
+    // cleanupPromoRedemption opens its own $transaction, so it runs AFTER the
+    // claim commits — never nested under the advisory lock.
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({

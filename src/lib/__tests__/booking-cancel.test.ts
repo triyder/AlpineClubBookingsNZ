@@ -786,11 +786,38 @@ describe("cancelBooking credit refunds", () => {
 describe("cancelBooking detaches the held booking-request pointer (issue #1254)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Pre-payment branches use the array form of $transaction.
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
+    // #1311: the no-payment claim re-reads the booking status under the advisory
+    // lock. By default the re-read sees the SAME still-cancellable status the
+    // outer read saw, so the claim succeeds. The concurrency test overrides this
+    // to a converted status to model a quote-accept winning the lock race.
+    mocks.txBookingFindUnique.mockResolvedValue({ status: "AWAITING_REVIEW" });
+    // The no-payment claim now runs inside a $transaction callback (under the
+    // advisory lock); the paid branches use the array form. Support both with a
+    // full mock tx client so the claim can $executeRaw the lock, re-read, flip
+    // status, and detach the held-request pointer inside the transaction.
     mocks.prismaTransaction.mockImplementation(
       async (
         arg: ((tx: unknown) => Promise<unknown>) | Array<Promise<unknown>>,
-      ) => (Array.isArray(arg) ? Promise.all(arg) : arg({} as never)),
+      ) => {
+        if (typeof arg === "function") {
+          const mockTx = {
+            $executeRaw: mocks.txExecuteRaw,
+            booking: {
+              findUnique: mocks.txBookingFindUnique,
+              update: mocks.bookingUpdate,
+            },
+            bookingRequest: {
+              updateMany: mocks.bookingRequestUpdateMany,
+            },
+            payment: {
+              update: mocks.paymentUpdate,
+            },
+          };
+          return arg(mockTx);
+        }
+        return Promise.all(arg);
+      },
     );
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
@@ -873,5 +900,128 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       data: { heldBookingId: null },
     });
     expect(mocks.logAudit).toHaveBeenCalled();
+  });
+});
+
+// #1311: the no-payment cancel path must be a status-guarded claim-first under
+// the SAME booking advisory lock the quote-accept path takes, so cancelling a
+// held AWAITING_REVIEW booking can never clobber a concurrent accept that has
+// already converted it to PENDING.
+describe("cancelBooking no-payment claim-first (issue #1311)", () => {
+  const heldBooking = {
+    id: "held-1",
+    memberId: "owner-1",
+    status: "AWAITING_REVIEW" as const,
+    finalPriceCents: 1000,
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+    member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+    payment: null,
+  };
+
+  function lockWasAcquired() {
+    return mocks.txExecuteRaw.mock.calls.some((call) =>
+      String((call as unknown[])[0]).includes("pg_advisory_xact_lock"),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
+    mocks.prismaTransaction.mockImplementation(
+      async (
+        arg: ((tx: unknown) => Promise<unknown>) | Array<Promise<unknown>>,
+      ) => {
+        if (typeof arg === "function") {
+          const mockTx = {
+            $executeRaw: mocks.txExecuteRaw,
+            booking: {
+              findUnique: mocks.txBookingFindUnique,
+              update: mocks.bookingUpdate,
+            },
+            bookingRequest: { updateMany: mocks.bookingRequestUpdateMany },
+            payment: { update: mocks.paymentUpdate },
+          };
+          return arg(mockTx);
+        }
+        return Promise.all(arg);
+      },
+    );
+    mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+  });
+
+  it("takes the advisory lock, re-reads status under it, then flips a still-held booking to CANCELLED", async () => {
+    // Winner path: both the outer read and the under-lock re-read see
+    // AWAITING_REVIEW, so the claim commits.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ status: "AWAITING_REVIEW" });
+
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    // The advisory lock is acquired inside the claim tx — this is the only part
+    // of the fix a mocked-prisma unit test can pin, and it is what serialises
+    // cancel against the quote-accept path (booking-request.ts).
+    expect(lockWasAcquired()).toBe(true);
+    // The status is re-read under the lock and then flipped exactly once.
+    expect(mocks.txBookingFindUnique).toHaveBeenCalled();
+    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "held-1" },
+      data: {
+        status: "CANCELLED",
+        waitlistOfferedAt: null,
+        waitlistOfferExpiresAt: null,
+        waitlistPosition: null,
+      },
+    });
+  });
+
+  it("returns 409 and clobbers NOTHING when a concurrent quote-accept converts the hold under the lock", async () => {
+    // Interleave: the cancel's stale outer read still saw AWAITING_REVIEW (so it
+    // passed the outer status guard and entered the no-payment branch), but by
+    // the time it wins the advisory lock the concurrent quote-accept has already
+    // committed AWAITING_REVIEW -> PENDING and released the lock. The under-lock
+    // re-read therefore sees PENDING. Absent this re-read the code would have
+    // flipped the just-accepted PENDING booking to CANCELLED — the exact clobber
+    // #1311 closes.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ status: "PENDING" });
+
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+
+    // The loser gets a real 409, never a false 200.
+    expect(result.status).toBe(409);
+    // The lock WAS taken and the status WAS re-read under it — proving the guard,
+    // not luck, caught the race.
+    expect(lockWasAcquired()).toBe(true);
+    expect(mocks.txBookingFindUnique).toHaveBeenCalled();
+    // NOTHING was clobbered or side-effected: no status flip, no pointer detach,
+    // no bed reconcile side effects, no audit, no email, no waitlist re-process.
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.bookingRequestUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(mocks.processWaitlistForDates).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when another cancel already claimed the booking (re-read sees CANCELLED)", async () => {
+    // The other race direction: a concurrent cancel won the lock first and
+    // committed CANCELLED. Our re-read under the lock sees CANCELLED (not in the
+    // no-payment set), so we abort as a pure no-op rather than double-cancelling.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ status: "CANCELLED" });
+
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+
+    expect(result.status).toBe(409);
+    expect(lockWasAcquired()).toBe(true);
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
   });
 });

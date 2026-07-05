@@ -232,7 +232,12 @@ finalized, so a quote is never emailed for dates it cannot reserve — if the
 lodge is full the send fails loudly (409). The hold survives acceptance: on
 accept/approve the same held row becomes the request's converted booking and
 moves AWAITING_REVIEW → PENDING, which keeps holding via rule (b) above, so an
-accepted-but-unpaid quote does not lose its bed before payment. The guest swap
+accepted-but-unpaid quote does not lose its bed before payment. Accept and the
+no-payment cancel are serialized on the global booking advisory lock (#1311): the
+cancel re-reads the held status under that lock and flips to CANCELLED only while
+it is still AWAITING_REVIEW/WAITLISTED/WAITLIST_OFFERED, so a cancel racing an
+accept can never clobber the just-converted PENDING booking back to CANCELLED —
+the loser returns 409. The guest swap
 at accept updates the held booking's existing guest rows in place (stable
 `bookingGuest` ids) instead of delete-then-recreate, so an admin's pre-assigned
 `BedAllocation` rows, #713 night sets, promo guest targets, and chore

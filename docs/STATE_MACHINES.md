@@ -72,6 +72,19 @@ Stripe-succeeded-but-unrecorded refund is replayed, not repeated), and the
 best-effort cancellation of any outstanding additional PaymentIntent is logged
 rather than allowed to abort the committed claim.
 
+Cancelling a no-payment booking (`WAITLISTED`, `WAITLIST_OFFERED`,
+`AWAITING_REVIEW`) is likewise status-guarded claim-first under the SAME global
+booking advisory lock (#1311). This path takes no Stripe/Xero call, so the only
+hazard is a state clobber, not a double money-move: a held `AWAITING_REVIEW`
+booking can be converted to `PENDING` by a concurrent quote-accept, which holds
+that lock and re-writes the held booking by id only. The cancel therefore takes
+the same lock, re-reads the status under it, and flips to `CANCELLED` only while
+the status is still one of the three no-payment states; if a concurrent accept
+(or another cancel) has moved it out of that set the loser returns HTTP 409 and
+runs no side effects (no status flip, pointer detach, bed reconcile, audit,
+email, or waitlist re-process), so a just-accepted booking is never clobbered
+back to `CANCELLED`.
+
 ### BookingEvent Scope
 
 `BookingEvent` is a durable narrative fact store, not the complete transition
