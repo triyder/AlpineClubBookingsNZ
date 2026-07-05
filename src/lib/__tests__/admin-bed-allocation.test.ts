@@ -21,6 +21,7 @@ import {
   BedAllocationAdminError,
   MAX_BED_ALLOCATION_RANGE_NIGHTS,
   buildBedAllocationWarnings,
+  getBedAllocationDashboard,
   manuallyAllocateBedForNights,
   parseBedAllocationDateRange,
   updateBedAllocationBed,
@@ -357,5 +358,117 @@ describe("manuallyAllocateBedForNights", () => {
         db: db as never,
       }),
     ).rejects.toThrow("Booking status is not allocatable");
+  });
+});
+
+describe("getBedAllocationDashboard focused booking (#1302)", () => {
+  function buildDashboardDb(overrides: {
+    bookingFindMany?: unknown[];
+    focusedBooking?: {
+      id: string;
+      checkIn: Date;
+      checkOut: Date;
+    } | null;
+  }) {
+    const findFirst = vi
+      .fn()
+      .mockResolvedValue(overrides.focusedBooking ?? null);
+    return {
+      db: {
+        bedAllocationSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+        lodgeRoom: { findMany: vi.fn().mockResolvedValue([]) },
+        bedAllocation: { findMany: vi.fn().mockResolvedValue([]) },
+        booking: {
+          findMany: vi
+            .fn()
+            .mockResolvedValue(overrides.bookingFindMany ?? []),
+          findFirst,
+        },
+      },
+      findFirst,
+    };
+  }
+
+  const range = {
+    from: parseDateOnly("2026-07-01"),
+    to: parseDateOnly("2026-07-08"),
+    fromDate: "2026-07-01",
+    toDate: "2026-07-08",
+  };
+
+  it("returns the stay window when the focused booking is out of range", async () => {
+    const { db, findFirst } = buildDashboardDb({
+      focusedBooking: {
+        id: "booking-past",
+        checkIn: new Date("2026-06-10"),
+        checkOut: new Date("2026-06-12"),
+      },
+    });
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      bookingId: "booking-past",
+      db: db as never,
+    });
+
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    expect(dashboard.focusedBooking).toEqual({
+      id: "booking-past",
+      checkIn: "2026-06-10",
+      checkOut: "2026-06-12",
+    });
+  });
+
+  it("skips the lookup and returns null when the focused booking is already in range", async () => {
+    const { db, findFirst } = buildDashboardDb({
+      bookingFindMany: [
+        {
+          id: "booking-in-range",
+          status: "CONFIRMED",
+          createdAt: new Date("2026-06-01"),
+          checkIn: new Date("2026-07-02"),
+          checkOut: new Date("2026-07-04"),
+          requestedRoomId: null,
+          parentBookingId: null,
+          originBookingRequest: null,
+          requestedRoom: null,
+          member: { firstName: "Ada", lastName: "Lovelace", email: null },
+          guests: [],
+        },
+      ],
+    });
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      bookingId: "booking-in-range",
+      db: db as never,
+    });
+
+    expect(findFirst).not.toHaveBeenCalled();
+    expect(dashboard.focusedBooking).toBeNull();
+  });
+
+  it("returns null when the focused booking is not an allocatable booking", async () => {
+    const { db } = buildDashboardDb({ focusedBooking: null });
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      bookingId: "booking-cancelled",
+      db: db as never,
+    });
+
+    expect(dashboard.focusedBooking).toBeNull();
+  });
+
+  it("returns null when no booking is focused", async () => {
+    const { db, findFirst } = buildDashboardDb({});
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      db: db as never,
+    });
+
+    expect(findFirst).not.toHaveBeenCalled();
+    expect(dashboard.focusedBooking).toBeNull();
   });
 });

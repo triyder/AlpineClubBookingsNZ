@@ -52,9 +52,11 @@ npm run test:e2e                       # prepare stack + run suite
    (`e2e/setup/enable-e2e-modules.ts`) — a fresh database defaults these off:
    `twoFactor` (two-factor enforcement), `waitlist` (`/admin/waitlist`,
    force-confirm, waitlist-confirm), `kiosk` + `chores` (`/lodge/*` and the
-   roster, for the LODGE role boundary), and `financeDashboard` (`/finance`, for
-   the finance role boundaries). `internetBankingPayments` and `xeroIntegration`
-   stay off; the internet-banking spec toggles them on for its own run (via
+   roster, for the LODGE role boundary), `financeDashboard` (`/finance`, for
+   the finance role boundaries), and `bedAllocation` (`/admin/bed-allocation`,
+   `/admin/rooms-beds`, for the bed-allocation board). `internetBankingPayments`
+   and `xeroIntegration` stay off; the internet-banking spec toggles them on for
+   its own run (via
    `PUT /api/admin/modules`) and restores them, so the rest of the suite keeps
    the default card-payment flow.
 3. Builds (unless `E2E_SKIP_APP_BUILD=1`) and starts the staging app on

@@ -161,6 +161,7 @@ describe("applyOptimisticAllocationBedMove", () => {
       suggestedAllocations: [],
       suggestedUnallocatedGuestNights: [],
       warnings: [],
+      focusedBooking: null,
     };
 
     const result = applyOptimisticAllocationBedMove({

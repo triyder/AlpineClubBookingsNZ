@@ -5,10 +5,8 @@ import {
   getClubThemeForAdmin,
   saveClubTheme,
 } from "@/lib/club-theme";
-import {
-  clubThemeUpdateSchema,
-  getBlockingContrastWarnings,
-} from "@/lib/club-theme-schema";
+import { getBlockingContrastWarnings } from "@/lib/club-theme-schema";
+import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
 

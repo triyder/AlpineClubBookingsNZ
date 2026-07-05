@@ -346,7 +346,13 @@ finance viewer, edit ⇒ finance manager) via `hasFinanceViewerAccess` and
 `hasFinanceManagerAccess` in `src/lib/admin-permissions.ts` — Full Admin is
 therefore a finance manager, and any role whose matrix grants finance view
 (including Read-only Admin, Booking Officer, and Membership Officer as
-seeded) can open the finance portal read-only. `requireAdmin()` infers the
+seeded) can open the finance portal read-only. The member-facing booking
+detail route (`/bookings/[id]`) mirrors the admin bookings list gate: any
+role with bookings-area view (Booking Officer, Read-only Admin, Full Admin,
+and the other seeded booking-capable roles) opens any booking detail
+read-only, while every mutation (cancel, pay, modify, notes, delete, and the
+Full-Admin-only Admin tools card) stays gated on booking ownership or Full
+Admin (issue #1289). `requireAdmin()` infers the
 requested admin path and HTTP method from proxy headers and enforces
 view/edit requirements centrally, selecting assignment rows with their
 definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in

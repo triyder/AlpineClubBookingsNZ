@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export const CLUB_THEME_ID = "default";
 export const MAX_LOGO_DATA_URL_BYTES = 900_000;
 
@@ -139,44 +137,6 @@ export function isValidLogoDataUrl(value: string): boolean {
   const byteLength = logoDataUrlByteLength(value);
   return byteLength !== null && byteLength <= MAX_LOGO_DATA_URL_BYTES;
 }
-
-const colourSchema = z
-  .string()
-  .trim()
-  .refine(
-    isValidThemeColour,
-    "Use a 6-digit hex colour or exact oklch() value.",
-  );
-
-const logoDataUrlSchema = z
-  .string()
-  .trim()
-  .max(2_000_000)
-  .refine(
-    isValidLogoDataUrl,
-    "Logo must be a PNG, JPEG, WebP, or GIF data URL no larger than 900KB.",
-  );
-
-export const clubThemeUpdateSchema = z
-  .object({
-    brandGold: colourSchema,
-    brandCharcoal: colourSchema,
-    brandDeep: colourSchema,
-    brandRidge: colourSchema,
-    brandMist: colourSchema,
-    brandSnow: colourSchema,
-    brandSafety: colourSchema,
-    headingFontKey: z.enum(CLUB_THEME_FONT_KEYS),
-    bodyFontKey: z.enum(CLUB_THEME_FONT_KEYS),
-    logoDataUrl: z
-      .union([logoDataUrlSchema, z.literal(""), z.null()])
-      .transform((value) => value || null),
-    rawCss: z.string().max(50_000).default("").transform(sanitiseRawCss),
-    completeSetup: z.boolean().optional(),
-  })
-  .strict();
-
-export type ClubThemeUpdateInput = z.infer<typeof clubThemeUpdateSchema>;
 
 function fontOption(fontKey: ClubThemeFontKey) {
   return CLUB_THEME_FONT_OPTIONS.find((font) => font.key === fontKey);

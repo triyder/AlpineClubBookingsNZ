@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -28,6 +29,7 @@ export function ConfirmPendingGuestsButton({
     );
 
     if (res.ok) {
+      toast.success("Pending guests confirmed.");
       router.refresh();
     } else {
       const data = await res.json().catch(() => ({}));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   DndContext,
@@ -262,6 +262,10 @@ export default function AdminBedAllocationPage() {
   const [selectedBeds, setSelectedBeds] = useState<Record<string, string>>({});
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set());
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  // Tracks the focused booking id we have already snapped the date window onto,
+  // so we snap exactly once (#1302) and never fight an admin who later moves the
+  // window off the focused booking.
+  const snappedBookingIdRef = useRef<string | null>(null);
 
   const nights = useMemo(() => {
     if (!isDateOnlyString(fromDate) || !isDateOnlyString(toDate)) return [];
@@ -343,6 +347,9 @@ export default function AdminBedAllocationPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ from: fromDate, to: toDate });
+      if (highlightedBookingId) {
+        params.set("bookingId", highlightedBookingId);
+      }
       const response = await fetch(`/api/admin/bed-allocation?${params}`, {
         cache: "no-store",
       });
@@ -370,6 +377,19 @@ export default function AdminBedAllocationPage() {
     void loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromDate, toDate]);
+
+  // Snap the date window onto a deep-linked focused booking that loaded outside
+  // the current range (#1302). The server returns its stay window only while it
+  // is out of range, so this fires at most once per booking; the ref guards a
+  // re-snap after the follow-up load (or after the admin browses away).
+  useEffect(() => {
+    const focused = payload?.focusedBooking;
+    if (!focused || focused.id !== highlightedBookingId) return;
+    if (snappedBookingIdRef.current === focused.id) return;
+    snappedBookingIdRef.current = focused.id;
+    setFromDate(focused.checkIn);
+    setToDate(clampRange(focused.checkIn, focused.checkOut));
+  }, [payload, highlightedBookingId]);
 
   async function withPending<T>(
     keys: string | string[],
@@ -806,6 +826,27 @@ export default function AdminBedAllocationPage() {
   const activeBedCount = bedOptions.length;
   const activeRooms = payload?.rooms.filter((room) => room.active) ?? [];
 
+  // A focused booking is "on the board" when it has a bucket card or a placed
+  // allocation in the current range (#1302).
+  const focusedBookingVisible =
+    highlightedBookingId !== "" &&
+    ((payload?.bookings.some((booking) => booking.id === highlightedBookingId) ??
+      false) ||
+      (payload?.allocations.some(
+        (allocation) => allocation.bookingId === highlightedBookingId,
+      ) ??
+        false));
+
+  // Residual case: a booking is focused but neither visible nor snappable (the
+  // server returned no stay window — e.g. it was cancelled or removed). The snap
+  // effect handles every allocatable out-of-range booking, so this only guides
+  // the admin when snapping is genuinely impossible.
+  const showFocusedBookingUnavailable =
+    highlightedBookingId !== "" &&
+    payload !== null &&
+    !focusedBookingVisible &&
+    payload.focusedBooking === null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -871,6 +912,16 @@ export default function AdminBedAllocationPage() {
       <p className="text-xs text-muted-foreground">
         The board shows up to {MAX_RANGE_NIGHTS} nights at a time.
       </p>
+
+      {showFocusedBookingUnavailable ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Focused booking is not on the board — it may be cancelled or removed.
+            Adjust Date In / Date Out to browse the board.
+          </span>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -956,8 +1007,11 @@ export default function AdminBedAllocationPage() {
                 <Badge variant="outline">
                   {payload.suggestedAllocations.length} suggested
                 </Badge>
-                <Badge variant={unapprovedCount > 0 ? "warning" : "success"}>
-                  {unapprovedCount} awaiting approval
+                <Badge
+                  variant={unapprovedCount > 0 ? "warning" : "success"}
+                  title="Draft bed placements on the Allocation Board below that still need approving — distinct from bookings still awaiting a bed."
+                >
+                  {unapprovedCount} draft allocations to approve
                 </Badge>
               </div>
 

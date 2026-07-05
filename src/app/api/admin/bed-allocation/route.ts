@@ -18,7 +18,12 @@ export async function GET(request: NextRequest) {
       from: request.nextUrl.searchParams.get("from"),
       to: request.nextUrl.searchParams.get("to"),
     });
-    return NextResponse.json(await getBedAllocationDashboard({ range }));
+    return NextResponse.json(
+      await getBedAllocationDashboard({
+        range,
+        bookingId: request.nextUrl.searchParams.get("bookingId"),
+      }),
+    );
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }

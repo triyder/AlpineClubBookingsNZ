@@ -7,6 +7,7 @@
 //   - waitlist          → /admin/waitlist, waitlist-confirm, force-confirm
 //   - kiosk + chores    → /lodge/* and /lodge/roster (LODGE role boundary)
 //   - financeDashboard  → /finance (FINANCE_USER/FINANCE_ADMIN boundary)
+//   - bedAllocation     → /admin/bed-allocation, /admin/rooms-beds (#1300)
 //
 // internetBankingPayments and xeroIntegration stay OFF here; the internet-
 // banking spec toggles them on itself and restores them, so the rest of the
@@ -22,6 +23,7 @@ const MODULES = {
   kiosk: true,
   chores: true,
   financeDashboard: true,
+  bedAllocation: true,
 } as const;
 
 async function main() {

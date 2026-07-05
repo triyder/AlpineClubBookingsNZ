@@ -5,8 +5,8 @@ import {
   DEFAULT_CLUB_THEME_VALUES,
   getContrastWarnings,
   normaliseThemeValues,
-  type ClubThemeUpdateInput,
 } from "@/lib/club-theme-schema";
+import type { ClubThemeUpdateInput } from "@/lib/club-theme-update-schema";
 
 export async function ensureClubTheme() {
   return prisma.clubTheme.upsert({
