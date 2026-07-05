@@ -280,7 +280,7 @@ export function AdminBookingCalendar() {
                     {beds !== undefined && (
                       <span
                         className={`text-[11px] leading-none font-medium ${
-                          beds === 0 ? "text-red-600" : beds <= 5 ? "text-red-500" : beds <= 15 ? "text-amber-600" : "text-green-600"
+                          beds === 0 ? "text-red-600" : beds <= 5 ? "text-red-600" : beds <= 15 ? "text-amber-600" : "text-green-600"
                         }`}
                       >
                         {beds} bed{beds !== 1 ? "s" : ""}
