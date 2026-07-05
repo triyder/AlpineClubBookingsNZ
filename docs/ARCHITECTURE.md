@@ -210,7 +210,11 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    check-in date: a date-specific `BookingPeriod` can override both the
    default enabled flag and the confirmation threshold. Existing clubs default
    to Members First (`nonMemberHoldEnabled=true`), while First Paid, First In
-   disables provisional non-member holds for that policy row.
+   disables provisional non-member holds for that policy row. The Default
+   Cancellation Policy admin page nudges operators to refresh their public
+   Terms/FAQ when that copy still describes the old hold behaviour and omits the
+   First Paid, First In option (`detectStaleHoldPolicyCopy` in
+   `src/lib/hold-policy-copy.ts`).
 5. If all guests are members, the non-member hold policy is disabled, or
    check-in is inside the configured hold window, the whole booking proceeds to
    normal payment immediately.
