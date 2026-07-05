@@ -8,10 +8,15 @@ import { Download, RefreshCw, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
+import {
   getMemberPasswordActionKind,
 } from "@/components/admin/member-password-action-button"
 import { toast } from "sonner"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
@@ -34,6 +39,7 @@ interface MembersResponse {
 export default function MembersPage() {
   const router = useRouter()
   const { data: session } = useSession()
+  const canEditMembership = useAdminAreaEditAccess("membership")
   const actorIsFullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
   })
@@ -247,7 +253,8 @@ export default function MembersPage() {
         </div>
         <div className="flex gap-2">
           {xeroConnected && (
-            <Button
+            <ViewOnlyActionButton
+              canEdit={canEditMembership}
               variant="outline"
               size="sm"
               onClick={handleRefreshXeroGroups}
@@ -257,7 +264,7 @@ export default function MembersPage() {
                 className={`h-4 w-4 mr-1 ${refreshingXeroGroups ? "animate-spin" : ""}`}
               />
               {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
-            </Button>
+            </ViewOnlyActionButton>
           )}
           <a href={exportUrl}>
             <Button variant="outline" size="sm">
@@ -265,13 +272,30 @@ export default function MembersPage() {
               Export CSV
             </Button>
           </a>
-          <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
+          <ViewOnlyActionButton
+            canEdit={canEditMembership}
+            variant="outline"
+            size="sm"
+            onClick={() => setImportDialogOpen(true)}
+          >
             <Upload className="h-4 w-4 mr-1" />
             Import CSV
-          </Button>
-          <Button onClick={() => setCreateDialogOpen(true)}>Add Member</Button>
+          </ViewOnlyActionButton>
+          <ViewOnlyActionButton
+            canEdit={canEditMembership}
+            onClick={() => setCreateDialogOpen(true)}
+          >
+            Add Member
+          </ViewOnlyActionButton>
         </div>
       </div>
+
+      {!canEditMembership && (
+        <AdminViewOnlyNotice>
+          Your admin role can view membership records but cannot create, edit,
+          import, or bulk-update members.
+        </AdminViewOnlyNotice>
+      )}
 
       {error && (
         <div
@@ -304,19 +328,21 @@ export default function MembersPage() {
         onClearFilters={clearFilters}
       />
 
-      <MemberBulkActionBar
-        selectedCount={selectedIds.size}
-        selectedPasswordActionCount={selectedPasswordSummary.passwordActionCount}
-        bulkPasswordActionLabel={selectedPasswordSummary.bulkPasswordActionLabel}
-        onOpenBulkDialog={openBulkDialog}
-        onOpenPasswordActionDialog={() =>
-          openPasswordActionDialog(
-            [...selectedIds],
-            `${selectedPasswordSummary.passwordActionCount} selected login member(s)`
-          )
-        }
-        onClearSelection={() => setSelectedIds(new Set())}
-      />
+      {canEditMembership && (
+        <MemberBulkActionBar
+          selectedCount={selectedIds.size}
+          selectedPasswordActionCount={selectedPasswordSummary.passwordActionCount}
+          bulkPasswordActionLabel={selectedPasswordSummary.bulkPasswordActionLabel}
+          onOpenBulkDialog={openBulkDialog}
+          onOpenPasswordActionDialog={() =>
+            openPasswordActionDialog(
+              [...selectedIds],
+              `${selectedPasswordSummary.passwordActionCount} selected login member(s)`
+            )
+          }
+          onClearSelection={() => setSelectedIds(new Set())}
+        />
+      )}
 
       <Card>
         <CardHeader className="pb-0">
@@ -328,6 +354,7 @@ export default function MembersPage() {
             loading={loading}
             debouncedSearch={debouncedSearch}
             selectedIds={selectedIds}
+            canEdit={canEditMembership}
             sortBy={sortBy}
             sortDir={sortDir}
             membersListPath={membersListPath}

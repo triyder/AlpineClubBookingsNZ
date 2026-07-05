@@ -7,9 +7,17 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  ADMIN_VIEW_ONLY_ACTION_REASON,
+  useAdminAreaEditAccess,
+} from "@/hooks/use-admin-area-edit-access"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 
@@ -110,6 +118,7 @@ export default function RefundRequestsPage() {
   const searchParams = useSearchParams()
   const initialFilter = searchParams.get("status")
   const { data: session } = useSession()
+  const canEditFinance = useAdminAreaEditAccess("finance")
   const [refundRequests, setRefundRequests] = useState<RefundRequestData[]>([])
   const [creditApprovals, setCreditApprovals] = useState<CreditApprovalRequestData[]>([])
   const [loading, setLoading] = useState(true)
@@ -280,6 +289,13 @@ export default function RefundRequestsPage() {
         </p>
       </div>
 
+      {!canEditFinance ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view refund appeals and credit approvals but cannot
+          approve, reject, or process them.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       {error && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
           {error}
@@ -429,9 +445,13 @@ export default function RefundRequestsPage() {
 
                         {req.status === "PENDING" && !isReviewing && (
                           <div className="flex gap-2 pt-2">
-                            <Button size="sm" onClick={() => startRefundReview(req)}>
+                            <ViewOnlyActionButton
+                              canEdit={canEditFinance}
+                              size="sm"
+                              onClick={() => startRefundReview(req)}
+                            >
                               Review
-                            </Button>
+                            </ViewOnlyActionButton>
                           </div>
                         )}
 
@@ -447,6 +467,12 @@ export default function RefundRequestsPage() {
                                 max={(maxRefundable / 100).toFixed(2)}
                                 value={approvedAmount}
                                 onChange={(e) => setApprovedAmount(e.target.value)}
+                                disabled={!canEditFinance}
+                                title={
+                                  !canEditFinance
+                                    ? ADMIN_VIEW_ONLY_ACTION_REASON
+                                    : undefined
+                                }
                                 className="w-40"
                               />
                               <p className="text-xs text-muted-foreground">
@@ -459,27 +485,35 @@ export default function RefundRequestsPage() {
                                 id="adminNotes"
                                 value={adminNotes}
                                 onChange={(e) => setAdminNotes(e.target.value)}
+                                disabled={!canEditFinance}
+                                title={
+                                  !canEditFinance
+                                    ? ADMIN_VIEW_ONLY_ACTION_REASON
+                                    : undefined
+                                }
                                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                 rows={3}
                                 placeholder="Notes visible to the member..."
                               />
                             </div>
                             <div className="flex gap-2">
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEditFinance}
                                 size="sm"
                                 onClick={() => handleRefundReview(req.id, "APPROVED")}
                                 disabled={processingRefund}
                               >
                                 {processingRefund ? "Processing..." : "Approve & Refund"}
-                              </Button>
-                              <Button
+                              </ViewOnlyActionButton>
+                              <ViewOnlyActionButton
+                                canEdit={canEditFinance}
                                 size="sm"
                                 variant="destructive"
                                 onClick={() => handleRefundReview(req.id, "REJECTED")}
                                 disabled={processingRefund}
                               >
                                 Reject
-                              </Button>
+                              </ViewOnlyActionButton>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -626,22 +660,24 @@ export default function RefundRequestsPage() {
                               </span>
                             ) : (
                               <>
-                                <Button
+                                <ViewOnlyActionButton
+                                  canEdit={canEditFinance}
                                   size="sm"
                                   variant="outline"
                                   disabled={isReviewing}
                                   onClick={() => handleCreditReview(request, "APPROVE")}
                                 >
                                   {isReviewing ? "Working..." : "Approve"}
-                                </Button>
-                                <Button
+                                </ViewOnlyActionButton>
+                                <ViewOnlyActionButton
+                                  canEdit={canEditFinance}
                                   size="sm"
                                   variant="destructive"
                                   disabled={isReviewing}
                                   onClick={() => handleCreditReview(request, "REJECT")}
                                 >
                                   Reject
-                                </Button>
+                                </ViewOnlyActionButton>
                               </>
                             )}
                           </div>

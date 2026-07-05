@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AllocationChip } from "@/app/(admin)/admin/bed-allocation/_components/allocation-chip";
@@ -38,7 +39,7 @@ function buildAllocation(
   };
 }
 
-function renderChip(allocation: DashboardAllocation) {
+function renderChip(allocation: DashboardAllocation, canEdit = true) {
   return render(
     <AllocationChip
       allocation={allocation}
@@ -46,6 +47,7 @@ function renderChip(allocation: DashboardAllocation) {
       onReassignBed={vi.fn()}
       onRemove={vi.fn()}
       pending={false}
+      canEdit={canEdit}
     />,
   );
 }
@@ -111,5 +113,16 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
     expect(provisionalCard.className).not.toContain("bg-white");
     expect(heldCard.className).toContain("bg-card");
     expect(provisionalCard.className).toContain("bg-muted");
+  });
+
+  it("disables drag and manage controls for view-only booking access", () => {
+    renderChip(buildAllocation(), false);
+
+    expect(
+      screen.getByRole("button", { name: /Drag Example Guest to another bed or night/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Manage allocation for Example Guest/i }),
+    ).toBeDisabled();
   });
 });

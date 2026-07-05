@@ -25,10 +25,15 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -242,6 +247,7 @@ export default function AdminBedAllocationPage() {
   const requestedFrom = searchParams.get("from");
   const requestedTo = searchParams.get("to");
   const highlightedBookingId = searchParams.get("bookingId") || "";
+  const canEditBookings = useAdminAreaEditAccess("bookings");
 
   const initialFrom = isDateOnlyString(requestedFrom ?? "")
     ? (requestedFrom as string)
@@ -437,6 +443,8 @@ export default function AdminBedAllocationPage() {
   }
 
   async function saveSettings() {
+    if (!canEditBookings) return;
+
     await mutate(
       "settings",
       () =>
@@ -450,6 +458,8 @@ export default function AdminBedAllocationPage() {
   }
 
   async function runAutoAllocation() {
+    if (!canEditBookings) return;
+
     await mutate(
       "auto",
       () =>
@@ -463,6 +473,8 @@ export default function AdminBedAllocationPage() {
   }
 
   async function approveVisible() {
+    if (!canEditBookings) return;
+
     await mutate(
       "approve",
       () =>
@@ -476,6 +488,8 @@ export default function AdminBedAllocationPage() {
   }
 
   async function allocateFullStay(group: BucketGuestGroup, bedId: string) {
+    if (!canEditBookings) return;
+
     const bed = bedById.get(bedId);
     if (!bed || !payload) return;
 
@@ -535,6 +549,8 @@ export default function AdminBedAllocationPage() {
     bedId: string,
     stayDate: string,
   ) {
+    if (!canEditBookings) return;
+
     if (!group.stayDates.includes(stayDate)) {
       toast.error(`${group.guestName} is not staying on ${stayDate}`);
       return;
@@ -592,6 +608,8 @@ export default function AdminBedAllocationPage() {
     allocation: DashboardAllocation,
     target: { bedId: string; roomId: string; stayDate: string },
   ) {
+    if (!canEditBookings) return;
+
     if (!payload) return;
     const bed = bedById.get(target.bedId);
     if (!bed) return;
@@ -727,6 +745,8 @@ export default function AdminBedAllocationPage() {
   }
 
   async function removeAllocation(allocation: DashboardAllocation) {
+    if (!canEditBookings) return;
+
     if (!payload) return;
 
     const snapshot = payload;
@@ -757,6 +777,8 @@ export default function AdminBedAllocationPage() {
   }
 
   function handleDragStart(event: DragStartEvent) {
+    if (!canEditBookings) return;
+
     setActiveDragId(String(event.active.id));
   }
 
@@ -766,6 +788,7 @@ export default function AdminBedAllocationPage() {
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveDragId(null);
+    if (!canEditBookings) return;
 
     const { active, over } = event;
     if (!over) return;
@@ -913,6 +936,13 @@ export default function AdminBedAllocationPage() {
         The board shows up to {MAX_RANGE_NIGHTS} nights at a time.
       </p>
 
+      {!canEditBookings ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view bed allocation but cannot move, allocate,
+          approve, or save assignments.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       {showFocusedBookingUnavailable ? (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -935,6 +965,7 @@ export default function AdminBedAllocationPage() {
             <label className="flex items-center gap-3 text-sm font-medium">
               <Checkbox
                 checked={autoAllocationEnabled}
+                disabled={!canEditBookings}
                 onCheckedChange={(checked) =>
                   setAutoAllocationEnabled(checked === true)
                 }
@@ -949,14 +980,15 @@ export default function AdminBedAllocationPage() {
               Single-night drag mode
             </label>
           </div>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEditBookings}
             onClick={() => void saveSettings()}
             disabled={saving === "settings"}
             className="gap-2 md:w-auto"
           >
             <Save className="h-4 w-4" />
             Save Mode
-          </Button>
+          </ViewOnlyActionButton>
         </CardContent>
       </Card>
 
@@ -983,7 +1015,8 @@ export default function AdminBedAllocationPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap gap-3">
-                <Button
+                <ViewOnlyActionButton
+                  canEdit={canEditBookings}
                   onClick={() => void runAutoAllocation()}
                   disabled={
                     !payload.settings.autoAllocationEnabled ||
@@ -994,8 +1027,9 @@ export default function AdminBedAllocationPage() {
                 >
                   <Wand2 className="h-4 w-4" />
                   Run Auto Allocation
-                </Button>
-                <Button
+                </ViewOnlyActionButton>
+                <ViewOnlyActionButton
+                  canEdit={canEditBookings}
                   variant="outline"
                   onClick={() => void approveVisible()}
                   disabled={unapprovedCount === 0 || saving === "approve"}
@@ -1003,7 +1037,7 @@ export default function AdminBedAllocationPage() {
                 >
                   <Check className="h-4 w-4" />
                   Approve Visible
-                </Button>
+                </ViewOnlyActionButton>
                 <Badge variant="outline">
                   {payload.suggestedAllocations.length} suggested
                 </Badge>
@@ -1050,6 +1084,7 @@ export default function AdminBedAllocationPage() {
                 }}
                 pendingGuestIds={pendingGuestIds}
                 highlightedBookingId={highlightedBookingId}
+                canEdit={canEditBookings}
               />
             </CardContent>
           </Card>
@@ -1088,6 +1123,7 @@ export default function AdminBedAllocationPage() {
                   onRemove={(allocation) => void removeAllocation(allocation)}
                   pendingAllocationIds={pendingAllocationIds}
                   highlightedBookingId={highlightedBookingId}
+                  canEdit={canEditBookings}
                 />
               ))}
             </CardContent>

@@ -194,13 +194,14 @@ const baseMember: Member = {
   currentMembershipType: null,
 };
 
-function renderMemberTable(members: Member[]) {
+function renderMemberTable(members: Member[], canEdit = true) {
   return render(
     <MemberTable
       members={members}
       loading={false}
       debouncedSearch=""
       selectedIds={new Set()}
+      canEdit={canEdit}
       sortBy="name"
       sortDir="asc"
       membersListPath="/admin/members"
@@ -277,6 +278,27 @@ describe("admin member access-role UI", () => {
     expect(screen.getByText("Treasurer").parentElement).toHaveClass(
       "flex-wrap",
     );
+  });
+
+  it("hides member write and bulk-selection controls for view-only membership access", () => {
+    renderMemberTable(
+      [
+        {
+          ...baseMember,
+          familyGroups: [{ id: "family-1", name: "Summit Household" }],
+        },
+      ],
+      false,
+    );
+
+    expect(screen.queryByLabelText("Select all members on this page")).toBeNull();
+    expect(screen.queryByLabelText("Select Alice Summit")).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Actions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByText("Summit Household")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Summit Household" }),
+    ).not.toBeInTheDocument();
   });
 
   it("labels access-role list filters with the new model", () => {
@@ -509,4 +531,3 @@ describe("scoped-admin gated access-role picker (#1038)", () => {
     }
   });
 });
-

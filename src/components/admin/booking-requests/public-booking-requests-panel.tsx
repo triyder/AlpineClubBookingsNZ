@@ -7,6 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -225,6 +229,7 @@ interface PublicBookingRequestsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
   showHeading?: boolean;
+  canEdit?: boolean;
 }
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
@@ -270,6 +275,7 @@ export function PublicBookingRequestsPanel({
   basePath = "/admin/booking-requests",
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
+  canEdit = true,
 }: PublicBookingRequestsPanelProps) {
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
@@ -1021,6 +1027,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {LINKING_EDITOR_STATUSES.has(request.status) ? (
+                    canEdit ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
                       {request.heldBookingId ? (
                         <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
@@ -1407,6 +1414,12 @@ export function PublicBookingRequestsPanel({
                         </p>
                       ) : null}
                     </div>
+                    ) : (
+                      <AdminViewOnlyNotice>
+                        Your admin role can view this request but cannot price,
+                        hold, approve, decline, or change its linked contact.
+                      </AdminViewOnlyNotice>
+                    )
                   ) : null}
 
                   {request.status === "DECLINED" ? (
@@ -1445,7 +1458,8 @@ export function PublicBookingRequestsPanel({
                           </p>
                         ) : (
                           <div className="mt-2">
-                            <Button
+                            <ViewOnlyActionButton
+                              canEdit={canEdit}
                               variant="outline"
                               size="sm"
                               disabled={actioningId === request.id}
@@ -1454,7 +1468,7 @@ export function PublicBookingRequestsPanel({
                               {actioningId === request.id
                                 ? "Sending…"
                                 : "Re-send attendee confirmation link"}
-                            </Button>
+                            </ViewOnlyActionButton>
                             <p className="mt-1 text-xs text-slate-500">
                               Rotates the secure link and emails it to the school
                               contact now, outside the reminder cadence.

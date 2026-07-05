@@ -115,4 +115,14 @@ describe("PublicBookingRequestsPanel release-hold warning (#1255 RR-1)", () => {
     // The confirm action is present alongside the warning.
     expect(screen.getByRole("button", { name: "Confirm release" })).toBeTruthy();
   });
+
+  it("hides request mutation controls for bookings view-only access", async () => {
+    render(<PublicBookingRequestsPanel canEdit={false} />);
+
+    expect(
+      await screen.findByText(/can view this request but cannot price/i),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Release hold" })).toBeNull();
+    expect(screen.queryByTestId("contact-picker")).toBeNull();
+  });
 });

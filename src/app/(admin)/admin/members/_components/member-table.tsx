@@ -31,6 +31,7 @@ interface MemberTableProps {
   loading: boolean
   debouncedSearch: string
   selectedIds: Set<string>
+  canEdit?: boolean
   sortBy: string
   sortDir: "asc" | "desc"
   membersListPath: string
@@ -95,6 +96,7 @@ export function MemberTable({
   loading,
   debouncedSearch,
   selectedIds,
+  canEdit = true,
   sortBy,
   sortDir,
   membersListPath,
@@ -129,16 +131,18 @@ export function MemberTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-10">
-              <span className="sr-only">Select</span>
-              <input
-                type="checkbox"
-                aria-label="Select all members on this page"
-                checked={selectedIds.size === members.length && members.length > 0}
-                onChange={onToggleSelectAll}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-            </TableHead>
+            {canEdit ? (
+              <TableHead className="w-10">
+                <span className="sr-only">Select</span>
+                <input
+                  type="checkbox"
+                  aria-label="Select all members on this page"
+                  checked={selectedIds.size === members.length && members.length > 0}
+                  onChange={onToggleSelectAll}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+              </TableHead>
+            ) : null}
             {[
               ["name", "Name"],
               ["email", "Email"],
@@ -179,7 +183,7 @@ export function MemberTable({
               sortDir={sortDir}
               onToggleSort={onToggleSort}
             />
-            <TableHead className="text-right">Actions</TableHead>
+            {canEdit ? <TableHead className="text-right">Actions</TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -206,15 +210,17 @@ export function MemberTable({
 
             return (
               <TableRow key={member.id} className="hover:bg-slate-50">
-                <TableCell>
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${name}`}
-                    checked={selectedIds.has(member.id)}
-                    onChange={() => onToggleSelect(member.id)}
-                    className="h-4 w-4 rounded border-gray-300"
-                  />
-                </TableCell>
+                {canEdit ? (
+                  <TableCell>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${name}`}
+                      checked={selectedIds.has(member.id)}
+                      onChange={() => onToggleSelect(member.id)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                  </TableCell>
+                ) : null}
                 <TableCell className="font-medium">
                   <Link
                     href={buildHrefWithReturnTo(`/admin/members/${member.id}`, membersListPath)}
@@ -288,16 +294,29 @@ export function MemberTable({
                 <TableCell>
                   {member.familyGroups && member.familyGroups.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
-                      {member.familyGroups.map((familyGroup) => (
-                        <Link key={familyGroup.id} href={`/admin/family-groups?edit=${familyGroup.id}`}>
+                      {member.familyGroups.map((familyGroup) =>
+                        canEdit ? (
+                          <Link
+                            key={familyGroup.id}
+                            href={`/admin/family-groups?edit=${familyGroup.id}`}
+                          >
+                            <Badge
+                              variant="secondary"
+                              className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                            >
+                              {familyGroup.name || "Unnamed Group"}
+                            </Badge>
+                          </Link>
+                        ) : (
                           <Badge
+                            key={familyGroup.id}
                             variant="secondary"
-                            className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                            className="bg-indigo-50 text-indigo-700 border-indigo-200"
                           >
                             {familyGroup.name || "Unnamed Group"}
                           </Badge>
-                        </Link>
-                      ))}
+                        )
+                      )}
                     </div>
                   ) : (
                     <span className="text-xs text-slate-400">-</span>
@@ -360,17 +379,19 @@ export function MemberTable({
                     year: "numeric",
                   })}
                 </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <MemberPasswordActionButton
-                      member={member}
-                      onClick={() => onOpenPasswordActionDialog([member.id], name)}
-                    />
-                    <Button variant="outline" size="sm" onClick={() => onEditMember(member)}>
-                      Edit
-                    </Button>
-                  </div>
-                </TableCell>
+                {canEdit ? (
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <MemberPasswordActionButton
+                        member={member}
+                        onClick={() => onOpenPasswordActionDialog([member.id], name)}
+                      />
+                      <Button variant="outline" size="sm" onClick={() => onEditMember(member)}>
+                        Edit
+                      </Button>
+                    </div>
+                  </TableCell>
+                ) : null}
               </TableRow>
             )
           })}

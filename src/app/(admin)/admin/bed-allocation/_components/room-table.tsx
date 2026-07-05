@@ -28,6 +28,7 @@ interface RoomTableProps {
   onRemove: (allocation: DashboardAllocation) => void;
   pendingAllocationIds: Set<string>;
   highlightedBookingId: string;
+  canEdit?: boolean;
 }
 
 export function RoomTable({
@@ -39,6 +40,7 @@ export function RoomTable({
   onRemove,
   pendingAllocationIds,
   highlightedBookingId,
+  canEdit = true,
 }: RoomTableProps) {
   const activeBeds = room.beds.filter((bed) => bed.active);
 
@@ -100,6 +102,7 @@ export function RoomTable({
                       allocation ? pendingAllocationIds.has(allocation.id) : false
                     }
                     highlighted={allocation?.bookingId === highlightedBookingId}
+                    canEdit={canEdit}
                   />
                 );
               })}
