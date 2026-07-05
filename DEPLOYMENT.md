@@ -68,20 +68,22 @@ Minimum production categories:
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
   `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
   subdomains from that value.
-- Module capability flags: `FEATURE_KIOSK`, `FEATURE_CHORES`,
-  `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, `FEATURE_XERO_INTEGRATION`,
-  `FEATURE_BED_ALLOCATION`, and `FEATURE_INTERNET_BANKING_PAYMENTS` must be
-  explicit `true` or `false` values.
-  These are deploy/operator capability gates. Admin Modules activation is the
-  database-backed club-level layer, so an optional module is active only when
-  its `.env` capability and Admin Modules activation are both enabled.
+- Modules: optional modules are database-backed in `ClubModuleSettings` and
+  controlled from Admin > Modules after first login. No `FEATURE_*`
+  environment variables are supported or read by the app.
 - Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
   `STRIPE_WEBHOOK_SECRET`
 - Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`,
   `XERO_ENCRYPTION_KEY`, optional `XERO_WEBHOOK_KEY`. This single connection
-  serves bookings, payments, subscriptions, and the finance dashboard. The
-  finance reports need the `accounting.reports.read` scope, so reconnect Xero
-  from `/admin/xero` after deploying this change.
+  serves bookings, payments, subscriptions, and the finance dashboard. Configure
+  the Xero app with the exact operational scopes requested by
+  `src/lib/xero-config.ts`: `openid`, `profile`, `email`,
+  `accounting.contacts`, `accounting.invoices`, `accounting.payments`,
+  `accounting.settings.read`, `accounting.reports.profitandloss.read`,
+  `accounting.reports.balancesheet.read`,
+  `accounting.reports.banksummary.read`, and `offline_access`. Do not grant the
+  stale generic all-reports scope; reconnect Xero from `/admin/xero` after
+  changing allowed scopes so new tokens carry the granular report scopes.
 - Email: `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`,
   `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`
 - Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
@@ -250,23 +252,51 @@ Configure webhook endpoints for the deployed domain:
 
 Keep webhook secrets in `.env`. Rotate them if they are exposed.
 
+Subscribe the Stripe endpoint to these event types:
+
+- `payment_intent.succeeded`
+- `payment_intent.payment_failed`
+- `payment_intent.canceled`
+- `payment_intent.requires_action`
+- `payment_intent.processing`
+- `setup_intent.succeeded`
+- `setup_intent.setup_failed`
+- `setup_intent.canceled`
+- `charge.refunded`
+
+If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or
+`STRIPE_WEBHOOK_SECRET` was wrong, fix the endpoint first, then use Stripe
+Dashboard > Developers > Webhooks > the configured endpoint > Event deliveries
+to resend failed events. Verify the event appears in webhook logs and the
+affected booking/payment state before retrying operator actions. Do not repair
+Stripe state by editing payment rows directly; unresolved payment-intent cleanup
+is replayed by the payment recovery cron.
+
 ## Cron Schedule
 
-The application exposes secured cron endpoints that must be invoked by an
-external scheduler. Auth is the `x-cron-secret` header set to `CRON_SECRET`.
+The supported Docker Compose deployment runs scheduled work inside the `app`
+cron-leader container when `CRON_ENABLED=true`. Blue/green web slots set
+`CRON_ENABLED=false` and do not schedule jobs. The secured POST endpoints remain
+available for the internal scheduler, manual operator retries, and custom
+non-Compose deployments that intentionally use an external scheduler. Auth is
+the `x-cron-secret` header set to `CRON_SECRET`.
 
-| Endpoint | Task | Required cadence | Purpose | `CronJobRun.jobName` |
-| -------- | ---- | ---------------- | ------- | -------------------- |
-| `POST /api/cron/payments?task=recovery` | `recovery` | every 5 minutes | Process the durable Stripe payment recovery queue and reap stale `WAITING_PAYMENT` Xero outbox rows. | `payment-recovery` |
-| `POST /api/cron` | pending booking confirmation and pre-arrival reminders | every 3 hours at minute 0 | Confirm or bump pending bookings whose non-member holds have expired, then send one pre-arrival directions/door-code reminder for confirmed or paid bookings checking in within 3 NZ date-only days. | `confirm-pending`, `pre-arrival-reminders` |
-| `POST /api/cron/xero?task=memberships` | `memberships` | daily at 02:00 Pacific/Auckland when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` | Refresh Xero-backed membership statuses as an optional safety net. | `xero-membership-refresh` |
-| `POST /api/cron/xero?task=outbox` | `outbox` | every 15 minutes | Process queued outbound Xero operations. | `xero-outbox` |
-| `POST /api/cron/xero?task=retries` | `retries` | every 15 minutes | Replay failed retryable Xero operations. | `xero-operation-replay` |
-| `POST /api/cron/xero?task=inbound` | `inbound` | every 15 minutes | Reconcile inbound Xero invoice, payment, contact, and membership state. | `xero-inbound-reconcile` |
-| `POST /api/cron/xero?task=backfill` | `backfill` | daily at 02:20 Pacific/Auckland | Backfill historical Xero object links; this task also runs stale link cleanup. | `xero-link-backfill`, `xero-link-cleanup` |
-| `POST /api/cron/xero?task=link-cleanup` | `link-cleanup` | daily at 02:25 Pacific/Auckland | Deactivate stale canonical Xero object links. | `xero-link-cleanup` |
-| `POST /api/cron/xero?task=report` | `report` | daily at 02:35 Pacific/Auckland | Send the Xero reconciliation report. | `xero-reconciliation-report` |
-| `POST /api/cron/issue-reports` | issue report retention | daily | Redact expired issue-report sensitive data. | not recorded |
+The full schedule and all job names live in `docs/ARCHITECTURE.md`. Keep that
+table and the cron registry in `src/lib/admin-cron-health.ts` as the source of
+truth. The public POST endpoints are:
+
+| Endpoint | Task(s) | Typical cadence | Recorded `CronJobRun.jobName` |
+| -------- | ------- | --------------- | ----------------------------- |
+| `POST /api/cron` | General cron cycle: pending booking confirmation, group-settlement reaper, pre-arrival reminders, booking-request retention purge, quote-expiry reminders, and school attendee confirmations. | Every 3 hours in the cron leader. | `confirm-pending`, `group-settlement-reaper`, `pre-arrival-reminders`, `purge-booking-requests`, `quote-expiry-reminders`, `school-attendee-confirmations` |
+| `POST /api/cron/payments?task=recovery` | Durable Stripe payment recovery, expired Internet Banking hold release, and stale `WAITING_PAYMENT` Xero outbox reaping. | Every 15 minutes in the cron leader. | `payment-recovery` |
+| `POST /api/cron/xero?task=memberships` | Optional Xero-backed membership status refresh. | Daily when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` and the Xero module is effectively enabled. | `xero-membership-refresh` |
+| `POST /api/cron/xero?task=outbox` | Process queued outbound Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-outbox` |
+| `POST /api/cron/xero?task=retries` | Replay failed retryable Xero operations. | Every 15 minutes when the Xero module is effectively enabled. | `xero-operation-replay` |
+| `POST /api/cron/xero?task=inbound` | Reconcile inbound Xero invoice, payment, contact, and membership state. | Every 15 minutes when the Xero module is effectively enabled. | `xero-inbound-reconcile` |
+| `POST /api/cron/xero?task=backfill` | Backfill historical Xero object links; the default runner also performs link cleanup with this task. | Daily when the Xero module is effectively enabled. | `xero-link-backfill`, `xero-link-cleanup` |
+| `POST /api/cron/xero?task=link-cleanup` | Deactivate stale canonical Xero object links. | Daily when the Xero module is effectively enabled. | `xero-link-cleanup` |
+| `POST /api/cron/xero?task=report` | Send the Xero reconciliation report. | Daily when the Xero module is effectively enabled. | `xero-reconciliation-report` |
+| `POST /api/cron/issue-reports` | Redact expired issue-report sensitive data. | Daily. | Not recorded |
 
 Without `/api/cron/payments?task=recovery` running on a regular schedule,
 abandoned zero-dollar batch edits leave PaymentIntents held in Stripe

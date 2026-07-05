@@ -658,13 +658,14 @@ rate-limited, or temporarily unavailable.
 
 ## Sentry
 
-| Variable                 | Description                                            |
-| ------------------------ | ------------------------------------------------------ |
-| `SENTRY_DSN`             | Server/edge Sentry DSN.                                |
-| `NEXT_PUBLIC_SENTRY_DSN` | Browser Sentry DSN.                                    |
-| `SENTRY_ORG`             | Sentry organization slug for source map uploads.       |
-| `SENTRY_PROJECT`         | Sentry project slug for source map uploads.            |
-| `SENTRY_AUTH_TOKEN`      | Sentry auth token for source map uploads during build. |
+| Variable                                  | Description                                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
+| `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
+| `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
+| `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for cron/webhook Sentry event deduplication; defaults to 300000 ms. |
 
 ## Cron, Waitlist, And Backups
 
