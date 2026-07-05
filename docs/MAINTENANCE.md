@@ -158,7 +158,7 @@ extraction over expanding this table casually.
 
 | File | Current LOC | Disposition |
 | --- | ---: | --- |
-| `src/lib/xero-inbound-reconciliation.ts` | 2926 | Queued for future split when reconciliation classification, repair, or reporting changes next land. |
+| `src/lib/xero-inbound-reconciliation.ts` | 13 | Split (#1270, #1208 item 1) into a re-export barrel over cohesive `src/lib/xero-inbound/` modules (`types`, `constants`, `amounts`, `object-links`, `audit`, `incremental-reconciliation`, `contact`, `payment`, `invoice-paid-effects`, `invoice`, `credit-note-repairs`, `credit-note`, `event-processing`). Behavior-preserving verbatim motion with an acyclic import graph (`types`/`constants` are leaves; the `event-processing` worker sits on top); the barrel re-exports the unchanged public surface (3 functions + 5 result types + `XeroInboundReplayError`). |
 | `src/lib/xero-booking-repair.ts` | 2682 | Accepted as-is for now: operator repair tool, documented separately, not normal request-path code. |
 | `src/lib/xero-operation-outbox.ts` | 2028 | Queued for future split when queue dispatch, release, or retry policy changes next land. |
 | `src/lib/email-templates.ts` | 2006 | Accepted as-is for now: central template catalogue; split only with a template-registry change. |

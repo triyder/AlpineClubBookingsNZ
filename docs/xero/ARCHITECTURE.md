@@ -158,7 +158,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-inbound-reconciliation` | Stored-event worker + per-entity reconcilers + incremental cursor reconciliation (see Flow 2). |
+| `xero-inbound-reconciliation` | Stored-event worker + per-entity reconcilers + incremental cursor reconciliation (see Flow 2). Split into cohesive `xero-inbound/*` sub-modules (#1208 item 1 / #1270, entry re-exports the public surface); see refactor item 1 for the module map. |
 | `xero-booking-repair` | Booking-vs-Xero audit and self-repair (see Flow 3). CLI entry: `scripts/xero-booking-repair.ts`. Split into cohesive `xero-booking-repair-*` sub-modules (#1208 item 2, entry re-exports the public surface); see refactor item 2 for the module map. |
 | `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. |
 | `xero-cron-runner` | Maps the 7 cron tasks to the workers above, records `CronJobRun` rows, gates on module + connection. |
@@ -382,15 +382,29 @@ handled), and per-record activity shows the ledger for one booking/payment/membe
 Ranked by risk-reduction value; item 1 touches the most money-path logic.
 These are candidates for future issues, not commitments.
 
-1. **Split `xero-inbound-reconciliation.ts` (3,427 lines).** It contains five
-   separable concerns: (a) stored-event worker mechanics (claim, dedupe,
-   backoff, replay); (b) contact reconciler; (c) invoice/payment reconciler
-   including the internet-banking settlement flip; (d) credit-note reconciler
-   plus the two big business-state repair routines
-   (`repairRefundedPaymentBusinessState`, ~260 lines;
-   `repairAccountCreditAllocationBusinessState`, ~220 lines); (e) incremental
-   cursor drivers. The settlement/repair code is the highest-risk money logic
-   in the subsystem and currently the hardest to review in isolation.
+1. **Split `xero-inbound-reconciliation.ts` (3,427 lines).** _Done (#1208 item 1
+   / #1270):_ the file was split verbatim (behavior preserving, export-parity)
+   into cohesive `src/lib/xero-inbound/<concern>.ts` sub-modules with an acyclic
+   import graph — `types` (all interfaces + `XeroInboundReplayError`) and
+   `constants` are leaves; the shared helpers `amounts` (money/credit/allocation
+   math + metadata guards, including the still-local `getJsonRecord`),
+   `object-links` (link dedupe/derive/find/recover) and `audit` sit above them;
+   the per-concern reconcilers `contact`, `payment`, `invoice-paid-effects`
+   (the internet-banking settlement flip + group-settlement side effects),
+   `invoice`, `credit-note-repairs` (the two big business-state repairs
+   `repairRefundedPaymentBusinessState` ~260 lines and
+   `repairAccountCreditAllocationBusinessState` ~220 lines), `credit-note`, and
+   the `incremental-reconciliation` cursor drivers depend only downward
+   (`invoice` → `payment`/`contact`/`invoice-paid-effects`; `credit-note` →
+   `credit-note-repairs`); and the `event-processing` worker (claim, dedupe,
+   backoff, replay + the stored-event dispatcher and the public cycle/replay
+   entry points) sits on top. `xero-inbound-reconciliation.ts` remains the entry
+   as a re-export barrel over the unchanged public surface (3 functions +
+   5 result types + `XeroInboundReplayError`) so every importer and the
+   `xero-inbound-reconciliation.test.ts` doubles resolve unchanged. The
+   settlement/repair code — the highest-risk money logic in the subsystem — now
+   lives in `invoice-paid-effects` and `credit-note-repairs` where it can be
+   reviewed in isolation.
 2. **Split `xero-booking-repair.ts` (3,004 lines).** _Done (#1208 item 2):_
    the ~2,700 lines of private helpers were extracted verbatim (behavior
    preserving) into cohesive `xero-booking-repair-<phase>.ts` sub-modules —
@@ -446,8 +460,11 @@ These are candidates for future issues, not commitments.
    `asRecord`/`readString`/`readNumber` guards that appeared in `xero-sync`,
    `xero-operation-queue`, `xero-operation-retry`, `xero-admin-failures`, and
    `xero-operation-outbox-payload` now import from the shared `xero-json`
-   module. The differently-shaped `getJsonRecord` guards in
-   `xero-inbound-reconciliation` remain local pending its own split. The
+   module. The differently-shaped `getJsonRecord` guards from
+   `xero-inbound-reconciliation` now live (still local, NOT merged into
+   `xero-json`) in its `xero-inbound/amounts` sub-module after the item-1 split
+   (#1270); merging them into `xero-json` is intentionally deferred to preserve
+   behavior. The
    `readJsonRecord`/`readJsonString`/`readJsonNumber` guards from
    `xero-booking-repair` now live (still local, NOT merged into `xero-json`) in
    its `xero-booking-repair-utils` sub-module after the item-2 split; merging
