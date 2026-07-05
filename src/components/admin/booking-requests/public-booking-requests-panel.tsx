@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -185,6 +185,19 @@ interface LinkMemberNightConflict {
   conflictingNights: string[];
 }
 
+// Booking-request statuses whose card renders the pricing/linking editor — and
+// therefore the advisory member-night banner. Shared by the render guard and
+// the on-load advisory pre-compute so the two never drift: we only fire the
+// pre-check for requests that can actually surface the banner.
+const LINKING_EDITOR_STATUSES = new Set<PublicBookingRequestData["status"]>([
+  "VERIFIED",
+  "PRICED",
+  "QUOTED",
+  "QUOTE_SENT",
+  "QUERY_PENDING",
+  "MODIFICATION_REQUESTED",
+]);
+
 function formatDate(value: string) {
   return formatNZDate(new Date(value));
 }
@@ -278,6 +291,13 @@ export function PublicBookingRequestsPanel({
   const [linkConflicts, setLinkConflicts] = useState<
     Record<string, LinkMemberNightConflict[]>
   >({});
+  // Per-request sequence token (#1226 follow-up): each advisory pre-check bumps
+  // its request's token, so a slower earlier response can never overwrite a
+  // newer one — only the latest request's result is applied.
+  const linkConflictSeqRef = useRef<Record<string, number>>({});
+  // Request ids whose advisory has already been fired on load, so the load-time
+  // effect runs the pre-check at most once per request.
+  const linkConflictLoadedRef = useRef<Set<string>>(new Set<string>());
   const [memberQueries, setMemberQueries] = useState<Record<string, string>>({});
   const [memberResults, setMemberResults] = useState<
     Record<string, MemberSearchResult[]>
@@ -644,43 +664,70 @@ export function PublicBookingRequestsPanel({
     }
   }
 
-  // Advisory-only pre-check (issue #1226): whenever the admin changes the
-  // guest→member links, ask the server if any linked member is already on an
-  // overlapping booking. This never blocks — the 409 hard block stays at
-  // approve/hold time — it just surfaces the overlap earlier so the admin can
-  // resolve it before approving.
-  async function refreshLinkConflicts(
-    request: PublicBookingRequestData,
-    links: UiMemberLink[]
-  ) {
-    if (links.length === 0) {
-      setLinkConflicts((prev) => ({ ...prev, [request.id]: [] }));
-      return;
+  // Advisory-only pre-check (issue #1226): ask the server whether any linked
+  // member is already on an overlapping booking. This runs both on load for
+  // already-linked members and whenever the admin changes the guest→member
+  // links. It never blocks — the 409 hard block stays at approve/hold time — it
+  // just surfaces the overlap earlier so the admin can resolve it before
+  // approving. A per-request sequence token guards against out-of-order
+  // responses: a slower earlier request can never overwrite a newer result.
+  const refreshLinkConflicts = useCallback(
+    async (request: PublicBookingRequestData, links: UiMemberLink[]) => {
+      const seq = (linkConflictSeqRef.current[request.id] ?? 0) + 1;
+      linkConflictSeqRef.current[request.id] = seq;
+      const isLatest = () => linkConflictSeqRef.current[request.id] === seq;
+
+      if (links.length === 0) {
+        // Nothing to check — clear synchronously. The seq bump above means any
+        // still-in-flight earlier request is discarded when it resolves.
+        setLinkConflicts((prev) => ({ ...prev, [request.id]: [] }));
+        return;
+      }
+      try {
+        const response = await fetch(
+          `/api/admin/booking-requests/${request.id}/link-conflicts`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              links: links.map(({ guestIndex, memberId }) => ({
+                guestIndex,
+                memberId,
+              })),
+            }),
+          }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!isLatest()) return; // a newer request superseded this one — ignore
+        if (!response.ok) return; // advisory only — never surface as a hard error
+        setLinkConflicts((prev) => ({
+          ...prev,
+          [request.id]: Array.isArray(data.conflicts) ? data.conflicts : [],
+        }));
+      } catch {
+        // Advisory pre-check is best-effort; ignore transport errors.
+      }
+    },
+    [setLinkConflicts]
+  );
+
+  // Compute the advisory on load (#1226 follow-up): a request reopened with
+  // already-persisted linked members would otherwise show no banner until the
+  // admin re-linked. For each request whose card renders the linking editor
+  // (and therefore the banner), fire the advisory once for its persisted links.
+  // Gated to those statuses so we never fire authenticated pre-checks for
+  // approved/declined requests that can't surface a banner, and recorded in a
+  // ref only once fired so a request first seen without links still computes
+  // when it later gains them.
+  useEffect(() => {
+    for (const request of requests) {
+      if (linkConflictLoadedRef.current.has(request.id)) continue;
+      if (!LINKING_EDITOR_STATUSES.has(request.status)) continue;
+      if (request.linkedGuestMembers.length === 0) continue;
+      linkConflictLoadedRef.current.add(request.id);
+      void refreshLinkConflicts(request, request.linkedGuestMembers);
     }
-    try {
-      const response = await fetch(
-        `/api/admin/booking-requests/${request.id}/link-conflicts`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            links: links.map(({ guestIndex, memberId }) => ({
-              guestIndex,
-              memberId,
-            })),
-          }),
-        }
-      );
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) return; // advisory only — never surface as a hard error
-      setLinkConflicts((prev) => ({
-        ...prev,
-        [request.id]: Array.isArray(data.conflicts) ? data.conflicts : [],
-      }));
-    } catch {
-      // Advisory pre-check is best-effort; ignore transport errors.
-    }
-  }
+  }, [requests, refreshLinkConflicts]);
 
   function handleLinkMember(
     request: PublicBookingRequestData,
@@ -973,14 +1020,7 @@ export function PublicBookingRequestsPanel({
                     </div>
                   ) : null}
 
-                  {[
-                    "VERIFIED",
-                    "PRICED",
-                    "QUOTED",
-                    "QUOTE_SENT",
-                    "QUERY_PENDING",
-                    "MODIFICATION_REQUESTED",
-                  ].includes(request.status) ? (
+                  {LINKING_EDITOR_STATUSES.has(request.status) ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
                       {request.heldBookingId ? (
                         <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
