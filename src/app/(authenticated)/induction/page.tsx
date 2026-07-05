@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { InductionSignOffForm } from "@/components/induction-sign-off-form";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import {
   type AwaitingInductionClient,
   type InductionDetailClient,
@@ -38,6 +39,7 @@ const STATUS_VARIANT: Record<
 };
 
 export default function InductionPage() {
+  const { hutLeaderLabel } = useClubIdentity();
   const [data, setData] = useState<InductionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,8 +99,8 @@ export default function InductionPage() {
               ) : (
                 <p className="text-sm text-muted-foreground">
                   You don&apos;t have an induction record yet. An administrator
-                  or hut leader will create one for you once you&apos;ve arranged
-                  your lodge induction.
+                  or {hutLeaderLabel.toLowerCase()} will create one for you once
+                  you&apos;ve arranged your lodge induction.
                 </p>
               )}
             </CardContent>

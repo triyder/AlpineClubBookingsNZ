@@ -4,6 +4,7 @@ import {
   SubscriptionStatus,
   type Prisma,
 } from "@prisma/client";
+import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -446,7 +447,7 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
   },
   {
     code: "hut_leader_assignments",
-    label: "Hut leader assignments reference this member.",
+    label: `${CLUB_HUT_LEADER_LABEL.charAt(0).toUpperCase()}${CLUB_HUT_LEADER_LABEL.slice(1).toLowerCase()} assignments reference this member.`,
     query: (db, memberId) =>
       db.hutLeaderAssignment.count({ where: { memberId } }),
   },

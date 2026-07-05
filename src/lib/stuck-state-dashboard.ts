@@ -1,4 +1,5 @@
 import type { FeatureFlags } from "@/config/schema";
+import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import {
   addDaysDateOnly,
   formatDateOnly,
@@ -611,7 +612,7 @@ async function addLodgeItems(
   addItem(items, {
     id: "lodge-unassigned-hut-leaders",
     domain: "lodge",
-    title: "Unassigned hut leader dates",
+    title: `Unassigned ${CLUB_HUT_LEADER_LABEL.toLowerCase()} dates`,
     severity: "warning",
     owner: "Lodge",
     count: unassignedDates.length,
@@ -619,7 +620,7 @@ async function addLodgeItems(
     summary: `${unassignedDates.length} upcoming lodge ${plural(
       unassignedDates.length,
       "date",
-    )} in the next ${hutLeaderLookaheadDays} days with bookings have no hut leader assigned.`,
+    )} in the next ${hutLeaderLookaheadDays} days with bookings have no ${CLUB_HUT_LEADER_LABEL.toLowerCase()} assigned.`,
   });
   addItem(items, {
     id: "lodge-open-issue-reports",

@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useClubIdentity } from "@/components/club-identity-provider";
 
 type InstructionDocument = {
   key: "OPEN" | "CLOSE" | "DAY_TO_DAY";
@@ -31,6 +32,8 @@ function formatUpdatedAt(value: string | null): string | null {
 }
 
 export default function LodgeInstructionsPage() {
+  const { hutLeaderLabel } = useClubIdentity();
+  const hutLeaderLower = hutLeaderLabel.toLowerCase();
   const [documents, setDocuments] = useState<InstructionDocument[] | null>(
     null,
   );
@@ -90,15 +93,15 @@ export default function LodgeInstructionsPage() {
             Lodge Instructions
           </CardTitle>
           <CardDescription>
-            You&apos;re not currently assigned as a hut leader.
+            You&apos;re not currently assigned as a {hutLeaderLower}.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-slate-600">
             The lodge opening, closing, and day-to-day instructions are only
-            available to admins and members with a current or upcoming hut
-            leader assignment. If you believe you should have access, please
-            contact a club administrator.
+            available to admins and members with a current or upcoming{" "}
+            {hutLeaderLower} assignment. If you believe you should have access,
+            please contact a club administrator.
           </p>
         </CardContent>
       </Card>
@@ -121,7 +124,7 @@ export default function LodgeInstructionsPage() {
             Lodge Instructions
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Opening, closing, and day-to-day instructions for hut leaders.
+            Opening, closing, and day-to-day instructions for {hutLeaderLower}s.
             Print a copy to pin up in the lodge.
           </p>
         </div>

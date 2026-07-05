@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
@@ -245,6 +246,7 @@ export function PublicBookingRequestsPanel({
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
 }: PublicBookingRequestsPanelProps) {
+  const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get("status");
@@ -850,7 +852,10 @@ export function PublicBookingRequestsPanel({
 
                   {request.type === "SCHOOL" && request.teachers.length > 0 ? (
                     <div className="text-sm">
-                      <span className="text-muted-foreground">Teachers &amp; parent helpers (hut leaders):</span>{" "}
+                      <span className="text-muted-foreground">
+                        Teachers &amp; parent helpers (
+                        {hutLeaderLabel.toLowerCase()}s):
+                      </span>{" "}
                       {request.teachers
                         .map((teacher) => `${teacher.firstName} ${teacher.lastName}`)
                         .join(", ")}

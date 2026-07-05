@@ -293,13 +293,16 @@ export default function SchoolBookingRequestPage() {
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Teachers &amp; parent helpers (hut leaders)</h3>
+              <h3 className="text-sm font-semibold">
+                Teachers &amp; parent helpers ({club.hutLeaderLabel.toLowerCase()}s)
+              </h3>
               <Button type="button" variant="outline" size="sm" onClick={addTeacher}>
                 + Add adult
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Each teacher or parent helper is set up as a hut leader and emailed their kiosk PIN. If
+              Each teacher or parent helper is set up as a{" "}
+              {club.hutLeaderLabel.toLowerCase()} and emailed their kiosk PIN. If
               no email is given, the PIN goes to the contact email above.
             </p>
 
