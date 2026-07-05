@@ -184,7 +184,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | Table | Role |
 | --- | --- |
 | `XeroToken` | Single-row encrypted OAuth token set + `refreshInProgressUntil` lease. |
-| `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields. **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
+| `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
@@ -497,8 +497,19 @@ These are candidates for future issues, not commitments.
    functions repeat the same insert shape. A registry map
    (`queueType → {expectedOperation, handler}`) plus deriving the filter from
    the payload module's constant list removes three copies of the same
-   knowledge; promoting `queueType` to an indexed column is the full fix but
-   needs a migration (coordinate with schema owners).
+   knowledge. **Done (#1271):** `queueType` is now a denormalized, indexed
+   `XeroSyncOperation` column (`@@index([queueType, status, createdAt])`),
+   captured once at enqueue in `startXeroSyncOperation` (and backfilled from
+   `requestPayload->>'queueType'`) and never updated afterward. The payload field
+   stays canonical — the PENDING-scan `OR` and the parsing switch still read it.
+   **Caveat for the #1272 reader:** the column mirrors the payload only for rows
+   still awaiting dispatch (`PENDING`/`WAITING_PAYMENT`); once a row is dispatched
+   some handlers (e.g. the booking-invoice create/update) overwrite
+   `requestPayload` wholesale and drop `queueType`, so the column and payload
+   diverge post-dispatch. That is safe because nothing reads the column yet, and
+   the set #1272 scans is exactly the pre-dispatch set where they still agree.
+   Switching those reads to the column (making it the sole source) is deferred to
+   #1272.
 4. **Unify the operation-replay stack.** `xero-operation-retry`,
    `xero-operation-queue`, and `xero-stale-operations` plus the
    claim-to-RUNNING `updateMany` pattern (duplicated in outbox and queue)

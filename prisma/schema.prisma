@@ -2072,6 +2072,17 @@ model XeroSyncOperation {
   lastErrorCode     String?
   lastErrorMessage  String?
   requestPayload    Json?
+  // Denormalized copy of the outbox discriminator, captured once at enqueue in
+  // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
+  // #1208). Dispatch reads queueType from `requestPayload` (not this column),
+  // BEFORE handlers may overwrite `requestPayload` -- so after dispatch this
+  // column can diverge from the payload (some handlers, e.g. the booking-invoice
+  // create/update, rewrite requestPayload wholesale and drop queueType). That is
+  // expected and safe: nothing reads this column yet (added for #1272), and for
+  // every row still awaiting dispatch (PENDING / WAITING_PAYMENT -- the set #1272
+  // will scan) the column faithfully mirrors the enqueue-time queueType. Null for
+  // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
+  queueType         String?
   responsePayload   Json?
   xeroObjectType    String?
   xeroObjectId      String?
@@ -2092,6 +2103,7 @@ model XeroSyncOperation {
   @@index([status, createdAt])
   @@index([direction, status, createdAt])
   @@index([entityType, status, createdAt])
+  @@index([queueType, status, createdAt])
   @@index([localModel, localId, createdAt])
   // No @@unique on correlationKey/idempotencyKey by design (#1234, invariant (c)):
   // (1) the same key legitimately recurs across rows over time -- a terminal-status
