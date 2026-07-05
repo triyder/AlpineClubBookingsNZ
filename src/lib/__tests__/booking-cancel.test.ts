@@ -45,8 +45,10 @@ const mocks = vi.hoisted(() => {
   refundPaymentTransactions: vi.fn(),
   planStripeRefundAllocation: vi.fn(),
   enqueueBookingCancellationRefundRecovery: vi.fn(),
+  enqueuePaymentIntentCancellationRecovery: vi.fn(),
   markBookingCancellationRefundRecoverySucceeded: vi.fn(),
   recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
+  txPaymentTransactionFindFirst: vi.fn(),
   // The tx client handed to the paid-path claim callback, captured so tests
   // can prove the #1349 recovery enqueue ran INSIDE the claim transaction.
   lastTx: null as unknown,
@@ -139,6 +141,8 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/payment-recovery", () => ({
   enqueueBookingCancellationRefundRecovery:
     mocks.enqueueBookingCancellationRefundRecovery,
+  enqueuePaymentIntentCancellationRecovery:
+    mocks.enqueuePaymentIntentCancellationRecovery,
   markBookingCancellationRefundRecoverySucceeded:
     mocks.markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError:
@@ -195,6 +199,9 @@ describe("cancelBooking credit refunds", () => {
             payment: {
               update: mocks.paymentUpdate,
             },
+            paymentTransaction: {
+              findFirst: mocks.txPaymentTransactionFindFirst,
+            },
           };
           mocks.lastTx = mockTx;
           return arg(mockTx);
@@ -241,6 +248,14 @@ describe("cancelBooking credit refunds", () => {
     });
     mocks.enqueueBookingCancellationRefundRecovery.mockResolvedValue({
       id: "recovery_op_1",
+    });
+    mocks.enqueuePaymentIntentCancellationRecovery.mockResolvedValue({
+      id: "recovery_cancel_op_1",
+    });
+    // The tx1 lookup of the outstanding ADDITIONAL transaction (#1350).
+    mocks.txPaymentTransactionFindFirst.mockResolvedValue({
+      id: "ptx_additional_1",
+      amountCents: 2500,
     });
     // #1349: the claim tx freezes the refund plan before any Stripe call. The
     // default echoes the requested amount as a single fully-refundable slice.
@@ -713,6 +728,123 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.bookingUpdate).toHaveBeenCalledWith({
       where: { id: "booking_1" },
       data: { status: "CANCELLED" },
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F1 (#1350): an outstanding ADDITIONAL payment intent gets a durable
+  // CANCEL_PAYMENT_INTENT recovery operation INSIDE the claim transaction, so
+  // the recovery cron (and the webhook's superseded-intent hook) cancel or
+  // refund it even when the Phase-2 best-effort Stripe cancel fails.
+  // ---------------------------------------------------------------------------
+  describe("durable additional-intent cancellation recovery (#1350)", () => {
+    const bookingWithOutstandingAdditional = {
+      id: "booking_1",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_1",
+        bookingId: "booking_1",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_1",
+        additionalPaymentIntentId: "pi_additional_1",
+        additionalPaymentStatus: "PENDING",
+      },
+    };
+
+    it("enqueues the durable cancellation op inside tx1, keyed to the additional transaction", async () => {
+      mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.txPaymentTransactionFindFirst).toHaveBeenCalledWith({
+        where: {
+          paymentId: "payment_1",
+          stripePaymentIntentId: "pi_additional_1",
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, amountCents: true },
+      });
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        paymentTransactionId: "ptx_additional_1",
+        paymentIntentId: "pi_additional_1",
+        amountCents: 2500,
+        store: mocks.lastTx,
+      });
+      // Ordered before any external Stripe work.
+      expect(
+        mocks.enqueuePaymentIntentCancellationRecovery.mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        mocks.cancelPaymentIntentIfCancellable.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("keeps the durable op even when the Phase-2 best-effort Stripe cancel fails", async () => {
+      mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.cancelPaymentIntentIfCancellable.mockRejectedValueOnce(
+        new Error("stripe unavailable")
+      );
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      // The claim stands and the debt to cancel the intent is durable.
+      expect(result.status).toBe(200);
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not enqueue when there is no outstanding additional intent", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
+    });
+
+    it("skips the enqueue (webhook guard remains the backstop) when no transaction row exists for the intent", async () => {
+      mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
     });
   });
 
