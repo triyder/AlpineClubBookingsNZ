@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     member: {
       findMany: vi.fn(),
       create: vi.fn(),
+      findUnique: vi.fn(),
     },
     booking: {
       findUnique: vi.fn(),
@@ -84,6 +85,44 @@ vi.mock("@/lib/booking-request", () => {
       mocks.mockApproveBookingRequest(...args),
     getBookingRequestSettings: (...args: unknown[]) =>
       mocks.mockGetSettings(...args),
+    MAPPABLE_CONTACT_ROLES: ["NON_MEMBER", "SCHOOL"] as const,
+    // Faithful re-implementation of the #1255 guard so the hold map/reject
+    // paths are actually exercised (the real module is fully mocked here).
+    assertMappableOwnerContact: async (
+      tx: {
+        member: {
+          findUnique: (args: unknown) => Promise<{
+            id: string;
+            canLogin: boolean;
+            role: string;
+            archivedAt: Date | null;
+            active: boolean;
+          } | null>;
+        };
+      },
+      ownerContactMemberId: string
+    ) => {
+      const contact = await tx.member.findUnique({
+        where: { id: ownerContactMemberId },
+        select: { id: true, canLogin: true, role: true, archivedAt: true, active: true },
+      });
+      if (!contact) {
+        throw new BookingRequestError("The selected contact could not be found", 404);
+      }
+      if (contact.canLogin) {
+        throw new BookingRequestError("login-capable member", 422);
+      }
+      if (contact.role !== "NON_MEMBER" && contact.role !== "SCHOOL") {
+        throw new BookingRequestError("not an org contact", 422);
+      }
+      if (contact.archivedAt) {
+        throw new BookingRequestError("archived contact", 422);
+      }
+      if (!contact.active) {
+        throw new BookingRequestError("inactive contact", 422);
+      }
+      return contact.id;
+    },
   };
 });
 
@@ -417,6 +456,68 @@ describe("sendBookingRequestQuote", () => {
     expect(result.emailDelivered).toBe(true);
   });
 
+  it("threads a mapped owner contact through the auto-hold placed on send (#1255)", async () => {
+    vi.mocked(prisma.bookingRequestQuote.findFirst).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.DRAFT,
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 1000,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      message: null,
+      createdByMemberId: "admin-1",
+      bookingRequest: baseRequest(),
+    } as never);
+    vi.mocked(prisma.bookingRequestQuote.update).mockResolvedValue({
+      id: "quote-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      options: [],
+      responseTokenExpiresAt: new Date("2026-08-01T00:00:00.000Z"),
+    } as never);
+    // No existing hold, so send materialises a fresh owner — and must honour the
+    // admin's map-to-existing decision rather than minting a new contact.
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+      }) as never
+    );
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "existing-contact",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+    mockSendQuoteEmail.mockResolvedValue(undefined);
+
+    await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "existing-contact",
+    });
+
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(bookingArgs.memberId).toBe("existing-contact");
+  });
+
   it("still marks the quote SENT but reports emailDelivered false when delivery fails", async () => {
     mockDraftQuoteForSend();
     mockSendQuoteEmail.mockRejectedValue(new Error("SES unavailable"));
@@ -747,6 +848,63 @@ describe("holdBookingRequestSlots owner role", () => {
     >;
     expect(memberArgs.role).toBe("SCHOOL");
     expect(memberArgs.firstName).toBe("New Plymouth Primary School");
+  });
+
+  it("maps the hold owner to an existing non-login contact instead of creating one (#1255)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+      }) as never
+    );
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "existing-contact",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+
+    const result = await holdBookingRequestSlots({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "existing-contact",
+    });
+
+    expect(result).toMatchObject({ type: "held", bookingId: "held-1" });
+    // No new owner member is created on the map path.
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(bookingArgs.memberId).toBe("existing-contact");
+  });
+
+  it("rejects holding onto a login-capable member (#1255 guard)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        priceCents: 12000,
+        quotes: [],
+      }) as never
+    );
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "real-member",
+      canLogin: true,
+      role: "USER",
+      archivedAt: null,
+    } as never);
+
+    await expect(
+      holdBookingRequestSlots({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        ownerContactMemberId: "real-member",
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
   });
 
   it("runs the member-night conflict guard with linked guests and no exclusion before creating the hold (issue #1158)", async () => {

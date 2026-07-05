@@ -34,10 +34,32 @@ export async function POST(
     return NextResponse.json({ error: "Booking request not found" }, { status: 404 });
   }
 
-  // Optional admin override of the school group's child counts at approval time.
-  // The body is empty for general requests and for school approvals that keep
-  // the submitted numbers, so parse defensively.
-  const body = (await req.json().catch(() => ({}))) as { childCounts?: unknown };
+  // Optional admin override of the school group's child counts at approval time,
+  // plus the optional map-to-existing-contact decision (issue #1255). The body
+  // is empty for general requests and for school approvals that keep the
+  // submitted numbers, so parse defensively.
+  const body = (await req.json().catch(() => ({}))) as {
+    childCounts?: unknown;
+    ownerContactMemberId?: unknown;
+  };
+
+  // The map target is an existing non-login Organisation/School contact id. The
+  // authoritative guard (canLogin:false, role, not archived) runs inside the
+  // approval transaction; here we only normalise the shape.
+  let ownerContactMemberId: string | undefined;
+  if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
+    if (
+      typeof body.ownerContactMemberId !== "string" ||
+      body.ownerContactMemberId.trim().length === 0 ||
+      body.ownerContactMemberId.length > 64
+    ) {
+      return NextResponse.json(
+        { error: "Invalid contact selection" },
+        { status: 422 }
+      );
+    }
+    ownerContactMemberId = body.ownerContactMemberId;
+  }
 
   try {
     if (requestRow.type === BookingRequestType.SCHOOL) {
@@ -57,6 +79,7 @@ export async function POST(
         requestId: id,
         adminMemberId: session.user.id,
         guestOverride,
+        ownerContactMemberId,
       });
 
       if (result.type === "capacityExceeded") {
@@ -83,6 +106,7 @@ export async function POST(
     const result = await approveBookingRequest({
       requestId: id,
       adminMemberId: session.user.id,
+      ownerContactMemberId,
     });
 
     if (result.type === "capacityExceeded") {

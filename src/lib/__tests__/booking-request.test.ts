@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     member: {
       create: vi.fn(),
+      findUnique: vi.fn(),
     },
     booking: {
       create: vi.fn(),
@@ -96,6 +97,7 @@ import {
 import { hashActionToken } from "@/lib/action-tokens";
 import {
   approveBookingRequest,
+  assertMappableOwnerContact,
   BookingRequestError,
   createBookingRequest,
   declineBookingRequest,
@@ -614,6 +616,73 @@ describe("approveBookingRequest", () => {
     );
   });
 
+  it("maps to an existing non-login contact instead of creating a new member (#1255)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    // The chosen contact is a valid non-login NON_MEMBER organisation contact.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "contact-9",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "contact-9",
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      memberId: "contact-9",
+      bookingId: "booking-1",
+    });
+    // No new member (and therefore no new Xero contact) is minted on the map path.
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0].data as Record<string, unknown>;
+    expect(bookingArgs.memberId).toBe("contact-9");
+  });
+
+  it("rejects mapping a request onto a login-capable member (#1255 guard)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({ status: BookingRequestStatus.PRICED, priceCents: 12000 }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "real-member",
+      canLogin: true,
+      role: "USER",
+      archivedAt: null,
+    } as never);
+
+    await expect(
+      approveBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        ownerContactMemberId: "real-member",
+      })
+    ).rejects.toMatchObject({ status: 422 });
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
   it("is idempotent on a re-armed convertedBookingId: a replayed accept returns the existing booking and fires no second side effect (#1232)", async () => {
     // First accept: a clean PRICED request converts exactly once.
     mockedFindUnique.mockResolvedValue(
@@ -753,6 +822,15 @@ describe("approveBookingRequest", () => {
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
     } as never);
+    // Held owner is re-validated at conversion (#1255 decision 1); still valid,
+    // so it is reused unchanged.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-member",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
     // Held booking already has the request's guest rows; the reuse path updates
     // them in place (issue #1254) rather than deleteMany+recreate.
     vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
@@ -778,6 +856,216 @@ describe("approveBookingRequest", () => {
     expect(prisma.booking.update).toHaveBeenCalled();
     expect(prisma.member.create).not.toHaveBeenCalled();
     expect(prisma.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("ignores ownerContactMemberId on a held request and reuses a still-valid held owner (#1255/#1280)", async () => {
+    // Once beds are held, the owner was materialised earlier (at hold/quote-send)
+    // and persisted on the held booking. Approval reuses held.memberId and does
+    // NOT re-run the map-or-create decision — the passed contact id is a no-op.
+    // Decision 1 (#1255): the held owner IS re-validated at conversion; a
+    // still-valid owner is reused unchanged (no substitution, no new member).
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-member",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    // Re-validation of the held owner: still a valid non-login contact.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-member",
+      canLogin: false,
+      role: "NON_MEMBER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      ownerContactMemberId: "some-other-contact",
+    });
+
+    // Owner stays the held booking's owner, not the passed contact.
+    expect(result).toMatchObject({ type: "approved", memberId: "held-member" });
+    // The guard re-validated the HELD owner (not the passed param); still valid,
+    // so no fresh member was minted and no substitution was recorded.
+    expect(prisma.member.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "held-member" } })
+    );
+    expect(prisma.member.create).not.toHaveBeenCalled();
+    expect(mockedLogAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "booking_request.owner_substituted" })
+    );
+  });
+
+  it("substitutes a fresh contact when the held owner is no longer valid at conversion, and the accept still succeeds (#1255 decision 1)", async () => {
+    // A mapped pre-existing contact was login-enabled/archived during the
+    // quote→accept window. Re-validation fails, so instead of failing the
+    // requester's accept the held booking is re-owned by a fresh non-login
+    // contact and an admin-attention audit row is written.
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-invalid",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    // The held owner became login-capable → guard rejects it.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-invalid",
+      canLogin: true,
+      role: "USER",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "fresh-owner" } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    // Accept succeeds; the booking is now owned by the fresh substitute.
+    expect(result).toMatchObject({ type: "approved", memberId: "fresh-owner" });
+    const freshArgs = vi.mocked(prisma.member.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(freshArgs.canLogin).toBe(false);
+    expect(freshArgs.role).toBe("NON_MEMBER");
+    // The held booking is repointed at the substitute owner.
+    const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(updateArgs.memberId).toBe("fresh-owner");
+    // Admin-attention audit row recording the substitution.
+    expect(mockedLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking_request.owner_substituted",
+        metadata: expect.objectContaining({
+          invalidMemberId: "held-invalid",
+          substituteMemberId: "fresh-owner",
+        }),
+      })
+    );
+  });
+});
+
+describe("assertMappableOwnerContact (real #1255 guard)", () => {
+  function txWith(contact: Record<string, unknown> | null) {
+    return {
+      member: { findUnique: vi.fn().mockResolvedValue(contact) },
+    } as never;
+  }
+
+  it("returns the id for a valid non-login NON_MEMBER contact", async () => {
+    await expect(
+      assertMappableOwnerContact(
+        txWith({
+          id: "c1",
+          canLogin: false,
+          role: "NON_MEMBER",
+          archivedAt: null,
+          active: true,
+        }),
+        "c1"
+      )
+    ).resolves.toBe("c1");
+  });
+
+  it("returns the id for a valid non-login SCHOOL contact (cross-type allowed, #1255 decision 2)", async () => {
+    await expect(
+      assertMappableOwnerContact(
+        txWith({
+          id: "s1",
+          canLogin: false,
+          role: "SCHOOL",
+          archivedAt: null,
+          active: true,
+        }),
+        "s1"
+      )
+    ).resolves.toBe("s1");
+  });
+
+  it("throws 404 when the contact does not exist", async () => {
+    await expect(
+      assertMappableOwnerContact(txWith(null), "missing")
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("rejects a login-capable member (422)", async () => {
+    await expect(
+      assertMappableOwnerContact(
+        txWith({ id: "m1", canLogin: true, role: "USER", archivedAt: null, active: true }),
+        "m1"
+      )
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects a role that is neither NON_MEMBER nor SCHOOL (422)", async () => {
+    await expect(
+      assertMappableOwnerContact(
+        txWith({ id: "m1", canLogin: false, role: "USER", archivedAt: null, active: true }),
+        "m1"
+      )
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects an archived contact (422)", async () => {
+    await expect(
+      assertMappableOwnerContact(
+        txWith({
+          id: "c1",
+          canLogin: false,
+          role: "NON_MEMBER",
+          archivedAt: new Date("2026-01-01T00:00:00.000Z"),
+          active: true,
+        }),
+        "c1"
+      )
+    ).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("rejects an inactive contact (422)", async () => {
+    await expect(
+      assertMappableOwnerContact(
+        txWith({
+          id: "c1",
+          canLogin: false,
+          role: "NON_MEMBER",
+          archivedAt: null,
+          active: false,
+        }),
+        "c1"
+      )
+    ).rejects.toMatchObject({ status: 422 });
   });
 });
 

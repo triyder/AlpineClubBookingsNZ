@@ -13,6 +13,9 @@ import { requireAdmin } from "@/lib/session-guards";
 
 const holdSchema = z.object({
   optionId: z.string().min(1).max(40).optional().nullable(),
+  // Optional map-to-existing-contact decision (issue #1255). The authoritative
+  // guard runs inside the hold transaction.
+  ownerContactMemberId: z.string().min(1).max(64).optional().nullable(),
 });
 
 export async function POST(
@@ -44,6 +47,7 @@ export async function POST(
       requestId: id,
       adminMemberId: session.user.id,
       optionId: parsed.data.optionId,
+      ownerContactMemberId: parsed.data.ownerContactMemberId,
     });
 
     if (result.type === "capacityExceeded") {

@@ -84,20 +84,30 @@ type CancelBookingResponse =
  * its linked provisional non-member child (PENDING, holds nothing, no payment),
  * so a family is cancelled as one. Cancelling the non-member child on its own
  * leaves the member booking intact.
+ *
+ * `options.suppressCustomerNotification` (#1255): when `true`, skip the
+ * customer-facing "booking cancelled" email. Currently honored on the
+ * no-payment / AWAITING_REVIEW cancellation path only — used by the admin
+ * "Release hold" action, which cancels a held (AWAITING_REVIEW) booking to
+ * re-open owner mapping without telling the requester their reservation was
+ * cancelled. Refund-path notifications are unaffected. Defaults to `false`, so
+ * every existing caller is unchanged.
  */
 export async function cancelBooking(
   bookingId: string,
   sessionUserId: string,
   sessionUserRole: string,
   ipAddress: string,
-  refundMethod: "card" | "credit" = "card"
+  refundMethod: "card" | "credit" = "card",
+  options: { suppressCustomerNotification?: boolean } = {}
 ): Promise<CancelBookingResponse> {
   const result = await performBookingCancellation(
     bookingId,
     sessionUserId,
     sessionUserRole,
     ipAddress,
-    refundMethod
+    refundMethod,
+    options.suppressCustomerNotification ?? false
   );
 
   if (result.status === 200) {
@@ -200,7 +210,8 @@ async function performBookingCancellation(
   sessionUserId: string,
   sessionUserRole: string,
   ipAddress: string,
-  refundMethod: "card" | "credit" = "card"
+  refundMethod: "card" | "credit" = "card",
+  suppressCustomerNotification = false
 ): Promise<CancelBookingResponse> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -275,14 +286,20 @@ async function performBookingCancellation(
         : "Cancelled before payment. No payment was taken.",
     });
 
-    sendBookingCancelledEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
-      0,
-      "card"
-    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for no-payment booking"));
+    // #1255: the admin "Release hold" action cancels this held booking to
+    // re-open owner mapping and passes suppressCustomerNotification, so the
+    // requester is not emailed a cancellation for a hold being administratively
+    // released. The detach/reconcile/audit above still run.
+    if (!suppressCustomerNotification) {
+      sendBookingCancelledEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        0,
+        "card"
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for no-payment booking"));
+    }
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
