@@ -155,6 +155,7 @@ import {
   reapStaleWaitingPaymentXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   beforeEach(() => {
@@ -1123,6 +1124,28 @@ describe("processQueuedXeroOutboxOperations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+  });
+
+  it("scans the pending outbox by the indexed queueType column, not a requestPayload JSON predicate (#1272)", async () => {
+    mocks.findManyOperations.mockResolvedValue([]);
+
+    await processQueuedXeroOutboxOperations({ limit: 7 });
+
+    expect(mocks.findManyOperations).toHaveBeenCalledTimes(1);
+    const args = mocks.findManyOperations.mock.calls[0][0];
+    // The scan now filters on the denormalized `queueType` column via the
+    // single-source-of-truth list, keeping status/direction/order/limit intact.
+    expect(args.where).toEqual({
+      status: "PENDING",
+      direction: "OUTBOUND",
+      queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
+    });
+    expect(args.where.queueType.in).toHaveLength(12);
+    // The legacy 12-branch `requestPayload->>'queueType'` OR predicate is gone.
+    expect(args.where.OR).toBeUndefined();
+    expect(JSON.stringify(args.where)).not.toContain("requestPayload");
+    expect(args.orderBy).toEqual({ createdAt: "asc" });
+    expect(args.take).toBe(7);
   });
 
   it("claims and processes queued entrance fee operations", async () => {

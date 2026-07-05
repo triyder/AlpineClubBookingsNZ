@@ -22,6 +22,30 @@ export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
 export const XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE =
   "GROUP_SETTLEMENT_INVOICE";
 
+/**
+ * The complete set of outbox queue types the pending scan dispatches (#1272,
+ * item 4 of #1208). Single source of truth: the pending-outbox scan
+ * (`processQueuedXeroOutboxOperations`) filters `queueType IN (...)` on this
+ * list, and the canonical per-type parse switch in `readQueuedOutboxPayload`
+ * covers exactly these members. Ordered to mirror the historical scan
+ * predicate for an obvious 1:1 audit. REQUEUE/BACKFILL/inbound rows carry no
+ * queueType and are intentionally excluded.
+ */
+export const XERO_OUTBOX_QUEUE_TYPES = [
+  XERO_OUTBOX_ENTRANCE_FEE_TYPE,
+  XERO_OUTBOX_BOOKING_INVOICE_TYPE,
+  XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
+  XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+  XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
+  XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
+  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
+] as const;
+
 export interface QueuedEntranceFeeOutboxPayload {
   queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
   category: EntranceFeeCategory;

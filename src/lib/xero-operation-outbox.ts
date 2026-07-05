@@ -49,6 +49,7 @@ import {
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
@@ -1772,83 +1773,23 @@ export async function processQueuedXeroOutboxOperations(options?: {
 }): Promise<ProcessQueuedXeroOutboxOperationsResult> {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.xeroSyncOperation.findMany({
+    // Scan the indexed, denormalized `queueType` column (#1271, item 3 of
+    // #1208) instead of a 12-branch `requestPayload->>'queueType'` OR predicate.
+    // Behavior-identical for this scan: the column is written at enqueue in
+    // `startXeroSyncOperation` from the same sanitized payload and never updated
+    // afterward, and the only non-enqueue path into PENDING (the
+    // WAITING_PAYMENT -> PENDING supplementary release) only flips status. So
+    // for every PENDING row the column mirrors the enqueue-time
+    // `payload.queueType` exactly (#1271's migration also backfilled existing
+    // rows), and this selects the identical set the OR predicate did — now via
+    // the `(queueType, status, createdAt)` index. Dispatch below still reads
+    // `queueType` from the payload, so routing is unchanged.
     where: {
       status: "PENDING",
       direction: "OUTBOUND",
-      OR: [
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_ENTRANCE_FEE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
-          },
-        },
-      ],
+      queueType: {
+        in: [...XERO_OUTBOX_QUEUE_TYPES],
+      },
     },
     orderBy: {
       createdAt: "asc",

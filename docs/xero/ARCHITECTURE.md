@@ -121,8 +121,8 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-operation-outbox` | `enqueueXero*Operation` (12 queue types) and the worker `processQueuedXeroOutboxOperations`; also WAITING_PAYMENT release/reap for supplementary invoices. |
-| `xero-operation-outbox-payload` | The 12 queue-type constants, payload schemas, and payload→expected-operation mapping used to claim rows safely. |
+| `xero-operation-outbox` | `enqueueXero*Operation` (12 queue types) and the worker `processQueuedXeroOutboxOperations` (scans the indexed `queueType` column via `XERO_OUTBOX_QUEUE_TYPES`); also WAITING_PAYMENT release/reap for supplementary invoices. |
+| `xero-operation-outbox-payload` | The 12 queue-type constants (plus the `XERO_OUTBOX_QUEUE_TYPES` list the pending scan filters on), payload schemas, and payload→expected-operation mapping used to claim rows safely. |
 | `xero-operation-retry` | `retryXeroSyncOperation`: immediate replay of a failed operation (admin "Retry"), including contact-payload rebuild for member contact ops. |
 | `xero-operation-queue` | Background replay: a REQUEUE `XeroSyncOperation` wraps the original id; `processQueuedXeroOperationRetries` claims and executes them via `retryXeroSyncOperation`. |
 | `xero-booking-invoice-queue` | Thin helper: enqueue booking invoice + immediate kick, for callers that want one line. |
@@ -502,20 +502,32 @@ These are candidates for future issues, not commitments.
    captured once at enqueue in `startXeroSyncOperation` (and backfilled from
    `requestPayload->>'queueType'`) and never updated afterward. The payload field
    stays canonical — the PENDING-scan `OR` and the parsing switch still read it.
-   **Caveat for the #1272 reader:** the column mirrors the payload only for rows
-   still awaiting dispatch (`PENDING`/`WAITING_PAYMENT`); once a row is dispatched
-   some handlers (e.g. the booking-invoice create/update) overwrite
-   `requestPayload` wholesale and drop `queueType`, so the column and payload
-   diverge post-dispatch. That is safe because nothing reads the column yet, and
-   the set #1272 scans is exactly the pre-dispatch set where they still agree.
-   Switching those reads to the column (making it the sole source) is deferred to
-   #1272.
-4. **Unify the operation-replay stack.** `xero-operation-retry`,
-   `xero-operation-queue`, and `xero-stale-operations` plus the
-   claim-to-RUNNING `updateMany` pattern (duplicated in outbox and queue)
-   describe one lifecycle across four files. A single operation-lifecycle
-   module owning claim/complete/fail/requeue/stale semantics would shrink the
-   surface admins and agents must understand.
+   **Why the column mirrors the payload only pre-dispatch:** the column mirrors
+   the payload only for rows still awaiting dispatch (`PENDING`/`WAITING_PAYMENT`);
+   once a row is dispatched some handlers (e.g. the booking-invoice create/update)
+   overwrite `requestPayload` wholesale and drop `queueType`, so the column and
+   payload diverge post-dispatch. That is safe because the only consumer is the
+   PENDING outbox scan (switched to the column in #1272 part 1), whose set is
+   exactly the pre-dispatch set where column and payload still agree; the
+   dispatcher and the parsing switch still read `queueType` from the payload.
+   Making the column the sole discriminator everywhere is the remaining #1272
+   consolidation (see item 4).
+4. **Unify the operation-replay stack.** `xero-operation-outbox`,
+   `xero-operation-outbox-payload`, `xero-operation-queue`, and
+   `xero-operation-retry` describe one lifecycle (enqueue → scan/dispatch →
+   execute → retry/replay → payload). _Part 1 done (#1272):_ the PENDING outbox
+   scan (`processQueuedXeroOutboxOperations`) now filters on the indexed
+   `queueType` column (using the `(queueType, status, createdAt)` index) instead
+   of a hand-written 12-branch `requestPayload->>'queueType'` OR predicate, and
+   the 12 queue-type values are consolidated into one exported
+   `XERO_OUTBOX_QUEUE_TYPES` list in `xero-operation-outbox-payload` that the
+   scan's `IN` consumes (single source of truth; per-type dispatch routing and
+   the payload parse switch are byte-identical). _Remaining (PR-b, owner-gated):_
+   physically co-locate the four files behind one `xero-operation-replay`
+   boundary and extract the duplicated claim-to-RUNNING `updateMany` pattern
+   (outbox + queue) — plus `xero-stale-operations` — into one shared
+   operation-lifecycle helper owning claim/complete/fail/requeue/stale
+   semantics.
 5. **Split `xero-hardening.ts` (1,606 lines).** _Done (#1208 item 5):_ the
    private helpers were extracted verbatim (behavior preserving) into cohesive
    `xero-hardening-<concern>.ts` sub-modules with an acyclic import graph —
