@@ -1012,6 +1012,84 @@ describe("POST /api/bookings/[id]/guests", () => {
     expect(fullPartyCall?.[2]?.lockedNightPrices ?? []).toEqual([]);
   });
 
+  it("moves a pending booking to PAYMENT_PENDING and clears the hold when the policy is disabled on add (#1287)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    mockedGetHoldPolicy.mockResolvedValueOnce({ enabled: false, holdDays: 7, source: "default" });
+    const booking = makeBooking({
+      status: "PENDING",
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+      hasNonMembers: true,
+      nonMemberHoldUntil: new Date("2026-05-25"),
+      payment: null,
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 6000,
+      guests: guests.map(() => ({ priceCents: 6000, perNightCents: [3000, 3000], nightDates: [] })),
+    })) as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    // First Paid, First In (hold disabled): the provisional hold is dropped and
+    // the party goes straight to the normal payment path.
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.hasNonMembers).toBe(true);
+    expect(updateData.status).toBe("PAYMENT_PENDING");
+    expect(updateData.nonMemberHoldUntil).toBeNull();
+  });
+
+  it("recomputes the hold and keeps the booking pending when the policy is enabled and outside the window on add (#1287)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    mockedGetHoldPolicy.mockResolvedValueOnce({ enabled: true, holdDays: 7, source: "default" });
+    const booking = makeBooking({
+      status: "PENDING",
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+      hasNonMembers: true,
+      // Stale hold from a prior policy; the add must recompute it from checkIn.
+      nonMemberHoldUntil: new Date("2026-01-01"),
+      payment: null,
+      guests: [
+        { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
+        { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith", ageTier: "ADULT", isMember: false, memberId: null, priceCents: 7000 },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as any);
+    mockedCalcPrice.mockImplementation(((_ci: unknown, _co: unknown, guests: unknown[]) => ({
+      totalPriceCents: guests.length * 6000,
+      guests: guests.map(() => ({ priceCents: 6000, perNightCents: [3000, 3000], nightDates: [] })),
+    })) as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    // Members First, outside the window: stays PENDING with the hold recomputed
+    // to checkIn - holdDays (not left at the stale value).
+    const updateData = tx.booking.update.mock.calls.at(-1)?.[0]?.data;
+    expect(updateData.status).toBe("PENDING");
+    expect(updateData.nonMemberHoldUntil).toEqual(
+      new Date(new Date("2026-06-01").getTime() - 7 * 24 * 60 * 60 * 1000),
+    );
+  });
+
   it("blocks adding guests to a quote-priced booking (#1032)", async () => {
     // The repro from the audit: adding one student to a school booking
     // quoted at a negotiated flat total must not reprice all guests at
