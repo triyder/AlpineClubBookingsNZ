@@ -63,14 +63,14 @@ test("member switches a card booking to Internet Banking with Xero absent", asyn
   await expect(switchButton).toBeVisible();
   await switchButton.click();
 
-  // Deterministic client outcome: the switch affordance retires immediately on
-  // success — it can no longer stick on "Switching…" or flash the pre-switch
-  // layout back for a paint (the #1148 / #1371 F28 fix). The detail page then
-  // refreshes to the Internet Banking card: source Internet Banking with a
-  // BOOKING-… reference, and no crash despite Xero being unconfigured (the Xero
-  // invoice is queued but never sent while disconnected). The booking stays
-  // payment-owed (holdBedSlots defaults off → no bed held, per #737). Asserted
-  // against the live DOM with no reload crutch, so a regression fails loudly.
+  // Deterministic outcome: on success the switch triggers a hard reload, so the
+  // page re-renders from the server to the Internet Banking card — source
+  // Internet Banking with a BOOKING-… reference, the switch affordance gone (a
+  // fresh render cannot show it once payment.source is INTERNET_BANKING), and no
+  // crash despite Xero being unconfigured (the Xero invoice is queued but never
+  // sent while disconnected). The booking stays payment-owed (holdBedSlots
+  // defaults off → no bed held, per #737). No soft-refresh race, no reload
+  // crutch in the spec (#1148 / #1371 F28) — asserted against the reloaded DOM.
   await expect(switchButton).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByText("Internet Banking Payment")).toBeVisible({
     timeout: 30_000,

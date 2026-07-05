@@ -673,21 +673,24 @@ describe("review finding source/schema contracts", () => {
     expect(reviewStep).toContain("text-brand-charcoal/75 dark:text-brand-gold/75");
   });
 
-  it("resolves the waitlist confirm CTA to a terminal state instead of sticking on Confirming (F28)", () => {
+  it("hard-reloads the waitlist confirm success path so the CTA can't stick on Confirming (F28)", () => {
     const card = readRepoFile("src/components/waitlist-offer-card.tsx");
-    expect(card).toContain("setConfirmed(true)");
-    // On success the whole card is replaced by a terminal confirmed state, so the
-    // CTA cannot stay stuck on "Confirming…" and the offer text clears at once.
-    expect(card).toContain("Spot Confirmed");
-    expect(card).toMatch(/if \(confirmed\) \{\s*return \(/);
+    // On success a full document reload re-renders the page from the server, so
+    // the CTA can never stay stuck on "Confirming…" waiting on a soft refresh
+    // that raced the re-render. No useRouter import means no soft router.refresh.
+    expect(card).toContain("window.location.reload()");
+    expect(card).not.toContain("useRouter");
   });
 
-  it("retires the internet-banking switch affordance after a successful switch (F28)", () => {
+  it("hard-reloads the internet-banking switch success path so the IB card renders deterministically (F28)", () => {
     const button = readRepoFile(
       "src/components/switch-to-internet-banking-button.tsx",
     );
-    expect(button).toContain("setSwitched(true)");
-    expect(button).toContain("Switching to internet banking…");
+    // A fresh server render cannot show the pre-switch layout once payment.source
+    // is INTERNET_BANKING, so a hard reload is deterministic where the soft
+    // refresh raced (#1148). No useRouter import means no soft router.refresh.
+    expect(button).toContain("window.location.reload()");
+    expect(button).not.toContain("useRouter");
   });
 
   it("guards the public quote cancel behind a confirmation dialog (F28)", () => {
@@ -727,9 +730,13 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {
+    // The components now hard-reload on success, so the specs assert the
+    // freshly-rendered server state directly — no reload-retry ride-through loop
+    // in the spec masking a soft-refresh race.
     const waitlistSpec = readRepoFile("e2e/waitlist.spec.ts");
     expect(waitlistSpec).not.toContain("assert the durable server state via reload");
-    expect(waitlistSpec).toContain('getByText("Spot Confirmed")');
+    expect(waitlistSpec).not.toContain("await memberPage.reload()");
+    expect(waitlistSpec).toContain("await expect(offerCard).toHaveCount(0, { timeout: 30_000 })");
 
     const ibSpec = readRepoFile("e2e/internet-banking.spec.ts");
     expect(ibSpec).not.toContain(
