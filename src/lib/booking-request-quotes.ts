@@ -16,6 +16,7 @@ import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
 import {
   approveBookingRequest,
+  assertMappableOwnerContact,
   BookingRequestError,
   getBookingRequestSettings,
   linkedGuestMemberMap,
@@ -465,6 +466,13 @@ export async function createBookingRequestQuote(input: {
 export async function sendBookingRequestQuote(input: {
   requestId: string;
   adminMemberId: string;
+  /**
+   * Optional existing non-login contact to own the auto-placed hold (issue
+   * #1255). Sending a quote reserves the beds by holding capacity (#1254), which
+   * materialises the owner — so the admin's map-or-create decision must be
+   * threaded here, not just at approval. Ignored once a hold already exists.
+   */
+  ownerContactMemberId?: string | null;
 }) {
   const quote = await prisma.bookingRequestQuote.findFirst({
     where: {
@@ -491,6 +499,7 @@ export async function sendBookingRequestQuote(input: {
     requestId: input.requestId,
     adminMemberId: input.adminMemberId,
     optionId: null,
+    ownerContactMemberId: input.ownerContactMemberId,
   });
   if (hold.type === "capacityExceeded") {
     const nights = hold.fullNights.join(", ");
@@ -869,6 +878,14 @@ export async function holdBookingRequestSlots(input: {
   requestId: string;
   adminMemberId: string;
   optionId?: string | null;
+  /**
+   * Optional existing non-login contact to own the held booking (issue #1255).
+   * When set, the hold is attached to this contact instead of creating a new
+   * NON_MEMBER/SCHOOL member. Because approval reuses the held booking's owner,
+   * this fixes the map-or-create decision for the whole quote → accept flow. The
+   * guard rejects any login-capable target.
+   */
+  ownerContactMemberId?: string | null;
 }): Promise<
   | { type: "held"; bookingId: string; reused: boolean }
   | { type: "capacityExceeded"; fullNights: string[] }
@@ -1016,21 +1033,35 @@ export async function holdBookingRequestSlots(input: {
       const ownerRole =
         request.type === BookingRequestType.SCHOOL ? "SCHOOL" : "NON_MEMBER";
 
-      const member = await tx.member.create({
-        data: {
-          email: request.contactEmail,
-          passwordHash: placeholderPasswordHash,
-          emailVerified: true,
-          firstName: ownerName.slice(0, 100),
-          lastName: ownerLastName.slice(0, 100),
-          role: ownerRole,
-          ageTier: AgeTier.ADULT,
-          active: true,
-          canLogin: false,
-          phoneNumber: request.contactPhone,
-        },
-        select: { id: true },
-      });
+      let member: { id: string };
+      if (input.ownerContactMemberId) {
+        // Admin mapped this request to an existing non-login Organisation/School
+        // contact at hold time (issue #1255). The held booking is owned by it,
+        // and — because approval reuses held.memberId — the eventual conversion
+        // and any Xero invoice reuse the same contact. The guard rejects any
+        // login-capable target.
+        const mappedId = await assertMappableOwnerContact(
+          tx,
+          input.ownerContactMemberId
+        );
+        member = { id: mappedId };
+      } else {
+        member = await tx.member.create({
+          data: {
+            email: request.contactEmail,
+            passwordHash: placeholderPasswordHash,
+            emailVerified: true,
+            firstName: ownerName.slice(0, 100),
+            lastName: ownerLastName.slice(0, 100),
+            role: ownerRole,
+            ageTier: AgeTier.ADULT,
+            active: true,
+            canLogin: false,
+            phoneNumber: request.contactPhone,
+          },
+          select: { id: true },
+        });
+      }
 
       const held = await tx.booking.create({
         data: {

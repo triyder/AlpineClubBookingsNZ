@@ -821,4 +821,57 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       data: { heldBookingId: null },
     });
   });
+
+  // #1255 RR-2 (Option A): the admin "Release hold" action passes
+  // suppressCustomerNotification so the requester is NOT emailed a cancellation
+  // for a hold being administratively released.
+  const heldBooking = {
+    id: "held-1",
+    memberId: "owner-1",
+    status: "AWAITING_REVIEW" as const,
+    finalPriceCents: 1000,
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+    member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+    payment: null,
+  };
+
+  it("sends the cancellation email for a held booking when notification is NOT suppressed", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "req@example.com",
+      "Req",
+      heldBooking.checkIn,
+      heldBooking.checkOut,
+      0,
+      "card",
+    );
+  });
+
+  it("suppresses the cancellation email but still detaches + audits when suppressCustomerNotification is true", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { suppressCustomerNotification: true },
+    );
+
+    expect(result.status).toBe(200);
+    // The customer email is skipped...
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    // ...but the hold is still released: pointer detached and cancellation audited.
+    expect(mocks.bookingRequestUpdateMany).toHaveBeenCalledWith({
+      where: { heldBookingId: "held-1" },
+      data: { heldBookingId: null },
+    });
+    expect(mocks.logAudit).toHaveBeenCalled();
+  });
 });

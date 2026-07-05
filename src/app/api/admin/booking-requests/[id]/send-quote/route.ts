@@ -12,7 +12,7 @@ import {
 import { requireAdmin } from "@/lib/session-guards";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const guard = await requireAdmin();
@@ -21,10 +21,32 @@ export async function POST(
 
   const { id } = await params;
 
+  // Optional map-to-existing-contact decision (issue #1255). Sending a quote
+  // auto-holds capacity, which materialises the owner, so the decision rides in
+  // the send body. The authoritative guard runs inside the hold transaction.
+  const body = (await req.json().catch(() => ({}))) as {
+    ownerContactMemberId?: unknown;
+  };
+  let ownerContactMemberId: string | undefined;
+  if (body.ownerContactMemberId !== undefined && body.ownerContactMemberId !== null) {
+    if (
+      typeof body.ownerContactMemberId !== "string" ||
+      body.ownerContactMemberId.trim().length === 0 ||
+      body.ownerContactMemberId.length > 64
+    ) {
+      return NextResponse.json(
+        { error: "Invalid contact selection" },
+        { status: 422 }
+      );
+    }
+    ownerContactMemberId = body.ownerContactMemberId;
+  }
+
   try {
     const quote = await sendBookingRequestQuote({
       requestId: id,
       adminMemberId: session.user.id,
+      ownerContactMemberId,
     });
 
     return NextResponse.json({
