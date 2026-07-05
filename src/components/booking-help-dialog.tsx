@@ -19,13 +19,19 @@ import type { CancellationScheduleRow } from "@/lib/cancellation-schedule";
  *  - the booking status glossary (#1072), so members can decode badges like
  *    "Confirmed (Unpaid)" and "Bumped"; and
  *  - the applicable cancellation refund schedule (#1239), when the booking can
- *    still be cancelled, so a member learns the refund consequences before cancel
- *    time — not only inside the cancel dialog.
+ *    still be cancelled AND a payment has been captured, so a member learns the
+ *    refund consequences before cancel time — not only inside the cancel dialog.
+ *
+ * When the booking is cancellable but unpaid, the refund tiers would imply a
+ * refund the member cannot receive, so we say "no payment received, no refund"
+ * plainly instead (owner review of PR #1389).
  */
 export function BookingHelpDialog({
   cancellationSchedule,
+  cancellationHasNoPayment = false,
 }: {
   cancellationSchedule?: CancellationScheduleRow[];
+  cancellationHasNoPayment?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const hasSchedule = Boolean(cancellationSchedule && cancellationSchedule.length > 0);
@@ -51,7 +57,9 @@ export function BookingHelpDialog({
             <DialogDescription>
               {hasSchedule
                 ? "What your booking statuses mean, and how much is refunded if you cancel."
-                : "What your booking statuses mean."}
+                : cancellationHasNoPayment
+                  ? "What your booking statuses mean, and what cancelling means for you."
+                  : "What your booking statuses mean."}
             </DialogDescription>
           </DialogHeader>
 
@@ -82,6 +90,14 @@ export function BookingHelpDialog({
                 <p className="text-xs text-muted-foreground">
                   The exact amount for your booking is shown when you start a
                   cancellation.
+                </p>
+              </section>
+            ) : cancellationHasNoPayment ? (
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold">Cancelling this booking</h3>
+                <p className="text-sm text-muted-foreground">
+                  No payment has been received for this booking, so no refund
+                  applies if you cancel.
                 </p>
               </section>
             ) : null}

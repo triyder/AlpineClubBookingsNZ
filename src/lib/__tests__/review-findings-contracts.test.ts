@@ -709,12 +709,21 @@ describe("review finding source/schema contracts", () => {
     const helpDialog = readRepoFile("src/components/booking-help-dialog.tsx");
     expect(helpDialog).toContain("BOOKING_STATUS_GLOSSARY");
     expect(helpDialog).toContain("Cancellation refund schedule");
+    // An unpaid-but-cancellable booking must not imply a refund it can't get
+    // (owner review of PR #1389): say no payment received / no refund instead.
+    expect(helpDialog).toContain(
+      "No payment has been received for this booking, so no refund",
+    );
 
     const bookingDetail = readRepoFile(
       "src/app/(authenticated)/bookings/[id]/page.tsx",
     );
     expect(bookingDetail).toContain("<BookingHelpDialog");
     expect(bookingDetail).toContain("describeCancellationSchedule");
+    // The refund schedule is gated on a captured payment; unpaid bookings get the
+    // no-refund message instead.
+    expect(bookingDetail).toContain("originalPaymentCaptured");
+    expect(bookingDetail).toContain("cancellationHasNoPayment");
   });
 
   it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {
