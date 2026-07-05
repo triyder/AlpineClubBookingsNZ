@@ -26,6 +26,7 @@
  * must confirm against Xero before treating a flag as a real accounting error.
  */
 
+import { BookingStatus } from "@prisma/client";
 import { getStayNights } from "./pricing";
 import { formatDate } from "./xero-invoice-helpers";
 
@@ -73,13 +74,31 @@ export interface GuestDrift {
   guestDriftCents: number;
 }
 
+/**
+ * Which builder path issued the invoice:
+ *  - BOOKING: a per-booking invoice (`Payment.xeroInvoiceId`).
+ *  - GROUP_SETTLEMENT: one combined ORGANISER_PAYS settlement invoice
+ *    (`GroupBookingSettlement.xeroInvoiceId`) aggregating many child bookings.
+ * Both paths run through the same `buildInvoiceLineItems`, so both share the
+ * pre-#1231 drift exposure.
+ */
+export type RoundingDriftSource = "BOOKING" | "GROUP_SETTLEMENT";
+
 export interface InvoiceRoundingDrift {
-  bookingId: string;
+  source: RoundingDriftSource;
+  /** Local record id: `Booking.id` (BOOKING) or `GroupBookingSettlement.id` (GROUP_SETTLEMENT). */
+  sourceId: string;
+  /** Group booking id for the GROUP_SETTLEMENT source; null for BOOKING. */
+  groupBookingId: string | null;
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
-  /** Proxy for when the invoice was issued (payment row creation). */
+  /**
+   * Proxy for when the invoice was issued: `Payment.createdAt` (BOOKING) or
+   * `GroupBookingSettlement.createdAt` (GROUP_SETTLEMENT). Both pre-exist the
+   * Xero invoice, so filtering on them is over-inclusive-but-safe.
+   */
   issuedAtProxy: string | null; // ISO
-  /** Signed total drift across all guests, integer cents. */
+  /** Signed total drift across all guests (all children, for a settlement), integer cents. */
   totalDriftCents: number;
   guests: GuestDrift[];
 }
@@ -189,6 +208,43 @@ export function computeGuestRoundingDrift(
   };
 }
 
+/**
+ * One block of line items the invoice builder emitted from a single
+ * `buildInvoiceLineItems` call: a set of guests billed over one night count. A
+ * per-booking invoice is one block; a group-settlement invoice is one block per
+ * child booking (mirroring the per-child loop in
+ * `xero-group-settlement-invoices.ts`).
+ */
+export interface DriftLineBlock {
+  bookingNights: number;
+  guests: AuditGuest[];
+}
+
+function toIsoOrNull(value: Date | string | null): string | null {
+  if (value == null) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+/**
+ * Merge the drift across one or more line blocks. A candidate exists iff at
+ * least one guest run drifted. Net drift can be zero while individual runs
+ * differ (rare ± cases); such invoices are kept, since their line totals were
+ * still individually wrong under the old builder.
+ */
+function mergeBlockDrift(
+  blocks: DriftLineBlock[]
+): { guests: GuestDrift[]; totalDriftCents: number } {
+  const guests: GuestDrift[] = [];
+  for (const block of blocks) {
+    for (const guest of block.guests) {
+      const drift = computeGuestRoundingDrift(guest, block.bookingNights);
+      if (drift.driftedRuns.length > 0) guests.push(drift);
+    }
+  }
+  const totalDriftCents = guests.reduce((sum, g) => sum + g.guestDriftCents, 0);
+  return { guests, totalDriftCents };
+}
+
 export interface BookingRoundingDriftInput {
   bookingId: string;
   xeroInvoiceId: string | null;
@@ -207,29 +263,52 @@ export interface BookingRoundingDriftInput {
 export function computeBookingRoundingDrift(
   input: BookingRoundingDriftInput
 ): InvoiceRoundingDrift | null {
-  // A booking is a candidate iff at least one run drifted. Net drift can be
-  // zero while individual runs differ (rare ± cases); keep such invoices, since
-  // their line totals were still individually wrong under the old builder.
-  const guests = input.guests
-    .map((guest) => computeGuestRoundingDrift(guest, input.bookingNights))
-    .filter((guest) => guest.driftedRuns.length > 0);
-
+  const { guests, totalDriftCents } = mergeBlockDrift([
+    { bookingNights: input.bookingNights, guests: input.guests },
+  ]);
   if (guests.length === 0) return null;
 
-  const totalDriftCents = guests.reduce((sum, g) => sum + g.guestDriftCents, 0);
-
-  const issuedAtProxy =
-    input.issuedAtProxy == null
-      ? null
-      : input.issuedAtProxy instanceof Date
-        ? input.issuedAtProxy.toISOString()
-        : input.issuedAtProxy;
-
   return {
-    bookingId: input.bookingId,
+    source: "BOOKING",
+    sourceId: input.bookingId,
+    groupBookingId: null,
     xeroInvoiceId: input.xeroInvoiceId,
     xeroInvoiceNumber: input.xeroInvoiceNumber,
-    issuedAtProxy,
+    issuedAtProxy: toIsoOrNull(input.issuedAtProxy),
+    totalDriftCents,
+    guests,
+  };
+}
+
+export interface SettlementRoundingDriftInput {
+  settlementId: string;
+  groupBookingId: string;
+  xeroInvoiceId: string | null;
+  xeroInvoiceNumber: string | null;
+  issuedAtProxy: Date | string | null;
+  /** One block per settleable child booking (each its own date range/nights). */
+  children: DriftLineBlock[];
+}
+
+/**
+ * Compute the total pre-#1231 rounding drift for one group-settlement invoice.
+ * The settlement invoice concatenates the line items of every settleable child
+ * booking (see `xero-group-settlement-invoices.ts`), so its drift is the sum of
+ * each child's per-guest run drift. Returns null when nothing drifted.
+ */
+export function computeSettlementRoundingDrift(
+  input: SettlementRoundingDriftInput
+): InvoiceRoundingDrift | null {
+  const { guests, totalDriftCents } = mergeBlockDrift(input.children);
+  if (guests.length === 0) return null;
+
+  return {
+    source: "GROUP_SETTLEMENT",
+    sourceId: input.settlementId,
+    groupBookingId: input.groupBookingId,
+    xeroInvoiceId: input.xeroInvoiceId,
+    xeroInvoiceNumber: input.xeroInvoiceNumber,
+    issuedAtProxy: toIsoOrNull(input.issuedAtProxy),
     totalDriftCents,
     guests,
   };
@@ -239,43 +318,70 @@ export function computeBookingRoundingDrift(
 // Read-only DB scanner
 // ---------------------------------------------------------------------------
 
-/** Minimal read surface the scanner needs; satisfied by the Prisma client. */
-export interface RoundingAuditBooking {
+/** Guest + per-night rows as read from the DB (shared by both scan paths). */
+export interface RoundingAuditGuest {
+  firstName: string;
+  lastName: string;
+  ageTier: string;
+  isMember: boolean;
+  priceCents: number;
+  nights: Array<{ stayDate: Date; priceCents: number }>;
+}
+
+/** A booking as the scanner reads it (child bookings omit `payment`). */
+export interface RoundingAuditChildBooking {
   id: string;
   checkIn: Date;
   checkOut: Date;
+  guests: RoundingAuditGuest[];
+}
+
+/** A per-booking invoice row: a booking plus its payment's Xero invoice link. */
+export interface RoundingAuditBooking extends RoundingAuditChildBooking {
   payment: {
     xeroInvoiceId: string | null;
     xeroInvoiceNumber: string | null;
     createdAt: Date;
   } | null;
-  guests: Array<{
-    firstName: string;
-    lastName: string;
-    ageTier: string;
-    isMember: boolean;
-    priceCents: number;
-    nights: Array<{ stayDate: Date; priceCents: number }>;
-  }>;
 }
 
+/** A group-settlement invoice row: the settlement plus its organiser booking id. */
+export interface RoundingAuditSettlement {
+  id: string;
+  xeroInvoiceId: string | null;
+  xeroInvoiceNumber: string | null;
+  createdAt: Date;
+  groupBooking: {
+    id: string;
+    organiserBookingId: string;
+  };
+}
+
+type FindManyArgs = {
+  where: Record<string, unknown>;
+  include?: Record<string, unknown>;
+  select?: Record<string, unknown>;
+  orderBy?: Record<string, unknown>;
+  take?: number;
+  skip?: number;
+  cursor?: { id: string };
+};
+
+/** Minimal read surface the scanner needs; satisfied by the Prisma client. */
 export interface RoundingAuditPrismaClient {
   booking: {
-    findMany: (args: {
-      where: Record<string, unknown>;
-      include: Record<string, unknown>;
-      orderBy: Record<string, unknown>;
-      take: number;
-      skip?: number;
-      cursor?: { id: string };
-    }) => Promise<RoundingAuditBooking[]>;
+    findMany: (args: FindManyArgs) => Promise<RoundingAuditBooking[]>;
+  };
+  groupBookingSettlement: {
+    findMany: (args: FindManyArgs) => Promise<RoundingAuditSettlement[]>;
   };
 }
 
 export interface RoundingAuditScanOptions {
   /**
-   * Only scan invoices whose issued-at proxy (`payment.createdAt`) is strictly
-   * before this instant. Set it to the date you deployed #1231 to exclude
+   * Only scan invoices whose issued-at proxy is strictly before this instant:
+   * `Payment.createdAt` (booking invoices) / `GroupBookingSettlement.createdAt`
+   * (settlement invoices). Set it to the date you deployed #1231 to exclude
    * already-correct invoices. Omit to scan every issued invoice.
    */
   issuedBefore?: Date | null;
@@ -286,7 +392,11 @@ export interface RoundingAuditScanOptions {
 }
 
 export interface RoundingAuditScanResult {
+  /** Booking + settlement invoices scanned. */
   scannedInvoices: number;
+  scannedBookingInvoices: number;
+  scannedSettlementInvoices: number;
+  /** Both sources, each labelled by `source`. */
   affected: InvoiceRoundingDrift[];
   totalDriftCents: number;
   affectedCount: number;
@@ -304,12 +414,30 @@ export function countStayNights(checkIn: Date, checkOut: Date): number {
   return getStayNights(checkIn, checkOut).length;
 }
 
+function mapAuditGuest(guest: RoundingAuditGuest): AuditGuest {
+  return {
+    firstName: guest.firstName,
+    lastName: guest.lastName,
+    ageTier: guest.ageTier,
+    isMember: guest.isMember,
+    priceCents: guest.priceCents,
+    nights: guest.nights.map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
+  };
+}
+
+const guestInclude = {
+  guests: {
+    include: { nights: { select: { stayDate: true, priceCents: true } } },
+  },
+};
+
 /**
- * Scan every issued booking invoice for pre-#1231 rounding drift, reading in
- * cursor-paginated batches so it never loads the whole table at once and never
- * opens a transaction. Read-only: it only issues `booking.findMany`.
+ * Scan every issued per-booking invoice (`Payment.xeroInvoiceId`) for pre-#1231
+ * rounding drift, reading in cursor-paginated batches so it never loads the
+ * whole table at once and never opens a transaction. Read-only: only
+ * `booking.findMany`.
  */
-export async function scanXeroInvoiceRoundingDrift(
+export async function scanBookingInvoiceRoundingDrift(
   client: RoundingAuditPrismaClient,
   options: RoundingAuditScanOptions = {}
 ): Promise<RoundingAuditScanResult> {
@@ -337,9 +465,7 @@ export async function scanXeroInvoiceRoundingDrift(
             createdAt: true,
           },
         },
-        guests: {
-          include: { nights: { select: { stayDate: true, priceCents: true } } },
-        },
+        ...guestInclude,
       },
       orderBy: { id: "asc" },
       take: batchSize,
@@ -357,32 +483,15 @@ export async function scanXeroInvoiceRoundingDrift(
         xeroInvoiceNumber: booking.payment.xeroInvoiceNumber,
         issuedAtProxy: booking.payment.createdAt,
         bookingNights: countStayNights(booking.checkIn, booking.checkOut),
-        guests: booking.guests.map((g) => ({
-          firstName: g.firstName,
-          lastName: g.lastName,
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-          priceCents: g.priceCents,
-          nights: g.nights.map((n) => ({
-            stayDate: n.stayDate,
-            priceCents: n.priceCents,
-          })),
-        })),
+        guests: booking.guests.map(mapAuditGuest),
       });
       if (drift) {
         affected.push(drift);
         totalDriftCents += drift.totalDriftCents;
-        if (options.limit && affected.length >= options.limit) {
-          return {
-            scannedInvoices,
-            affected,
-            affectedCount: affected.length,
-            totalDriftCents,
-            issuedBefore: issuedBefore ? issuedBefore.toISOString() : null,
-          };
-        }
+        if (options.limit && affected.length >= options.limit) break;
       }
     }
+    if (options.limit && affected.length >= options.limit) break;
 
     cursorId = batch[batch.length - 1].id;
     if (batch.length < batchSize) break;
@@ -390,10 +499,150 @@ export async function scanXeroInvoiceRoundingDrift(
 
   return {
     scannedInvoices,
+    scannedBookingInvoices: scannedInvoices,
+    scannedSettlementInvoices: 0,
     affected,
     affectedCount: affected.length,
     totalDriftCents,
     issuedBefore: issuedBefore ? issuedBefore.toISOString() : null,
+  };
+}
+
+/**
+ * Scan every issued group-settlement invoice (`GroupBookingSettlement.
+ * xeroInvoiceId`) for pre-#1231 rounding drift. For each settlement it re-runs
+ * the EXACT child query the real builder uses (see
+ * `xero-group-settlement-invoices.ts` lines 104-112: `parentBookingId =
+ * organiserBookingId`, `organiserSettled: true`, `deletedAt: null`,
+ * `status in [CONFIRMED, PAID]`) so the reconstructed line-item input matches
+ * what was invoiced, then sums each child's per-guest run drift. Read-only:
+ * only `groupBookingSettlement.findMany` + `booking.findMany`, no transaction.
+ */
+export async function scanGroupSettlementRoundingDrift(
+  client: RoundingAuditPrismaClient,
+  options: RoundingAuditScanOptions = {}
+): Promise<RoundingAuditScanResult> {
+  const batchSize = options.batchSize && options.batchSize > 0 ? options.batchSize : 200;
+  const issuedBefore = options.issuedBefore ?? null;
+
+  const settlementWhere: Record<string, unknown> = { xeroInvoiceId: { not: null } };
+  if (issuedBefore) {
+    settlementWhere.createdAt = { lt: issuedBefore };
+  }
+
+  const affected: InvoiceRoundingDrift[] = [];
+  let scannedInvoices = 0;
+  let totalDriftCents = 0;
+  let cursorId: string | null = null;
+
+  for (;;) {
+    const batch = await client.groupBookingSettlement.findMany({
+      where: settlementWhere,
+      select: {
+        id: true,
+        xeroInvoiceId: true,
+        xeroInvoiceNumber: true,
+        createdAt: true,
+        groupBooking: { select: { id: true, organiserBookingId: true } },
+      },
+      orderBy: { id: "asc" },
+      take: batchSize,
+      ...(cursorId ? { skip: 1, cursor: { id: cursorId } } : {}),
+    });
+
+    if (batch.length === 0) break;
+
+    for (const settlement of batch) {
+      if (!settlement.xeroInvoiceId) continue;
+      scannedInvoices += 1;
+
+      // Verbatim children query from xero-group-settlement-invoices.ts (104-112).
+      const children = await client.booking.findMany({
+        where: {
+          parentBookingId: settlement.groupBooking.organiserBookingId,
+          organiserSettled: true,
+          deletedAt: null,
+          status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID] },
+        },
+        include: { ...guestInclude },
+        orderBy: { id: "asc" },
+      });
+
+      const drift = computeSettlementRoundingDrift({
+        settlementId: settlement.id,
+        groupBookingId: settlement.groupBooking.id,
+        xeroInvoiceId: settlement.xeroInvoiceId,
+        xeroInvoiceNumber: settlement.xeroInvoiceNumber,
+        issuedAtProxy: settlement.createdAt,
+        children: children.map((child) => ({
+          bookingNights: countStayNights(child.checkIn, child.checkOut),
+          guests: child.guests.map(mapAuditGuest),
+        })),
+      });
+      if (drift) {
+        affected.push(drift);
+        totalDriftCents += drift.totalDriftCents;
+        if (options.limit && affected.length >= options.limit) break;
+      }
+    }
+    if (options.limit && affected.length >= options.limit) break;
+
+    cursorId = batch[batch.length - 1].id;
+    if (batch.length < batchSize) break;
+  }
+
+  return {
+    scannedInvoices,
+    scannedBookingInvoices: 0,
+    scannedSettlementInvoices: scannedInvoices,
+    affected,
+    affectedCount: affected.length,
+    totalDriftCents,
+    issuedBefore: issuedBefore ? issuedBefore.toISOString() : null,
+  };
+}
+
+/**
+ * Scan BOTH sources — per-booking invoices and group-settlement invoices — for
+ * pre-#1231 rounding drift and merge the results. This is the entry the CLI
+ * uses; a clean result means both scans found nothing. Read-only throughout.
+ */
+export async function scanXeroInvoiceRoundingDrift(
+  client: RoundingAuditPrismaClient,
+  options: RoundingAuditScanOptions = {}
+): Promise<RoundingAuditScanResult> {
+  const bookingResult = await scanBookingInvoiceRoundingDrift(client, options);
+
+  // Respect the diagnostic cap across both scans.
+  const remainingLimit =
+    options.limit != null
+      ? Math.max(0, options.limit - bookingResult.affectedCount)
+      : undefined;
+  const settlementResult =
+    remainingLimit === 0
+      ? {
+          scannedInvoices: 0,
+          scannedBookingInvoices: 0,
+          scannedSettlementInvoices: 0,
+          affected: [] as InvoiceRoundingDrift[],
+          affectedCount: 0,
+          totalDriftCents: 0,
+          issuedBefore: bookingResult.issuedBefore,
+        }
+      : await scanGroupSettlementRoundingDrift(client, {
+          ...options,
+          limit: remainingLimit,
+        });
+
+  const affected = [...bookingResult.affected, ...settlementResult.affected];
+  return {
+    scannedInvoices: bookingResult.scannedInvoices + settlementResult.scannedInvoices,
+    scannedBookingInvoices: bookingResult.scannedBookingInvoices,
+    scannedSettlementInvoices: settlementResult.scannedSettlementInvoices,
+    affected,
+    affectedCount: affected.length,
+    totalDriftCents: bookingResult.totalDriftCents + settlementResult.totalDriftCents,
+    issuedBefore: bookingResult.issuedBefore,
   };
 }
 
@@ -412,11 +661,20 @@ export function formatRoundingAuditReport(result: RoundingAuditScanResult): stri
   const lines: string[] = [];
   lines.push("Xero invoice rounding-drift audit (#1318) — DIAGNOSTIC, read-only");
   lines.push("=".repeat(70));
-  lines.push(`Issued invoices scanned: ${result.scannedInvoices}`);
+  lines.push(
+    "Scope note: scans BOTH per-booking invoices (Payment.xeroInvoiceId) AND " +
+      "group-booking settlement invoices (GroupBookingSettlement.xeroInvoiceId); " +
+      "both run through the same line builder and share the #1163 exposure."
+  );
+  lines.push(
+    `Issued invoices scanned: ${result.scannedInvoices} ` +
+      `(booking ${result.scannedBookingInvoices}, ` +
+      `settlement ${result.scannedSettlementInvoices})`
+  );
   lines.push(`Candidate affected invoices: ${result.affectedCount}`);
   lines.push(`Net drift across candidates: ${formatCents(result.totalDriftCents)}`);
   if (result.issuedBefore) {
-    lines.push(`Scope: payment.createdAt < ${result.issuedBefore}`);
+    lines.push(`Scope: issued-at proxy (createdAt) < ${result.issuedBefore}`);
   } else {
     lines.push(
       "Scope: ALL issued invoices (no --issued-before). Some candidates may " +
@@ -426,7 +684,10 @@ export function formatRoundingAuditReport(result: RoundingAuditScanResult): stri
   lines.push("");
 
   if (result.affected.length === 0) {
-    lines.push("No candidate invoices matched the pre-#1231 drift pattern.");
+    lines.push(
+      "No candidate invoices matched the pre-#1231 drift pattern " +
+        "(both per-booking and group-settlement invoices are clean)."
+    );
     return lines.join("\n");
   }
 
@@ -439,13 +700,20 @@ export function formatRoundingAuditReport(result: RoundingAuditScanResult): stri
   lines.push("");
 
   for (const invoice of result.affected) {
+    const isSettlement = invoice.source === "GROUP_SETTLEMENT";
     lines.push("-".repeat(70));
     lines.push(
-      `Invoice ${invoice.xeroInvoiceNumber ?? "(no number)"} ` +
+      `[${isSettlement ? "GROUP SETTLEMENT" : "BOOKING"}] ` +
+        `Invoice ${invoice.xeroInvoiceNumber ?? "(no number)"} ` +
         `[${invoice.xeroInvoiceId ?? "unknown id"}]`
     );
-    lines.push(`  Booking: ${invoice.bookingId}`);
-    lines.push(`  Issued-at proxy (payment.createdAt): ${invoice.issuedAtProxy ?? "unknown"}`);
+    if (isSettlement) {
+      lines.push(`  Settlement: ${invoice.sourceId} (group ${invoice.groupBookingId})`);
+      lines.push(`  Issued-at proxy (settlement.createdAt): ${invoice.issuedAtProxy ?? "unknown"}`);
+    } else {
+      lines.push(`  Booking: ${invoice.sourceId}`);
+      lines.push(`  Issued-at proxy (payment.createdAt): ${invoice.issuedAtProxy ?? "unknown"}`);
+    }
     lines.push(`  Total drift: ${formatCents(invoice.totalDriftCents)}`);
     for (const guest of invoice.guests) {
       lines.push(

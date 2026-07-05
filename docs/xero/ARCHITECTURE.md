@@ -161,7 +161,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `xero-inbound-reconciliation` | Stored-event worker + per-entity reconcilers + incremental cursor reconciliation (see Flow 2). Split into cohesive `xero-inbound/*` sub-modules (#1208 item 1 / #1270, entry re-exports the public surface); see refactor item 1 for the module map. |
 | `xero-booking-repair` | Booking-vs-Xero audit and self-repair (see Flow 3). CLI entry: `scripts/xero-booking-repair.ts`. Split into cohesive `xero-booking-repair-*` sub-modules (#1208 item 2, entry re-exports the public surface); see refactor item 2 for the module map. |
 | `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. |
-| `xero-invoice-rounding-audit` | Read-only diagnostic that replays the pre-#1231 line maths in integer cents to flag issued invoices that would have carried the #1163 rounding drift. Makes **no** live-provider calls and mutates nothing (only `booking.findMany`). CLI entry: `scripts/audit-xero-invoice-rounding.ts`. See "Historical rounding-drift audit" below. |
+| `xero-invoice-rounding-audit` | Read-only diagnostic that replays the pre-#1231 line maths in integer cents to flag issued invoices that would have carried the #1163 rounding drift, across **both** builder callers — per-booking invoices (`Payment.xeroInvoiceId`) and group-settlement invoices (`GroupBookingSettlement.xeroInvoiceId`). Makes **no** live-provider calls and mutates nothing (only `booking.findMany` + `groupBookingSettlement.findMany`). CLI entry: `scripts/audit-xero-invoice-rounding.ts`. See "Historical rounding-drift audit" below. |
 | `xero-cron-runner` | Maps the 7 cron tasks to the workers above, records `CronJobRun` rows, gates on module + connection. |
 | `xero-admin-failures`, `xero-admin-health`, `xero-record-activity`, `xero-admin-cache` | Admin overviews: failed-operation triage states, missing-invoice/missing-credit-note health snapshot, per-record activity timeline, cached chart-of-accounts/items. |
 
@@ -383,41 +383,54 @@ invoices.
 - **Fork or existing install — self-check with the audit.** `xero-invoice-rounding-audit`
   (`scripts/audit-xero-invoice-rounding.ts`) replays the pre-#1231 maths in
   integer cents over persisted booking/guest/night data and flags issued
-  invoices (`payment.xeroInvoiceId` set) whose guest-line total would have
-  drifted. It is a **diagnostic only**: zero live-provider calls, no
-  transactions, no mutations — it only issues cursor-paginated `booking.findMany`
-  reads. Run it against a **non-production copy** of the database:
+  invoices whose guest-line total would have drifted. It scans **both** invoice
+  sources that use `buildInvoiceLineItems`:
+  - **Per-booking invoices** (`Payment.xeroInvoiceId`), keyed off the booking's
+    guests/nights, and
+  - **Group-booking settlement invoices** (`GroupBookingSettlement.xeroInvoiceId`).
+    For each settlement it re-runs the **exact** child query the real builder uses
+    (`xero-group-settlement-invoices.ts`: `parentBookingId = organiserBookingId`,
+    `organiserSettled = true`, `deletedAt = null`, `status in {CONFIRMED, PAID}`)
+    and sums each settleable child's per-guest run drift, so the reconstructed
+    line-item input matches what was invoiced.
+
+  It is a **diagnostic only**: zero live-provider calls, no transactions, no
+  mutations — it issues only `booking.findMany` +
+  `groupBookingSettlement.findMany` reads (cursor-paginated). Run it against a
+  **non-production copy** of the database:
 
   ```bash
   DATABASE_URL='postgresql://user:pass@host:5432/scratch_copy' \
     npx tsx scripts/audit-xero-invoice-rounding.ts --issued-before 2026-07-04
+  # or: npm run xero:audit-invoice-rounding -- --issued-before 2026-07-04
   ```
 
   `--issued-before <YYYY-MM-DD>` should be the date you deployed #1231; it scopes
-  the scan to invoices created before the fix (via the `payment.createdAt`
-  proxy). Omit it to scan every issued invoice. The report prints the invoice
+  the scan to invoices created before the fix via the issued-at proxy —
+  `Payment.createdAt` for booking invoices and `GroupBookingSettlement.createdAt`
+  for settlement invoices (both pre-exist their Xero invoice, so the filter is
+  over-inclusive-but-safe). Omit it to scan every issued invoice. The report
+  labels each candidate `[BOOKING]` or `[GROUP SETTLEMENT]` and prints the invoice
   id/number, the affected line run, and the computed drift in cents.
 
-- **A flag is a candidate, not a proven error.** It means the booking's local data
-  would have produced a drifting line total under the pre-#1231 builder. It does
-  **not** prove the live Xero invoice is still wrong: the invoice may have been
-  issued after #1231 (already correct — `payment.createdAt` is only a proxy and is
-  over-inclusive), or since been voided / credited / superseded. The audit also
-  replays against the booking's **current** persisted night data: a booking
-  re-priced or modified after its invoice was issued will replay against the
-  post-modification data, which may differ from what was actually invoiced. The
-  audit cannot see Xero invoice status, so **confirm each candidate against Xero
-  before acting.**
+- **A flag is a candidate, not a proven error.** It means the local data would have
+  produced a drifting line total under the pre-#1231 builder. It does **not** prove
+  the live Xero invoice is still wrong: the invoice may have been issued after
+  #1231 (already correct — the `createdAt` proxy is over-inclusive), or since been
+  voided / credited / superseded. The audit also replays against the **current**
+  persisted night data: a booking (or, for a settlement, **any one of its child
+  bookings**) re-priced, modified, or cancelled after the invoice was issued will
+  replay against post-change data that may differ from what was actually invoiced.
+  The audit cannot see Xero invoice status, so **confirm each candidate against
+  Xero before acting.**
 - **Remediation is out of scope here.** Any correction is a **manual accounting
   action** (a Xero credit note / adjustment by the operator) or a separately-scoped
   repair task — this audit never edits money, invoices, or Xero.
 
-Scope boundary: only `buildInvoiceLineItems` carries this pattern. Booking
-invoices use it directly, and `xero-group-settlement-invoices` delegates to it,
-so group-settlement invoices share the same historical exposure (scanning them
-means walking `GroupBookingSettlement`, which is separately scoped and not covered
-by this audit). The entrance-fee and supplementary builders emit single
-`quantity: 1` exact-cent lines and cannot drift.
+Scope boundary: only `buildInvoiceLineItems` carries this pattern, and both its
+callers — per-booking invoices and `xero-group-settlement-invoices` — are now
+scanned. The entrance-fee and supplementary builders emit single `quantity: 1`
+exact-cent lines and cannot drift, so they are out of scope by construction.
 
 ## OAuth and token lifecycle (supporting flow)
 

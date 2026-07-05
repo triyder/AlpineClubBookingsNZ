@@ -4,8 +4,10 @@
  *
  * Replays the pre-#1231 (#1163) line maths over persisted booking/guest/night
  * data and flags issued invoices whose guest-line total would have drifted 1–2
- * cents. It makes ZERO live-provider calls (no Xero, no Stripe), opens no
- * transactions, and mutates nothing — it only runs `booking.findMany`.
+ * cents. Scans BOTH per-booking invoices (Payment.xeroInvoiceId) and group
+ * settlement invoices (GroupBookingSettlement.xeroInvoiceId). It makes ZERO
+ * live-provider calls (no Xero, no Stripe), opens no transactions, and mutates
+ * nothing — it only runs `booking.findMany` + `groupBookingSettlement.findMany`.
  *
  * SAFE USAGE — run against a NON-PRODUCTION copy of the database:
  *
