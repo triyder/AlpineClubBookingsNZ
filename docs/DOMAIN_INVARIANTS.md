@@ -60,11 +60,14 @@ Future reviews and issues should cite this file when proposing changes.
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
   writes only `memberId: null` guests and takes the lock but is a guard no-op).
-  When an admin links a booking-request guest to a real member, the linking UI
-  runs an **advisory-only** overlap pre-check
-  (`findLinkedGuestMemberNightConflicts`, #1226) so any conflict surfaces before
-  approve/hold. It is non-authoritative — it never throws, blocks, or takes the
-  advisory lock, and it excludes the request's own held booking — the
+  When an admin links a booking-request guest to a real member — or opens a
+  request that already carries persisted linked members — the linking UI runs an
+  **advisory-only** overlap pre-check (`findLinkedGuestMemberNightConflicts`,
+  #1226) so any conflict surfaces before approve/hold. The panel computes it on
+  load for pre-existing links and on every link/unlink, applying only the latest
+  response per request so a slower earlier check can't overwrite a newer one
+  (#1226 follow-up). It is non-authoritative — it never throws, blocks, or takes
+  the advisory lock, and it excludes the request's own held booking — the
   transactional `assertNoBookingMemberNightConflicts` guard at approve/hold time
   remains the sole enforcer.
 - A member holds at most one group-join roster row per group
