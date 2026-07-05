@@ -206,29 +206,41 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    (per-row form) in `src/lib/booking-status.ts`.
 3. Minimum-stay, booking-window, age-tier, membership, group-discount, fixed or
    percentage promo, and account-credit rules are applied.
-4. If all guests are members, or check-in is within the non-member hold window,
-   the booking can proceed to payment immediately.
-5. If non-members are included outside the hold window, a card can be saved and
-   the booking remains pending until the hold date.
-6. `BookingGuest.stayStart` and `BookingGuest.stayEnd` record the actual
+4. Booking Policies resolve the effective non-member hold policy from the
+   check-in date: a date-specific `BookingPeriod` can override both the
+   default enabled flag and the confirmation threshold. Existing clubs default
+   to Members First (`nonMemberHoldEnabled=true`), while First Paid, First In
+   disables provisional non-member holds for that policy row. The Default
+   Cancellation Policy admin page nudges operators to refresh their public
+   Terms/FAQ when that copy still describes the old hold behaviour and omits the
+   First Paid, First In option (`detectStaleHoldPolicyCopy` in
+   `src/lib/hold-policy-copy.ts`).
+5. If all guests are members, the non-member hold policy is disabled, or
+   check-in is inside the configured hold window, the whole booking proceeds to
+   normal payment immediately.
+6. If non-members are included outside an enabled Members First hold window, a
+   card can be saved and the non-member portion remains pending until the hold
+   date. Mixed member/non-member parties split only in this pending case; inside
+   the window or under First Paid, First In they stay one normal booking.
+7. `BookingGuest.stayStart` and `BookingGuest.stayEnd` record the actual
    date-only range for each guest inside the parent booking envelope. Capacity,
    lodge lists, rosters, and booking-derived finance metrics count a guest only
    on nights in that individual range.
-7. Capacity-sensitive writes use a PostgreSQL advisory transaction lock so
+8. Capacity-sensitive writes use a PostgreSQL advisory transaction lock so
    overlapping booking decisions serialize at the current lodge scale.
    Member lifecycle approval (delete / archive) acquires
    `pg_advisory_xact_lock(hashtext('member-lifecycle:<memberId>'))` inside
    the transaction. Future approve / reject paths that recount eligibility
    then mutate the member graph should follow the same idiom so a parallel
    write cannot race the re-check.
-8. Payment state records an explicit source. Stripe payments stay on Stripe
+9. Payment state records an explicit source. Stripe payments stay on Stripe
    PaymentIntent, refund, and recovery paths; Internet Banking payments issue a
    Xero invoice and settle through inbound Xero reconciliation. By default,
    Internet Banking bookings do not hold capacity until reconciliation performs
    the final capacity claim. Admin settings can opt into bed-slot holding for a
    bounded number of days, in which case the booking is `CONFIRMED` while the
    Xero invoice remains unpaid.
-9. Bed allocations reconcile when bookings are confirmed, modified, waitlist
+10. Bed allocations reconcile when bookings are confirmed, modified, waitlist
    confirmed, force-confirmed, cancelled, completed, or deleted. Automatic
    allocation can fill missing guest nights from active room/bed inventory, and
    admins can manually move or approve allocations.
@@ -346,7 +358,13 @@ finance viewer, edit ⇒ finance manager) via `hasFinanceViewerAccess` and
 `hasFinanceManagerAccess` in `src/lib/admin-permissions.ts` — Full Admin is
 therefore a finance manager, and any role whose matrix grants finance view
 (including Read-only Admin, Booking Officer, and Membership Officer as
-seeded) can open the finance portal read-only. `requireAdmin()` infers the
+seeded) can open the finance portal read-only. The member-facing booking
+detail route (`/bookings/[id]`) mirrors the admin bookings list gate: any
+role with bookings-area view (Booking Officer, Read-only Admin, Full Admin,
+and the other seeded booking-capable roles) opens any booking detail
+read-only, while every mutation (cancel, pay, modify, notes, delete, and the
+Full-Admin-only Admin tools card) stays gated on booking ownership or Full
+Admin (issue #1289). `requireAdmin()` infers the
 requested admin path and HTTP method from proxy headers and enforces
 view/edit requirements centrally, selecting assignment rows with their
 definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in
@@ -355,6 +373,26 @@ matrix server-side and passes it to the sidebar, because definitions cannot
 resolve client-side. Editing a definition applies to every holder on their
 next request — guards re-read roles and definitions from the database and
 never trust the JWT.
+
+When you add a new admin page (`src/app/(admin)`) or `/api/admin/**` route,
+update **both** central route maps: the permission-area map in
+`src/lib/admin-permissions.ts` (`ROUTE_AREA_PREFIXES`, or
+`SPECIAL_ROUTE_AREA_PATTERNS` when the route needs a different area than its
+prefix) so `getAdminRouteRequirement()` gives it the right area/level, and — if
+it belongs to an optional module — the feature-gate map
+`FEATURE_ROUTE_RULES` in `src/config/feature-routes.ts`. The permission map's
+last entry, `overview`, is a catch-all (`/admin`, `/api/admin`): a route that
+matches no more specific area silently resolves to `overview`, so a
+finance-sensitive route that forgets its prefix would be readable at plain
+overview access. `src/lib/__tests__/admin-route-map-drift.test.ts` enforces
+this: it enumerates every admin page and `/api/admin` route and fails the build
+if one lands on the overview catch-all without an intentional entry in that
+test's small, justified `OVERVIEW_ALLOWLIST`. The guard catches *unmapped*
+routes; it cannot catch a route *mis-mapped* by inheriting an existing wrong
+prefix, so still add a `SPECIAL_ROUTE_AREA_PATTERNS` entry by hand when a
+sensitive action lands under a broader prefix. New optional-module surfaces at
+brand-new prefixes must be added to `FEATURE_ROUTE_RULES` by hand — the guard
+only verifies existing feature prefixes still point at real files.
 
 Managing the definitions themselves is Full-Admin-only: the
 `/api/admin/access-roles` mutation handlers enforce an explicit `isFullAdmin`

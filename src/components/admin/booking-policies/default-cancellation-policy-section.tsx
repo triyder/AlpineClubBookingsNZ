@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { CancellationRulesEditor } from "./cancellation-rules-editor"
@@ -13,11 +14,13 @@ import type { PolicyRule } from "./types"
 
 export function DefaultCancellationPolicySection() {
   const [defaultRules, setDefaultRules] = useState<PolicyRule[]>([])
+  const [defaultHoldEnabled, setDefaultHoldEnabled] = useState(true)
   const [defaultHoldDays, setDefaultHoldDays] = useState(7)
   const [loadingDefaults, setLoadingDefaults] = useState(true)
   const [savingDefaults, setSavingDefaults] = useState(false)
   const [editingDefaults, setEditingDefaults] = useState(false)
   const [savedDefaultRules, setSavedDefaultRules] = useState<PolicyRule[]>([])
+  const [savedDefaultHoldEnabled, setSavedDefaultHoldEnabled] = useState(true)
   const [savedDefaultHoldDays, setSavedDefaultHoldDays] = useState(7)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -34,10 +37,13 @@ export function DefaultCancellationPolicySection() {
             { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
             { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
           ]
+      const holdEnabled = data.nonMemberHoldEnabled ?? true
       const holdDays = data.nonMemberHoldDays ?? 7
       setDefaultRules(rules)
+      setDefaultHoldEnabled(holdEnabled)
       setDefaultHoldDays(holdDays)
       setSavedDefaultRules(rules)
+      setSavedDefaultHoldEnabled(holdEnabled)
       setSavedDefaultHoldDays(holdDays)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
@@ -52,6 +58,7 @@ export function DefaultCancellationPolicySection() {
 
   function handleCancelDefaults() {
     setDefaultRules(savedDefaultRules)
+    setDefaultHoldEnabled(savedDefaultHoldEnabled)
     setDefaultHoldDays(savedDefaultHoldDays)
     setEditingDefaults(false)
   }
@@ -66,6 +73,7 @@ export function DefaultCancellationPolicySection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rules: defaultRules,
+          nonMemberHoldEnabled: defaultHoldEnabled,
           nonMemberHoldDays: defaultHoldDays,
         }),
       })
@@ -76,8 +84,10 @@ export function DefaultCancellationPolicySection() {
       const data = await res.json()
       const rules = data.rules.map((rule: PolicyRule) => normalizeCancellationRule(rule))
       setDefaultRules(rules)
+      setDefaultHoldEnabled(data.nonMemberHoldEnabled ?? true)
       setDefaultHoldDays(data.nonMemberHoldDays)
       setSavedDefaultRules(rules)
+      setSavedDefaultHoldEnabled(data.nonMemberHoldEnabled ?? true)
       setSavedDefaultHoldDays(data.nonMemberHoldDays)
       setEditingDefaults(false)
       setSuccess("Default policy saved")
@@ -116,7 +126,22 @@ export function DefaultCancellationPolicySection() {
           )}
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-2 max-w-xs">
+          <div className="space-y-4 max-w-xl">
+            <div className="flex items-start gap-3 rounded-md border p-3">
+              <Checkbox
+                id="nonMemberHoldEnabled"
+                checked={defaultHoldEnabled}
+                disabled={!editingDefaults}
+                onCheckedChange={setDefaultHoldEnabled}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="nonMemberHoldEnabled">Members First booking policy</Label>
+                <p className="text-xs text-muted-foreground">
+                  When enabled, non-member guests outside the threshold are held provisionally.
+                  When disabled, mixed member and non-member bookings proceed as First Paid, First In.
+                </p>
+              </div>
+            </div>
             <Label htmlFor="holdDays">Non-member confirmation threshold</Label>
             <div className="flex items-center space-x-2">
               <Input
@@ -126,13 +151,15 @@ export function DefaultCancellationPolicySection() {
                 max="365"
                 value={defaultHoldDays}
                 onChange={(e) => setDefaultHoldDays(parseInt(e.target.value) || 7)}
-                className={`w-20 ${!editingDefaults ? "bg-slate-50 text-slate-700" : ""}`}
-                disabled={!editingDefaults}
+                className={`w-20 ${!editingDefaults || !defaultHoldEnabled ? "bg-slate-50 text-slate-700" : ""}`}
+                disabled={!editingDefaults || !defaultHoldEnabled}
               />
               <span className="text-sm text-muted-foreground">days before check-in</span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Non-member bookings are held as pending until this many days before check-in, then confirmed automatically.
+              {defaultHoldEnabled
+                ? "Non-member bookings are held as pending until this many days before check-in, then confirmed automatically."
+                : "The threshold is retained but inactive while First Paid, First In is selected."}
             </p>
           </div>
 

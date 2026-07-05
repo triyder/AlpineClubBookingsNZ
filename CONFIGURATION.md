@@ -144,8 +144,11 @@ menu.
   `{{skifield-whakapapa}}`, `{{skifield-conditions:dataHash}}`,
   `{{photo-gallery}}`, `{{photo-gallery:path}}`, `{{photo-slideshow}}`, and
   `{{photo-slideshow:path}}`. Legal and help-copy pages can also use text
-  tokens `{{club-name}}`, `{{currency}}`, and `{{lodge-capacity}}`, which are
-  resolved server-side from the current club/runtime settings. The `dataHash`
+  tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
+  `{{hut-leader}}`, and `{{hut-leader-lower}}`, which are resolved server-side
+  from the current club/runtime settings (`{{hut-leader}}` renders the
+  configured hut-leader label, default `Hut Leader`; `{{hut-leader-lower}}`
+  renders its lower-cased form for mid-sentence prose). The `dataHash`
   parameter is the Snow.nz widget hash. Photo token `path` parameters are
   normalised relative to
   `public/images/` and load images from that shared image-manager storage tree:
@@ -237,10 +240,10 @@ public page route.
   the documents to the signed-in hut leader tier.
 - HTML is sanitised on save and again on render with the same allowlist as
   page content (`src/lib/page-content-html.ts`).
-- Text tokens `{{club-name}}`, `{{currency}}`, and `{{lodge-capacity}}` are
-  resolved on the reader and kiosk surfaces (embed tokens are not supported
-  here). The admin editor shows the literal tokens; the editor's token help
-  button lists what is available.
+- Text tokens `{{club-name}}`, `{{currency}}`, `{{lodge-capacity}}`,
+  `{{hut-leader}}`, and `{{hut-leader-lower}}` are resolved on the reader and
+  kiosk surfaces (embed tokens are not supported here). The admin editor shows
+  the literal tokens; the editor's token help button lists what is available.
 - The migration backfills the three empty documents, so deploy-only
   environments get editable rows without running the seed.
 

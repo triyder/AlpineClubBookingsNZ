@@ -75,6 +75,55 @@ describe("booking route policy decisions", () => {
     ).toBe(BookingStatus.PENDING);
   });
 
+  it("keeps non-member bookings on the payment path inside the enabled hold window", () => {
+    expect(
+      calculateBookingHoldDecision({
+        hasNonMembers: true,
+        holdEnabled: true,
+        checkIn: new Date("2026-07-10T12:00:00.000Z"),
+        holdDays: 7,
+        now: new Date("2026-07-03T12:00:00.000Z"),
+      })
+    ).toMatchObject({
+      daysUntilCheckIn: 7,
+      holdEnabled: true,
+      shouldBePending: false,
+      status: BookingStatus.PAYMENT_PENDING,
+    });
+  });
+
+  it("disables member-priority holds regardless of the threshold", () => {
+    expect(
+      calculateBookingHoldDecision({
+        hasNonMembers: true,
+        holdEnabled: false,
+        checkIn: new Date("2026-10-01T00:00:00.000Z"),
+        holdDays: 7,
+        now: new Date("2026-07-03T00:00:00.000Z"),
+      })
+    ).toMatchObject({
+      holdEnabled: false,
+      shouldBePending: false,
+      status: BookingStatus.PAYMENT_PENDING,
+    });
+  });
+
+  it("does not mark a booking pending at a 365-day threshold until it is beyond that window", () => {
+    expect(
+      calculateBookingHoldDecision({
+        hasNonMembers: true,
+        holdEnabled: true,
+        checkIn: new Date("2027-07-03T00:00:00.000Z"),
+        holdDays: 365,
+        now: new Date("2026-07-03T00:00:00.000Z"),
+      })
+    ).toMatchObject({
+      daysUntilCheckIn: 365,
+      shouldBePending: false,
+      status: BookingStatus.PAYMENT_PENDING,
+    });
+  });
+
   it("validates booking credit application against balance, status, and price", () => {
     expect(
       calculateBookingCreditApplication({

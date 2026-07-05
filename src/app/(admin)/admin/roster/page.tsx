@@ -226,10 +226,13 @@ export default function RosterPage() {
       })
       if (!res.ok) throw new Error("Failed to send emails")
       const data = await res.json()
+      const skippedNote = data.skipped
+        ? ` ${data.skipped} guest(s) skipped (opted out of chore roster emails).`
+        : ""
       if (data.partialFailure) {
-        alert(`Roster emails sent with ${data.failed} failure(s).`)
+        alert(`Roster emails sent with ${data.failed} failure(s).${skippedNote}`)
       } else {
-        alert("Roster emails sent successfully!")
+        alert(`Roster emails sent successfully!${skippedNote}`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")

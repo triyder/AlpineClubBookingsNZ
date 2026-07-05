@@ -13,10 +13,7 @@ import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { z } from "zod";
-import {
-  authorizationRoleFromAccessRoles,
-  hasAdminAccess,
-} from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 
 const createChangeRequestSchema = z.object({
   checkIn: z.string().optional(),
@@ -160,8 +157,11 @@ export async function POST(
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
-  const isAdmin = hasAdminAccess(session.user);
-  const actorRole = authorizationRoleFromAccessRoles(session.user);
+  // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN,
+  // gaining the same authority and admin-on-behalf edit policy as a Full Admin;
+  // member/read-only stay USER.
+  const actorRole = bookingManagementAuthorizationRole(session.user);
+  const isAdmin = actorRole === "ADMIN";
 
   const { id: bookingId } = await params;
   const booking = await prisma.booking.findUnique({
@@ -461,7 +461,10 @@ export async function GET(
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) return inactiveResponse;
-  const isAdmin = hasAdminAccess(session.user);
+  // Issue #1313 (option A2): owner, Full Admin, or Booking Officer (bookings:edit)
+  // may list a booking's change requests.
+  const isAdmin =
+    bookingManagementAuthorizationRole(session.user) === "ADMIN";
 
   const { id: bookingId } = await params;
   const booking = await prisma.booking.findUnique({

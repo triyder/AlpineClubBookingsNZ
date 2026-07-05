@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 interface LodgeSettingsResponse {
@@ -21,6 +22,12 @@ interface LodgeSettingsResponse {
 }
 
 export function LodgeCapacityCard() {
+  const { hutLeaderLabel } = useClubIdentity();
+  // This card writes the label as a hyphenated compound adjective ("hut-leader"),
+  // so hyphenate the lowercased label to keep the default render byte-identical.
+  const hutLeaderAdj = hutLeaderLabel.toLowerCase().replace(/\s+/g, "-");
+  const hutLeaderAdjSentence =
+    hutLeaderAdj.charAt(0).toUpperCase() + hutLeaderAdj.slice(1);
   const [clubConfigCapacity, setClubConfigCapacity] = useState<number | null>(
     null,
   );
@@ -88,7 +95,7 @@ export function LodgeCapacityCard() {
       hutLeaderLookaheadDays < 1 ||
       hutLeaderLookaheadDays > 365
     ) {
-      setError("Enter a hut-leader lookahead between 1 and 365 days.");
+      setError(`Enter a ${hutLeaderAdj} lookahead between 1 and 365 days.`);
       setSaving(false);
       return;
     }
@@ -118,8 +125,8 @@ export function LodgeCapacityCard() {
       <CardHeader>
         <CardTitle className="text-lg">Lodge settings</CardTitle>
         <CardDescription>
-          Set the fallback lodge capacity and how far ahead hut-leader coverage
-          is checked for dashboard and Needs Attention warnings.
+          Set the fallback lodge capacity and how far ahead {hutLeaderAdj}{" "}
+          coverage is checked for dashboard and Needs Attention warnings.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -162,7 +169,7 @@ export function LodgeCapacityCard() {
           </div>
           <div className="space-y-1">
             <Label htmlFor="hut-leader-lookahead">
-              Hut-leader lookahead (days)
+              {hutLeaderAdjSentence} lookahead (days)
             </Label>
             <Input
               id="hut-leader-lookahead"

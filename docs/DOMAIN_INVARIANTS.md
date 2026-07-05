@@ -60,6 +60,16 @@ Future reviews and issues should cite this file when proposing changes.
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
   writes only `memberId: null` guests and takes the lock but is a guard no-op).
+  When an admin links a booking-request guest to a real member — or opens a
+  request that already carries persisted linked members — the linking UI runs an
+  **advisory-only** overlap pre-check (`findLinkedGuestMemberNightConflicts`,
+  #1226) so any conflict surfaces before approve/hold. The panel computes it on
+  load for pre-existing links and on every link/unlink, applying only the latest
+  response per request so a slower earlier check can't overwrite a newer one
+  (#1226 follow-up). It is non-authoritative — it never throws, blocks, or takes
+  the advisory lock, and it excludes the request's own held booking — the
+  transactional `assertNoBookingMemberNightConflicts` guard at approve/hold time
+  remains the sole enforcer.
 - A member holds at most one group-join roster row per group
   (`GroupBookingJoin` unique on groupBookingId + joinerMemberId, #1039
   item 2). The roster row is written inside the child booking's transaction:
@@ -202,7 +212,8 @@ client_secret whose amount no longer matches `finalPriceCents`, and the
 Stripe webhook alerts admins before refusing a capture that mismatches the
 booking's current total), and the non-member
 hold is recalculated from the remaining guests (all-member bookings clear the
-hold; bookings inside the hold window move PENDING → PAYMENT_PENDING). The same
+hold; bookings inside the hold window or under a disabled hold policy move
+PENDING → PAYMENT_PENDING). The same
 change must produce the same booking state regardless of which endpoint made
 it.
 
@@ -224,18 +235,34 @@ finalized, so a quote is never emailed for dates it cannot reserve — if the
 lodge is full the send fails loudly (409). The hold survives acceptance: on
 accept/approve the same held row becomes the request's converted booking and
 moves AWAITING_REVIEW → PENDING, which keeps holding via rule (b) above, so an
-accepted-but-unpaid quote does not lose its bed before payment. The guest swap
+accepted-but-unpaid quote does not lose its bed before payment. Accept and the
+no-payment cancel are serialized on the global booking advisory lock (#1311): the
+cancel re-reads the held status under that lock and flips to CANCELLED only while
+it is still AWAITING_REVIEW/WAITLISTED/WAITLIST_OFFERED, so a cancel racing an
+accept can never clobber the just-converted PENDING booking back to CANCELLED —
+the loser returns 409. The guest swap
 at accept updates the held booking's existing guest rows in place (stable
 `bookingGuest` ids) instead of delete-then-recreate, so an admin's pre-assigned
 `BedAllocation` rows, #713 night sets, promo guest targets, and chore
-assignments are preserved. The hold is released only on cancel (requester
-declines the quote) or expiry: the quote-expiry cron
+assignments are preserved. The hold is released on cancel (requester declines
+the quote), expiry, or a capacity-reduction bump: the quote-expiry cron
 (`cron-quote-expiry-reminders.ts`) frees the bed behind any SENT quote whose
 response link has lapsed, and the accepted-but-unpaid booking is released by
 the same hold-deadline machinery as any other PENDING request booking
 (`cron-confirm-pending.ts`). Every release path detaches
 `BookingRequest.heldBookingId` so a later re-quote can never reuse a released
 row.
+
+An accepted-but-unpaid quote hold is **not** protected against a later reduction
+of lodge capacity for its nights (owner-ratified, #1317). At the hold deadline
+`cron-confirm-pending.ts` re-checks capacity for those nights under the booking
+advisory lock; if capacity has since been lowered below what is booked, the
+still-unpaid hold is bumped/cancelled (no charge, bumped email sent) exactly as
+any other over-capacity PENDING request booking would be. The capacity-priority
+rule above ("a later *member* booking can no longer bump an accepted-but-unpaid
+quote") is unchanged — only an admin lowering the nightly capacity can reclaim an
+unpaid hold. Paying the hold moves it to a fully capacity-holding status and ends
+this exposure.
 
 A booking converted from (or held for) a public/school booking request keeps
 its officer-negotiated price, flat-split across guest rows; the quote's

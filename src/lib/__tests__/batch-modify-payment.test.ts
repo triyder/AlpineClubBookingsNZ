@@ -97,6 +97,11 @@ vi.mock("@/lib/change-fee", () => ({
 vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(30),
   loadCancellationPolicy: (...args: unknown[]) => mockLoadCancellationPolicy(...args),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
   calculateDualRefundAmounts: (
     paidAmountCents: number,
     _daysUntilCheckIn: number,

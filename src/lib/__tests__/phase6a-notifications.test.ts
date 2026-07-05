@@ -44,6 +44,11 @@ const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
       update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    // #1285: the check-in reminder path now consults the member's
+    // bookingReminder preference; null defaults to "send".
+    notificationPreference: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   };
   return { mockPrisma, mockTransporter, mockLogger };
 });
@@ -711,7 +716,7 @@ describe("N-01: sendCheckinReminders", () => {
         status: "CONFIRMED",
         checkIn: tomorrow,
         checkOut: new Date(tomorrow.getTime() + 2 * 86400000),
-        member: { email: "member@test.com", firstName: "Jane" },
+        member: { id: "member-1", email: "member@test.com", firstName: "Jane" },
         guests: [
           { firstName: "Jane", lastName: "Doe" },
           { firstName: "Bob", lastName: "Smith" },
@@ -738,7 +743,7 @@ describe("N-01: sendCheckinReminders", () => {
         status: "CONFIRMED",
         checkIn: tomorrow,
         checkOut: new Date(tomorrow.getTime() + 2 * 86400000),
-        member: { email: "member@test.com", firstName: "Jane" },
+        member: { id: "member-1", email: "member@test.com", firstName: "Jane" },
         guests: [{ firstName: "Jane", lastName: "Doe" }],
         choreAssignments: [],
       },

@@ -3,10 +3,12 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
+  calculateBookingHoldDecision,
   isGroupDiscountAppliedToBooking,
   toGroupDiscountConfig,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
+import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -183,11 +185,29 @@ export async function POST(request: NextRequest) {
       seasons: seasonData,
       groupDiscount,
     });
+    const hasNonMembers = guests.some((guest) => !guest.isMember);
+    const holdPolicy = hasNonMembers
+      ? await getNonMemberHoldPolicy(checkIn)
+      : { enabled: false, holdDays: 0, source: "default" as const };
+    const holdDecision = calculateBookingHoldDecision({
+      hasNonMembers,
+      checkIn,
+      holdDays: holdPolicy.holdDays,
+      holdEnabled: holdPolicy.enabled,
+    });
 
     return NextResponse.json({
       ...price,
       availableCreditCents,
       groupDiscountApplied,
+      nonMemberHoldDecision: {
+        enabled: holdPolicy.enabled,
+        holdDays: holdPolicy.holdDays,
+        source: holdPolicy.source,
+        daysUntilCheckIn: holdDecision.daysUntilCheckIn,
+        shouldBePending: holdDecision.shouldBePending,
+        status: holdDecision.status,
+      },
     });
   } catch (err) {
     if (err instanceof MembershipTypeBookingPolicyError) {

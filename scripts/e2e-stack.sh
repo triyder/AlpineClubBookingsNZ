@@ -45,7 +45,11 @@ fi
 
 STAGING_POSTGRES_PORT="${STAGING_POSTGRES_PORT:-5433}"
 STAGING_HTTP_PORT="${STAGING_HTTP_PORT:-3001}"
+MAILPIT_HTTP_PORT="${MAILPIT_HTTP_PORT:-8025}"
 export E2E_BASE_URL="${E2E_BASE_URL:-http://localhost:${STAGING_HTTP_PORT}}"
+# Host-side view of the mailpit HTTP API, so the Playwright email-code
+# two-factor spec can read back the captured code (e2e/helpers/mailpit.ts).
+export E2E_MAILPIT_URL="${E2E_MAILPIT_URL:-http://localhost:${MAILPIT_HTTP_PORT}}"
 # Host-side view of the compose-internal database, for migrate + seeds.
 HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_PORT}/tacbookings"
 

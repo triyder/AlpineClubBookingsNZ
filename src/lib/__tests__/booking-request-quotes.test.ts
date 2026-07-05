@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
     },
     bookingGuest: {
       deleteMany: vi.fn(),
+      findMany: vi.fn(),
     },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
@@ -161,6 +162,7 @@ vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
 import { prisma } from "@/lib/prisma";
 import {
   createBookingRequestQuote,
+  findLinkedGuestMemberNightConflicts,
   getBookingRequestQuoteContext,
   holdBookingRequestSlots,
   respondToBookingRequestQuote,
@@ -1020,5 +1022,121 @@ describe("holdBookingRequestSlots owner role", () => {
       bookingId: "held-1",
       reused: false,
     });
+  });
+});
+
+describe("findLinkedGuestMemberNightConflicts (advisory pre-check #1226)", () => {
+  function overlappingGuestRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "existing-guest",
+      memberId: "member-42",
+      firstName: "Linked",
+      lastName: "Member",
+      stayStart: null,
+      stayEnd: null,
+      nights: [],
+      member: { firstName: "Linked", lastName: "Member" },
+      booking: {
+        id: "existing-booking",
+        memberId: "other-owner",
+        status: BookingStatus.CONFIRMED,
+        checkIn: new Date("2026-08-01T00:00:00.000Z"),
+        checkOut: new Date("2026-08-03T00:00:00.000Z"),
+        member: { firstName: "Other", lastName: "Owner" },
+        guests: [{ id: "existing-guest", memberId: "member-42" }],
+      },
+      ...overrides,
+    };
+  }
+
+  it("reports an overlap for a linked member without throwing (advisory only)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ guests: GUESTS, heldBookingId: null }) as never
+    );
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([
+      overlappingGuestRow(),
+    ] as never);
+
+    // The real findBookingMemberNightConflicts runs here; only the higher-level
+    // assertNoBookingMemberNightConflicts assertion is spied elsewhere. The
+    // advisory RESOLVES with the overlap rather than throwing — proving it does
+    // not block linking the way the approve/hold guard's 409 does.
+    const conflicts = await findLinkedGuestMemberNightConflicts({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      links: [{ guestIndex: 0, memberId: "member-42" }],
+    });
+
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]).toMatchObject({
+      memberId: "member-42",
+      memberName: "Linked Member",
+      bookingId: "existing-booking",
+      bookingOwnerName: "Other Owner",
+      conflictingNights: ["2026-08-01", "2026-08-02"],
+    });
+  });
+
+  it("reports no conflict when the linked member is clear", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ guests: GUESTS, heldBookingId: null }) as never
+    );
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
+
+    const conflicts = await findLinkedGuestMemberNightConflicts({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      links: [{ guestIndex: 0, memberId: "member-42" }],
+    });
+
+    expect(conflicts).toEqual([]);
+  });
+
+  it("excludes the request's own held booking so it never flags itself", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ guests: GUESTS, heldBookingId: "own-hold" }) as never
+    );
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
+
+    await findLinkedGuestMemberNightConflicts({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      links: [{ guestIndex: 0, memberId: "member-42" }],
+    });
+
+    // The self-hold carries these same linked members on an AWAITING_REVIEW
+    // booking (a conflict-eligible status), so the query MUST exclude it or the
+    // advisory would report a false conflict against the request's own hold.
+    const call = vi.mocked(prisma.bookingGuest.findMany).mock.calls[0][0] as {
+      where: { booking: { id?: unknown } };
+    };
+    expect(call.where.booking.id).toEqual({ not: "own-hold" });
+  });
+
+  it("returns no conflict when there are no links and never queries", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ guests: GUESTS, heldBookingId: null }) as never
+    );
+
+    const conflicts = await findLinkedGuestMemberNightConflicts({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      links: [],
+    });
+
+    expect(conflicts).toEqual([]);
+    expect(prisma.bookingGuest.findMany).not.toHaveBeenCalled();
+  });
+
+  it("throws 404 for a missing request (an error the route renders, not a block)", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(null);
+
+    await expect(
+      findLinkedGuestMemberNightConflicts({
+        requestId: "missing",
+        adminMemberId: "admin-1",
+        links: [{ guestIndex: 0, memberId: "member-42" }],
+      })
+    ).rejects.toMatchObject({ status: 404 });
   });
 });

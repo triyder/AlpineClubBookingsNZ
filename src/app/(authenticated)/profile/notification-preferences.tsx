@@ -40,6 +40,27 @@ const PREFERENCE_LABELS: Record<keyof Preferences, { label: string; description:
   },
 };
 
+// #1285: Which categories a member can actually switch off. Check-in reminders
+// and chore rosters are optional/operational and are honored on the send path;
+// Club Communications (marketing) is honored by the bulk-send recipient filter.
+const TOGGLEABLE_KEYS: Array<keyof Preferences> = [
+  "bookingReminder",
+  "choreRoster",
+  "marketingEmails",
+];
+
+// #1285: Must-send transactional categories. These are essential updates about
+// a booking the member owns (confirmation, pending-booking bumps, cancellation
+// and refund notices) and are ALWAYS sent — the send path never gates them.
+// They are listed here for transparency but are intentionally not toggleable,
+// because previously showing an on/off switch promised control that was never
+// honored and could hide a cancellation/refund from the person affected.
+const ALWAYS_SENT_KEYS: Array<keyof Preferences> = [
+  "bookingConfirmation",
+  "bookingBumped",
+  "bookingCancelled",
+];
+
 export function NotificationPreferences() {
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [editPrefs, setEditPrefs] = useState<Preferences | null>(null);
@@ -131,7 +152,7 @@ export function NotificationPreferences() {
         )}
       </div>
 
-      {(Object.keys(PREFERENCE_LABELS) as Array<keyof Preferences>).map((key) => (
+      {TOGGLEABLE_KEYS.map((key) => (
         <div key={key} className="flex items-center justify-between gap-4">
           <div className="space-y-0.5">
             <Label htmlFor={key} className="text-sm font-medium">
@@ -159,6 +180,28 @@ export function NotificationPreferences() {
           </button>
         </div>
       ))}
+
+      <div className="space-y-3 border-t pt-4">
+        <p className="text-xs text-muted-foreground">
+          Essential booking emails are always sent so you never miss an update
+          about a stay you have booked. These cannot be turned off.
+        </p>
+        {ALWAYS_SENT_KEYS.map((key) => (
+          <div key={key} className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">
+                {PREFERENCE_LABELS[key].label}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {PREFERENCE_LABELS[key].description}
+              </p>
+            </div>
+            <span className="shrink-0 rounded-full border border-input px-3 py-1 text-xs font-medium text-muted-foreground">
+              Always sent
+            </span>
+          </div>
+        ))}
+      </div>
 
       {error && (
         <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">

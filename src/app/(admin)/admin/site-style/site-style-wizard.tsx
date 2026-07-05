@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -37,7 +37,6 @@ import {
   DEFAULT_CLUB_THEME_VALUES,
   MAX_LOGO_DATA_URL_BYTES,
   buildClubThemeCss,
-  clubThemeUpdateSchema,
   fontCssVariable,
   fontLabel,
   getBlockingContrastWarnings,
@@ -48,6 +47,12 @@ import {
   type ClubThemeValues,
   type ContrastWarning,
 } from "@/lib/club-theme-schema";
+
+// Type-only reference to the lazy-loaded zod schema. `typeof import(...)` in a
+// type position emits no runtime import, so naming the schema's type here never
+// pulls zod into the admin/site-style client bundle (#1278).
+type ClubThemeUpdateSchema =
+  typeof import("@/lib/club-theme-update-schema")["clubThemeUpdateSchema"];
 
 type SiteStyleThemeResponse = ClubThemeValues & {
   completedAt: string | null;
@@ -123,13 +128,37 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const stepIndex = steps.findIndex((item) => item.id === step);
-  const fieldErrors = useMemo(() => {
-    const parsed = clubThemeUpdateSchema.safeParse(themePayload(values, false));
-    if (parsed.success) {
-      return {};
+  // Live inline field validation uses the zod update schema, which is code-split
+  // out of this route's initial bundle and lazy-loaded on mount (#1278,
+  // follow-up from #1197). Until it resolves, inline field errors stay empty;
+  // the synchronous contrast gate below and the server-side validation on save
+  // still guard the payload, so degrading gracefully here is safe.
+  const [updateSchema, setUpdateSchema] =
+    useState<ClubThemeUpdateSchema | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<
+    Record<string, string[] | undefined>
+  >({});
+
+  useEffect(() => {
+    let active = true;
+    void import("@/lib/club-theme-update-schema").then((module) => {
+      if (active) {
+        setUpdateSchema(module.clubThemeUpdateSchema);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!updateSchema) {
+      setFieldErrors({});
+      return;
     }
-    return parsed.error.flatten().fieldErrors;
-  }, [values]);
+    const parsed = updateSchema.safeParse(themePayload(values, false));
+    setFieldErrors(parsed.success ? {} : parsed.error.flatten().fieldErrors);
+  }, [updateSchema, values]);
   const contrastWarnings = useMemo(() => getContrastWarnings(values), [values]);
   // Measurable AA failures block saving (mirrors the server gate in the
   // site-style route); both hex and oklch values are measured.

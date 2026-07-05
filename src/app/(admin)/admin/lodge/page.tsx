@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
 interface LodgeAccount {
@@ -17,6 +18,7 @@ interface LodgeAccount {
 }
 
 export default function AdminLodgePage() {
+  const { hutLeaderLabel } = useClubIdentity();
   const [lodge, setLodge] = useState<LodgeAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -136,8 +138,9 @@ export default function AdminLodgePage() {
 
       <p className="max-w-3xl text-sm text-slate-600">
         This is the shared sign-in used on the physical lodge kiosk screen — it is
-        not a personal admin login. Guests and hut leaders use it on the lodge
-        device to check in and out and view lodge information. Set the email and
+        not a personal admin login. Guests and {hutLeaderLabel.toLowerCase()}s use
+        it on the lodge device to check in and out and view lodge information. Set
+        the email and
         password below, then sign in once on the kiosk device with these details.
         Use &ldquo;Preview Kiosk&rdquo; above to see exactly what it displays.
       </p>

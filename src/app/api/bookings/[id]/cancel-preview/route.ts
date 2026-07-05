@@ -6,6 +6,7 @@ import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -36,9 +37,14 @@ export async function GET(
       return NextResponse.json({ error: "Booking not found" }, { status: 404 });
     }
 
+    // Issue #1313 (option A2): the owner, a Full Admin, or a Booking Officer
+    // (bookings:edit) may see the refund breakdown — the read-only companion to
+    // the cancel action, gated on the same bookings:edit predicate so a
+    // read-only admin (bookings:view) still cannot preview a cancellation.
     if (
       booking.memberId !== session.user.id &&
-      !hasAdminAccess(session.user)
+      !hasAdminAccess(session.user) &&
+      !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
     ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

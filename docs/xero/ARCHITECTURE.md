@@ -158,9 +158,10 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-inbound-reconciliation` | Stored-event worker + per-entity reconcilers + incremental cursor reconciliation (see Flow 2). |
+| `xero-inbound-reconciliation` | Stored-event worker + per-entity reconcilers + incremental cursor reconciliation (see Flow 2). Split into cohesive `xero-inbound/*` sub-modules (#1208 item 1 / #1270, entry re-exports the public surface); see refactor item 1 for the module map. |
 | `xero-booking-repair` | Booking-vs-Xero audit and self-repair (see Flow 3). CLI entry: `scripts/xero-booking-repair.ts`. Split into cohesive `xero-booking-repair-*` sub-modules (#1208 item 2, entry re-exports the public surface); see refactor item 2 for the module map. |
 | `xero-hardening` | Historical `XeroObjectLink` backfill, stale canonical-link cleanup, the emailed reconciliation report, repeated-failure alerting. Split into cohesive `xero-hardening-*` sub-modules (#1208 item 5, entry re-exports the public surface); see refactor item 5 for the module map. |
+| `xero-invoice-rounding-audit` | Read-only diagnostic that replays the pre-#1231 line maths in integer cents to flag issued invoices that would have carried the #1163 rounding drift, across **both** builder callers — per-booking invoices (`Payment.xeroInvoiceId`) and group-settlement invoices (`GroupBookingSettlement.xeroInvoiceId`). Makes **no** live-provider calls and mutates nothing (only `booking.findMany` + `groupBookingSettlement.findMany`). CLI entry: `scripts/audit-xero-invoice-rounding.ts`. See "Historical rounding-drift audit" below. |
 | `xero-cron-runner` | Maps the 7 cron tasks to the workers above, records `CronJobRun` rows, gates on module + connection. |
 | `xero-admin-failures`, `xero-admin-health`, `xero-record-activity`, `xero-admin-cache` | Admin overviews: failed-operation triage states, missing-invoice/missing-credit-note health snapshot, per-record activity timeline, cached chart-of-accounts/items. |
 
@@ -361,6 +362,76 @@ refunds missing credit notes (flagged when the refunded amount still exceeds the
 cents already covered by active refund credit notes, so multi-note refunds are
 handled), and per-record activity shows the ledger for one booking/payment/member.
 
+### Historical rounding-drift audit (#1318, read-only)
+
+Issue #1163 was a 1–2 cent Xero invoice drift: the pre-#1231 line builder grouped
+a guest's nights into contiguous **date** runs only and billed each run as
+`quantity: nightCount, unitAmount: round(totalCents / nightCount) / 100`. When a
+single contiguous run mixed nightly prices (a season boundary, or locked-vs-
+re-priced nights), `nightCount * round(totalCents / nightCount)` could not
+represent the exact cent total, so the issued invoice's guest-line total drifted.
+The legacy no-per-night path drifted the same way whenever `guest.priceCents` was
+not divisible by the night count. **PR #1231 fixed it for new invoices** by
+splitting every run to a single price (so `perNightCents * nightCount ===
+totalCents` by construction) but did **not** retroactively heal already-issued
+invoices.
+
+**Stance on historical data:**
+
+- **Fresh install / new deployment — no action.** There is no pre-#1231 history to
+  heal, so nothing to run.
+- **Fork or existing install — self-check with the audit.** `xero-invoice-rounding-audit`
+  (`scripts/audit-xero-invoice-rounding.ts`) replays the pre-#1231 maths in
+  integer cents over persisted booking/guest/night data and flags issued
+  invoices whose guest-line total would have drifted. It scans **both** invoice
+  sources that use `buildInvoiceLineItems`:
+  - **Per-booking invoices** (`Payment.xeroInvoiceId`), keyed off the booking's
+    guests/nights, and
+  - **Group-booking settlement invoices** (`GroupBookingSettlement.xeroInvoiceId`).
+    For each settlement it re-runs the **exact** child query the real builder uses
+    (`xero-group-settlement-invoices.ts`: `parentBookingId = organiserBookingId`,
+    `organiserSettled = true`, `deletedAt = null`, `status in {CONFIRMED, PAID}`)
+    and sums each settleable child's per-guest run drift, so the reconstructed
+    line-item input matches what was invoiced.
+
+  It is a **diagnostic only**: zero live-provider calls, no transactions, no
+  mutations — it issues only `booking.findMany` +
+  `groupBookingSettlement.findMany` reads (cursor-paginated). Run it against a
+  **non-production copy** of the database:
+
+  ```bash
+  DATABASE_URL='postgresql://user:pass@host:5432/scratch_copy' \
+    npx tsx scripts/audit-xero-invoice-rounding.ts --issued-before 2026-07-04
+  # or: npm run xero:audit-invoice-rounding -- --issued-before 2026-07-04
+  ```
+
+  `--issued-before <YYYY-MM-DD>` should be the date you deployed #1231; it scopes
+  the scan to invoices created before the fix via the issued-at proxy —
+  `Payment.createdAt` for booking invoices and `GroupBookingSettlement.createdAt`
+  for settlement invoices (both pre-exist their Xero invoice, so the filter is
+  over-inclusive-but-safe). Omit it to scan every issued invoice. The report
+  labels each candidate `[BOOKING]` or `[GROUP SETTLEMENT]` and prints the invoice
+  id/number, the affected line run, and the computed drift in cents.
+
+- **A flag is a candidate, not a proven error.** It means the local data would have
+  produced a drifting line total under the pre-#1231 builder. It does **not** prove
+  the live Xero invoice is still wrong: the invoice may have been issued after
+  #1231 (already correct — the `createdAt` proxy is over-inclusive), or since been
+  voided / credited / superseded. The audit also replays against the **current**
+  persisted night data: a booking (or, for a settlement, **any one of its child
+  bookings**) re-priced, modified, or cancelled after the invoice was issued will
+  replay against post-change data that may differ from what was actually invoiced.
+  The audit cannot see Xero invoice status, so **confirm each candidate against
+  Xero before acting.**
+- **Remediation is out of scope here.** Any correction is a **manual accounting
+  action** (a Xero credit note / adjustment by the operator) or a separately-scoped
+  repair task — this audit never edits money, invoices, or Xero.
+
+Scope boundary: only `buildInvoiceLineItems` carries this pattern, and both its
+callers — per-booking invoices and `xero-group-settlement-invoices` — are now
+scanned. The entrance-fee and supplementary builders emit single `quantity: 1`
+exact-cent lines and cannot drift, so they are out of scope by construction.
+
 ## OAuth and token lifecycle (supporting flow)
 
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state
@@ -382,15 +453,29 @@ handled), and per-record activity shows the ledger for one booking/payment/membe
 Ranked by risk-reduction value; item 1 touches the most money-path logic.
 These are candidates for future issues, not commitments.
 
-1. **Split `xero-inbound-reconciliation.ts` (3,427 lines).** It contains five
-   separable concerns: (a) stored-event worker mechanics (claim, dedupe,
-   backoff, replay); (b) contact reconciler; (c) invoice/payment reconciler
-   including the internet-banking settlement flip; (d) credit-note reconciler
-   plus the two big business-state repair routines
-   (`repairRefundedPaymentBusinessState`, ~260 lines;
-   `repairAccountCreditAllocationBusinessState`, ~220 lines); (e) incremental
-   cursor drivers. The settlement/repair code is the highest-risk money logic
-   in the subsystem and currently the hardest to review in isolation.
+1. **Split `xero-inbound-reconciliation.ts` (3,427 lines).** _Done (#1208 item 1
+   / #1270):_ the file was split verbatim (behavior preserving, export-parity)
+   into cohesive `src/lib/xero-inbound/<concern>.ts` sub-modules with an acyclic
+   import graph — `types` (all interfaces + `XeroInboundReplayError`) and
+   `constants` are leaves; the shared helpers `amounts` (money/credit/allocation
+   math + metadata guards, including the still-local `getJsonRecord`),
+   `object-links` (link dedupe/derive/find/recover) and `audit` sit above them;
+   the per-concern reconcilers `contact`, `payment`, `invoice-paid-effects`
+   (the internet-banking settlement flip + group-settlement side effects),
+   `invoice`, `credit-note-repairs` (the two big business-state repairs
+   `repairRefundedPaymentBusinessState` ~260 lines and
+   `repairAccountCreditAllocationBusinessState` ~220 lines), `credit-note`, and
+   the `incremental-reconciliation` cursor drivers depend only downward
+   (`invoice` → `payment`/`contact`/`invoice-paid-effects`; `credit-note` →
+   `credit-note-repairs`); and the `event-processing` worker (claim, dedupe,
+   backoff, replay + the stored-event dispatcher and the public cycle/replay
+   entry points) sits on top. `xero-inbound-reconciliation.ts` remains the entry
+   as a re-export barrel over the unchanged public surface (3 functions +
+   5 result types + `XeroInboundReplayError`) so every importer and the
+   `xero-inbound-reconciliation.test.ts` doubles resolve unchanged. The
+   settlement/repair code — the highest-risk money logic in the subsystem — now
+   lives in `invoice-paid-effects` and `credit-note-repairs` where it can be
+   reviewed in isolation.
 2. **Split `xero-booking-repair.ts` (3,004 lines).** _Done (#1208 item 2):_
    the ~2,700 lines of private helpers were extracted verbatim (behavior
    preserving) into cohesive `xero-booking-repair-<phase>.ts` sub-modules —
@@ -446,8 +531,11 @@ These are candidates for future issues, not commitments.
    `asRecord`/`readString`/`readNumber` guards that appeared in `xero-sync`,
    `xero-operation-queue`, `xero-operation-retry`, `xero-admin-failures`, and
    `xero-operation-outbox-payload` now import from the shared `xero-json`
-   module. The differently-shaped `getJsonRecord` guards in
-   `xero-inbound-reconciliation` remain local pending its own split. The
+   module. The differently-shaped `getJsonRecord` guards from
+   `xero-inbound-reconciliation` now live (still local, NOT merged into
+   `xero-json`) in its `xero-inbound/amounts` sub-module after the item-1 split
+   (#1270); merging them into `xero-json` is intentionally deferred to preserve
+   behavior. The
    `readJsonRecord`/`readJsonString`/`readJsonNumber` guards from
    `xero-booking-repair` now live (still local, NOT merged into `xero-json`) in
    its `xero-booking-repair-utils` sub-module after the item-2 split; merging

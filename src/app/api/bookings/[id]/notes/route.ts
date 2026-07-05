@@ -5,6 +5,7 @@ import { htmlToPlainText } from "@/lib/email-text";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 
 const notesSchema = z.object({
   notes: z
@@ -39,7 +40,13 @@ export async function PUT(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.memberId !== session.user.id && !isAdmin) {
+  // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
+  // (bookings:edit) may edit the admin notes on any booking.
+  if (
+    booking.memberId !== session.user.id &&
+    !isAdmin &&
+    !hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

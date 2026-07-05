@@ -1,6 +1,8 @@
 // Demo-seed personas (prisma/demo-seed.ts). Passwords come from the seed's
 // DEMO_SEED_PASSWORD default; override E2E_DEMO_PASSWORD if the seed was run
 // with a custom one.
+import { EMAIL_2FA_ENROLLEE } from "./fixtures";
+
 export const DEMO_PASSWORD = process.env.E2E_DEMO_PASSWORD ?? "demo1234";
 
 export type Persona = {
@@ -25,5 +27,14 @@ export const personas = {
     email: "bob@demo.alpineclub.test",
     firstName: "Bob",
     lastName: "Brown",
+  },
+  // Evan is a second un-enrolled member (distinct from Bob) so the email-code
+  // two-factor spec drives its own forced enrollment without colliding with the
+  // TOTP spec. Defined in prisma/e2e-fixtures.ts so the seed and this spec never
+  // drift.
+  emailEnrollee: {
+    email: EMAIL_2FA_ENROLLEE.email,
+    firstName: EMAIL_2FA_ENROLLEE.firstName,
+    lastName: EMAIL_2FA_ENROLLEE.lastName,
   },
 } satisfies Record<string, Persona>;

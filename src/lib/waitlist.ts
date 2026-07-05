@@ -1,7 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { checkCapacityForGuestRanges } from "./capacity";
-import { getNonMemberHoldDays } from "./cancellation";
+import { getNonMemberHoldPolicy } from "./cancellation";
 import {
   sendWaitlistOfferEmail,
   sendWaitlistOfferExpiredEmail,
@@ -15,7 +15,10 @@ import {
   loadSeasonRateData,
   recalculateBookingPromo,
 } from "@/lib/booking-guest-removal-service";
-import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
+import {
+  calculateBookingHoldDecision,
+  toGroupDiscountConfig,
+} from "@/lib/policies/booking-route-decisions";
 import { getSeasonYear } from "@/lib/utils";
 
 export const WAITLIST_OFFER_HOURS =
@@ -414,11 +417,16 @@ export async function confirmWaitlistOffer(
       // Determine new status using the same logic as booking creation.
       // Math.ceil mirrors bookings/route.ts: fractional days over threshold → PENDING.
       const hasNonMembers = booking.guests.some((g) => !g.isMember);
-      const holdDays = hasNonMembers ? await getNonMemberHoldDays(booking.checkIn) : 7;
-      const daysUntilCheckIn = Math.ceil(
-        (booking.checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      );
-      const shouldBePending = hasNonMembers && daysUntilCheckIn > holdDays;
+      const holdPolicy = hasNonMembers
+        ? await getNonMemberHoldPolicy(booking.checkIn)
+        : { enabled: false, holdDays: 0, source: "default" as const };
+      const holdDecision = calculateBookingHoldDecision({
+        hasNonMembers,
+        checkIn: booking.checkIn,
+        holdDays: holdPolicy.holdDays,
+        holdEnabled: holdPolicy.enabled,
+      });
+      const shouldBePending = holdDecision.shouldBePending;
       const newStatus = shouldBePending ? BookingStatus.PENDING : BookingStatus.PAYMENT_PENDING;
 
       const updateData: Record<string, unknown> = {
@@ -426,11 +434,12 @@ export async function confirmWaitlistOffer(
         waitlistPosition: null,
         waitlistOfferedAt: null,
         waitlistOfferExpiresAt: null,
+        nonMemberHoldUntil: null,
       };
 
       if (newStatus === BookingStatus.PENDING) {
         const holdDate = new Date(booking.checkIn);
-        holdDate.setDate(holdDate.getDate() - holdDays);
+        holdDate.setDate(holdDate.getDate() - holdPolicy.holdDays);
         updateData.nonMemberHoldUntil = holdDate;
       }
 

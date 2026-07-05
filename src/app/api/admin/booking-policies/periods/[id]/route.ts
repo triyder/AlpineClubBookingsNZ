@@ -25,7 +25,8 @@ const updateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   startDate: dateOnlyString.optional(),
   endDate: dateOnlyString.optional(),
-  nonMemberHoldDays: z.number().int().min(1).max(30).optional(),
+  nonMemberHoldEnabled: z.boolean().optional(),
+  nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
   cancellationRules: z.array(cancellationRuleSchema).min(1).optional(),
   active: z.boolean().optional(),
 });
@@ -82,6 +83,9 @@ export async function PUT(
         ...(data.name !== undefined && { name: data.name }),
         ...(data.startDate && { startDate }),
         ...(data.endDate && { endDate }),
+        ...(data.nonMemberHoldEnabled !== undefined && {
+          nonMemberHoldEnabled: data.nonMemberHoldEnabled,
+        }),
         ...(data.nonMemberHoldDays !== undefined && {
           nonMemberHoldDays: data.nonMemberHoldDays,
         }),

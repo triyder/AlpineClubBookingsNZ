@@ -6,6 +6,7 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 
 const cancelBookingParamsSchema = z.object({
   id: z.string().min(1),
@@ -64,7 +65,20 @@ export async function POST(
       session.user.id,
       authorizationRoleFromAccessRoles(session.user),
       getClientIp(request),
-      parsed.data.refundMethod
+      parsed.data.refundMethod,
+      {
+        // Issue #1313 (owner-approved option A2): a Booking Officer
+        // (bookings:edit) may cancel any member's booking with the SAME
+        // authority — and byte-identical refund / Stripe path / cancellation
+        // email / audit — as a Full Admin acting on-behalf. The actor's real
+        // authorization role stays honest ("USER" for an officer); this flag
+        // ONLY widens the internal authorization gate, never the refund
+        // computation (which keys off booking state + policy tier only).
+        hasBookingsEditAccess: hasAdminAreaAccess(session.user, {
+          area: "bookings",
+          level: "edit",
+        }),
+      }
     );
 
     if (result.status === 200) {

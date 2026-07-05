@@ -11,6 +11,7 @@ the demo seed (`prisma/demo-seed.ts`).
 | Spec | Matrix row | Journey |
 | --- | --- | --- |
 | `e2e/two-factor-login.spec.ts` | Global two-factor enforcement (Critical) | Forced TOTP enrollment on first login, recovery codes, protected-route gating for unverified sessions, wrong-code rejection, TOTP re-login, single-use recovery codes |
+| `e2e/two-factor-email.spec.ts` | Global two-factor enforcement — email method (Critical) | Forced **email-code** enrollment on first login (send → capture the emailed code from the mailpit SMTP capture → enroll → recovery codes), then an email-code re-login that rejects a wrong code and accepts the emailed one. The code is read back over mailpit's HTTP API (`e2e/helpers/mailpit.ts`); no live mail provider is used |
 | `e2e/booking.spec.ts` | Create booking with capacity lock (Critical) | Member books a bed through `/book` (confirm-details gate → dates → guests → review → payment step); while payment is owed the booking holds **no** bed (issue #737 — only committed money reserves capacity); the same member cannot hold the same lodge night twice |
 | `e2e/stripe-payment.spec.ts` | Stripe payment success/failure (Critical) | In-wizard step-4 card payment with Stripe test cards: `4242…` confirms the booking and the paid booking occupies its beds; `4000 0000 0000 0002` declines and leaves it payable. **Skips unless genuine Stripe test-mode keys are configured** |
 | `e2e/admin-roles.spec.ts` | Role boundaries (High) | One persona per bundled access role (ADMIN_READONLY, ADMIN_BOOKINGS, ADMIN_MEMBERSHIP, ADMIN_CONTENT, FINANCE_USER, FINANCE_ADMIN, LODGE). Each asserts an in-area page renders and an out-of-area page is blocked (redirect), per the authoritative matrix in `src/lib/admin-permissions.ts` and the `/finance` (finance-auth) and `/lodge` (kiosk) gates |
@@ -20,8 +21,6 @@ the demo seed (`prisma/demo-seed.ts`).
 
 Not covered by browser tests (by design):
 
-- **Email-code two-factor enrollment** — needs an SMTP capture container; TOTP is
-  covered, email-code is a manual browser check.
 - **Waitlist offer creation + expiry** — run only by the in-process scheduler
   (`src/lib/cron-waitlist.ts` via `instrumentation.node.ts`); `CRON_ENABLED` is
   off in staging and there is **no** HTTP waitlist-cron endpoint, so these are not
@@ -31,9 +30,10 @@ Not covered by browser tests (by design):
 - **Webhook signature classes** (Stripe/Xero/SES valid/duplicate/malformed/
   oversized/wrong-signature) — covered by targeted route tests (issue #1133), not
   browser flows.
-- **The email delivery of nomination links** — email is unconfigured on staging;
-  the membership spec drives the confirmation pages using seeded tokens instead
-  (see below).
+- **The email delivery of nomination links** — outbound mail is captured by the
+  local mailpit container (no live provider), but the membership spec drives the
+  confirmation pages using seeded tokens rather than parsing the captured email
+  (see below). Only the email-code two-factor spec reads a captured message back.
 
 ## Running locally
 
@@ -52,14 +52,19 @@ npm run test:e2e                       # prepare stack + run suite
    (`e2e/setup/enable-e2e-modules.ts`) — a fresh database defaults these off:
    `twoFactor` (two-factor enforcement), `waitlist` (`/admin/waitlist`,
    force-confirm, waitlist-confirm), `kiosk` + `chores` (`/lodge/*` and the
-   roster, for the LODGE role boundary), and `financeDashboard` (`/finance`, for
-   the finance role boundaries). `internetBankingPayments` and `xeroIntegration`
-   stay off; the internet-banking spec toggles them on for its own run (via
+   roster, for the LODGE role boundary), `financeDashboard` (`/finance`, for
+   the finance role boundaries), and `bedAllocation` (`/admin/bed-allocation`,
+   `/admin/rooms-beds`, for the bed-allocation board). `internetBankingPayments`
+   and `xeroIntegration` stay off; the internet-banking spec toggles them on for
+   its own run (via
    `PUT /api/admin/modules`) and restores them, so the rest of the suite keeps
    the default card-payment flow.
 3. Builds (unless `E2E_SKIP_APP_BUILD=1`) and starts the staging app on
-   `STAGING_HTTP_PORT` (default 3001), waiting for `/api/health/ready`.
-4. Runs `playwright test` with `E2E_BASE_URL` pointed at the staging app.
+   `STAGING_HTTP_PORT` (default 3001), waiting for `/api/health/ready`. The app
+   depends on the **mailpit** SMTP capture container, so it starts alongside the
+   app (see "Email capture" below).
+4. Runs `playwright test` with `E2E_BASE_URL` pointed at the staging app and
+   `E2E_MAILPIT_URL` pointed at the mailpit HTTP API.
 
 Other entry points:
 
@@ -86,13 +91,17 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
 `pk_live` Stripe keys.
 
 - `E2E_BASE_URL` — target app (default `http://localhost:$STAGING_HTTP_PORT`).
+- `E2E_MAILPIT_URL` — mailpit HTTP API for reading captured mail (default
+  `http://localhost:$MAILPIT_HTTP_PORT`, i.e. `http://localhost:8025`).
 - `E2E_DEMO_PASSWORD` — only if the demo seed ran with a custom
   `DEMO_SEED_PASSWORD`.
 - Personas: the suite signs in as `alice@demo.alpineclub.test` (PAID
-  subscription; books and pays) and `bob@demo.alpineclub.test` (drives
+  subscription; books and pays), `bob@demo.alpineclub.test` (drives TOTP
+  two-factor enrollment), and `evan@demo.alpineclub.test` (drives email-code
   two-factor enrollment). TOTP secrets and recovery codes captured during
   enrollment are stored under `e2e/.auth/` (gitignored) and cleared at the
-  start of each run.
+  start of each run; the email-code persona needs no stored secret because its
+  code is read live from mailpit each time.
 - Stay dates are computed relative to today (Monday–Wednesday windows at least
   three weeks out). The base seed's seasons cover Jun–Sep 2026 and Nov
   2026–Mar 2027; a run whose windows fall in a season gap fails loudly at the
@@ -174,19 +183,57 @@ Two env vars carry the keys, and they flow into the stack differently:
   repository secrets; `.github/workflows/e2e.yml` maps them onto the two vars
   above. The workflow refuses live keys. **Never commit real keys anywhere.**
 
+## Email capture (mailpit)
+
+The staging stack runs a **mailpit** SMTP capture container
+(`docker-compose.staging.yml`, image `axllent/mailpit`) so the email-code
+two-factor spec can enroll and re-login for real: the app relays every outbound
+message to mailpit and the spec reads the emitted code back over mailpit's HTTP
+API. No live mail provider is ever contacted — mailpit accepts any SMTP
+credentials and forwards nothing.
+
+The wiring is entirely non-production and lives only in the staging override and
+the E2E env files:
+
+- The staging app sends over **SMTP relay** rather than SES: the env sets
+  `USE_AWS_SES=false`, `USE_SMTP_RELAY=true`, and
+  `EMAIL_SERVER_HOST=mailpit` / `EMAIL_SERVER_PORT=1025` with dummy
+  `EMAIL_SERVER_USER` / `EMAIL_SERVER_PASSWORD` (see `.env.staging.example` and
+  the CI env writer in `.github/workflows/e2e.yml`). All four SMTP_RELAY vars
+  must be present and `USE_AWS_SES` must be false, or `resolveEmailDeliveryConfig`
+  returns `invalid` and every send throws.
+- mailpit's HTTP API is published to the host on `MAILPIT_HTTP_PORT`
+  (default 8025). `scripts/e2e-stack.sh` exports `E2E_MAILPIT_URL` so the
+  Playwright process can reach it; `e2e/helpers/mailpit.ts` reads and clears
+  captured mail there. Change `MAILPIT_HTTP_PORT` if 8025 is taken.
+- The `app` service `depends_on` mailpit, so `up --wait app` brings mailpit up
+  with the app and `test:e2e:down` tears it (and its data) back down.
+
+The `two-factor` module is already enabled for the run by
+`e2e/setup/enable-e2e-modules.ts`; the email-code path needs no extra module.
+
 ## CI
 
-`.github/workflows/e2e.yml` runs the suite on PRs and pushes to `main`. It is
-**non-blocking** (`continue-on-error: true`) while the suite beds in — a red
-E2E job does not fail the workflow. Check the job log and the uploaded
-`playwright-report` artifact when it goes red. Promote it to a required gate
-by removing `continue-on-error` once it has proven stable.
+`.github/workflows/e2e.yml` runs the suite on PRs and pushes to `main`. It is a
+**blocking gate** — a red E2E job fails the workflow (promoted from advisory in
+#1315 after a stable green window on `main`). Check the job log and the uploaded
+`playwright-report` artifact when it goes red.
+
+Note on scope: `main` is not branch-protected, so a red E2E run is an honest
+failing signal but does not itself hard-block a merge. Making E2E a required
+status that blocks merges is a separate branch-protection setting.
+
+The Stripe payment specs remain an environment dependency: they run only when
+the `STRIPE_TEST_SECRET_KEY` / `STRIPE_TEST_PUBLISHABLE_KEY` repository secrets
+hold genuine Stripe **test-mode** keys, and otherwise `test.skip` cleanly (they
+are also retry-scoped to absorb the datacenter-IP Link/hCaptcha flake). So a
+green E2E run does not imply Stripe E2E coverage ran unless those secrets are set.
 
 ## Safety
 
 - The stack is the isolated `tacbookings-staging` compose project with its own
   Postgres volume. The scripts never touch port 5432 or the production compose
   project.
-- No live providers: Stripe stays in test mode, email/SES stays unconfigured
-  (failed sends are recorded by the app's email outbox, which is expected on
-  staging), Xero and cron stay disabled.
+- No live providers: Stripe stays in test mode; email is delivered to the local
+  mailpit capture container (SES/SMTP relay to a live host stays unconfigured, so
+  no real mailbox is ever contacted); Xero and cron stay disabled.

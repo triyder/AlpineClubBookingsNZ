@@ -26,7 +26,12 @@ still does not hold and stays bumpable. The single source of truth is
 `capacityHoldingBookingFilter()` in `src/lib/booking-status.ts`; every
 availability query uses it. Consequence: an accepted-but-unpaid quote booking
 keeps its bed until it is paid, expires, or is cancelled, and a later member
-booking can no longer bump it.
+booking can no longer bump it. One deliberate exception (owner-ratified, #1317):
+an accepted-but-unpaid hold is NOT protected against a *capacity reduction* — if
+an admin lowers the lodge capacity for those nights below what is booked, the
+`cron-confirm-pending` job bumps/cancels the still-unpaid hold at its hold
+deadline (no charge). Only an admin capacity cut can reclaim the bed; competing
+member bookings still cannot.
 
 To verify in later review: exact terminal transitions, non-member hold expiry,
 school group `CONFIRMED` semantics, and payment-failure back paths.
@@ -71,6 +76,19 @@ inline `booking_cancel_refund_<bookingId>` Stripe key, so a
 Stripe-succeeded-but-unrecorded refund is replayed, not repeated), and the
 best-effort cancellation of any outstanding additional PaymentIntent is logged
 rather than allowed to abort the committed claim.
+
+Cancelling a no-payment booking (`WAITLISTED`, `WAITLIST_OFFERED`,
+`AWAITING_REVIEW`) is likewise status-guarded claim-first under the SAME global
+booking advisory lock (#1311). This path takes no Stripe/Xero call, so the only
+hazard is a state clobber, not a double money-move: a held `AWAITING_REVIEW`
+booking can be converted to `PENDING` by a concurrent quote-accept, which holds
+that lock and re-writes the held booking by id only. The cancel therefore takes
+the same lock, re-reads the status under it, and flips to `CANCELLED` only while
+the status is still one of the three no-payment states; if a concurrent accept
+(or another cancel) has moved it out of that set the loser returns HTTP 409 and
+runs no side effects (no status flip, pointer detach, bed reconcile, audit,
+email, or waitlist re-process), so a just-accepted booking is never clobbered
+back to `CANCELLED`.
 
 ### BookingEvent Scope
 
@@ -137,7 +155,16 @@ beds/guest-nights before the send is finalized, so a quote is never emailed for
 dates it cannot reserve: if the lodge is full the send fails with `409` and no
 quote is marked SENT. The hold spans accept (the held row becomes the converted
 PENDING booking and keeps holding, see the booking-status section above) and is
-released only on cancel or expiry.
+released on cancel, expiry, or a capacity-reduction bump (see the #1317 note in
+the booking-status section above).
+
+Auto-hold-on-send does not retire the manual **Hold slots** admin action — it is
+deliberately kept (owner-ratified, #1317). Holding slots is still valid *before*
+a quote is sent (e.g. reserve the beds while pricing, or while confirming the
+booking contact), so it is a pre-quote manual hold rather than a redundant one;
+sending the quote then reuses that hold idempotently. The hold scope covers every
+request-converted PENDING booking, including requests approved DIRECTLY without a
+quote — intended.
 
 Token-link outcomes the requester can see:
 
@@ -147,6 +174,10 @@ Token-link outcomes the requester can see:
 - Past expiry: `410` "This quote has expired." with a recover-by-contacting-the-club path.
 - Accept after the lodge fills: the request reverts to `QUOTE_SENT`, the link stays
   active, and the requester is told which nights are now full.
+- Accept racing the expiry / hold-release cron (owner-ratified, #1317): harmless.
+  The accept and the cron both serialize on the booking advisory lock, so at most
+  one side wins; the loser gets a safe conflict response it can retry, the quote
+  link stays active, and no double-booking or data loss occurs.
 
 Every requester transition (accept, cancel, modification request, question) and the
 capacity-blocked accept revert is written to AuditLog with `actor: "requester"`. The

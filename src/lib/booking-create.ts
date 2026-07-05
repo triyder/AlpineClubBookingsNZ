@@ -407,12 +407,17 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   const hasMemberGuests = memberGuests.length > 0;
   const hasNonMemberGuests = nonMemberGuests.length > 0;
   const flaggedProvisional =
-    (cancelIfGuestsBumped ?? false) && hasNonMemberGuests && !review.blockForReview;
+    shouldBePending &&
+    (cancelIfGuestsBumped ?? false) &&
+    hasNonMemberGuests &&
+    !review.blockForReview;
   const splitBooking =
     hasMemberGuests &&
     hasNonMemberGuests &&
+    shouldBePending &&
     !flaggedProvisional &&
     !review.blockForReview;
+  const effectiveCancelIfGuestsBumped = flaggedProvisional;
 
   // The primary (returned) booking. For a split it carries only the member
   // guests; the non-member guests become the linked child created in the same
@@ -595,7 +600,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
           requestedRoomId: requestedRoomId || null,
-          cancelIfGuestsBumped: cancelIfGuestsBumped ?? false,
+          cancelIfGuestsBumped: effectiveCancelIfGuestsBumped,
           createdById: isOnBehalf ? sessionUserId : null,
           requiresAdminReview: review.requiresAdminReview,
           adminReviewReason: review.adminReviewReason,

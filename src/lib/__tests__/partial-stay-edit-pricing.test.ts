@@ -54,6 +54,11 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(30),
   loadCancellationPolicy: vi.fn().mockResolvedValue([]),
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
   calculateDualRefundAmounts: vi.fn((basisAmountCents: number) => ({
     cardRefundAmountCents: basisAmountCents,
     cardRefundPercentage: 100,

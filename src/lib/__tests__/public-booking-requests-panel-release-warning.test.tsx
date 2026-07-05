@@ -37,6 +37,13 @@ vi.mock("@/components/admin/booking-requests/booking-request-contact-picker", ()
   BookingRequestContactPicker: () => <div data-testid="contact-picker" />,
 }));
 
+// The panel reads the configurable hut-leader label via useClubIdentity, which
+// throws outside a ClubIdentityProvider; stub it with the default label.
+vi.mock("@/components/club-identity-provider", () => ({
+  useClubIdentity: () => ({ hutLeaderLabel: "Hut Leader" }),
+  ClubIdentityProvider: ({ children }: { children: ReactNode }) => children,
+}));
+
 // A general request that HAS a held booking and is in a whitelisted status, so
 // the read-only note + "Release hold" action render.
 const heldRequest = {

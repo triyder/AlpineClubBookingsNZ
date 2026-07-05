@@ -65,6 +65,11 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
   daysUntilDate: vi.fn().mockReturnValue(30),
   loadCancellationPolicy: vi.fn().mockResolvedValue([
     {

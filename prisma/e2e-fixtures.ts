@@ -70,6 +70,18 @@ export const NOMINATOR_TWO = {
   lastName: "Nominator",
 } as const;
 
+// Un-enrolled member the email-code two-factor spec drives forced enrollment on
+// (e2e/two-factor-email.spec.ts). Distinct from the TOTP enrollee (bob) so the
+// two 2FA specs never collide. Seeded with no two-factor state, so global
+// enforcement forces enrollment and the spec picks the EMAIL method. Outbound
+// mail is captured by the staging mailpit container, and the spec reads the
+// emailed code back over its HTTP API.
+export const EMAIL_2FA_ENROLLEE = {
+  email: demoEmail("evan"),
+  firstName: "Evan",
+  lastName: "Email",
+} as const;
+
 // Owner of the capacity-filling booking for the waitlist spec (non-login).
 export const LODGE_FILL_OWNER = {
   email: demoEmail("lodge-fill"),

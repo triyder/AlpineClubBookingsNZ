@@ -17,7 +17,10 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
-import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
+import {
+  calculateBookingHoldDecision,
+  toGroupDiscountConfig,
+} from "@/lib/policies/booking-route-decisions";
 import {
   deletePromoRedemptionAndAdjustCount,
   replacePromoRedemptionAllocations,
@@ -31,7 +34,7 @@ import logger from "@/lib/logger";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
-import { getNonMemberHoldDays } from "@/lib/cancellation";
+import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -507,20 +510,34 @@ export async function POST(
       const addingNonMembers = normalizedNewGuests.some((g) => !g.isMember);
       const hasNonMembers = booking.hasNonMembers || addingNonMembers;
 
-      // Update nonMemberHoldUntil if adding non-members
+      // Recalculate member-priority hold state if this edit leaves non-members
+      // on a pre-payment booking. Disabled or inside-window holds are cleared.
       let nonMemberHoldUntil = booking.nonMemberHoldUntil;
-      if (addingNonMembers && !booking.hasNonMembers) {
-        const holdDays = await getNonMemberHoldDays(booking.checkIn);
-        const daysUntilCheckIn = Math.ceil(
-          (new Date(booking.checkIn).getTime() - new Date().getTime()) /
-            (1000 * 60 * 60 * 24)
-        );
-        if (daysUntilCheckIn > holdDays && booking.status === "PENDING") {
+      let holdAdjustedStatus = booking.status;
+      if (
+        hasNonMembers &&
+        (booking.status === "PENDING" || booking.status === "PAYMENT_PENDING")
+      ) {
+        const holdPolicy = await getNonMemberHoldPolicy(booking.checkIn);
+        const holdDecision = calculateBookingHoldDecision({
+          hasNonMembers,
+          checkIn: booking.checkIn,
+          holdDays: holdPolicy.holdDays,
+          holdEnabled: holdPolicy.enabled,
+        });
+        if (holdDecision.shouldBePending && booking.status === "PENDING") {
           nonMemberHoldUntil = new Date(
             new Date(booking.checkIn).getTime() -
-              holdDays * 24 * 60 * 60 * 1000
+              holdPolicy.holdDays * 24 * 60 * 60 * 1000
           );
+        } else {
+          nonMemberHoldUntil = null;
+          if (booking.status === "PENDING") {
+            holdAdjustedStatus = "PAYMENT_PENDING";
+          }
         }
+      } else if (!hasNonMembers) {
+        nonMemberHoldUntil = null;
       }
 
       // Calculate additional amount for confirmed+paid bookings
@@ -561,7 +578,7 @@ export async function POST(
       const newStatus =
         reviewCleared && booking.status === "AWAITING_REVIEW"
           ? "PAYMENT_PENDING"
-          : booking.status;
+          : holdAdjustedStatus;
 
       const updatedBooking = await tx.booking.update({
         where: { id: bookingId },

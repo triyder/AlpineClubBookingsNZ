@@ -150,6 +150,12 @@ export interface BedAllocationDashboardPayload {
   suggestedAllocations: BedAllocationCandidate[];
   suggestedUnallocatedGuestNights: UnallocatedGuestNight[];
   warnings: AdminBedAllocationWarning[];
+  // Stay window of a deep-linked focused booking (?bookingId=…) when it falls
+  // outside the current date range and is therefore absent from `bookings`
+  // (#1302). Lets the board snap Date In / Date Out onto the booking so its chip
+  // becomes visible. Null when no booking is focused, when it is already in
+  // range, or when it is not an allocatable booking.
+  focusedBooking: { id: string; checkIn: string; checkOut: string } | null;
 }
 
 export interface RoomsAndBedsConfigurationPayload {
@@ -859,6 +865,9 @@ export function buildBedAllocationWarnings(input: {
 
 export async function getBedAllocationDashboard(input: {
   range: BedAllocationDateRange;
+  // Deep-linked focused booking (?bookingId=…). When set and out of range, the
+  // response carries its stay window so the board can snap onto it (#1302).
+  bookingId?: string | null;
   db?: BedAllocationDb;
 }): Promise<BedAllocationDashboardPayload> {
   const db = input.db ?? prisma;
@@ -899,6 +908,29 @@ export async function getBedAllocationDashboard(input: {
       })
     : { allocations: [], unallocatedGuestNights: [] };
 
+  // Resolve a deep-linked focused booking that falls outside the current range
+  // (#1302). It is absent from `bookings` (range-filtered), so the client cannot
+  // snap onto it without its stay window. Look it up only when it is not already
+  // in range, and only if it is an allocatable, non-deleted booking.
+  let focusedBooking: BedAllocationDashboardPayload["focusedBooking"] = null;
+  if (input.bookingId && !bookings.some((booking) => booking.id === input.bookingId)) {
+    const found = await db.booking.findFirst({
+      where: {
+        id: input.bookingId,
+        deletedAt: null,
+        status: { in: [...BED_ALLOCATABLE_BOOKING_STATUSES] },
+      },
+      select: { id: true, checkIn: true, checkOut: true },
+    });
+    if (found) {
+      focusedBooking = {
+        id: found.id,
+        checkIn: formatDateOnly(found.checkIn),
+        checkOut: formatDateOnly(found.checkOut),
+      };
+    }
+  }
+
   return {
     settings,
     range: {
@@ -912,6 +944,7 @@ export async function getBedAllocationDashboard(input: {
     suggestedAllocations: plan.allocations,
     suggestedUnallocatedGuestNights: plan.unallocatedGuestNights,
     warnings: buildBedAllocationWarnings({ allocations: serializedAllocations }),
+    focusedBooking,
   };
 }
 

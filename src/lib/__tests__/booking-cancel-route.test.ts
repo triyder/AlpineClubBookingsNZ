@@ -134,7 +134,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
     expect(cancelBooking).not.toHaveBeenCalled();
   });
 
-  it("passes the validated refund method into cancelBooking", async () => {
+  it("passes the validated refund method into cancelBooking (owner: no bookings:edit)", async () => {
     const res = await POST(
       makeCancelRequest(JSON.stringify({ refundMethod: "credit" })),
       { params: Promise.resolve({ id: "booking-1" }) }
@@ -146,7 +146,65 @@ describe("POST /api/bookings/[id]/cancel", () => {
       "member-1",
       "USER",
       "127.0.0.1",
-      "credit"
+      "credit",
+      { hasBookingsEditAccess: false }
     );
+  });
+
+  // Issue #1313 (option A2): the route computes hasBookingsEditAccess from the
+  // session's bookings-area edit permission and hands it to cancelBooking, which
+  // uses it to widen ONLY the authorization gate.
+  it("passes hasBookingsEditAccess: true for a Booking Officer (bookings:edit)", async () => {
+    mockedAuth.mockResolvedValue({
+      user: {
+        id: "officer-1",
+        role: "MEMBER",
+        accessRoles: [{ role: "ADMIN_BOOKINGS" }],
+      },
+    } as any);
+
+    const res = await POST(
+      makeCancelRequest(JSON.stringify({ refundMethod: "card" })),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(cancelBooking).toHaveBeenCalledWith(
+      "booking-1",
+      "officer-1",
+      "USER", // an officer keeps their honest legacy authorization role
+      "127.0.0.1",
+      "card",
+      { hasBookingsEditAccess: true }
+    );
+  });
+
+  it("passes hasBookingsEditAccess: false for a read-only admin (bookings:view), which the service then refuses", async () => {
+    mockedAuth.mockResolvedValue({
+      user: {
+        id: "readonly-1",
+        role: "MEMBER",
+        accessRoles: [{ role: "ADMIN_READONLY" }],
+      },
+    } as any);
+    mockedCancelBooking.mockResolvedValue({
+      status: 403,
+      error: "Forbidden",
+    } as any);
+
+    const res = await POST(
+      makeCancelRequest(JSON.stringify({ refundMethod: "card" })),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(cancelBooking).toHaveBeenCalledWith(
+      "booking-1",
+      "readonly-1",
+      "USER",
+      "127.0.0.1",
+      "card",
+      { hasBookingsEditAccess: false }
+    );
+    expect(res.status).toBe(403);
   });
 });

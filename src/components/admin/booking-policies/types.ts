@@ -19,6 +19,7 @@ export interface BookingPeriod {
   name: string
   startDate: string
   endDate: string
+  nonMemberHoldEnabled: boolean
   nonMemberHoldDays: number
   cancellationRules: PolicyRule[]
   active: boolean

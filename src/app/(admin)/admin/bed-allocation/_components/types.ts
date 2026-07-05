@@ -105,6 +105,9 @@ export interface DashboardPayload {
     reason: string;
   }>;
   warnings: DashboardWarning[];
+  // Stay window of a deep-linked focused booking (?bookingId=…) when it is out
+  // of the current range; lets the board snap Date In / Date Out onto it (#1302).
+  focusedBooking: { id: string; checkIn: string; checkOut: string } | null;
 }
 
 export interface BedOption {

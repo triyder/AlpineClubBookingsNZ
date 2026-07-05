@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
+import { formatNZDate } from "@/lib/nzst-date";
 
 interface Guest {
   id: string;
@@ -66,6 +67,13 @@ export function BookingEditor({
   canModify: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  // Capture "now" once at mount so the hold banner can honestly tell a future
+  // deadline (future-tense auto-confirm copy) from a lapsed one (awaiting
+  // processing copy). Day-scale deadlines make a single snapshot sufficient.
+  const [nowMs] = useState(() => Date.now());
+  const nonMemberHoldLapsed = booking.nonMemberHoldUntil
+    ? new Date(booking.nonMemberHoldUntil).getTime() <= nowMs
+    : false;
 
   if (editing && canModify) {
     return (
@@ -145,9 +153,20 @@ export function BookingEditor({
 
           {booking.status === "PENDING" && booking.nonMemberHoldUntil && (
             <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
-              This booking includes non-members. It will be auto-confirmed on{" "}
-              {new Date(booking.nonMemberHoldUntil).toLocaleDateString("en-NZ")},
-              subject to availability. Members have priority.
+              {nonMemberHoldLapsed ? (
+                <>
+                  This booking includes non-members. The hold period ended on{" "}
+                  {formatNZDate(new Date(booking.nonMemberHoldUntil))} and it is now
+                  awaiting confirmation, payment, or admin processing, subject to
+                  availability. Members have priority.
+                </>
+              ) : (
+                <>
+                  This booking includes non-members. It will be auto-confirmed on{" "}
+                  {formatNZDate(new Date(booking.nonMemberHoldUntil))}, subject to
+                  availability. Members have priority.
+                </>
+              )}
             </div>
           )}
         </CardContent>

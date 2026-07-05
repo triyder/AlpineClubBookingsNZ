@@ -62,10 +62,7 @@ import {
 } from "@/lib/booking-edit-guest-ranges";
 import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 import { getSeasonYear } from "@/lib/utils";
-import {
-  authorizationRoleFromAccessRoles,
-  hasAdminAccess,
-} from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   findBookingMemberNightConflicts,
   getBookingMemberNightConflictResponse,
@@ -199,8 +196,13 @@ export async function POST(
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  const isAdmin = hasAdminAccess(session.user);
-  const actorRole = authorizationRoleFromAccessRoles(session.user);
+  // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
+  // so the quote preview mirrors the admin-on-behalf modify they will perform —
+  // every isAdmin branch below (skip member-night authorization, locked-period,
+  // unpaid-subscription, and minimum-stay checks) applies to them identically to
+  // a Full Admin. Full Admin already resolves to ADMIN; member/read-only stay USER.
+  const actorRole = bookingManagementAuthorizationRole(session.user);
+  const isAdmin = actorRole === "ADMIN";
 
   const { id: bookingId } = await params;
 

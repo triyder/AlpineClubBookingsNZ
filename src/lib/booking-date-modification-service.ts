@@ -33,7 +33,7 @@ import { createBookingModificationCredit } from "@/lib/member-credit";
 import { checkCapacity } from "@/lib/capacity";
 import {
   daysUntilDate,
-  getNonMemberHoldDays,
+  getNonMemberHoldPolicy,
   loadCancellationPolicy,
 } from "@/lib/cancellation";
 import { calculateChangeFee } from "@/lib/change-fee";
@@ -58,7 +58,10 @@ import {
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
 } from "@/lib/membership-type-policy";
-import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
+import {
+  calculateBookingHoldDecision,
+  toGroupDiscountConfig,
+} from "@/lib/policies/booking-route-decisions";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -491,20 +494,23 @@ export async function modifyBookingDates({
     let newStatus = booking.status;
 
     if (hasNonMembers) {
-      const holdDays = await getNonMemberHoldDays(newCheckIn);
-      const daysUntilNewCheckIn = Math.ceil(
-        (newCheckIn.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24),
-      );
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn);
+      const holdDecision = calculateBookingHoldDecision({
+        hasNonMembers,
+        checkIn: newCheckIn,
+        holdDays: holdPolicy.holdDays,
+        holdEnabled: holdPolicy.enabled,
+      });
 
-      if (daysUntilNewCheckIn <= holdDays) {
+      if (holdDecision.shouldBePending) {
+        newNonMemberHoldUntil = new Date(
+          newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
+        );
+      } else {
         newNonMemberHoldUntil = null;
         if (booking.status === "PENDING") {
           newStatus = "PAYMENT_PENDING";
         }
-      } else {
-        newNonMemberHoldUntil = new Date(
-          newCheckIn.getTime() - holdDays * 24 * 60 * 60 * 1000,
-        );
       }
     } else {
       newNonMemberHoldUntil = null;

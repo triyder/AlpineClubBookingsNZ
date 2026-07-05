@@ -12,6 +12,14 @@ export {
 } from "./policies/cancellation";
 export type { CancellationRule } from "./policies/cancellation";
 
+export type NonMemberHoldPolicySource = "period" | "default";
+
+export type NonMemberHoldPolicy = {
+  enabled: boolean;
+  holdDays: number;
+  source: NonMemberHoldPolicySource;
+};
+
 /**
  * Find the active BookingPeriod that covers a given check-in date, if any.
  */
@@ -26,20 +34,43 @@ export async function getBookingPeriodForDate(checkIn: Date) {
 }
 
 /**
- * Get the non-member hold days for a given check-in date.
- * Uses period-specific value if check-in falls in a BookingPeriod,
- * otherwise uses the global default from BookingDefaults.
+ * Resolve the effective non-member hold policy for a check-in date.
+ * Date-specific periods override both the hold enabled flag and the threshold.
  */
-export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
+export async function getNonMemberHoldPolicy(
+  checkIn: Date
+): Promise<NonMemberHoldPolicy> {
   const period = await getBookingPeriodForDate(checkIn);
   if (period) {
-    return period.nonMemberHoldDays;
+    return {
+      enabled: period.nonMemberHoldEnabled,
+      holdDays: period.nonMemberHoldDays,
+      source: "period",
+    };
   }
 
   const defaults = await prisma.bookingDefaults.findUnique({
     where: { id: "default" },
   });
-  return defaults?.nonMemberHoldDays ?? 7;
+
+  return {
+    enabled: defaults?.nonMemberHoldEnabled ?? true,
+    holdDays: defaults?.nonMemberHoldDays ?? 7,
+    source: "default",
+  };
+}
+
+/**
+ * Get the non-member hold days for a given check-in date.
+ * Uses period-specific value if check-in falls in a BookingPeriod,
+ * otherwise uses the global default from BookingDefaults.
+ *
+ * Request-origin payment-link flows use this threshold as a deadline even when
+ * member-created provisional holds are disabled.
+ */
+export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
+  const policy = await getNonMemberHoldPolicy(checkIn);
+  return policy.holdDays;
 }
 
 /**

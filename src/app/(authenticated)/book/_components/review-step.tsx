@@ -1,6 +1,6 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useEffect, type Dispatch, type SetStateAction } from "react";
 import { type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -154,6 +154,16 @@ export function ReviewStep({
   submitting: boolean;
   savingDraft: boolean;
 }) {
+  const provisionalHoldWillBeCreated =
+    guests.some((guest) => !guest.isMember) &&
+    priceQuote.nonMemberHoldDecision?.shouldBePending === true;
+
+  useEffect(() => {
+    if (!provisionalHoldWillBeCreated && cancelIfGuestsBumped) {
+      setCancelIfGuestsBumped(false);
+    }
+  }, [cancelIfGuestsBumped, provisionalHoldWillBeCreated, setCancelIfGuestsBumped]);
+
   return (
     <div className="space-y-4">
       <Card>
@@ -531,7 +541,7 @@ export function ReviewStep({
         </CardContent>
       </Card>
 
-      {guests.some((g) => !g.isMember) && (
+      {provisionalHoldWillBeCreated && (
         <div className="space-y-3">
           <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
             <strong>Note:</strong> This booking includes non-member guests.

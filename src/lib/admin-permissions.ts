@@ -1,5 +1,6 @@
-import type { FinanceAccessLevel } from "@prisma/client";
+import type { FinanceAccessLevel, Role } from "@prisma/client";
 import {
+  authorizationRoleFromAccessRoles,
   isAccessRole,
   type AccessRoleDefinitionLevelFields,
   type AccessRoleInput,
@@ -532,4 +533,28 @@ export function financeAccessLevelFromMatrix(
   if (matrix.finance === "edit") return "MANAGER";
   if (matrix.finance === "view") return "VIEWER";
   return "NONE";
+}
+
+/**
+ * Legacy authorization `Role` to use for member-facing booking-management
+ * actions (modify / modify-quote / change-requests), where a Booking Officer
+ * (the `bookings:edit` permission) acts with the SAME authority as a Full Admin
+ * operating on-behalf-of the member — issue #1313, owner-approved option A2.
+ *
+ * This is intentionally a strict superset of `authorizationRoleFromAccessRoles`:
+ * a Full Admin already resolves to `"ADMIN"` there (the `ADMIN` bundle carries
+ * `bookings:edit`), so this returns `"ADMIN"` for them unchanged; a Booking
+ * Officer (and any custom role granting `bookings:edit`) is mapped onto the
+ * existing admin-on-behalf `"ADMIN"` path; every other actor keeps their legacy
+ * authorization role verbatim (a plain member and a read-only admin both stay
+ * `"USER"`). It does NOT invent a new privilege level — it maps a `bookings:edit`
+ * holder onto the one admin-on-behalf code path the booking-modify engine
+ * already keys off (`role === "ADMIN"`), so an officer and a Full Admin drive
+ * byte-identical modify/quote/change-request behaviour.
+ */
+export function bookingManagementAuthorizationRole(input: AccessRoleInput): Role {
+  if (hasAdminAreaAccess(input, { area: "bookings", level: "edit" })) {
+    return "ADMIN";
+  }
+  return authorizationRoleFromAccessRoles(input);
 }

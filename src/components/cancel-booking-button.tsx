@@ -23,9 +23,15 @@ function formatDollars(cents: number): string {
 export function CancelBookingButton({
   bookingId,
   refundAppealDescription,
+  onBehalfOfMember = false,
 }: {
   bookingId: string;
   refundAppealDescription?: string;
+  // Issue #1303: when a Full Admin cancels a booking they don't own, this is an
+  // explicit admin-on-behalf action (the only admin path to cancel a member's
+  // booking). Re-frame the button label and confirm/success copy accordingly —
+  // the cancel endpoint and settlement logic are unchanged.
+  onBehalfOfMember?: boolean;
 }) {
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
@@ -86,7 +92,7 @@ export function CancelBookingButton({
   if (step === "idle") {
     return (
       <Button variant="destructive" onClick={handleShowPreview}>
-        Cancel Booking
+        {onBehalfOfMember ? "Cancel on behalf of member" : "Cancel Booking"}
       </Button>
     );
   }
@@ -104,23 +110,31 @@ export function CancelBookingButton({
     const isCredit = result?.refundMethod === "credit";
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-1">
-        <p className="text-sm font-medium text-green-800">Booking cancelled successfully</p>
+        <p className="text-sm font-medium text-green-800">
+          {onBehalfOfMember
+            ? "Booking cancelled on behalf of the member"
+            : "Booking cancelled successfully"}
+        </p>
         {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
           <p className="text-sm text-green-700">
-            {formatDollars(result.creditRestoredCents)} of previously applied credit has been restored to your account (per the cancellation policy).
+            {formatDollars(result.creditRestoredCents)} of previously applied credit has been restored to {onBehalfOfMember ? "the member's" : "your"} account (per the cancellation policy).
           </p>
         )}
         {refund > 0 && isCredit ? (
           <p className="text-sm text-green-700">
-            A credit of {formatDollars(refund)} has been added to your account for future bookings.
+            A credit of {formatDollars(refund)} has been added to {onBehalfOfMember ? "the member's" : "your"} account for future bookings.
           </p>
         ) : refund > 0 ? (
           <p className="text-sm text-green-700">
-            Your refund of {formatDollars(refund)} has been processed to your original payment method. You will receive a confirmation email shortly.
+            {onBehalfOfMember
+              ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method. They will receive a confirmation email shortly.`
+              : `Your refund of ${formatDollars(refund)} has been processed to your original payment method. You will receive a confirmation email shortly.`}
           </p>
         ) : (
           <p className="text-sm text-green-700">
-            You will receive a confirmation email shortly.
+            {onBehalfOfMember
+              ? "The member will receive a confirmation email shortly."
+              : "You will receive a confirmation email shortly."}
           </p>
         )}
       </div>
@@ -150,7 +164,19 @@ export function CancelBookingButton({
 
     return (
       <div className="rounded-md border border-red-200 bg-red-50 p-4 space-y-3">
-        <p className="text-sm font-medium text-red-800">Cancellation Summary</p>
+        <p className="text-sm font-medium text-red-800">
+          {onBehalfOfMember
+            ? "Cancel on behalf of member"
+            : "Cancellation Summary"}
+        </p>
+
+        {onBehalfOfMember && (
+          <p className="text-sm text-red-700">
+            You are cancelling this booking on behalf of the member. Any refund
+            or account credit is applied to the member&apos;s account and they
+            are notified by email.
+          </p>
+        )}
 
         {!preview.hasPayment ? (
           <p className="text-sm text-slate-700">

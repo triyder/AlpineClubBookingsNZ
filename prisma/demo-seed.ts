@@ -29,6 +29,7 @@ import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membershi
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
   E2E_ADMIN,
+  EMAIL_2FA_ENROLLEE,
   IB_BOOKING_ID,
   IB_WINDOW,
   LODGE_FILL_OWNER,
@@ -828,6 +829,16 @@ async function main() {
     NOMINATOR_TWO.lastName,
     "1979-11-03",
     "5552003",
+  );
+
+  // Email-code two-factor enrollee: un-enrolled (makeMember sets no two-factor
+  // state) so global enforcement forces enrollment, and the email-code spec
+  // (e2e/two-factor-email.spec.ts) drives the EMAIL method end-to-end. Kept
+  // separate from bob so it never collides with the TOTP spec.
+  await makeMember(
+    EMAIL_2FA_ENROLLEE.email.split("@")[0],
+    EMAIL_2FA_ENROLLEE.firstName,
+    EMAIL_2FA_ENROLLEE.lastName,
   );
 
   // Waitlist spec: fill a September window to capacity (lodge capacity is 20)

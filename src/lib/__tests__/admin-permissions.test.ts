@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  bookingManagementAuthorizationRole,
   canViewAdminHref,
   canViewAdminHrefWithMatrix,
   financeAccessLevelFromMatrix,
@@ -15,7 +16,11 @@ import {
   type AdminPermissionArea,
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
-import { type AppAccessRole } from "@/lib/access-roles";
+import {
+  authorizationRoleFromAccessRoles,
+  hasAdminAccess,
+  type AppAccessRole,
+} from "@/lib/access-roles";
 
 const LODGE_ONLY_DEFINITION = {
   overviewLevel: "NONE",
@@ -71,6 +76,322 @@ describe("admin permission bundles", () => {
         { area: "finance", level: "edit" },
       ),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Booking detail read-only admin-view guard (issue #1289).
+//
+// The admin bookings list/calendar is gated on bookings-area view, but the
+// member-facing detail route src/app/(authenticated)/bookings/[id]/page.tsx
+// previously gated on the narrow full-admin hasAdminAccess, so a Booking
+// Officer / Read-only Admin reached the calendar but was redirected to
+// "My Bookings". The guard now also admits bookings-area view holders
+// read-only. This mirrors the exact redirect predicate from that page.
+// ---------------------------------------------------------------------------
+describe("booking detail read-only admin-view guard (issue #1289)", () => {
+  // Mirrors the redirect guard in the booking detail page: a viewer loads the
+  // detail when they can manage it, are a linked guest, or hold read-only
+  // bookings-area admin access.
+  const wouldRedirect = (viewer: {
+    accessRoles: AppAccessRole[];
+    isBookingOwner: boolean;
+    isLinkedGuestViewer: boolean;
+  }) => {
+    const isAdmin = hasAdminAccess({ accessRoles: viewer.accessRoles });
+    const canManageBooking = viewer.isBookingOwner || isAdmin;
+    const canViewAsAdmin = hasAdminAreaAccess(
+      { accessRoles: viewer.accessRoles },
+      { area: "bookings", level: "view" },
+    );
+    return (
+      !canManageBooking && !viewer.isLinkedGuestViewer && !canViewAsAdmin
+    );
+  };
+
+  it("resolves the exact predicate the page evaluates for booking admins", () => {
+    // Pins the precise call the page makes, so removing the canViewAsAdmin
+    // wiring cannot pass on the mirror alone.
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_BOOKINGS"] },
+        { area: "bookings", level: "view" },
+      ),
+    ).toBe(true);
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_READONLY"] },
+        { area: "bookings", level: "view" },
+      ),
+    ).toBe(true);
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["USER"] },
+        { area: "bookings", level: "view" },
+      ),
+    ).toBe(false);
+  });
+
+  it("lets a Booking Officer (ADMIN_BOOKINGS) open a booking they do not own", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["ADMIN_BOOKINGS"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("lets a Read-only Admin (ADMIN_READONLY) open a booking they do not own", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["ADMIN_READONLY"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("still redirects an unrelated plain member away from a booking they do not own", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["USER"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the booking owner and full admin able to open the detail", () => {
+    expect(
+      wouldRedirect({
+        accessRoles: ["USER"],
+        isBookingOwner: true,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+    expect(
+      wouldRedirect({
+        accessRoles: ["ADMIN"],
+        isBookingOwner: false,
+        isLinkedGuestViewer: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Booking detail write-surface gates (issue #1313 + owner-approved option A2).
+//
+// A Booking Officer (the ADMIN_BOOKINGS bundle carries bookings:edit) may now
+// operate BOTH:
+//   1. the admin-tooling cluster (AdminBookingToolsCard: copy +
+//      confirm-pending-guests; the admin requested-room editor) whose backing
+//      routes live under /api/admin/bookings/* (bookings:edit); AND
+//   2. the four member-facing admin-operational controls — cancel, modify,
+//      admin notes, arrival-time — whose /api/bookings/[id]/* routes were
+//      widened from owner-or-Full-Admin to also accept bookings:edit
+//      (option A2). See bookingManagementAuthorizationRole + the route gates.
+//
+// Member-PERSONAL payment controls (save-card / complete / draft / additional
+// payment) remain owner-only. These mirror the exact page gates AND pin the
+// backing-route authz, so a widened button can never front a route that would
+// 403 the officer.
+// ---------------------------------------------------------------------------
+describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
+  const identity = (accessRoles: AppAccessRole[], isBookingOwner: boolean) => {
+    const subject = { accessRoles };
+    const isAdmin = hasAdminAccess(subject);
+    const canAdminEditBookings = hasAdminAreaAccess(subject, {
+      area: "bookings",
+      level: "edit",
+    });
+    const canManageBooking = isBookingOwner || isAdmin;
+    return {
+      // Admin-operational tooling cluster: Full Admin OR Booking Officer.
+      canSeeAdminTools: isAdmin || canAdminEditBookings,
+      // Member-personal payment section (save-card / complete / draft /
+      // additional payment): owner only.
+      showMemberPayment: isBookingOwner,
+      // Member-facing admin-operational controls (cancel, admin notes, modify,
+      // arrival-time). Option A2 widened their APIs, so the page predicates now
+      // admit a Booking Officer alongside the owner and Full Admin.
+      canCancel: canManageBooking || canAdminEditBookings,
+      canModify: canManageBooking || canAdminEditBookings,
+      canEditArrivalTime: canManageBooking || canAdminEditBookings,
+      // A non-owner Full Admin OR Booking Officer acts on-behalf of the member
+      // (same suppress-notification / policy framing) for cancel + modify.
+      actingOnBehalf: (isAdmin || canAdminEditBookings) && !isBookingOwner,
+      // Owner second-person copy must not address a non-owner admin viewer.
+      nonOwnerAdminViewer:
+        !isBookingOwner &&
+        hasAdminAreaAccess(subject, { area: "bookings", level: "view" }),
+    };
+  };
+
+  it("grants the admin-tooling cluster to a non-owner Booking Officer", () => {
+    expect(identity(["ADMIN_BOOKINGS"], false).canSeeAdminTools).toBe(true);
+  });
+
+  it("grants the admin-tooling cluster to a non-owner Full Admin", () => {
+    expect(identity(["ADMIN"], false).canSeeAdminTools).toBe(true);
+  });
+
+  it("withholds the admin-tooling cluster from a read-only admin (view only)", () => {
+    expect(identity(["ADMIN_READONLY"], false).canSeeAdminTools).toBe(false);
+  });
+
+  it("withholds the admin-tooling cluster from a plain member on their own booking", () => {
+    expect(identity(["USER"], true).canSeeAdminTools).toBe(false);
+  });
+
+  it("shows the member payment section only to the owner, never a non-owner admin/officer", () => {
+    expect(identity(["USER"], true).showMemberPayment).toBe(true);
+    expect(identity(["ADMIN"], false).showMemberPayment).toBe(false);
+    expect(identity(["ADMIN_BOOKINGS"], false).showMemberPayment).toBe(false);
+  });
+
+  it("grants the widened member-facing controls (cancel/modify/arrival) to a non-owner Booking Officer (option A2)", () => {
+    const officer = identity(["ADMIN_BOOKINGS"], false);
+    expect(officer.canCancel).toBe(true);
+    expect(officer.canModify).toBe(true);
+    expect(officer.canEditArrivalTime).toBe(true);
+  });
+
+  it("keeps the widened controls available to the booking owner and to a Full Admin", () => {
+    for (const subject of [
+      identity(["ADMIN"], false),
+      identity(["USER"], true),
+    ]) {
+      expect(subject.canCancel).toBe(true);
+      expect(subject.canModify).toBe(true);
+      expect(subject.canEditArrivalTime).toBe(true);
+    }
+  });
+
+  it("still withholds the widened controls from a read-only admin and a non-owner plain member", () => {
+    for (const subject of [
+      identity(["ADMIN_READONLY"], false),
+      identity(["USER"], false),
+    ]) {
+      expect(subject.canCancel).toBe(false);
+      expect(subject.canModify).toBe(false);
+      expect(subject.canEditArrivalTime).toBe(false);
+    }
+  });
+
+  it("treats a non-owner Full Admin OR Booking Officer as acting on-behalf, never the owner or a read-only admin", () => {
+    expect(identity(["ADMIN"], false).actingOnBehalf).toBe(true);
+    expect(identity(["ADMIN_BOOKINGS"], false).actingOnBehalf).toBe(true);
+    expect(identity(["ADMIN_READONLY"], false).actingOnBehalf).toBe(false);
+    // An officer on their OWN booking is a normal owner, not acting-on-behalf.
+    expect(identity(["ADMIN_BOOKINGS"], true).actingOnBehalf).toBe(false);
+    expect(identity(["USER"], true).actingOnBehalf).toBe(false);
+  });
+
+  it("treats every non-owner admin-type viewer as needing neutral copy (#1289)", () => {
+    expect(identity(["ADMIN"], false).nonOwnerAdminViewer).toBe(true);
+    expect(identity(["ADMIN_BOOKINGS"], false).nonOwnerAdminViewer).toBe(true);
+    expect(identity(["ADMIN_READONLY"], false).nonOwnerAdminViewer).toBe(true);
+    expect(identity(["USER"], true).nonOwnerAdminViewer).toBe(false);
+    expect(identity(["USER"], false).nonOwnerAdminViewer).toBe(false);
+  });
+
+  // Button↔API consistency (the lynchpin): admin-tooling controls front
+  // /api/admin/bookings/* (bookings:edit) — unchanged by A2.
+  it("routes the admin-tooling buttons to bookings:edit APIs", () => {
+    for (const path of [
+      "/api/admin/bookings/BID/confirm-pending-guests",
+      "/api/admin/bookings/BID/copy",
+    ]) {
+      expect(getAdminRouteRequirement(path, "POST")).toEqual({
+        area: "bookings",
+        level: "edit",
+      });
+    }
+    expect(
+      getAdminRouteRequirement("/api/admin/bookings/BID/requested-room", "PUT"),
+    ).toEqual({ area: "bookings", level: "edit" });
+    expect(
+      getAdminRouteRequirement(
+        "/api/admin/bookings/BID/requested-room",
+        "DELETE",
+      ),
+    ).toEqual({ area: "bookings", level: "edit" });
+  });
+
+  it("confirms a Booking Officer satisfies the widened member-facing APIs' bookings:edit predicate", () => {
+    // cancel/notes/arrival-time authorize on hasAdminAreaAccess(bookings:edit);
+    // modify/quote/change-requests authorize via bookingManagementAuthorizationRole.
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_BOOKINGS"] },
+        { area: "bookings", level: "edit" },
+      ),
+    ).toBe(true);
+    // A read-only admin (bookings:view, no edit) is NOT admitted.
+    expect(
+      hasAdminAreaAccess(
+        { accessRoles: ["ADMIN_READONLY"] },
+        { area: "bookings", level: "edit" },
+      ),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bookingManagementAuthorizationRole (issue #1313 option A2): the single legacy
+// authorization Role the widened modify / modify-quote / change-requests paths
+// key their admin-on-behalf relaxations off. A Booking Officer maps onto the
+// existing ADMIN path; every other actor keeps their legacy authorization role.
+// ---------------------------------------------------------------------------
+describe("bookingManagementAuthorizationRole (issue #1313 option A2)", () => {
+  it("maps a Booking Officer (bookings:edit) onto the admin-on-behalf ADMIN path", () => {
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN_BOOKINGS"] }),
+    ).toBe("ADMIN");
+  });
+
+  it("leaves a Full Admin at ADMIN (byte-identical to authorizationRoleFromAccessRoles)", () => {
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN"] }),
+    ).toBe("ADMIN");
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN"] }),
+    ).toBe(authorizationRoleFromAccessRoles({ accessRoles: ["ADMIN"] }));
+  });
+
+  it("keeps a plain member at USER", () => {
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["USER"] }),
+    ).toBe("USER");
+  });
+
+  it("keeps a read-only admin (bookings:view, no edit) at USER", () => {
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN_READONLY"] }),
+    ).toBe("USER");
+  });
+
+  it("keeps a scoped admin without bookings:edit (Membership Officer) at USER", () => {
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["ADMIN_MEMBERSHIP"] }),
+    ).toBe("USER");
+  });
+
+  it("preserves a non-admin legacy role (LODGE) rather than forcing ADMIN", () => {
+    expect(
+      bookingManagementAuthorizationRole({ accessRoles: ["LODGE"] }),
+    ).toBe("LODGE");
+  });
+
+  it("clears to USER when the account cannot log in", () => {
+    expect(
+      bookingManagementAuthorizationRole({
+        accessRoles: ["ADMIN_BOOKINGS"],
+        canLogin: false,
+      }),
+    ).toBe("USER");
   });
 });
 

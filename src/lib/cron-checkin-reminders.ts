@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { sendCheckinReminderEmail } from "./email";
+import { sendCheckinReminderEmail, shouldSendEmail } from "./email";
 import { getNZSTTomorrow } from "./nzst-date";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
@@ -46,6 +46,21 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
   let skipped = 0;
 
   for (const booking of bookings) {
+    // #1285: honor the member's "Check-in Reminders" notification preference.
+    // Check-in reminders are optional/operational — NOT must-send transactional
+    // mail — so a member who has switched this category off should not receive
+    // one. (Booking confirmation/updates/cancellation notices are must-send and
+    // are never gated.) `booking.member` is loaded via the `member: true`
+    // include above, so the memberId is already in hand.
+    const wantsReminder = await shouldSendEmail(
+      booking.member.id,
+      "bookingReminder",
+    );
+    if (!wantsReminder) {
+      skipped++;
+      continue;
+    }
+
     // Check if reminder already sent (look for checkin-reminder template for this booking's email+subject)
     const alreadySent = await prisma.emailLog.findFirst({
       where: {

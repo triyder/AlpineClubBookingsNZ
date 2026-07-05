@@ -10,6 +10,10 @@ import {
 import { formatNZDate } from "../nzst-date";
 import { sendEmail } from "./core";
 
+// #1285: the "Chore Roster" notification preference is honored by the caller
+// (`admin-roster-service.ts` via `shouldSendChoreRoster`), before a chore
+// token is created — mirroring how check-in reminders are gated in their cron
+// caller. This sender stays a pure transport so it never double-gates.
 export async function sendChoreRosterEmail(
   email: string,
   guestName: string,

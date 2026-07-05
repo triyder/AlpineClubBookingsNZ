@@ -56,6 +56,14 @@ const PRIVACY_UPDATE_MIGRATION_PATH = join(
   "migration.sql",
 );
 
+const NON_MEMBER_HOLD_COPY_UPDATE_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20260705130000_add_non_member_hold_enabled",
+  "migration.sql",
+);
+
 // Previous starter FAQ contentHtml (flat <h3>/<p> pairs), replaced by the
 // accordion update migration. Extracted verbatim from the policy-pages
 // backfill so the update migration's WHERE guard provably matches what that
@@ -78,6 +86,24 @@ function previousPrivacyContentHtml(policyPagesSql: string) {
     throw new Error("Privacy contentHtml not found in policy pages backfill SQL");
   }
   return privacyBlock;
+}
+
+function previousTermsContentHtml(policyPagesSql: string) {
+  const termsBlock = policyPagesSql
+    .split("'starter-page-terms'")[1]
+    ?.match(/\$cms\$([\s\S]*?)\$cms\$/)?.[1];
+  if (!termsBlock) {
+    throw new Error("Terms contentHtml not found in policy pages backfill SQL");
+  }
+  return termsBlock;
+}
+
+function faqAccordionContentHtml(faqUpdateSql: string) {
+  const faqBlock = faqUpdateSql.match(/\$faq_new\$([\s\S]*?)\$faq_new\$/)?.[1];
+  if (!faqBlock) {
+    throw new Error("FAQ accordion contentHtml not found in FAQ update SQL");
+  }
+  return faqBlock;
 }
 
 // Previous default "home" copy, replaced by the update migration above. The
@@ -108,8 +134,12 @@ describe("starter page content backfill migration", () => {
   const updateSql = readFileSync(HOME_UPDATE_MIGRATION_PATH, "utf8");
   const faqUpdateSql = readFileSync(FAQ_UPDATE_MIGRATION_PATH, "utf8");
   const privacyUpdateSql = readFileSync(PRIVACY_UPDATE_MIGRATION_PATH, "utf8");
+  const nonMemberHoldCopyUpdateSql = readFileSync(
+    NON_MEMBER_HOLD_COPY_UPDATE_MIGRATION_PATH,
+    "utf8",
+  );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}`;
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}`;
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -222,15 +252,14 @@ describe("starter faq accordion update migration (#992)", () => {
     expect(sql).toContain(previousFaqContentHtml(policyPagesSql));
   });
 
-  it("writes the current accordion contentHtml from starterPageContent", () => {
-    const faq = starterPageContent.find((page) => page.slug === "faq");
-    expect(faq).toBeDefined();
-    expect(sql).toContain(faq!.contentHtml);
+  it("writes accordion contentHtml before later starter-copy updates", () => {
+    const accordionHtml = faqAccordionContentHtml(sql);
+    expect(sql).toContain(accordionHtml);
     expect(sql).toContain('"updatedAt" = CURRENT_TIMESTAMP');
 
     // SET (new accordion value) must come before the WHERE guard (old value),
     // so the two blobs are not accidentally swapped.
-    const setIndex = sql.indexOf(faq!.contentHtml);
+    const setIndex = sql.indexOf(accordionHtml);
     const whereIndex = sql.indexOf(previousFaqContentHtml(policyPagesSql));
     expect(setIndex).toBeGreaterThan(-1);
     expect(whereIndex).toBeGreaterThan(setIndex);
@@ -242,8 +271,39 @@ describe("starter faq accordion update migration (#992)", () => {
         .replace(/<[^>]+>/g, " ")
         .replace(/\s+/g, " ")
         .trim();
-    expect(stripTags(faq!.contentHtml)).toBe(
+    expect(stripTags(accordionHtml)).toBe(
       stripTags(previousFaqContentHtml(policyPagesSql)),
     );
+  });
+});
+
+describe("starter non-member hold copy update migration (#1287)", () => {
+  const sql = readFileSync(NON_MEMBER_HOLD_COPY_UPDATE_MIGRATION_PATH, "utf8");
+  const faqUpdateSql = readFileSync(FAQ_UPDATE_MIGRATION_PATH, "utf8");
+  const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
+
+  it("adds the hold-enabled columns and only guard-updates starter copy", () => {
+    expect(sql).toContain('ALTER TABLE "BookingDefaults" ADD COLUMN "nonMemberHoldEnabled"');
+    expect(sql).toContain('ALTER TABLE "BookingPeriod" ADD COLUMN "nonMemberHoldEnabled"');
+    expect(sql).toMatch(/UPDATE\s+"PageContent"/);
+    expect(sql).not.toMatch(/\bDELETE\b/i);
+    expect(sql).not.toMatch(/\bINSERT\b/i);
+  });
+
+  it("guards updates on the untouched previous starter rows", () => {
+    expect(sql).toContain(`"slug" = ${sqlQuote("terms")}`);
+    expect(sql).toContain(previousTermsContentHtml(policyPagesSql));
+    expect(sql).toContain(faqAccordionContentHtml(faqUpdateSql));
+  });
+
+  it("writes the current Terms and FAQ non-member policy copy", () => {
+    const terms = starterPageContent.find((page) => page.slug === "terms");
+    const faq = starterPageContent.find((page) => page.slug === "faq");
+    expect(terms).toBeDefined();
+    expect(faq).toBeDefined();
+    expect(sql).toContain(terms!.contentHtml);
+    expect(sql).toContain(faq!.contentHtml);
+    expect(sql).toContain("First Paid, First In");
+    expect(sql).toContain("non-member confirmation threshold");
   });
 });

@@ -25,6 +25,7 @@ const createSchema = z.object({
   name: z.string().min(1).max(200),
   startDate: dateOnlyString,
   endDate: dateOnlyString,
+  nonMemberHoldEnabled: z.boolean().optional(),
   nonMemberHoldDays: z.number().int().min(1).max(365),
   cancellationRules: z.array(cancellationRuleSchema).min(1),
   active: z.boolean().optional(),
@@ -67,6 +68,7 @@ export async function POST(request: NextRequest) {
         name: data.name,
         startDate,
         endDate,
+        nonMemberHoldEnabled: data.nonMemberHoldEnabled ?? true,
         nonMemberHoldDays: data.nonMemberHoldDays,
         cancellationRules: normalizeCancellationRules(
           data.cancellationRules

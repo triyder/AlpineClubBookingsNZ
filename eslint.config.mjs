@@ -27,8 +27,11 @@ const eslintConfig = defineConfig([
     // facade (which exists only for external callers). Importing the facade
     // from within `src/lib/xero-*` hides the real dependency graph and invites
     // import cycles (#1208). The exact-path match here does NOT fire on the
-    // `@/lib/xero-*` domain modules — only on the bare facade path.
-    files: ["src/lib/xero-*.ts"],
+    // `@/lib/xero-*` domain modules — only on the bare facade path. The glob
+    // also covers subsystem split directories such as `src/lib/xero-inbound/`
+    // (#1270) so the guard follows the code into its new home; `../xero` is the
+    // relative facade path seen from those nested modules.
+    files: ["src/lib/xero-*.ts", "src/lib/xero-*/**/*.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -41,6 +44,11 @@ const eslintConfig = defineConfig([
             },
             {
               name: "./xero",
+              message:
+                "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
+            },
+            {
+              name: "../xero",
               message:
                 "xero-* modules must import the source domain module directly, not the @/lib/xero compatibility facade (#1208).",
             },

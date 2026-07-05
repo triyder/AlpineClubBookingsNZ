@@ -2,9 +2,8 @@ name: E2E
 
 # Playwright browser E2E suite for the Critical journeys in
 # docs/END_TO_END_TEST_MATRIX.md, run against the staging compose stack with
-# the base + demo seeds. Non-blocking while the suite beds in:
-# continue-on-error keeps a red run from failing the workflow. Promote it to a
-# required gate by removing continue-on-error once it has proven stable.
+# the base + demo seeds. This is a blocking gate: a red run fails the workflow
+# (promoted from advisory in #1315 after a stable green window on main).
 #
 # The Stripe payment specs skip unless the STRIPE_TEST_SECRET_KEY and
 # STRIPE_TEST_PUBLISHABLE_KEY repository secrets hold genuine Stripe
@@ -27,10 +26,9 @@ concurrency:
 
 jobs:
   playwright:
-    name: Playwright E2E (non-blocking)
+    name: Playwright E2E
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    continue-on-error: true
     env:
       STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
       STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
@@ -72,6 +70,18 @@ jobs:
           XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false
           XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
           SMTP_PORT=587
+          # Route outbound mail to the mailpit SMTP capture container (defined in
+          # docker-compose.staging.yml) so the email-code two-factor spec can read
+          # the code back over its HTTP API. USE_AWS_SES must be false so exactly
+          # one provider flag is set, and all four SMTP_RELAY vars must be present
+          # or every send throws.
+          USE_AWS_SES=false
+          USE_SMTP_RELAY=true
+          EMAIL_SERVER_HOST=mailpit
+          EMAIL_SERVER_PORT=1025
+          EMAIL_SERVER_USER=e2e
+          EMAIL_SERVER_PASSWORD=e2e
+          MAILPIT_HTTP_PORT=8025
           EMAIL_FROM=e2e@example.org
           CONTACT_EMAIL=e2e@example.org
           NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org

@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { DefaultCancellationPolicySection } from "@/components/admin/booking-policies/default-cancellation-policy-section";
+import {
+  detectStaleHoldPolicyCopy,
+  holdCopyTitle,
+} from "@/lib/hold-policy-copy";
 
-export default function CancellationPolicyPage() {
+export default async function CancellationPolicyPage() {
+  const staleHoldCopy = await detectStaleHoldPolicyCopy();
+
   return (
     <div className="space-y-6">
       <div>
@@ -19,6 +25,37 @@ export default function CancellationPolicyPage() {
           overrides them.
         </p>
       </div>
+
+      {staleHoldCopy.length > 0 && (
+        <div
+          role="status"
+          className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          <p className="font-medium">Public copy may be out of date</p>
+          <p className="mt-1">
+            Your{" "}
+            {staleHoldCopy.map((slug, index) => (
+              <span key={slug}>
+                {index > 0 && (index === staleHoldCopy.length - 1 ? " and " : ", ")}
+                <strong>{holdCopyTitle(slug)}</strong>
+              </span>
+            ))}{" "}
+            {staleHoldCopy.length > 1 ? "pages still describe" : "page still describes"}{" "}
+            the old non-member hold behaviour and don&rsquo;t mention the{" "}
+            <strong>First Paid, First In</strong> option. If you change the
+            Members First policy below, review this copy so it matches what
+            guests are told.
+          </p>
+          <p className="mt-2">
+            <Link
+              href="/admin/page-content"
+              className="font-medium underline underline-offset-4"
+            >
+              Edit public pages
+            </Link>
+          </p>
+        </div>
+      )}
 
       <DefaultCancellationPolicySection />
     </div>

@@ -58,6 +58,11 @@ vi.mock("@/lib/capacity", () => ({
 
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -600,6 +605,49 @@ describe("confirmWaitlistOffer", () => {
 
     expect(result.success).toBe(true);
     expect(result.newStatus).toBe("PENDING");
+  });
+
+  it("clears the hold and takes payment when non-member holds are disabled", async () => {
+    const { confirmWaitlistOffer } = await import("@/lib/waitlist");
+    const { getNonMemberHoldPolicy } = await import("@/lib/cancellation");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    vi.mocked(getNonMemberHoldPolicy).mockResolvedValueOnce({
+      enabled: false,
+      holdDays: 7,
+      source: "default",
+    });
+    const farFuture = new Date();
+    farFuture.setDate(farFuture.getDate() + 30);
+
+    mockTx.booking.findUnique.mockResolvedValue({
+      id: "booking1",
+      memberId: "m1",
+      status: "WAITLIST_OFFERED",
+      waitlistOfferExpiresAt: new Date(Date.now() + 86400000),
+      nonMemberHoldUntil: new Date("2026-07-01"),
+      checkIn: farFuture,
+      checkOut: new Date(farFuture.getTime() + 2 * 86400000),
+      guests: [
+        { id: "g1", isMember: true },
+        { id: "g2", isMember: false },
+      ],
+    });
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({ available: true });
+    mockTx.booking.update.mockResolvedValue({});
+
+    const result = await confirmWaitlistOffer("booking1", "m1");
+
+    expect(result.success).toBe(true);
+    expect(result.newStatus).toBe("PAYMENT_PENDING");
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "PAYMENT_PENDING",
+          nonMemberHoldUntil: null,
+        }),
+      })
+    );
   });
 
   it("rejects expired offers", async () => {

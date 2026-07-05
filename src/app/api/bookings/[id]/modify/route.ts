@@ -21,7 +21,7 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { nameField } from "@/lib/zod-helpers";
-import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -112,7 +112,12 @@ export async function PUT(
       bookingId,
       actor: {
         id: session.user.id,
-        role: authorizationRoleFromAccessRoles(session.user),
+        // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to
+        // ADMIN here so they receive the SAME admin-on-behalf modify authority
+        // (edit-policy relaxations, member-night/subscription bypasses) as a
+        // Full Admin. A Full Admin already resolves to ADMIN; every other actor
+        // keeps their legacy role.
+        role: bookingManagementAuthorizationRole(session.user),
       },
       input: parsed.data,
       ipAddress,

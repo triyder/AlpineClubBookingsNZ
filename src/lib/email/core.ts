@@ -292,3 +292,45 @@ export async function shouldSendEmail(
 
   return Boolean(pref[prefField]);
 }
+
+/**
+ * Resolve whether a chore-roster email should be sent to a specific booking
+ * guest, honoring the "Chore Roster" notification preference.
+ *
+ * #1285 Option C (hybrid — owner decision). Chore rosters are delivered per
+ * guest, and a dependent guest's mail is delivered to the primary member's
+ * inbox (see `getEffectiveEmail`, which resolves delivery via
+ * `inheritEmailFromId`). Preference resolution mirrors that delivery:
+ *
+ *   1. If the guest has their OWN `NotificationPreference` row, it wins — a
+ *      full member with their own login controls their own chore-roster mail.
+ *   2. If the guest has NO own row but inherits their email from a primary
+ *      member (`inheritEmailFromId`), fall back to that primary's preference,
+ *      since the roster lands in the primary's inbox.
+ *   3. If neither has a row (or the guest is a non-member with no member id),
+ *      default to SENDING — preserving the documented "no preference → send"
+ *      contract for optional/operational mail.
+ */
+export async function shouldSendChoreRoster(
+  memberId: string | null | undefined,
+  inheritEmailFromId: string | null | undefined,
+): Promise<boolean> {
+  // Non-member guest: no member record, no preference to consult → send.
+  if (!memberId) return true;
+
+  // The guest's own preference row wins when it exists.
+  const ownPref = await prisma.notificationPreference.findUnique({
+    where: { memberId },
+  });
+  if (ownPref) return Boolean(ownPref.choreRoster);
+
+  // No own row: an inherited-email dependent follows the primary whose inbox
+  // actually receives the mail. `shouldSendEmail` returns the documented
+  // "no preference → send" default when the primary has no row either.
+  if (inheritEmailFromId) {
+    return shouldSendEmail(inheritEmailFromId, "choreRoster");
+  }
+
+  // No own row and not inheriting from anyone: preserve "no preference → send".
+  return true;
+}

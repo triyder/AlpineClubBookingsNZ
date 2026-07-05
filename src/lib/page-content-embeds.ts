@@ -9,6 +9,7 @@ import {
 } from "@/lib/image-storage";
 import {
   CLUB_FACEBOOK_URL,
+  CLUB_HUT_LEADER_LABEL,
   CLUB_NAME,
   CLUB_PUBLIC_URL,
 } from "@/config/club-identity";
@@ -137,6 +138,10 @@ export async function resolveTextTokens(contentHtml: string): Promise<string> {
         return escapeHtmlText(String(lodgeCapacity));
       case "club-name":
         return escapeHtmlText(CLUB_NAME);
+      case "hut-leader":
+        return escapeHtmlText(CLUB_HUT_LEADER_LABEL);
+      case "hut-leader-lower":
+        return escapeHtmlText(CLUB_HUT_LEADER_LABEL.toLowerCase());
       case "currency":
         return escapeHtmlText(APP_CURRENCY);
       case "facebook-url":

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
@@ -20,6 +21,7 @@ export function BookingPeriodsSection() {
   const [periodName, setPeriodName] = useState("")
   const [periodStart, setPeriodStart] = useState("")
   const [periodEnd, setPeriodEnd] = useState("")
+  const [periodHoldEnabled, setPeriodHoldEnabled] = useState(true)
   const [periodHoldDays, setPeriodHoldDays] = useState(5)
   const [periodRules, setPeriodRules] = useState<PolicyRule[]>([
     { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
@@ -58,6 +60,7 @@ export function BookingPeriodsSection() {
     setPeriodName("")
     setPeriodStart("")
     setPeriodEnd("")
+    setPeriodHoldEnabled(true)
     setPeriodHoldDays(5)
     setPeriodRules([
       { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
@@ -71,6 +74,7 @@ export function BookingPeriodsSection() {
     setPeriodName(period.name)
     setPeriodStart(period.startDate.split("T")[0])
     setPeriodEnd(period.endDate.split("T")[0])
+    setPeriodHoldEnabled(period.nonMemberHoldEnabled ?? true)
     setPeriodHoldDays(period.nonMemberHoldDays)
     setPeriodRules(period.cancellationRules.map((rule) => normalizeCancellationRule(rule)))
     setShowPeriodForm(true)
@@ -93,6 +97,7 @@ export function BookingPeriodsSection() {
           name: periodName,
           startDate: periodStart,
           endDate: periodEnd,
+          nonMemberHoldEnabled: periodHoldEnabled,
           nonMemberHoldDays: periodHoldDays,
           cancellationRules: periodRules,
         }),
@@ -194,8 +199,26 @@ export function BookingPeriodsSection() {
                       value={periodHoldDays}
                       onChange={(e) => setPeriodHoldDays(parseInt(e.target.value) || 5)}
                       className="w-24"
+                      disabled={!periodHoldEnabled}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      {periodHoldEnabled
+                        ? "Used only when this period applies and Members First is enabled."
+                        : "Stored but inactive while this period uses First Paid, First In."}
+                    </p>
                   </div>
+                  <label className="flex items-start gap-3 rounded-md border p-3 md:col-span-2">
+                    <Checkbox
+                      checked={periodHoldEnabled}
+                      onCheckedChange={setPeriodHoldEnabled}
+                    />
+                    <span className="space-y-1">
+                      <span className="block text-sm font-medium">Members First for this period</span>
+                      <span className="block text-xs text-muted-foreground">
+                        Disable this to let bookings in this date range proceed as First Paid, First In.
+                      </span>
+                    </span>
+                  </label>
                   <div className="space-y-2">
                     <Label htmlFor="pStart">Start Date</Label>
                     <Input
@@ -258,7 +281,12 @@ export function BookingPeriodsSection() {
                           {new Date(period.startDate).toLocaleDateString("en-NZ")} &mdash;{" "}
                           {new Date(period.endDate).toLocaleDateString("en-NZ")}
                           <span className="ml-3">
-                            Non-member hold: <strong>{period.nonMemberHoldDays} days</strong>
+                            Non-member hold:{" "}
+                            <strong>
+                              {period.nonMemberHoldEnabled ?? true
+                                ? `${period.nonMemberHoldDays} days`
+                                : "First Paid, First In"}
+                            </strong>
                           </span>
                         </p>
                       </div>

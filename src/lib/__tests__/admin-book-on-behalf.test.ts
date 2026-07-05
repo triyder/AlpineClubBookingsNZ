@@ -36,6 +36,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
 }));
 vi.mock("@/lib/email", () => ({
   sendBookingPendingEmail: vi.fn().mockResolvedValue(undefined),

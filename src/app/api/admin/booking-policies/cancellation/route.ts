@@ -15,6 +15,7 @@ const policySchema = z.object({
       creditFixedFeeCents: z.number().int().min(0).optional(),
     })
   ).min(1, "At least one rule is required"),
+  nonMemberHoldEnabled: z.boolean().optional(),
   nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
 })
 
@@ -31,6 +32,7 @@ export async function GET() {
 
   return NextResponse.json({
     rules: policies.map(normalizeCancellationRule),
+    nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
     nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
   })
 }
@@ -49,7 +51,7 @@ export async function PUT(req: NextRequest) {
     )
   }
 
-  const { rules, nonMemberHoldDays } = parsed.data
+  const { rules, nonMemberHoldEnabled, nonMemberHoldDays } = parsed.data
 
   // Validate: days must be unique
   const sortedRules = [...rules]
@@ -76,11 +78,18 @@ export async function PUT(req: NextRequest) {
       })),
     })
 
-    if (nonMemberHoldDays !== undefined) {
+    if (nonMemberHoldDays !== undefined || nonMemberHoldEnabled !== undefined) {
       await tx.bookingDefaults.upsert({
         where: { id: "default" },
-        update: { nonMemberHoldDays },
-        create: { id: "default", nonMemberHoldDays },
+        update: {
+          ...(nonMemberHoldEnabled !== undefined && { nonMemberHoldEnabled }),
+          ...(nonMemberHoldDays !== undefined && { nonMemberHoldDays }),
+        },
+        create: {
+          id: "default",
+          nonMemberHoldEnabled: nonMemberHoldEnabled ?? true,
+          nonMemberHoldDays: nonMemberHoldDays ?? 7,
+        },
       })
     }
 
@@ -94,6 +103,7 @@ export async function PUT(req: NextRequest) {
 
     return {
       rules: policies.map(normalizeCancellationRule),
+      nonMemberHoldEnabled: defaults?.nonMemberHoldEnabled ?? true,
       nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
     }
   })
@@ -101,7 +111,7 @@ export async function PUT(req: NextRequest) {
   logAudit({
     action: "cancellation-policy.update",
     memberId: session.user.id,
-    details: `Updated to ${sortedRules.length} rules, holdDays=${nonMemberHoldDays ?? "unchanged"}`,
+    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}`,
   })
 
   return NextResponse.json(result)

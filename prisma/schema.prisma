@@ -1910,15 +1910,16 @@ model CancellationPolicy {
 // ---------------------------------------------------------------------------
 
 model BookingPeriod {
-  id                String   @id @default(cuid())
-  name              String // e.g. "School Holidays Jul 2026"
-  startDate         DateTime @db.Date
-  endDate           DateTime @db.Date
-  nonMemberHoldDays Int      @default(7)
-  cancellationRules Json // Array of {daysBeforeStay: number, refundPercentage: number}
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  name                 String // e.g. "School Holidays Jul 2026"
+  startDate            DateTime @db.Date
+  endDate              DateTime @db.Date
+  nonMemberHoldEnabled Boolean  @default(true)
+  nonMemberHoldDays    Int      @default(7)
+  cancellationRules    Json // Array of {daysBeforeStay: number, refundPercentage: number}
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@index([startDate, endDate])
 }
@@ -1928,8 +1929,9 @@ model BookingPeriod {
 // ---------------------------------------------------------------------------
 
 model BookingDefaults {
-  id                String @id @default("default")
-  nonMemberHoldDays Int    @default(7)
+  id                   String  @id @default("default")
+  nonMemberHoldEnabled Boolean @default(true)
+  nonMemberHoldDays    Int     @default(7)
 }
 
 // ---------------------------------------------------------------------------

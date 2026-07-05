@@ -15,7 +15,7 @@ import {
   calculateDualRefundAmounts,
   daysUntilDate,
   loadCancellationPolicy,
-  getNonMemberHoldDays,
+  getNonMemberHoldPolicy,
 } from "@/lib/cancellation";
 import {
   queueSupersededPrimaryIntentCancellations,
@@ -30,6 +30,7 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
+import { calculateBookingHoldDecision } from "@/lib/policies/booking-route-decisions";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -292,20 +293,23 @@ export async function applyLifecycleTransitions(
   }
 
   if (!skipBookingLifecycleRules && hasNonMembers) {
-    const holdDays = await getNonMemberHoldDays(newCheckIn);
-    const daysUntilNewCheckIn = Math.ceil(
-      (newCheckIn.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24),
-    );
+    const holdPolicy = await getNonMemberHoldPolicy(newCheckIn);
+    const holdDecision = calculateBookingHoldDecision({
+      hasNonMembers,
+      checkIn: newCheckIn,
+      holdDays: holdPolicy.holdDays,
+      holdEnabled: holdPolicy.enabled,
+    });
 
-    if (daysUntilNewCheckIn <= holdDays) {
+    if (holdDecision.shouldBePending) {
+      newNonMemberHoldUntil = new Date(
+        newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
+      );
+    } else {
       newNonMemberHoldUntil = null;
       if (booking.status === "PENDING") {
         newStatus = "PAYMENT_PENDING";
       }
-    } else {
-      newNonMemberHoldUntil = new Date(
-        newCheckIn.getTime() - holdDays * 24 * 60 * 60 * 1000,
-      );
     }
   } else if (!skipBookingLifecycleRules) {
     newNonMemberHoldUntil = null;

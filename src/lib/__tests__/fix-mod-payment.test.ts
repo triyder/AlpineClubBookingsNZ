@@ -104,6 +104,11 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(30),
   loadCancellationPolicy: vi.fn().mockResolvedValue([]),
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  getNonMemberHoldPolicy: vi.fn().mockResolvedValue({
+    enabled: true,
+    holdDays: 7,
+    source: "default",
+  }),
   // Date reductions settle through the shared policy machinery (#1024);
   // default to a 100% tier so existing full-refund expectations hold.
   calculateDualRefundAmounts: vi.fn((basisAmountCents: number) => ({

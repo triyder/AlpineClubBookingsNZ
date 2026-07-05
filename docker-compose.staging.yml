@@ -30,6 +30,40 @@ services:
       CRON_ENABLED: "false"
       BACKUP_ENABLED: "false"
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
+    # mailpit is the non-production SMTP capture the E2E suite relays outbound
+    # mail to (USE_SMTP_RELAY). It is listed here so `up --wait app` also starts
+    # it and the app never comes up expecting an SMTP host that is not running.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+
+  # Non-production SMTP capture container. The staging app relays all outbound
+  # email here (see USE_SMTP_RELAY in .env.staging.example); Playwright reads the
+  # captured two-factor code back over mailpit's HTTP API
+  # (e2e/two-factor-email.spec.ts, docs/E2E_PLAYWRIGHT.md). It accepts any SMTP
+  # credentials over the compose-internal network and never forwards mail
+  # anywhere, so no live provider is ever contacted. Defined only in this
+  # staging override, so production never runs it.
+  mailpit:
+    image: axllent/mailpit:v1.30.3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    environment:
+      TZ: Pacific/Auckland
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      # HTTP API/UI, published so the host-side Playwright process can read the
+      # captured code. SMTP (1025) stays on the internal network only.
+      - "127.0.0.1:${MAILPIT_HTTP_PORT:-8025}:8025"
+    mem_limit: 128m
+    cpus: 0.2
 
   app_blue:
     profiles: ["production-bluegreen"]

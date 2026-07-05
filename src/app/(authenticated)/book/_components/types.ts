@@ -46,6 +46,14 @@ export interface PriceQuote {
   }[];
   totalPriceCents: number;
   availableCreditCents?: number;
+  nonMemberHoldDecision?: {
+    enabled: boolean;
+    holdDays: number;
+    source: "default" | "period";
+    daysUntilCheckIn: number;
+    shouldBePending: boolean;
+    status: string;
+  };
 }
 
 export interface WorkPartyEvent {

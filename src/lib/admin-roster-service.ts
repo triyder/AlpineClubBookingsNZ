@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests"
-import { sendChoreRosterEmail } from "@/lib/email"
+import { sendChoreRosterEmail, shouldSendChoreRoster } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { getEffectiveEmail } from "@/lib/member-utils"
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only"
@@ -428,6 +428,7 @@ export async function updateAdminRosterForDate(params: {
             include: {
               member: {
                 select: {
+                  id: true,
                   email: true,
                   inheritEmailFromId: true,
                   inheritEmailFrom: { select: { email: true } },
@@ -441,6 +442,11 @@ export async function updateAdminRosterForDate(params: {
       // Group assignments by guest, resolving effective email for dependents
       const byGuest = new Map<string, {
         email: string | null
+        // #1285: the guest's own member id (null for non-member guests) plus the
+        // member they inherit their email from (if any), so the roster send can
+        // resolve the effective choreRoster preference (Option C hybrid).
+        memberId: string | null
+        inheritEmailFromId: string | null
         name: string
         chores: Array<{ name: string; description: string | null }>
       }>()
@@ -454,6 +460,8 @@ export async function updateAdminRosterForDate(params: {
             : null
           byGuest.set(guestId, {
             email: effectiveEmail,
+            memberId: a.bookingGuest.member?.id ?? null,
+            inheritEmailFromId: a.bookingGuest.member?.inheritEmailFromId ?? null,
             name: `${a.bookingGuest.firstName} ${a.bookingGuest.lastName}`,
             chores: [],
           })
@@ -471,32 +479,47 @@ export async function updateAdminRosterForDate(params: {
         name: string
         email: string
       }>[] = []
+      let skipped = 0
       for (const [guestId, guest] of byGuest) {
-        if (guest.email) {
-          const recipientEmail = guest.email
-          emailPromises.push(
-            (async () => {
-              // Delete old tokens for this guest+date to prevent duplicates
-              await prisma.guestChoreToken.deleteMany({
-                where: { bookingGuestId: guestId, date },
-              })
-              const token = await createGuestChoreToken(guestId, date)
-              const choreLink = `${baseUrl}/chores/${token}`
-              await sendChoreRosterEmail(
-                recipientEmail,
-                guest.name,
-                dateStr,
-                guest.chores,
-                choreLink
-              )
-              return {
-                guestId,
-                name: guest.name,
-                email: recipientEmail,
-              }
-            })()
+        if (!guest.email) continue
+        // #1285 Option C (hybrid): resolve the guest's effective chore-roster
+        // preference BEFORE creating a token, so an opted-out recipient is
+        // suppressed without leaving an orphaned GuestChoreToken behind.
+        const wantsRoster = await shouldSendChoreRoster(
+          guest.memberId,
+          guest.inheritEmailFromId,
+        )
+        if (!wantsRoster) {
+          skipped++
+          logger.debug(
+            { guestId, memberId: guest.memberId, date: dateStr },
+            "Skipped chore roster email — recipient opted out of the choreRoster category",
           )
+          continue
         }
+        const recipientEmail = guest.email
+        emailPromises.push(
+          (async () => {
+            // Delete old tokens for this guest+date to prevent duplicates
+            await prisma.guestChoreToken.deleteMany({
+              where: { bookingGuestId: guestId, date },
+            })
+            const token = await createGuestChoreToken(guestId, date)
+            const choreLink = `${baseUrl}/chores/${token}`
+            await sendChoreRosterEmail(
+              recipientEmail,
+              guest.name,
+              dateStr,
+              guest.chores,
+              choreLink,
+            )
+            return {
+              guestId,
+              name: guest.name,
+              email: recipientEmail,
+            }
+          })()
+        )
       }
 
       const results = await Promise.allSettled(emailPromises)
@@ -511,6 +534,9 @@ export async function updateAdminRosterForDate(params: {
         partialFailure: failures.length > 0,
         sent: results.filter((result) => result.status === "fulfilled").length,
         failed: failures.length,
+        // #1285: guests suppressed by their (or their primary's) choreRoster
+        // opt-out. Surfaced so the admin isn't confused when sent < guest count.
+        skipped,
         failures,
       })
     }

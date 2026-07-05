@@ -25,7 +25,11 @@ import {
   type BookingRequestLinkedGuestMember,
 } from "@/lib/booking-request";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
-import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
+import {
+  assertNoBookingMemberNightConflicts,
+  findBookingMemberNightConflicts,
+  type BookingMemberNightConflict,
+} from "@/lib/booking-member-night-conflicts";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -218,6 +222,74 @@ async function assertLinkedMembersExist(links: BookingRequestLinkedGuestMember[]
   if (missing.length > 0) {
     throw new BookingRequestQuoteError("One or more linked members were not found", 422);
   }
+}
+
+/**
+ * Advisory (non-blocking) member-night conflict pre-check for the admin linking
+ * step (issue #1226, follow-up from #1158). When an admin links booking-request
+ * guests to real members, surface any overlapping member-night conflict *before*
+ * they reach the approve/hold action so it can be resolved early.
+ *
+ * This is display-only. Unlike `assertNoBookingMemberNightConflicts` (which
+ * throws a 409 and is the authoritative enforcer at approve/hold time — see
+ * DOMAIN_INVARIANTS.md:35-40), this never throws on a conflict: it returns the
+ * overlaps so the linking UI can render an advisory. The hard block at
+ * approve/hold time is unchanged and remains the only thing that stops a
+ * double-book.
+ *
+ * A genuinely missing request still throws a 404 (an error the caller renders),
+ * and out-of-range guest indices from the client are skipped rather than
+ * rejected, keeping the advisory path lenient.
+ */
+export async function findLinkedGuestMemberNightConflicts(input: {
+  requestId: string;
+  adminMemberId: string;
+  links: BookingRequestLinkedGuestMember[];
+}): Promise<BookingMemberNightConflict[]> {
+  const request = await prisma.bookingRequest.findUnique({
+    where: { id: input.requestId },
+    select: {
+      checkIn: true,
+      checkOut: true,
+      guests: true,
+      heldBookingId: true,
+    },
+  });
+  if (!request) {
+    throw new BookingRequestQuoteError("Booking request not found", 404);
+  }
+
+  const guests = parseBookingRequestGuests(request.guests);
+  // Build the link map directly (skipping any out-of-range guest index) rather
+  // than reusing normalizeLinkedGuestMembers, which throws on a bad index — the
+  // advisory must stay lenient and never block linking.
+  const linkedByGuest = new Map<number, string>();
+  for (const link of input.links) {
+    if (link.guestIndex < 0 || link.guestIndex >= guests.length) continue;
+    linkedByGuest.set(link.guestIndex, link.memberId);
+  }
+  if (linkedByGuest.size === 0) return [];
+
+  const linkedGuests = Array.from(linkedByGuest.entries()).map(
+    ([, memberId]) => ({
+      stayStart: request.checkIn,
+      stayEnd: request.checkOut,
+      memberId,
+    })
+  );
+
+  return findBookingMemberNightConflicts(prisma, {
+    actorMemberId: input.adminMemberId,
+    actorRole: "ADMIN",
+    checkIn: request.checkIn,
+    checkOut: request.checkOut,
+    guests: linkedGuests,
+    // A request that already has a held booking (#1254) carries these same
+    // linked members on that AWAITING_REVIEW hold, which is itself a
+    // conflict-eligible status. Exclude it so the advisory never flags the
+    // request against its own hold.
+    excludeBookingId: request.heldBookingId ?? undefined,
+  });
 }
 
 function normalizeQuoteOptions(input: {

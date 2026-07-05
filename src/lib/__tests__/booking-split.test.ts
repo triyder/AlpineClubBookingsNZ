@@ -265,6 +265,41 @@ describe("createConfirmedBooking split bookings (#738)", () => {
     // No up-front payment is taken for the flagged provisional booking.
     expect(h.paymentCreate).not.toHaveBeenCalled();
   });
+
+  it("keeps a mixed party inside the hold window as one normal booking", async () => {
+    const guests = [guest(true, "Alice"), guest(false, "Bob")];
+    await createConfirmedBooking(
+      baseInput(guests, {
+        status: BookingStatus.PAYMENT_PENDING,
+        shouldBePending: false,
+      })
+    );
+
+    const payloads = createPayloads();
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].status).toBe(BookingStatus.PAYMENT_PENDING);
+    expect(payloads[0].hasNonMembers).toBe(true);
+    expect(payloads[0].parentBookingId).toBeUndefined();
+    expect(payloads[0].nonMemberHoldUntil).toBeNull();
+    expect((payloads[0].guests as { create: unknown[] }).create).toHaveLength(2);
+  });
+
+  it("ignores the keep-together flag when no provisional hold will be created", async () => {
+    const guests = [guest(true, "Alice"), guest(false, "Bob")];
+    await createConfirmedBooking(
+      baseInput(guests, {
+        cancelIfGuestsBumped: true,
+        status: BookingStatus.PAYMENT_PENDING,
+        shouldBePending: false,
+      })
+    );
+
+    const payloads = createPayloads();
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].status).toBe(BookingStatus.PAYMENT_PENDING);
+    expect(payloads[0].cancelIfGuestsBumped).toBe(false);
+    expect(payloads[0].nonMemberHoldUntil).toBeNull();
+  });
 });
 
 describe("group join roster writes (#1039 items 2 and 3)", () => {

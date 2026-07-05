@@ -44,6 +44,18 @@ const CANCELLABLE_BOOKING_STATUSES: readonly string[] = [
   "AWAITING_REVIEW",
 ];
 
+// The no-payment / holding statuses the shared cancel path may flip straight to
+// CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
+// subset of CANCELLABLE_BOOKING_STATUSES. This is the exact WHERE set for the
+// #1311 status-guarded claim-first: a booking that has left this set under the
+// advisory lock (e.g. a concurrent quote-accept converting AWAITING_REVIEW ->
+// PENDING) must NOT be clobbered to CANCELLED.
+const NO_PAYMENT_CANCELLABLE_STATUSES: readonly string[] = [
+  "WAITLISTED",
+  "WAITLIST_OFFERED",
+  "AWAITING_REVIEW",
+];
+
 interface CancelBookingResult {
   success: boolean;
   refundAmountCents: number;
@@ -92,6 +104,14 @@ type CancelBookingResponse =
  * re-open owner mapping without telling the requester their reservation was
  * cancelled. Refund-path notifications are unaffected. Defaults to `false`, so
  * every existing caller is unchanged.
+ *
+ * `options.hasBookingsEditAccess` (#1313, option A2): when `true`, a non-owner
+ * actor holding the `bookings:edit` permission (a Booking Officer) is authorized
+ * to cancel exactly as a Full Admin does. This is an authorization widening
+ * ONLY — `sessionUserRole` is still passed through honestly and the refund /
+ * Stripe / email / audit logic never reads it beyond the gate below, so the
+ * money outcome is independent of which authorized actor triggered the cancel.
+ * Defaults to `false`, so every existing caller is unchanged.
  */
 export async function cancelBooking(
   bookingId: string,
@@ -99,7 +119,10 @@ export async function cancelBooking(
   sessionUserRole: string,
   ipAddress: string,
   refundMethod: "card" | "credit" = "card",
-  options: { suppressCustomerNotification?: boolean } = {}
+  options: {
+    suppressCustomerNotification?: boolean;
+    hasBookingsEditAccess?: boolean;
+  } = {}
 ): Promise<CancelBookingResponse> {
   const result = await performBookingCancellation(
     bookingId,
@@ -107,7 +130,8 @@ export async function cancelBooking(
     sessionUserRole,
     ipAddress,
     refundMethod,
-    options.suppressCustomerNotification ?? false
+    options.suppressCustomerNotification ?? false,
+    options.hasBookingsEditAccess ?? false
   );
 
   if (result.status === 200) {
@@ -211,7 +235,8 @@ async function performBookingCancellation(
   sessionUserRole: string,
   ipAddress: string,
   refundMethod: "card" | "credit" = "card",
-  suppressCustomerNotification = false
+  suppressCustomerNotification = false,
+  hasBookingsEditAccess = false
 ): Promise<CancelBookingResponse> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -222,7 +247,18 @@ async function performBookingCancellation(
     return { status: 404, error: "Booking not found" };
   }
 
-  if (booking.memberId !== sessionUserId && sessionUserRole !== "ADMIN") {
+  // Authorization (issue #1313, option A2): the booking owner, a Full Admin
+  // (sessionUserRole === "ADMIN"), OR a Booking Officer (bookings:edit, passed
+  // as hasBookingsEditAccess by the member-facing cancel route) may cancel.
+  // Adding the officer is an authorization widening ONLY — `sessionUserRole` and
+  // `hasBookingsEditAccess` are read nowhere below this gate, so the refund
+  // amount, refund method/destination, Stripe path, cancellation email, and
+  // audit are all identical regardless of which authorized actor triggered it.
+  if (
+    booking.memberId !== sessionUserId &&
+    sessionUserRole !== "ADMIN" &&
+    !hasBookingsEditAccess
+  ) {
     return { status: 403, error: "Forbidden" };
   }
 
@@ -235,39 +271,110 @@ async function performBookingCancellation(
 
   // Bookings awaiting admin review have no payment yet; same no-payment
   // shape as waitlisted/offered. Reuse that path.
-  if (
-    booking.status === "WAITLISTED" ||
-    booking.status === "WAITLIST_OFFERED" ||
-    booking.status === "AWAITING_REVIEW"
-  ) {
-    const wasOffered = booking.status === "WAITLIST_OFFERED";
-    const wasAwaitingReview = booking.status === "AWAITING_REVIEW";
-    const priorStatus = booking.status;
+  if (NO_PAYMENT_CANCELLABLE_STATUSES.includes(booking.status)) {
+    // ── #1311: status-guarded claim-first under the booking advisory lock ──
+    //
+    // This branch has NO payment and makes NO external-provider (Stripe/Xero)
+    // call, so the only hazard is a state CLOBBER, not a double money-move —
+    // the "claim-first without durable recovery inverts a crash into money
+    // LOSS" caveat does not apply here. The clobber: a held AWAITING_REVIEW
+    // booking can be converted to PENDING by a concurrent quote-accept
+    // (`convertBookingRequestToBooking` in booking-request.ts). That accept
+    // takes `pg_advisory_xact_lock(1)`, re-reads the held booking's status
+    // under the lock (booking-request.ts:903), and — if still AWAITING_REVIEW
+    // — updates it by id ONLY, with no status guard (booking-request.ts:951).
+    // A plain, lockless `booking.update` here could be sequenced between that
+    // accept's status re-read and its id-only write, clobbering the
+    // just-accepted PENDING booking back to CANCELLED (a guarded updateMany
+    // WITHOUT the lock does NOT close this, because the accept's id-only write
+    // would overwrite the CANCELLED it committed). Taking the SAME advisory
+    // lock and re-reading the status under it makes cancel and accept mutually
+    // exclude; the race loser observes a non-cancellable status and aborts
+    // cleanly with a 409, running none of the side effects below. This mirrors
+    // the paid single-flight claim (#1160) further down.
+    const claim = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: "CANCELLED",
-        waitlistOfferedAt: null,
-        waitlistOfferExpiresAt: null,
-        waitlistPosition: null,
-      },
-    });
-    if (wasAwaitingReview) {
-      // Detach any booking-request pointer to this hold so a later re-quote
-      // creates a fresh hold instead of reusing this now-cancelled row
-      // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates
-      // defensively, but detaching at the source keeps the pointer honest.
-      await prisma.bookingRequest.updateMany({
-        where: { heldBookingId: bookingId },
-        data: { heldBookingId: null },
+      // Re-read the FULL row under the lock (same `include`s as the outer read
+      // above and the paid #1160 claim below) so the winner path sources its
+      // downstream reconcile, audit, cancellation email, and waitlist re-process
+      // from this authoritative under-lock read rather than the pre-lock
+      // `booking` snapshot. Dates/member are immutable while the booking is in
+      // the no-payment set, so this is defensive — it removes any reliance on
+      // that invariant and matches the paid path (#1311 follow-up to #1334).
+      const fresh = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { payment: true, member: true },
       });
+      // Race loser / retry: under the lock the booking has left the no-payment
+      // set (a concurrent quote-accept converted it, or another cancel already
+      // claimed it). Do NOT flip status, detach, reconcile, or run any side
+      // effects.
+      if (!fresh || !NO_PAYMENT_CANCELLABLE_STATUSES.includes(fresh.status)) {
+        return { claimed: false as const };
+      }
+
+      const wasOffered = fresh.status === "WAITLIST_OFFERED";
+      const wasAwaitingReview = fresh.status === "AWAITING_REVIEW";
+
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: "CANCELLED",
+          waitlistOfferedAt: null,
+          waitlistOfferExpiresAt: null,
+          waitlistPosition: null,
+        },
+      });
+      if (wasAwaitingReview) {
+        // Detach any booking-request pointer to this hold so a later re-quote
+        // creates a fresh hold instead of reusing this now-cancelled row
+        // (#1254 stale-pointer fix). holdBookingRequestSlots also re-validates
+        // defensively, but detaching at the source keeps the pointer honest.
+        await tx.bookingRequest.updateMany({
+          where: { heldBookingId: bookingId },
+          data: { heldBookingId: null },
+        });
+      }
+      // Bed release is now ATOMIC with the status flip under the lock, sourced
+      // from the under-lock `fresh` read.
+      await reconcileCancelledBookingBedAllocations(fresh, tx);
+
+      return {
+        claimed: true as const,
+        fresh,
+        wasOffered,
+        wasAwaitingReview,
+        priorStatus: fresh.status,
+      };
+    });
+
+    // Loser contract (mirrors the paid single-flight path, #1160): a concurrent
+    // quote-accept / cancel that transitioned the row out of the no-payment set
+    // gets a real 409. This MUST be non-200 so a caller never treats a clobbered
+    // accept as a successful cancel. Every cancelBooking caller forwards this
+    // 409 (release-hold, member cancel, admin review-reject) or aborts safely
+    // (deletion-requests, which never passes a no-payment-holding status).
+    if (!claim.claimed) {
+      return {
+        status: 409,
+        error:
+          "This booking was concurrently accepted or cancelled and can no longer be cancelled",
+      };
     }
-    await reconcileCancelledBookingBedAllocations(booking);
+
+    const { fresh, wasOffered, wasAwaitingReview, priorStatus } = claim;
+
+    // cleanupPromoRedemption opens its own $transaction, so it runs AFTER the
+    // claim commits — never nested under the advisory lock.
     await cleanupPromoRedemption(bookingId);
 
+    // Audit/email/waitlist below all source from the under-lock `fresh` row.
+    // `statusBefore` therefore reads `fresh.status` (the pre-cancel status the
+    // locked read observed — the `tx.booking.update` above returns a new row and
+    // never mutates `fresh`), consistent with priorStatus/wasOffered/wasAwaiting.
     logBookingCancellationAudit({
-      booking,
+      booking: fresh,
       bookingId,
       sessionUserId,
       details: wasAwaitingReview
@@ -292,10 +399,10 @@ async function performBookingCancellation(
     // released. The detach/reconcile/audit above still run.
     if (!suppressCustomerNotification) {
       sendBookingCancelledEmail(
-        booking.member.email,
-        booking.member.firstName,
-        booking.checkIn,
-        booking.checkOut,
+        fresh.member.email,
+        fresh.member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
         0,
         "card"
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for no-payment booking"));
@@ -303,7 +410,7 @@ async function performBookingCancellation(
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
-      processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
         .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
     }
 

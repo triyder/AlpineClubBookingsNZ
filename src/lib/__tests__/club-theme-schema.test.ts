@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CLUB_THEME_VALUES,
   buildClubThemeCss,
-  clubThemeUpdateSchema,
   contrastRatio,
   getBlockingContrastWarnings,
   getContrastWarnings,
   isValidLogoDataUrl,
   sanitiseRawCss,
 } from "@/lib/club-theme-schema";
+import { clubThemeUpdateSchema } from "@/lib/club-theme-update-schema";
 
 const tinyPng =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";

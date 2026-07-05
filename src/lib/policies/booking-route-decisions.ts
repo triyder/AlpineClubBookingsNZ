@@ -159,17 +159,22 @@ export function calculateBookingHoldDecision(input: {
   hasNonMembers: boolean;
   checkIn: Date;
   holdDays: number;
+  holdEnabled?: boolean;
   now?: Date;
 }): {
   daysUntilCheckIn: number;
+  holdEnabled: boolean;
   shouldBePending: boolean;
   status: BookingStatus;
 } {
   const daysUntilCheckIn = calculateHoldDaysUntilCheckIn(input.checkIn, input.now);
-  const shouldBePending = input.hasNonMembers && daysUntilCheckIn > input.holdDays;
+  const holdEnabled = input.holdEnabled ?? true;
+  const shouldBePending =
+    holdEnabled && input.hasNonMembers && daysUntilCheckIn > input.holdDays;
 
   return {
     daysUntilCheckIn,
+    holdEnabled,
     shouldBePending,
     status: shouldBePending ? BookingStatus.PENDING : BookingStatus.PAYMENT_PENDING,
   };

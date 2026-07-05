@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { getNonMemberHoldDays } from "@/lib/cancellation";
+import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import {
   calculateBookingHoldDecision,
   toGroupDiscountConfig,
@@ -455,11 +455,14 @@ export async function POST(request: NextRequest) {
   }
 
   const hasNonMembers = guestInputs.some((g) => !g.isMember);
-  const holdDays = hasNonMembers ? await getNonMemberHoldDays(checkIn) : 7;
+  const holdPolicy = hasNonMembers
+    ? await getNonMemberHoldPolicy(checkIn)
+    : { enabled: false, holdDays: 0, source: "default" as const };
   const { shouldBePending, status } = calculateBookingHoldDecision({
     hasNonMembers,
     checkIn,
-    holdDays,
+    holdDays: holdPolicy.holdDays,
+    holdEnabled: holdPolicy.enabled,
   });
 
   // Pre-warm the credit balance only if requested; the service will load
@@ -488,7 +491,7 @@ export async function POST(request: NextRequest) {
       groupDiscount,
       status,
       shouldBePending,
-      holdDays,
+      holdDays: holdPolicy.holdDays,
       paymentMethod,
       internetBankingSettings,
       memberReviewJustification,
