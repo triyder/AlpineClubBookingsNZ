@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   eachDateOnlyInRange,
@@ -125,7 +125,9 @@ export async function checkCapacity(
     where: {
       checkIn: { lt: exclusiveEnd },
       checkOut: { gt: start },
-      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
+      // Capacity-holding population (issue #1254): holding statuses plus
+      // request-converted PENDING holds. See capacityHoldingBookingFilter.
+      ...capacityHoldingBookingFilter(),
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
@@ -177,7 +179,9 @@ export async function checkCapacityForGuestRanges(
     where: {
       checkIn: { lt: exclusiveEnd },
       checkOut: { gt: start },
-      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
+      // Capacity-holding population (issue #1254): holding statuses plus
+      // request-converted PENDING holds. See capacityHoldingBookingFilter.
+      ...capacityHoldingBookingFilter(),
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
@@ -226,7 +230,9 @@ export async function getMonthAvailability(
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: startDate },
-      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
+      // Capacity-holding population (issue #1254): holding statuses plus
+      // request-converted PENDING holds. See capacityHoldingBookingFilter.
+      ...capacityHoldingBookingFilter(),
     },
     include: {
       // Load each guest's explicit night set (issue #713) so non-contiguous

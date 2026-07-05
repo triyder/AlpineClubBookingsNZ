@@ -43,6 +43,7 @@ import {
   BookingRequestError,
   linkedGuestMemberMap,
   parseBookingRequestGuests,
+  reassignHeldBookingGuests,
   splitPriceAcrossGuests,
   type BookingRequestGuest,
 } from "@/lib/booking-request";
@@ -610,7 +611,11 @@ export async function approveSchoolBookingRequest(input: {
           throw new BookingRequestError("Held booking is no longer available", 409);
         }
 
-        await tx.bookingGuest.deleteMany({ where: { bookingId: held.id } });
+        // Preserve the held booking's beds across the guest swap (issue #1254):
+        // update guest rows in place rather than deleteMany+recreate, so an
+        // admin's pre-assigned beds (and #713 night sets) survive. CONFIRMED
+        // already holds capacity (#709), so the school hold spans send → accept.
+        await reassignHeldBookingGuests(tx, held.id, guestCreates);
         booking = await tx.booking.update({
           where: { id: held.id },
           data: {
@@ -622,7 +627,6 @@ export async function approveSchoolBookingRequest(input: {
             hasNonMembers: true,
             notes: request.message,
             createdById: input.adminMemberId,
-            guests: { create: guestCreates },
           },
           select: { id: true },
         });

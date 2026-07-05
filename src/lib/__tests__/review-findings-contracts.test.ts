@@ -26,6 +26,23 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
   return source.slice(start, end);
 }
 
+// #1159 (finding F4): the person-night guard is only race-free if every
+// member-linked guest-night writer takes the global booking advisory lock
+// (pg_advisory_xact_lock(1)) BEFORE running the guard
+// (assertNoBookingMemberNightConflicts) in the same transaction. indexOf proves
+// the source ordering (lock text precedes guard text inside the function body);
+// each writer was separately confirmed to run both markers under one
+// prisma.$transaction, so source order reflects execution order.
+function assertLockBeforeGuard(block: string, label: string) {
+  const lockIdx = block.indexOf("pg_advisory_xact_lock(1)");
+  const guardIdx = block.indexOf("assertNoBookingMemberNightConflicts");
+  expect(lockIdx, `${label}: advisory lock present`).toBeGreaterThanOrEqual(0);
+  expect(
+    guardIdx,
+    `${label}: person-night guard runs after the advisory lock`
+  ).toBeGreaterThan(lockIdx);
+}
+
 function createTempMigration(sql: string, ledger: string) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
   const migrationDir = path.join(tempDir, "20990101000000_test_migration");
@@ -95,6 +112,107 @@ describe("review finding source/schema contracts", () => {
 
     expect(createWaitlistedBookingBlock).toContain("prisma.$transaction");
     expect(createWaitlistedBookingBlock).toContain("pg_advisory_xact_lock(1)");
+  });
+
+  it("takes the booking advisory lock before the person-night guard in every same-transaction member-linked guest writer", () => {
+    // #1159: freeze lock->guard ordering for every writer that persists a
+    // member-linked BookingGuest/BookingGuestNight and runs the guard in the
+    // same transaction. (The modify guest-edit path delegates its guard to a
+    // helper and is frozen by the next test; group-booking's non-member join
+    // path carries no member guest, so the guard is a no-op there and is out of
+    // scope by design.)
+    const bookingCreate = readRepoFile("src/lib/booking-create.ts");
+    assertLockBeforeGuard(
+      sliceFrom(
+        bookingCreate,
+        "export async function createDraftBooking",
+        "export async function createConfirmedBooking"
+      ),
+      "createDraftBooking"
+    );
+    assertLockBeforeGuard(
+      sliceFrom(
+        bookingCreate,
+        "export async function createConfirmedBooking",
+        "export async function createWaitlistedBooking"
+      ),
+      "createConfirmedBooking"
+    );
+    assertLockBeforeGuard(
+      sliceFrom(bookingCreate, "export async function createWaitlistedBooking"),
+      "createWaitlistedBooking"
+    );
+
+    assertLockBeforeGuard(
+      sliceFrom(
+        readRepoFile("src/lib/booking-date-modification-service.ts"),
+        "export async function modifyBookingDates"
+      ),
+      "modifyBookingDates"
+    );
+
+    assertLockBeforeGuard(
+      sliceFrom(
+        readRepoFile("src/lib/booking-request.ts"),
+        "export async function approveBookingRequest",
+        "export async function purgeExpiredBookingRequests"
+      ),
+      "approveBookingRequest"
+    );
+
+    assertLockBeforeGuard(
+      sliceFrom(
+        readRepoFile("src/lib/booking-request-quotes.ts"),
+        "export async function holdBookingRequestSlots"
+      ),
+      "holdBookingRequestSlots"
+    );
+
+    assertLockBeforeGuard(
+      sliceFrom(
+        readRepoFile("src/lib/school-booking-request.ts"),
+        "export async function approveSchoolBookingRequest"
+      ),
+      "approveSchoolBookingRequest"
+    );
+
+    assertLockBeforeGuard(
+      sliceFrom(
+        readRepoFile("src/app/api/bookings/[id]/guests/route.ts"),
+        "export async function POST"
+      ),
+      "guests route POST (member self-add)"
+    );
+  });
+
+  it("keeps the modify pipeline's advisory lock ahead of its delegated person-night guard", () => {
+    // The guest-editing modify path (single + batch) runs through
+    // modifyBookingBatch, which takes the advisory lock and then delegates the
+    // person-night guard to prepareGuestPlan inside the SAME transaction: the
+    // guard runs against the passed-in tx, so taking the lock first is the
+    // caller's responsibility. Freeze both halves of that contract.
+    const batchService = readRepoFile(
+      "src/lib/booking-batch-modification-service.ts"
+    );
+    const modifyBlock = sliceFrom(
+      batchService,
+      "export async function modifyBookingBatch"
+    );
+    const lockIdx = modifyBlock.indexOf("pg_advisory_xact_lock(1)");
+    const delegateIdx = modifyBlock.indexOf("prepareGuestPlan(");
+    expect(lockIdx, "modifyBookingBatch: advisory lock present").toBeGreaterThanOrEqual(0);
+    expect(
+      delegateIdx,
+      "modifyBookingBatch: prepareGuestPlan delegated after the advisory lock"
+    ).toBeGreaterThan(lockIdx);
+
+    const plan = readRepoFile("src/lib/booking-modify-plan.ts");
+    const prepareBlock = sliceFrom(
+      plan,
+      "export async function prepareGuestPlan",
+      "export async function loadActiveSeasonRates"
+    );
+    expect(prepareBlock).toContain("assertNoBookingMemberNightConflicts");
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {

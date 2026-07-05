@@ -35,6 +35,15 @@ describe("WebsiteFooter", () => {
     expect(screen.getByText("Admin blurb")).toBeTruthy();
     expect(screen.getByText("Quick Links")).toBeTruthy();
     expect(screen.getByText("Affiliations")).toBeTruthy();
+    // Section headings are demoted h3 -> h2 at render time so they sit under
+    // the page <h1> without skipping a level (axe heading-order).
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Quick Links" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Affiliations" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
     expect(
       screen.getByRole("link", { name: "Privacy Policy" }).getAttribute("href"),
     ).toBe("/privacy");

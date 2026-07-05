@@ -85,6 +85,7 @@ describe("general cron runner", () => {
         sendQuoteExpiryReminders: vi.fn(async () => ({
           remindedCount: 1,
           failedCount: 0,
+          releasedHoldCount: 0,
         })),
         sendSchoolAttendeeConfirmationPrompts: vi.fn(async () => ({
           scanned: 0,
@@ -103,6 +104,7 @@ describe("general cron runner", () => {
     expect(result.quoteExpiryReminders).toEqual({
       remindedCount: 1,
       failedCount: 0,
+      releasedHoldCount: 0,
     });
     expect(result.groupSettlementReap).toEqual({
       scanned: 1,
@@ -174,6 +176,7 @@ describe("general cron runner", () => {
     const sendQuoteExpiryReminders = vi.fn(async () => ({
       remindedCount: 0,
       failedCount: 0,
+      releasedHoldCount: 0,
     }));
     const reapStaleGroupSettlements = vi.fn(async () => ({
       scanned: 0,

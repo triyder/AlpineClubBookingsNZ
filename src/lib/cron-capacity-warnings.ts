@@ -4,7 +4,7 @@ import { getLodgeCapacity, getOccupiedBedsForNight } from "./capacity";
 import { getNZSTToday } from "./nzst-date";
 import { eachDayOfInterval, addDays } from "date-fns";
 import logger from "@/lib/logger";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 
 const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
 
@@ -28,7 +28,9 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: todayNZ },
-      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
+      // Capacity-holding population (issue #1254): holding statuses plus
+      // request-converted PENDING holds.
+      ...capacityHoldingBookingFilter(),
     },
     include: { guests: true },
   });

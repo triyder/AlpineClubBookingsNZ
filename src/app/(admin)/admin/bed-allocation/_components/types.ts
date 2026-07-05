@@ -29,10 +29,13 @@ export interface DashboardAllocation {
   source: "AUTO" | "MANUAL";
   approvedAt: string | null;
   approvedByName: string | null;
-  // Raw booking status (#1251). The board derives the "Held" vs "Provisional"
-  // badge from isCapacityHoldingBookingStatus() so it auto-tracks the capacity
-  // set (#1254) without duplicating the list here.
+  // Raw booking status (#1251), kept for display/debugging.
   bookingStatus: string;
+  // Server-computed "does this booking hold capacity" flag (#1254). Because
+  // holding is no longer a pure function of status (an accepted-but-unpaid quote
+  // is PENDING but holds), the board reads this precomputed flag —
+  // bookingHoldsCapacity() — for the "Held" vs "Provisional" badge.
+  holdsCapacity: boolean;
 }
 
 export interface DashboardGuestNight {
@@ -53,6 +56,8 @@ export interface DashboardRequestedRoom {
 export interface DashboardBookingSummary {
   id: string;
   status: string;
+  // Server-computed capacity-holding flag (#1254); see DashboardAllocation.
+  holdsCapacity: boolean;
   createdAt: string;
   checkIn: string;
   checkOut: string;

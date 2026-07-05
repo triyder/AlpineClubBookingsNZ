@@ -103,13 +103,13 @@ export const MEMBER_PROFILE_FIELD_LABELS: Record<MemberProfileMissingField, stri
   streetAddressLine2: "Physical Address Line 2",
   streetCity: "Physical City / Town",
   streetRegion: "Physical Region",
-  streetPostalCode: "Physical Postal Code",
+  streetPostalCode: "Physical Address Postcode",
   streetCountry: "Physical Country",
   postalAddressLine1: "Postal Address Line 1",
   postalAddressLine2: "Postal Address Line 2",
   postalCity: "Postal City / Town",
   postalRegion: "Postal Region",
-  postalPostalCode: "Postal Postal Code",
+  postalPostalCode: "Postal Address Postcode",
   postalCountry: "Postal Country",
 };
 

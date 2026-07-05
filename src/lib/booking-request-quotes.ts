@@ -23,6 +23,7 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestLinkedGuestMember,
 } from "@/lib/booking-request";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
@@ -480,6 +481,27 @@ export async function sendBookingRequestQuote(input: {
     throw new BookingRequestQuoteError("Create a quote before sending it", 409);
   }
 
+  // A sent quote must reserve the beds/guest-nights so they cannot disappear
+  // before the requester accepts (issue #1254, owner decision (a)). Place the
+  // hold BEFORE marking the quote SENT / emailing, so that if the lodge is full
+  // the send fails loudly instead of promising dates that are not reserved.
+  // The hold is idempotent (reused on re-send) and option-agnostic — the bed
+  // count is the guest count regardless of which price option is chosen.
+  const hold = await holdBookingRequestSlots({
+    requestId: input.requestId,
+    adminMemberId: input.adminMemberId,
+    optionId: null,
+  });
+  if (hold.type === "capacityExceeded") {
+    const nights = hold.fullNights.join(", ");
+    throw new BookingRequestQuoteError(
+      nights
+        ? `The lodge is at capacity for one or more requested nights (${nights}), so the beds cannot be reserved. Sending this quote was blocked — adjust the dates or wait for capacity before sending.`
+        : "The lodge is at capacity for the requested nights, so the beds cannot be reserved. Sending this quote was blocked.",
+      409
+    );
+  }
+
   const options = parseBookingRequestQuoteOptions(quote.options);
   const settings = await getBookingRequestSettings();
   const ttlMs = settings.quoteResponseTtlDays * DAY_MS;
@@ -643,9 +665,18 @@ export async function respondToBookingRequestQuote(input: {
         },
       });
       if (quote.bookingRequest.heldBookingId) {
+        const heldBookingId = quote.bookingRequest.heldBookingId;
         await tx.booking.update({
-          where: { id: quote.bookingRequest.heldBookingId },
-          data: { status: BookingStatus.CANCELLED },
+          where: { id: heldBookingId },
+          data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
+        });
+        // Release the reserved beds and detach the pointer so the hold no longer
+        // consumes capacity and a later re-hold can never reuse a cancelled row
+        // (issue #1254).
+        await reconcileBedAllocationsForBooking({ bookingId: heldBookingId, db: tx });
+        await tx.bookingRequest.update({
+          where: { id: quote.bookingRequestId },
+          data: { heldBookingId: null },
         });
       }
     });
@@ -838,7 +869,10 @@ export async function holdBookingRequestSlots(input: {
   requestId: string;
   adminMemberId: string;
   optionId?: string | null;
-}) {
+}): Promise<
+  | { type: "held"; bookingId: string; reused: boolean }
+  | { type: "capacityExceeded"; fullNights: string[] }
+> {
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
     include: {
@@ -855,7 +889,28 @@ export async function holdBookingRequestSlots(input: {
     throw new BookingRequestError("This booking request cannot be held", 409);
   }
   if (request.heldBookingId) {
-    return { type: "held" as const, bookingId: request.heldBookingId, reused: true };
+    // Re-validate before reusing (#1254). An admin can now cancel a held
+    // booking directly — every sent quote leaves one, tagged "Held" on the bed
+    // board — which would leave this pointer dangling. Reusing a cancelled or
+    // missing row would promise a quote for beds nothing reserves and then 409
+    // on accept. If the hold is no longer a live AWAITING_REVIEW booking,
+    // detach it and fall through to create a fresh hold.
+    const existingHold = await prisma.booking.findUnique({
+      where: { id: request.heldBookingId },
+      select: { status: true },
+    });
+    if (existingHold?.status === BookingStatus.AWAITING_REVIEW) {
+      return {
+        type: "held" as const,
+        bookingId: request.heldBookingId,
+        reused: true,
+      };
+    }
+    await prisma.bookingRequest.updateMany({
+      where: { id: request.id, heldBookingId: request.heldBookingId },
+      data: { heldBookingId: null },
+    });
+    request.heldBookingId = null;
   }
 
   const guests = parseBookingRequestGuests(request.guests);

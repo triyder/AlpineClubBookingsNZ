@@ -78,7 +78,7 @@ Use these ownership boundaries when adding new code:
 | Route-private page UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
-| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251) — the state is derived from `isCapacityHoldingBookingStatus` (booking-status.ts), never a duplicated list, so it auto-tracks any capacity-set change. |
+| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
@@ -194,11 +194,16 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 
 1. A member selects check-in and check-out dates.
 2. Capacity is calculated as lodge beds minus capacity-holding guests per
-   night. Only bookings with money committed hold beds: `PAID`, `COMPLETED`,
-   `CONFIRMED` (pay-on-account school groups), and `AWAITING_REVIEW` (a bed is
-   reserved while an admin decides). `PENDING` does not hold capacity; it is a
-   provisional non-member hold. The single source of truth is
-   `CAPACITY_HOLDING_BOOKING_STATUSES` in `src/lib/booking-status.ts`.
+   night. Capacity-holding statuses are `PAID`, `COMPLETED`, `CONFIRMED`
+   (pay-on-account school groups + accepted-but-unpaid school quotes), and
+   `AWAITING_REVIEW` (a bed is reserved while an admin decides, and for the
+   "sent quote" hold). Generic `PENDING` does not hold capacity (a provisional
+   non-member hold) — but a `PENDING` booking that is the converted booking of a
+   `BookingRequest` (an accepted-but-unpaid quote or a directly-approved
+   request) DOES hold until it is paid, expires, or is cancelled (issue #1254,
+   refining #737). The single source of truth is
+   `capacityHoldingBookingFilter()` (query form) and `bookingHoldsCapacity()`
+   (per-row form) in `src/lib/booking-status.ts`.
 3. Minimum-stay, booking-window, age-tier, membership, group-discount, fixed or
    percentage promo, and account-credit rules are applied.
 4. If all guests are members, or check-in is within the non-member hold window,

@@ -23,7 +23,10 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
     },
     bookingGuest: {
+      findMany: vi.fn(),
       deleteMany: vi.fn(),
+      createMany: vi.fn(),
+      update: vi.fn(),
     },
     payment: {
       create: vi.fn(),
@@ -750,7 +753,10 @@ describe("approveBookingRequest", () => {
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
     } as never);
-    vi.mocked(prisma.bookingGuest.deleteMany).mockResolvedValue({ count: 1 } as never);
+    // Held booking already has the request's guest rows; the reuse path updates
+    // them in place (issue #1254) rather than deleteMany+recreate.
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([{ id: "g1" }] as never);
+    vi.mocked(prisma.bookingGuest.update).mockResolvedValue({} as never);
     vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
     vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
     vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
@@ -762,6 +768,12 @@ describe("approveBookingRequest", () => {
       prisma,
       expect.objectContaining({ excludeBookingId: "held-1" })
     );
+    // Reuse path preserves the held booking's guest rows (updates in place) and
+    // does not destroy them, so bed allocations survive the accept (issue #1254).
+    expect(prisma.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "g1" } })
+    );
+    expect(prisma.bookingGuest.deleteMany).not.toHaveBeenCalled();
     // Reuse path updates the held booking rather than creating a fresh one.
     expect(prisma.booking.update).toHaveBeenCalled();
     expect(prisma.member.create).not.toHaveBeenCalled();

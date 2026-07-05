@@ -6,7 +6,7 @@ import type {
   Prisma,
   SubscriptionStatus,
 } from "@prisma/client";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 import {
   formatDateOnly,
   getTodayDateOnly,
@@ -399,7 +399,9 @@ export async function getSeasonalMembershipChangePreview(params: {
         memberId: params.memberId,
         deletedAt: null,
         checkOut: { gt: today },
-        status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
+        // Capacity-holding population (issue #1254): holding statuses plus
+        // request-converted PENDING holds.
+        ...capacityHoldingBookingFilter(),
       },
       orderBy: [{ checkIn: "asc" }, { createdAt: "asc" }],
       select: bookingSelect,

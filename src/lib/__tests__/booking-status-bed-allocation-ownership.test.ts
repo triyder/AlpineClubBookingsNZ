@@ -14,6 +14,15 @@ import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle
 // These assertions are exhaustive over BookingStatus so that adding a new
 // status forces an explicit ownership decision instead of silently inheriting
 // one set or the other.
+//
+// NOTE (issue #1254): "holds capacity" is no longer a pure function of status.
+// A PENDING booking that is the *converted* booking of a BookingRequest (an
+// accepted-but-unpaid quote / approved request) also holds capacity, via the
+// relation-based `capacityHoldingBookingFilter()` — not this status set. That
+// extension keeps this invariant intact (PENDING is already bed-allocatable, so
+// capacity-holding ⊆ bed-allocatable still holds) and does NOT change the sets
+// below. The behavioural coverage for the relation extension lives in
+// capacity-holding-filter.test.ts; don't infer "status ⟹ holds capacity" here.
 
 const capacityHolding = new Set<string>(CAPACITY_HOLDING_BOOKING_STATUSES);
 const bedAllocatable = new Set<string>(BED_ALLOCATABLE_BOOKING_STATUSES);

@@ -1,4 +1,4 @@
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, Prisma } from "@prisma/client";
 
 export const CAPACITY_HOLDING_BOOKING_STATUSES = [
   BookingStatus.PAID,
@@ -8,16 +8,27 @@ export const CAPACITY_HOLDING_BOOKING_STATUSES = [
   // CONFIRMED holds capacity for pay-on-account bookings (school groups,
   // issue #709): the booking is confirmed at approval and the lodge is
   // reserved while the emailed Xero invoice is outstanding. It flips to PAID
-  // when the invoice is reconciled.
+  // when the invoice is reconciled. School quote acceptances also land here
+  // (issue #1254), so an accepted-but-unpaid school booking holds its beds.
   BookingStatus.CONFIRMED,
   // AWAITING_REVIEW must hold the bed: otherwise another member could book
   // the same dates while an admin is deciding, and approval would overbook.
+  // The quote lifecycle (issue #1254) also reuses this status for the "sent
+  // quote" hold — a sent quote reserves the beds/guest-nights while the
+  // requester decides, so it must consume capacity.
   BookingStatus.AWAITING_REVIEW,
-  // NOTE: PENDING does NOT hold capacity (issue #737). Only bookings with money
-  // committed reserve beds; members pay up front and land on PAID. A PENDING
-  // booking is a provisional non-member hold that no longer consumes capacity —
-  // the bump-on-no-capacity safety in cron-confirm-pending.ts and the
-  // most-recent-first bumping in bumping.ts still target PENDING bookings.
+  // NOTE: PENDING does NOT hold capacity *by status alone* (issue #737). Members
+  // pay up front and land on PAID; split-booking non-member children (#738) and
+  // "only-if-my-guests-come" holds are provisional and stay bumpable — the
+  // bump-on-no-capacity safety in cron-confirm-pending.ts and the
+  // most-recent-first bumping still target those PENDING bookings.
+  //
+  // EXCEPTION (issue #1254, refines #737): a PENDING booking that is the
+  // *converted* booking of a BookingRequest (an accepted-but-unpaid quote, or a
+  // directly-approved request) DOES hold capacity until it is paid, expires, or
+  // is cancelled. That extension is relation-based (originBookingRequest is
+  // set), not status-based, so it lives in `capacityHoldingBookingFilter()`
+  // below rather than in this status set. Generic PENDING remains non-holding.
 ] as const;
 
 export const PAYMENT_OWED_BOOKING_STATUSES = [
@@ -69,6 +80,60 @@ export function isCapacityHoldingBookingStatus(status: string) {
 // test seam
 export function isOperationalStayBookingStatus(status: string) {
   return (OPERATIONAL_STAY_BOOKING_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Per-booking analogue of `capacityHoldingBookingFilter()` (the DB-query form
+ * below): does THIS booking consume lodge capacity? (issue #1254). A booking
+ * holds when its status is capacity-holding, OR it is PENDING and is the
+ * converted booking of a BookingRequest (accepted-but-unpaid quote / approved
+ * request). Pass `isRequestConverted` = whether the booking has an
+ * `originBookingRequest`. Generic PENDING stays non-holding (#737 preserved).
+ *
+ * Use this wherever a display or decision needs a per-row holding answer (e.g.
+ * the bed board's Held vs Provisional tag) instead of the pure status check —
+ * `isCapacityHoldingBookingStatus` alone would mislabel a held quote booking.
+ */
+export function bookingHoldsCapacity(booking: {
+  status: string;
+  isRequestConverted?: boolean;
+}): boolean {
+  if (isCapacityHoldingBookingStatus(booking.status)) return true;
+  return (
+    booking.status === BookingStatus.PENDING &&
+    Boolean(booking.isRequestConverted)
+  );
+}
+
+/**
+ * The single source of truth for "which bookings consume lodge capacity" as a
+ * Prisma `where` fragment. Use this — never a bare `status: { in: [...] }` — in
+ * every occupancy/availability query so the rule stays consistent everywhere.
+ *
+ * Capacity is held by:
+ *   1. Any booking in a capacity-holding status (PAID/COMPLETED/CONFIRMED/
+ *      AWAITING_REVIEW), and
+ *   2. PENDING bookings that were converted from a BookingRequest — i.e. an
+ *      accepted-but-unpaid quote or a directly-approved request (issue #1254,
+ *      refining #737). These reserve the bed until payment, expiry, or cancel.
+ *
+ * Generic PENDING bookings (split-booking non-member children #738, member
+ * "only-if-my-guests-come" holds) have no `originBookingRequest`, so they stay
+ * non-holding and bumpable — #737 is preserved.
+ *
+ * The result is a self-contained `AND`-able fragment (its top level is `OR`);
+ * spread it into a larger `where` alongside date/exclusion clauses.
+ */
+export function capacityHoldingBookingFilter(): Prisma.BookingWhereInput {
+  return {
+    OR: [
+      { status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] } },
+      {
+        status: BookingStatus.PENDING,
+        originBookingRequest: { isNot: null },
+      },
+    ],
+  };
 }
 
 /**

@@ -588,6 +588,82 @@ export function resolveRequestBookingHoldUntil(
   return hold > checkIn ? checkIn : hold;
 }
 
+type HeldBookingGuestInput = {
+  firstName: string;
+  lastName: string;
+  ageTier: AgeTier;
+  isMember: boolean;
+  memberId?: string | null;
+  stayStart: Date;
+  stayEnd: Date;
+  priceCents: number;
+};
+
+/**
+ * Swap a held booking's guest rows to the accepted/approved guest list while
+ * PRESERVING each row's identity (issue #1254). The held booking was created by
+ * holdBookingRequestSlots with exactly this guest list in this order, so we
+ * update the existing rows in place instead of the old delete-then-recreate.
+ * Keeping each `bookingGuest.id` stable preserves everything that cascades off
+ * it: an admin's pre-assigned BedAllocation rows (a destructive `deleteMany`
+ * would silently drop them via onDelete: Cascade), BookingGuestNight sets
+ * (#713), promo guest targets, and chore assignments.
+ *
+ * The guest list is fixed at request submission, so the counts should always
+ * match; if they somehow diverge we fall back to delete+recreate so approval
+ * still succeeds (that fallback loses pre-assigned beds but stays correct).
+ * Returns whether the identity-preserving path was taken (for audit/tests).
+ */
+export async function reassignHeldBookingGuests(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  guestCreates: HeldBookingGuestInput[]
+): Promise<{ preservedInPlace: boolean }> {
+  const existing = await tx.bookingGuest.findMany({
+    where: { bookingId },
+    select: { id: true },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
+
+  if (existing.length !== guestCreates.length) {
+    await tx.bookingGuest.deleteMany({ where: { bookingId } });
+    if (guestCreates.length > 0) {
+      await tx.bookingGuest.createMany({
+        data: guestCreates.map((guest) => ({
+          bookingId,
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          ageTier: guest.ageTier,
+          isMember: guest.isMember,
+          memberId: guest.memberId ?? null,
+          stayStart: guest.stayStart,
+          stayEnd: guest.stayEnd,
+          priceCents: guest.priceCents,
+        })),
+      });
+    }
+    return { preservedInPlace: false };
+  }
+
+  for (let index = 0; index < guestCreates.length; index += 1) {
+    const guest = guestCreates[index];
+    await tx.bookingGuest.update({
+      where: { id: existing[index].id },
+      data: {
+        firstName: guest.firstName,
+        lastName: guest.lastName,
+        ageTier: guest.ageTier,
+        isMember: guest.isMember,
+        memberId: guest.memberId ?? null,
+        stayStart: guest.stayStart,
+        stayEnd: guest.stayEnd,
+        priceCents: guest.priceCents,
+      },
+    });
+  }
+  return { preservedInPlace: true };
+}
+
 /**
  * Approve a PRICED request: in a single transaction under the booking
  * advisory lock, create the non-login Member, the PENDING Booking with
@@ -743,12 +819,20 @@ export async function approveBookingRequest(input: {
           throw new BookingRequestError("Held booking is no longer available", 409);
         }
 
-        await tx.bookingGuest.deleteMany({ where: { bookingId: held.id } });
+        // Preserve the held booking's beds across the guest swap (issue #1254):
+        // update guest rows in place rather than deleteMany+recreate. The date
+        // range is unchanged (fixed at request submission), so existing bed
+        // allocations remain valid — no reconcile needed.
+        await reassignHeldBookingGuests(tx, held.id, guestCreates);
         booking = await tx.booking.update({
           where: { id: held.id },
           data: {
             checkIn: request.checkIn,
             checkOut: request.checkOut,
+            // Stays capacity-holding across the accept: AWAITING_REVIEW (holding
+            // status) → PENDING, which now holds because it becomes the request's
+            // convertedBooking (capacityHoldingBookingFilter, #1254 refining
+            // #737). The bed is reserved until payment, expiry, or cancel.
             status: BookingStatus.PENDING,
             totalPriceCents: priceCents,
             finalPriceCents: priceCents,
@@ -756,7 +840,6 @@ export async function approveBookingRequest(input: {
             nonMemberHoldUntil,
             notes: request.message,
             createdById: input.adminMemberId,
-            guests: { create: guestCreates },
           },
           select: { id: true },
         });

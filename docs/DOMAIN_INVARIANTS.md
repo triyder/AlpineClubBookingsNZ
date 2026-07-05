@@ -17,9 +17,25 @@ Future reviews and issues should cite this file when proposing changes.
   unless a feature explicitly requires time-of-day semantics.
 - `BookingGuest.stayStart` and `BookingGuest.stayEnd` represent each guest's
   date-only occupancy inside the booking envelope.
-- Only capacity-holding booking statuses consume beds. The implementation
-  source of truth is `CAPACITY_HOLDING_BOOKING_STATUSES` in
-  `src/lib/booking-status.ts`.
+- A booking consumes beds when it is capacity-holding. The implementation
+  source of truth is `capacityHoldingBookingFilter()` in
+  `src/lib/booking-status.ts`, which every occupancy/availability query uses.
+  A booking holds capacity when either (a) its status is in
+  `CAPACITY_HOLDING_BOOKING_STATUSES` (PAID, COMPLETED, CONFIRMED,
+  AWAITING_REVIEW), or (b) it is PENDING **and** is the converted booking of a
+  `BookingRequest` — i.e. an accepted-but-unpaid quote or a directly-approved
+  request (issue #1254). Rule (b) refines #737: generic PENDING bookings
+  (split-booking non-member children #738, member "only-if-my-guests-come"
+  holds) have no `originBookingRequest` and stay non-holding and bumpable, but a
+  quote-derived accepted booking keeps its beds until it is paid, expires, or is
+  cancelled. Because #737's member-priority bumping only ever touched
+  non-holding PENDING rows, an accepted-but-unpaid quote can no longer be bumped
+  by a later member booking — this is the intended capacity-priority change.
+- Bed-allocation eligibility (`BED_ALLOCATABLE_BOOKING_STATUSES`) is a status-
+  only superset of capacity-holding; the `capacity-holding ⊆ bed-allocatable`
+  invariant still holds because rule (b) only extends holding to PENDING, which
+  is already bed-allocatable (locked by
+  `booking-status-bed-allocation-ownership.test.ts`, #813).
 - Waitlisted and offered bookings do not consume capacity until confirmed.
 - A waitlist offer reprices the booking at current season rates,
   membership-type policy, group discount, and promo validity at the moment the
@@ -34,9 +50,11 @@ Future reviews and issues should cite this file when proposing changes.
 - The person-night guard is app-level enforcement by design (#1039 item 3): a
   database unique index cannot express it because liveness is booking-status
   dependent and spans `BookingGuest` to `Booking`, which a Postgres partial
-  unique index cannot reference. It is race-free because every booking
-  creation/edit transaction takes the global booking advisory lock before
-  running the guard; that ordering is frozen by test.
+  unique index cannot reference. It is race-free because every transaction that
+  writes a member-linked `BookingGuest`/`BookingGuestNight` takes the global
+  booking advisory lock (`pg_advisory_xact_lock(1)`) before running the guard
+  (`assertNoBookingMemberNightConflicts`); that lock-before-guard ordering is
+  frozen for every such writer by `review-findings-contracts.test.ts`.
 - A member holds at most one group-join roster row per group
   (`GroupBookingJoin` unique on groupBookingId + joinerMemberId, #1039
   item 2). The roster row is written inside the child booking's transaction:
@@ -193,6 +211,26 @@ statuses (PENDING/PAYMENT_PENDING); a paid or confirmed booking is flagged in
 place, and approving it clears the review without re-opening the payment
 lifecycle. Rejection cancels through the shared cancellation flow, which
 refunds captured payments per the policy.
+
+A quote hold spans the whole quote lifecycle (issue #1254). Sending a quote
+places the hold automatically: the held booking (AWAITING_REVIEW, a
+capacity-holding status) reserves the beds/guest-nights before the send is
+finalized, so a quote is never emailed for dates it cannot reserve — if the
+lodge is full the send fails loudly (409). The hold survives acceptance: on
+accept/approve the same held row becomes the request's converted booking and
+moves AWAITING_REVIEW → PENDING, which keeps holding via rule (b) above, so an
+accepted-but-unpaid quote does not lose its bed before payment. The guest swap
+at accept updates the held booking's existing guest rows in place (stable
+`bookingGuest` ids) instead of delete-then-recreate, so an admin's pre-assigned
+`BedAllocation` rows, #713 night sets, promo guest targets, and chore
+assignments are preserved. The hold is released only on cancel (requester
+declines the quote) or expiry: the quote-expiry cron
+(`cron-quote-expiry-reminders.ts`) frees the bed behind any SENT quote whose
+response link has lapsed, and the accepted-but-unpaid booking is released by
+the same hold-deadline machinery as any other PENDING request booking
+(`cron-confirm-pending.ts`). Every release path detaches
+`BookingRequest.heldBookingId` so a later re-quote can never reuse a released
+row.
 
 A booking converted from (or held for) a public/school booking request keeps
 its officer-negotiated price, flat-split across guest rows; the quote's

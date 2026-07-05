@@ -54,7 +54,7 @@ export async function sendHutLeaderAssignmentEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: `Your ${CLUB_NAME} ${CLUB_HUT_LEADER_LABEL} assignment`,
+    subject: `Your ${CLUB_NAME} ${CLUB_HUT_LEADER_LABEL.toLowerCase()} assignment`,
     html: hutLeaderAssignmentTemplate(params),
     templateName: "hut-leader-assignment",
     templateData: {

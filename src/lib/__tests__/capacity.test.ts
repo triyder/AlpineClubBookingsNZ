@@ -191,10 +191,20 @@ describe("capacity calendar availability", () => {
   it("queries completed bookings as capacity-holding bookings", async () => {
     await getMonthAvailability(2026, 3);
 
+    // Capacity-holding is now an OR of the holding-status set plus
+    // request-converted PENDING holds (issue #1254, refining #737).
     const call = mocks.bookingFindMany.mock.calls[0][0];
-    expect(call.where.status.in).toEqual(
+    const holdingStatusClause = call.where.OR.find(
+      (clause: { status?: { in?: BookingStatus[] } }) =>
+        Array.isArray(clause.status?.in)
+    );
+    expect(holdingStatusClause.status.in).toEqual(
       expect.arrayContaining([BookingStatus.COMPLETED])
     );
+    expect(call.where.OR).toContainEqual({
+      status: BookingStatus.PENDING,
+      originBookingRequest: { isNot: null },
+    });
   });
 
   it("counts completed bookings in monthly occupied beds", async () => {
@@ -234,9 +244,11 @@ describe("capacity calendar availability", () => {
     expect(mocks.bookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: {
-            in: expect.arrayContaining([BookingStatus.COMPLETED]),
-          },
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              status: { in: expect.arrayContaining([BookingStatus.COMPLETED]) },
+            }),
+          ]),
         }),
       })
     );

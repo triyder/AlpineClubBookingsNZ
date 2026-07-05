@@ -25,6 +25,7 @@ function buildBooking(
   return {
     id: "booking-1",
     status: "CONFIRMED",
+    holdsCapacity: true,
     createdAt: "2026-06-01T00:00:00.000Z",
     checkIn: "2026-07-10",
     checkOut: "2026-07-12",

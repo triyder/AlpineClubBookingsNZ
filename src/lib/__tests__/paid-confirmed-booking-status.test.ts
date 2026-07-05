@@ -149,12 +149,16 @@ describe("paid legacy CONFIRMED booking repair", () => {
       requestedGuests
     );
 
+    // Capacity-holding status filter now lives under OR[0] (issue #1254): the
+    // query is (holding status) OR (request-converted PENDING).
     expect(prismaMocks.bookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: {
-            in: expect.arrayContaining([BookingStatus.PAID]),
-          },
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              status: { in: expect.arrayContaining([BookingStatus.PAID]) },
+            }),
+          ]),
         }),
       })
     );
@@ -180,9 +184,11 @@ describe("paid legacy CONFIRMED booking repair", () => {
     expect(prismaMocks.bookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: {
-            in: expect.arrayContaining([BookingStatus.COMPLETED]),
-          },
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              status: { in: expect.arrayContaining([BookingStatus.COMPLETED]) },
+            }),
+          ]),
         }),
       })
     );
@@ -194,17 +200,32 @@ describe("paid legacy CONFIRMED booking repair", () => {
     ]);
   });
 
-  it("excludes PENDING bookings from the capacity-holding query (issue #737)", async () => {
+  it("excludes bare PENDING from the capacity-holding query; only request-converted PENDING holds (issue #737 refined by #1254)", async () => {
     prismaMocks.bookingFindMany.mockResolvedValueOnce([]);
 
     await checkCapacity(dateOnly(2026, 6, 10), dateOnly(2026, 6, 12), 1);
 
+    // Holding is now (holding status) OR (PENDING AND request-converted).
     const call = prismaMocks.bookingFindMany.mock.calls[0][0] as {
-      where: { status: { in: BookingStatus[] } };
+      where: {
+        OR: Array<{
+          status?: { in: BookingStatus[] } | BookingStatus;
+          originBookingRequest?: { isNot: null };
+        }>;
+      };
     };
-    const queriedStatuses = call.where.status.in;
-    expect(queriedStatuses).not.toContain(BookingStatus.PENDING);
-    expect(queriedStatuses).toEqual(
+    const orBranches = call.where.OR;
+
+    // Branch 1: capacity-holding statuses. PENDING must NOT be among them.
+    const statusBranch = orBranches.find(
+      (branch) =>
+        branch.status &&
+        typeof branch.status === "object" &&
+        "in" in branch.status
+    ) as { status: { in: BookingStatus[] } } | undefined;
+    expect(statusBranch).toBeDefined();
+    expect(statusBranch!.status.in).not.toContain(BookingStatus.PENDING);
+    expect(statusBranch!.status.in).toEqual(
       expect.arrayContaining([
         BookingStatus.PAID,
         BookingStatus.COMPLETED,
@@ -212,6 +233,16 @@ describe("paid legacy CONFIRMED booking repair", () => {
         BookingStatus.AWAITING_REVIEW,
       ])
     );
+
+    // Branch 2: bare PENDING only holds when it is a converted booking request
+    // (originBookingRequest set) — generic PENDING (#737) still never holds.
+    const pendingBranch = orBranches.find(
+      (branch) => branch.status === BookingStatus.PENDING
+    ) as
+      | { status: BookingStatus; originBookingRequest: { isNot: null } }
+      | undefined;
+    expect(pendingBranch).toBeDefined();
+    expect(pendingBranch!.originBookingRequest).toEqual({ isNot: null });
   });
 
   it("uses PAID operational bookings for lodge guest lookup and roster validation", async () => {

@@ -995,7 +995,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(content).not.toContain(
       '{(effectiveTier === "none" || effectiveTier === "staying-guest") && ('
     );
-    expect(content).toContain("unlock hut leader controls on");
+    expect(content).toContain("controls on this kiosk");
   });
 
   it("renders the updated lodge kiosk list controls and refresh behavior", async () => {

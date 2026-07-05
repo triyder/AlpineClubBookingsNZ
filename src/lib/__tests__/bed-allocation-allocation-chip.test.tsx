@@ -33,6 +33,7 @@ function buildAllocation(
     approvedAt: null,
     approvedByName: null,
     bookingStatus: "CONFIRMED",
+    holdsCapacity: true,
     ...overrides,
   };
 }
@@ -51,7 +52,9 @@ function renderChip(allocation: DashboardAllocation) {
 
 describe("AllocationChip held vs provisional state (#1251)", () => {
   it("labels a capacity-holding booking as Held with a solid border", () => {
-    const { container } = renderChip(buildAllocation({ bookingStatus: "PAID" }));
+    const { container } = renderChip(
+      buildAllocation({ bookingStatus: "PAID", holdsCapacity: true }),
+    );
 
     expect(screen.getByText("Held")).toBeTruthy();
     expect(screen.queryByText("Provisional")).toBeNull();
@@ -64,7 +67,7 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
 
   it("labels a provisional booking as Provisional with a dashed border", () => {
     const { container } = renderChip(
-      buildAllocation({ bookingStatus: "PENDING" }),
+      buildAllocation({ bookingStatus: "PENDING", holdsCapacity: false }),
     );
 
     expect(screen.getByText("Provisional")).toBeTruthy();
@@ -74,20 +77,29 @@ describe("AllocationChip held vs provisional state (#1251)", () => {
     expect(card.className).toContain("border-dashed");
   });
 
+  it("labels an accepted-but-unpaid quote (PENDING but holding) as Held (#1254)", () => {
+    // Server sets holdsCapacity=true for a request-converted PENDING booking, so
+    // the board must show it Held even though its status is PENDING.
+    renderChip(buildAllocation({ bookingStatus: "PENDING", holdsCapacity: true }));
+
+    expect(screen.getByText("Held")).toBeTruthy();
+    expect(screen.queryByText("Provisional")).toBeNull();
+  });
+
   it.each(["PAYMENT_PENDING", "WAITLIST_OFFERED"])(
     "treats %s (bed-allocatable but not capacity-holding) as Provisional",
     (status) => {
-      renderChip(buildAllocation({ bookingStatus: status }));
+      renderChip(buildAllocation({ bookingStatus: status, holdsCapacity: false }));
       expect(screen.getByText("Provisional")).toBeTruthy();
     },
   );
 
   it("uses theme tokens (not hardcoded light colours) for both states", () => {
     const { container: held } = renderChip(
-      buildAllocation({ bookingStatus: "CONFIRMED" }),
+      buildAllocation({ bookingStatus: "CONFIRMED", holdsCapacity: true }),
     );
     const { container: provisional } = renderChip(
-      buildAllocation({ bookingStatus: "PENDING" }),
+      buildAllocation({ bookingStatus: "PENDING", holdsCapacity: false }),
     );
 
     // Regression guard for the dark-mode requirement: the previous chip used

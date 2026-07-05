@@ -183,7 +183,11 @@ configurable palette):
   are measured — hex directly, and `oklch()` via an oklch→linear-sRGB conversion
   — because the wizard's value field accepts either, so neither can bypass the
   gate. The shipped default gold moved from `#7a8f6a` (3.55:1 button-on-gold) to
-  `#8fa87c` (4.8:1) so first-run setup passes its own gate.
+  `#8fa87c` (4.8:1) so first-run setup passes its own gate. A one-time,
+  idempotent data migration (#1244,
+  `20260705120000_bump_sub_aa_club_theme_gold`) bumps any persisted `ClubTheme`
+  colour still holding `#7a8f6a` to `#8fa87c`, so existing installs converge on
+  the compliant default without an admin re-save.
 - **Booking calendar** day buttons now expose their selected state to screen
   readers (`aria-label` gains ", selected as check-in/​check-out/​within your
   selected stay" and `aria-pressed` on the check-in/out days); previously only
@@ -202,3 +206,49 @@ an `h1`; member filter selects, phone inputs, and row-select checkboxes carry
 accessible names. Out of scope for this pass (booking wizard + admin members):
 the broader admin-page h1s and footer heading order noted above, and NVDA/
 VoiceOver walkthroughs.
+
+## #1242 Static Heading Fixes (2026-07-05)
+
+The two static findings carried over from the passes above were resolved in
+code. This closes the static `page-has-heading-one` and `heading-order` axe
+items; the live/manual walkthrough remains pending (item 3 below).
+
+### Item 1 — `page-has-heading-one` (DONE, static)
+
+The audit's page list was largely already satisfied in current `main`. Only
+`/login/enroll` genuinely lacked a page-level heading. Verified state:
+
+- **`/login/enroll` — added.** `TwoFactorEnrollPanel` used a `<CardTitle>`
+  (renders as a `<div>`), so the page had no `<h1>`. Added a screen-reader
+  `<h1 className="sr-only">` to both of the panel's mutually exclusive render
+  branches (the enrolment card "Set up two-factor authentication" and the
+  post-enrolment "Save your recovery codes" card), matching the existing
+  `sr-only` `<h1>` pattern on `/login` and `/forgot-password`. Exactly one
+  `<h1>` renders in any state; no visual change.
+- **Already present, no change** (verified page-level `<h1>` in current `main`):
+  `/forgot-password` (sr-only `<h1>` in both branches), `/admin/members`,
+  `/admin/bookings`, `/admin/booking-requests`, `/admin/health` (one per
+  loading/error/loaded state), `/admin/stuck-states`,
+  `/admin/booking-policies/public-requests`.
+
+### Item 2 — `heading-order` on `website-footer` (DONE, static)
+
+The footer section headings (Quick Links, Affiliations) were `<h3>`, an
+`h1 -> h3` skip on sparse pages. The markup is admin-editable stored HTML
+(starter default + `20260702124500_add_site_content` backfill migration, kept
+in sync by a test), not literal JSX, and the historical backfill uses
+`ON CONFLICT DO NOTHING`, so editing the starter/migration would neither be
+allowed nor change any existing deployment's rows. The fix is therefore a
+render-layer normalization in `src/components/website-footer.tsx`:
+`demoteFooterHeadings()` rewrites `<h3>` -> `<h2>` at render time and
+`FOOTER_HTML_CLASSES` now styles `h2` identically to the old `h3`. Stored
+content, the migration, and the sanitiser allowlist are untouched; the footer
+now sits at `h2` under the page `h1` with no visual change.
+
+### Item 3 — live keyboard-only + screen-reader walk (PENDING live verification)
+
+**Not done here — needs the running stack.** The keyboard-only and screen-reader
+(NVDA/VoiceOver) walkthrough of the booking wizard and the admin members table
+against the running app (staging / `:3101`) is still outstanding and remains a
+human manual-QA task. Items 1 and 2 above are static markup fixes and were not
+exercised against a live browser in this change.

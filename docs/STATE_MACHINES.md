@@ -14,12 +14,22 @@ Known schema statuses: `DRAFT`, `PENDING`, `PAYMENT_PENDING`, `CONFIRMED`,
 DRAFT -> PENDING or PAYMENT_PENDING -> CONFIRMED or PAID -> COMPLETED
 PENDING -> CONFIRMED/PAID or BUMPED/CANCELLED
 WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
-AWAITING_REVIEW -> CONFIRMED/PAID or CANCELLED
+AWAITING_REVIEW -> PENDING (quote accepted, #1254) or CONFIRMED/PAID or CANCELLED
 ```
 
-To verify in later review: exact terminal transitions, capacity-holding
-statuses, non-member hold expiry, school group `CONFIRMED` semantics, and
-payment-failure back paths.
+Capacity-holding is not a pure function of status (#1254, refining #737). A
+booking holds beds when its status is capacity-holding (PAID, COMPLETED,
+CONFIRMED, AWAITING_REVIEW) **or** it is PENDING and is the converted booking of
+a `BookingRequest` (an accepted-but-unpaid quote / approved request). Generic
+PENDING (split-booking children #738, member "only-if-my-guests-come" holds)
+still does not hold and stays bumpable. The single source of truth is
+`capacityHoldingBookingFilter()` in `src/lib/booking-status.ts`; every
+availability query uses it. Consequence: an accepted-but-unpaid quote booking
+keeps its bed until it is paid, expires, or is cancelled, and a later member
+booking can no longer bump it.
+
+To verify in later review: exact terminal transitions, non-member hold expiry,
+school group `CONFIRMED` semantics, and payment-failure back paths.
 
 Organiser-pays group children add one cron-driven back path: the
 `group-settlement-reaper` reverts CONFIRMED-unpaid children to
@@ -109,11 +119,25 @@ A `BookingRequest` from the public form can be priced through one or more
 `ACCEPTED`, `CANCELLED`, `SUPERSEDED`.
 
 ```text
-DRAFT -> SENT (admin sends; a SHA-256 response token is issued, time-limited)
-SENT  -> ACCEPTED (requester accepts an option; booking conversion runs)
-SENT  -> CANCELLED (requester cancels; any held booking is released)
-SENT  -> SUPERSEDED (requester asks a question / requests changes, or admin issues a newer quote)
+DRAFT -> SENT (admin sends; a SHA-256 response token is issued, time-limited; the
+               beds are auto-held as an AWAITING_REVIEW booking, #1254)
+SENT  -> ACCEPTED (requester accepts an option; booking conversion runs; the held
+               booking stays capacity-holding until payment)
+SENT  -> CANCELLED (requester cancels; the held booking is released and heldBookingId detached)
+SENT  -> SUPERSEDED (requester asks a question / requests changes, or admin issues a newer quote;
+               the hold is retained across a re-quote for the same dates, but if the request
+               settles in MODIFICATION_REQUESTED / QUERY_PENDING with no outstanding quote the
+               quote-expiry cron auto-releases the hold once the last response window lapses, #1254)
+SENT  -> (link expires; the quote-expiry cron releases the held booking, frees the beds, and
+          detaches heldBookingId — the request stays QUOTE_SENT so an admin can re-quote)
 ```
+
+The whole quote lifecycle holds capacity (#1254). Sending a quote reserves the
+beds/guest-nights before the send is finalized, so a quote is never emailed for
+dates it cannot reserve: if the lodge is full the send fails with `409` and no
+quote is marked SENT. The hold spans accept (the held row becomes the converted
+PENDING booking and keeps holding, see the booking-status section above) and is
+released only on cancel or expiry.
 
 Token-link outcomes the requester can see:
 
@@ -135,7 +159,22 @@ The response window (default 14 days) and a pre-expiry reminder lead time are
 admin-configurable under Booking Policies -> Public Booking Requests. The
 `quote-expiry-reminders` cron sends one reminder per quote inside the lead window,
 rotating the response token so the reminder email carries a fresh working link
-(set the reminder lead to 0 to disable reminders).
+(set the reminder lead to 0 to disable reminders). The same cron also releases
+the auto-hold behind any SENT quote whose link has expired (#1254): it cancels
+the AWAITING_REVIEW held booking, reconciles away its beds, and detaches
+`heldBookingId` so the freed capacity is reusable and a re-quote never reuses a
+released row. This release runs even when reminders are disabled. The same cron
+phase also frees holds stuck behind a MODIFICATION_REQUESTED / QUERY_PENDING
+request that has no outstanding SENT quote, once the latest response window
+(`max(responseTokenExpiresAt)` across its quotes) has lapsed — otherwise a
+"please change X" / "I have a question" bounce would hold a bed indefinitely.
+
+Because an admin can cancel a held booking directly (every sent quote leaves one,
+tagged "Held" on the bed board), `heldBookingId` is detached wherever such a hold
+is cancelled — both in the booking-cancel service and defensively in
+`holdBookingRequestSlots`, which re-validates the pointed-to booking is still a
+live AWAITING_REVIEW hold before reusing it and otherwise creates a fresh hold.
+This stops a re-quote from reusing a cancelled row and 409-ing on accept (#1254).
 
 School group requests share this quote lifecycle. The public form shows a soft
 warning above 25 total students, teachers, and parent helpers because a club

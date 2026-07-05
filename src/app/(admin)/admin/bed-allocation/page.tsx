@@ -151,12 +151,14 @@ function addOptimisticAllocations(
       .map((allocation) => allocation.stayDate),
   );
 
-  // Mirror the booking's real status so the optimistic chip picks the correct
-  // Held/Provisional state (#1251). The empty-string fallback renders as
-  // provisional and is corrected by the next loadDashboard().
-  const bookingStatus =
-    payload.bookings.find((booking) => booking.id === group.bookingId)?.status ??
-    "";
+  // Mirror the booking's real status and capacity-holding flag so the optimistic
+  // chip picks the correct Held/Provisional state (#1251, #1254). The fallbacks
+  // render as provisional and are corrected by the next loadDashboard().
+  const sourceBooking = payload.bookings.find(
+    (booking) => booking.id === group.bookingId,
+  );
+  const bookingStatus = sourceBooking?.status ?? "";
+  const holdsCapacity = sourceBooking?.holdsCapacity ?? false;
 
   const newAllocations: DashboardAllocation[] = stayDates
     .filter((stayDate) => !existingDates.has(stayDate))
@@ -175,6 +177,7 @@ function addOptimisticAllocations(
       approvedAt: null,
       approvedByName: null,
       bookingStatus,
+      holdsCapacity,
     }));
 
   return {

@@ -13,7 +13,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 import { cn } from "@/lib/utils";
 import {
   type BedOption,
@@ -45,12 +44,13 @@ export function AllocationChip({
   const otherBeds = bedOptions.filter((bed) => bed.id !== allocation.bedId);
 
   // Issue #1251: a bed on a capacity-holding booking (booked/confirmed) holds
-  // the night; a bed on a provisional booking (PENDING / PAYMENT_PENDING /
-  // WAITLIST_OFFERED) does NOT. Derive the state from the shared capacity set
-  // so it auto-tracks any future capacity-status change (#1254). The signal is
-  // NOT colour-only — border style, icon, and label all differ — so it survives
-  // in either theme and for colour-blind staff.
-  const holdsCapacity = isCapacityHoldingBookingStatus(allocation.bookingStatus);
+  // the night; a bed on a provisional booking (generic PENDING / PAYMENT_PENDING
+  // / WAITLIST_OFFERED) does NOT. Holding is no longer a pure function of status
+  // (an accepted-but-unpaid quote is PENDING but holds, #1254), so the server
+  // precomputes the flag via bookingHoldsCapacity(). The signal is NOT
+  // colour-only — border style, icon, and label all differ — so it survives in
+  // either theme and for colour-blind staff.
+  const holdsCapacity = allocation.holdsCapacity;
 
   return (
     <div

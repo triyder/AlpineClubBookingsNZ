@@ -18,6 +18,7 @@ import {
   type UnallocatedGuestNight,
 } from "@/lib/bed-allocation";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
+import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { prisma } from "@/lib/prisma";
 
 export const BED_ALLOCATION_SETTINGS_ID = "default";
@@ -77,6 +78,9 @@ interface DashboardBed {
 interface DashboardBooking {
   id: string;
   status: string;
+  // Server-computed capacity-holding flag (#1254): status-holding OR a
+  // request-converted PENDING booking (accepted-but-unpaid quote / approval).
+  holdsCapacity: boolean;
   createdAt: string;
   checkIn: string;
   checkOut: string;
@@ -110,12 +114,12 @@ interface DashboardAllocation {
   source: "AUTO" | "MANUAL";
   approvedAt: string | null;
   approvedByName: string | null;
-  // Raw booking status (issue #1251). The board derives a "Held" vs
-  // "Provisional" visual state from whether this is in
-  // CAPACITY_HOLDING_BOOKING_STATUSES; carrying the raw status (rather than a
-  // precomputed flag) keeps the single source of truth in the shared helper so
-  // the UI auto-tracks any future capacity-set change (#1254) with no coupling.
+  // Raw booking status (issue #1251), kept for display/debugging.
   bookingStatus: string;
+  // Server-computed "Held" vs "Provisional" signal (#1254). Holding is no longer
+  // a pure function of status (an accepted-but-unpaid quote is PENDING but holds),
+  // so the board reads this precomputed flag from bookingHoldsCapacity().
+  holdsCapacity: boolean;
 }
 
 interface DashboardGuestNight {
@@ -543,6 +547,10 @@ async function loadBookingRecords(
       checkOut: true,
       requestedRoomId: true,
       parentBookingId: true,
+      // Whether this booking is the converted booking of a BookingRequest — an
+      // accepted-but-unpaid quote / approved request holds capacity even while
+      // PENDING (#1254), which the Held/Provisional badge must reflect.
+      originBookingRequest: { select: { id: true } },
       requestedRoom: {
         select: {
           id: true,
@@ -593,6 +601,8 @@ async function loadAllocationRecords(
       booking: {
         select: {
           status: true,
+          // Accepted-but-unpaid quote holds capacity while PENDING (#1254).
+          originBookingRequest: { select: { id: true } },
         },
       },
       bookingGuest: {
@@ -656,6 +666,10 @@ function serializeBookings(
   return bookings.map((booking) => ({
     id: booking.id,
     status: booking.status,
+    holdsCapacity: bookingHoldsCapacity({
+      status: booking.status,
+      isRequestConverted: Boolean(booking.originBookingRequest),
+    }),
     createdAt: booking.createdAt.toISOString(),
     checkIn: formatDateOnly(booking.checkIn),
     checkOut: formatDateOnly(booking.checkOut),
@@ -693,6 +707,10 @@ function serializeAllocations(
       ? memberName(allocation.approvedBy)
       : null,
     bookingStatus: allocation.booking.status,
+    holdsCapacity: bookingHoldsCapacity({
+      status: allocation.booking.status,
+      isRequestConverted: Boolean(allocation.booking.originBookingRequest),
+    }),
   }));
 }
 

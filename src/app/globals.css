@@ -354,6 +354,18 @@
   color: var(--foreground);
 }
 
+/* White + neutral -50/-100/-200 surfaces are remapped to dark tokens so they
+   stop reading as bright boxes in dark mode. The `[class*="bg-…/"]` entries
+   extend each tier to Tailwind's OPACITY variants (e.g. `bg-white/70`,
+   `bg-slate-50/90`, `supports-[backdrop-filter]:bg-slate-50/90`), which are
+   distinct class names the plain `.bg-white`/`.bg-slate-50` selectors miss.
+   Without this, T2 lightens colored + neutral text on those still-light
+   surfaces to a light-on-light unreadable state (#1263 follow-up). Matching the
+   solid rules, the translucency is intentionally dropped in favour of an opaque
+   dark token. NOTE: these apply the fill UNCONDITIONALLY, so they assume the
+   opacity class is an always-on surface fill — do NOT rely on this for a
+   conditional `hover:bg-white/…` or a deliberate `dark:bg-white/…` translucent
+   overlay (none exist today); such a class would be forced opaque here. */
 .dark
   .app-theme-scope
   :is(
@@ -362,7 +374,13 @@
     .bg-gray-50,
     .bg-zinc-50,
     .bg-neutral-50,
-    .bg-stone-50
+    .bg-stone-50,
+    [class*="bg-white/"],
+    [class*="bg-slate-50/"],
+    [class*="bg-gray-50/"],
+    [class*="bg-zinc-50/"],
+    [class*="bg-neutral-50/"],
+    [class*="bg-stone-50/"]
   ) {
   background-color: var(--card);
 }
@@ -374,7 +392,12 @@
     .bg-gray-100,
     .bg-zinc-100,
     .bg-neutral-100,
-    .bg-stone-100
+    .bg-stone-100,
+    [class*="bg-slate-100/"],
+    [class*="bg-gray-100/"],
+    [class*="bg-zinc-100/"],
+    [class*="bg-neutral-100/"],
+    [class*="bg-stone-100/"]
   ) {
   background-color: var(--muted);
 }
@@ -386,7 +409,12 @@
     .bg-gray-200,
     .bg-zinc-200,
     .bg-neutral-200,
-    .bg-stone-200
+    .bg-stone-200,
+    [class*="bg-slate-200/"],
+    [class*="bg-gray-200/"],
+    [class*="bg-zinc-200/"],
+    [class*="bg-neutral-200/"],
+    [class*="bg-stone-200/"]
   ) {
   background-color: var(--border);
 }

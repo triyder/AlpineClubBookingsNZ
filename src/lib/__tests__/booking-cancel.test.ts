@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
   txExecuteRaw: vi.fn(),
   paymentUpdate: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingRequestUpdateMany: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
   calculateRefundAmount: vi.fn(),
@@ -54,6 +55,9 @@ vi.mock("@/lib/prisma", () => ({
       // Split-booking cascade (#738) looks for linked provisional children
       // after a successful cancel; none here.
       findMany: vi.fn().mockResolvedValue([]),
+    },
+    bookingRequest: {
+      updateMany: mocks.bookingRequestUpdateMany,
     },
     payment: {
       update: mocks.paymentUpdate,
@@ -778,3 +782,43 @@ describe("cancelBooking credit refunds", () => {
   });
 });
 
+
+describe("cancelBooking detaches the held booking-request pointer (issue #1254)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Pre-payment branches use the array form of $transaction.
+    mocks.prismaTransaction.mockImplementation(
+      async (
+        arg: ((tx: unknown) => Promise<unknown>) | Array<Promise<unknown>>,
+      ) => (Array.isArray(arg) ? Promise.all(arg) : arg({} as never)),
+    );
+    mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+  });
+
+  it("nulls heldBookingId on the owning request when a held AWAITING_REVIEW booking is cancelled", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      memberId: "owner-1",
+      status: "AWAITING_REVIEW",
+      finalPriceCents: 1000,
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+      payment: null,
+    });
+
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    // The dangling pointer is detached so a later re-quote creates a fresh hold
+    // instead of reusing this now-cancelled row.
+    expect(mocks.bookingRequestUpdateMany).toHaveBeenCalledWith({
+      where: { heldBookingId: "held-1" },
+      data: { heldBookingId: null },
+    });
+  });
+});

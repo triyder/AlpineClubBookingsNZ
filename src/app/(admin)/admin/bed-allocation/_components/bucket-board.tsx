@@ -2,7 +2,6 @@
 
 import { useDroppable } from "@dnd-kit/core";
 import { CircleDashed, Lock } from "lucide-react";
-import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 import { cn } from "@/lib/utils";
 import { GuestChip } from "./guest-chip";
 import {
@@ -68,8 +67,10 @@ export function BucketBoard({
         bookingsWithGroups.map((booking) => {
           const groups = groupsByBooking.get(booking.id) ?? [];
           // Match the board's Held/Provisional state (#1251) so a booking reads
-          // the same before and after its guests are placed on beds.
-          const holdsCapacity = isCapacityHoldingBookingStatus(booking.status);
+          // the same before and after its guests are placed on beds. Server
+          // precomputes it (bookingHoldsCapacity) because an accepted-but-unpaid
+          // quote is PENDING but holds (#1254).
+          const holdsCapacity = booking.holdsCapacity;
           return (
             <div
               key={booking.id}
