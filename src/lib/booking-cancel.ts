@@ -271,9 +271,16 @@ async function performBookingCancellation(
     const claim = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
+      // Re-read the FULL row under the lock (same `include`s as the outer read
+      // above and the paid #1160 claim below) so the winner path sources its
+      // downstream reconcile, audit, cancellation email, and waitlist re-process
+      // from this authoritative under-lock read rather than the pre-lock
+      // `booking` snapshot. Dates/member are immutable while the booking is in
+      // the no-payment set, so this is defensive — it removes any reliance on
+      // that invariant and matches the paid path (#1311 follow-up to #1334).
       const fresh = await tx.booking.findUnique({
         where: { id: bookingId },
-        select: { status: true },
+        include: { payment: true, member: true },
       });
       // Race loser / retry: under the lock the booking has left the no-payment
       // set (a concurrent quote-accept converted it, or another cancel already
@@ -305,11 +312,13 @@ async function performBookingCancellation(
           data: { heldBookingId: null },
         });
       }
-      // Bed release is now ATOMIC with the status flip under the lock.
-      await reconcileCancelledBookingBedAllocations(booking, tx);
+      // Bed release is now ATOMIC with the status flip under the lock, sourced
+      // from the under-lock `fresh` read.
+      await reconcileCancelledBookingBedAllocations(fresh, tx);
 
       return {
         claimed: true as const,
+        fresh,
         wasOffered,
         wasAwaitingReview,
         priorStatus: fresh.status,
@@ -330,14 +339,18 @@ async function performBookingCancellation(
       };
     }
 
-    const { wasOffered, wasAwaitingReview, priorStatus } = claim;
+    const { fresh, wasOffered, wasAwaitingReview, priorStatus } = claim;
 
     // cleanupPromoRedemption opens its own $transaction, so it runs AFTER the
     // claim commits — never nested under the advisory lock.
     await cleanupPromoRedemption(bookingId);
 
+    // Audit/email/waitlist below all source from the under-lock `fresh` row.
+    // `statusBefore` therefore reads `fresh.status` (the pre-cancel status the
+    // locked read observed — the `tx.booking.update` above returns a new row and
+    // never mutates `fresh`), consistent with priorStatus/wasOffered/wasAwaiting.
     logBookingCancellationAudit({
-      booking,
+      booking: fresh,
       bookingId,
       sessionUserId,
       details: wasAwaitingReview
@@ -362,10 +375,10 @@ async function performBookingCancellation(
     // released. The detach/reconcile/audit above still run.
     if (!suppressCustomerNotification) {
       sendBookingCancelledEmail(
-        booking.member.email,
-        booking.member.firstName,
-        booking.checkIn,
-        booking.checkOut,
+        fresh.member.email,
+        fresh.member.firstName,
+        fresh.checkIn,
+        fresh.checkOut,
         0,
         "card"
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for no-payment booking"));
@@ -373,7 +386,7 @@ async function performBookingCancellation(
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
-      processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
         .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
     }
 

@@ -787,11 +787,22 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.txExecuteRaw.mockResolvedValue(undefined);
-    // #1311: the no-payment claim re-reads the booking status under the advisory
-    // lock. By default the re-read sees the SAME still-cancellable status the
-    // outer read saw, so the claim succeeds. The concurrency test overrides this
-    // to a converted status to model a quote-accept winning the lock race.
-    mocks.txBookingFindUnique.mockResolvedValue({ status: "AWAITING_REVIEW" });
+    // #1311 (follow-up to #1334): the no-payment claim re-reads the FULL booking
+    // row under the advisory lock and sources its downstream reconcile / audit /
+    // email / waitlist from THAT read. By default the under-lock re-read returns
+    // the same still-held row the outer read saw, so the claim succeeds. The
+    // concurrency test overrides the status to model a quote-accept winning the
+    // lock race.
+    mocks.txBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      memberId: "owner-1",
+      status: "AWAITING_REVIEW",
+      finalPriceCents: 1000,
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+      payment: null,
+    });
     // The no-payment claim now runs inside a $transaction callback (under the
     // advisory lock); the paid branches use the array form. Support both with a
     // full mock tx client so the claim can $executeRaw the lock, re-read, flip
@@ -956,9 +967,10 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
 
   it("takes the advisory lock, re-reads status under it, then flips a still-held booking to CANCELLED", async () => {
     // Winner path: both the outer read and the under-lock re-read see
-    // AWAITING_REVIEW, so the claim commits.
+    // AWAITING_REVIEW, so the claim commits. The under-lock read now returns the
+    // full row (its data feeds the downstream reconcile/audit/email/waitlist).
     mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
-    mocks.txBookingFindUnique.mockResolvedValue({ status: "AWAITING_REVIEW" });
+    mocks.txBookingFindUnique.mockResolvedValue({ ...heldBooking });
 
     const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
 
@@ -1023,5 +1035,80 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
     expect(mocks.logAudit).not.toHaveBeenCalled();
     expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+  });
+
+  // #1311 follow-up to #1334: the winner path must source its downstream
+  // reconcile / audit / cancellation email / waitlist re-process from the
+  // authoritative UNDER-LOCK read, not the stale pre-lock outer read. Diverge
+  // the two reads: the outer read carries stale member + dates, the under-lock
+  // read carries the authoritative member + dates (both WAITLIST_OFFERED, so the
+  // claim commits and the waitlist branch runs). Every observable downstream
+  // consumer must use the under-lock values.
+  it("sources the cancellation email, audit, and waitlist from the under-lock fresh row, not the stale outer read", async () => {
+    const staleCheckIn = new Date("2026-09-01");
+    const staleCheckOut = new Date("2026-09-03");
+    const freshCheckIn = new Date("2026-10-05");
+    const freshCheckOut = new Date("2026-10-07");
+
+    // Stale pre-lock read: passed the outer status guard, then the row was
+    // (hypothetically) re-quoted under a new member/date window before the lock.
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      memberId: "owner-1",
+      status: "WAITLIST_OFFERED",
+      finalPriceCents: 1000,
+      checkIn: staleCheckIn,
+      checkOut: staleCheckOut,
+      member: { id: "owner-1", email: "stale@example.com", firstName: "Stale" },
+      payment: null,
+    });
+    // Authoritative under-lock read: still in the no-payment set (claim wins).
+    mocks.txBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      memberId: "owner-1",
+      status: "WAITLIST_OFFERED",
+      finalPriceCents: 1000,
+      checkIn: freshCheckIn,
+      checkOut: freshCheckOut,
+      member: { id: "owner-1", email: "fresh@example.com", firstName: "Fresh" },
+      payment: null,
+    });
+
+    const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(lockWasAcquired()).toBe(true);
+
+    // Email uses the UNDER-LOCK member + dates, never the stale outer read.
+    expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "fresh@example.com",
+      "Fresh",
+      freshCheckIn,
+      freshCheckOut,
+      0,
+      "card",
+    );
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalledWith(
+      "stale@example.com",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    // Waitlist re-process (WAITLIST_OFFERED) uses the under-lock dates.
+    expect(mocks.processWaitlistForDates).toHaveBeenCalledWith({
+      checkIn: freshCheckIn,
+      checkOut: freshCheckOut,
+    });
+
+    // Audit metadata (checkIn/checkOut/statusBefore) is derived from the
+    // under-lock row: the ISO dates match the fresh window, not the stale one.
+    const auditMetadata = mocks.logAudit.mock.calls[0][0].metadata;
+    expect(auditMetadata.checkIn).toBe(freshCheckIn.toISOString());
+    expect(auditMetadata.checkOut).toBe(freshCheckOut.toISOString());
+    expect(auditMetadata.checkIn).not.toBe(staleCheckIn.toISOString());
   });
 });
