@@ -207,4 +207,43 @@ describe("POST /api/bookings/[id]/cancel", () => {
     );
     expect(res.status).toBe(403);
   });
+
+  // Issue #1367 (F14): a member whose ONLY role is a definition-backed custom
+  // role has an EMPTY enum accessRoles claim — the session carries the merged
+  // admin-permission matrix instead, and the route's
+  // hasAdminAreaAccess(session.user, …) gate must grant from it exactly as it
+  // does for the seeded Booking Officer above.
+  it("passes hasBookingsEditAccess: true for a custom definition-backed booking role (#1367)", async () => {
+    mockedAuth.mockResolvedValue({
+      user: {
+        id: "custom-officer-1",
+        role: "MEMBER",
+        accessRoles: [],
+        adminPermissionMatrix: {
+          overview: "none",
+          bookings: "edit",
+          membership: "none",
+          finance: "none",
+          lodge: "none",
+          content: "none",
+          support: "none",
+        },
+      },
+    } as any);
+
+    const res = await POST(
+      makeCancelRequest(JSON.stringify({ refundMethod: "card" })),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(cancelBooking).toHaveBeenCalledWith(
+      "booking-1",
+      "custom-officer-1",
+      "USER",
+      "127.0.0.1",
+      "card",
+      { hasBookingsEditAccess: true }
+    );
+  });
 });

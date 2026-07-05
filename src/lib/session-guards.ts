@@ -8,9 +8,11 @@ import {
 } from "@/lib/access-roles";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
+  getAdminPermissionMatrix,
   getAdminRouteRequirement,
   hasAdminAreaAccess,
   type AdminAccessRequirement,
+  type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import {
   REQUEST_METHOD_HEADER,
@@ -26,6 +28,7 @@ type SessionUser = {
   id: string;
   role: string;
   accessRoles: AppAccessRole[];
+  adminPermissionMatrix?: AdminPermissionMatrix;
   email?: string | null;
   twoFactorRequired?: boolean;
   twoFactorVerified?: boolean;
@@ -174,6 +177,10 @@ export async function requireAdmin(
         accessRoles: dedupeAccessRoles(
           member.accessRoles.map(({ role }) => role),
         ),
+        // DB-verified matrix for the same reason (#1367): downstream area
+        // checks on this user resolve from the rows this guard just read
+        // (definitions joined), not the JWT-carried snapshot.
+        adminPermissionMatrix: getAdminPermissionMatrix(member),
       },
     },
   };

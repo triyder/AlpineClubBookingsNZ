@@ -13,6 +13,7 @@ import {
   hasAdminPortalAccess,
   hasFinanceManagerAccess,
   hasFinanceViewerAccess,
+  sanitizeAdminPermissionMatrix,
   type AdminPermissionArea,
   type AdminPermissionLevel,
 } from "@/lib/admin-permissions";
@@ -825,5 +826,124 @@ describe("admin API authorization matrix (issue #1132)", () => {
     });
 
     expect(violations).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// #1367 (F14): session.user carries an embedded adminPermissionMatrix computed
+// from the DB-joined member, because its accessRoles claim is enum-only and
+// drops definition-backed custom roles. The embedded matrix is authoritative.
+// -----------------------------------------------------------------------------
+describe("embedded session permission matrix (#1367)", () => {
+  const ALL_NONE = {
+    overview: "none",
+    bookings: "none",
+    membership: "none",
+    finance: "none",
+    lodge: "none",
+    content: "none",
+    support: "none",
+  } as const;
+
+  // A session.user whose ONLY role is a custom definition granting
+  // bookings:edit — the enum claim is empty, the matrix carries the grant.
+  const customOfficerSessionUser = {
+    accessRoles: [] as AppAccessRole[],
+    adminPermissionMatrix: { ...ALL_NONE, bookings: "edit" },
+  };
+
+  it("grants a custom-role session user the same gates as a seeded Booking Officer", () => {
+    const seededOfficer = { accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole] };
+
+    for (const requirement of [
+      { area: "bookings", level: "view" },
+      { area: "bookings", level: "edit" },
+    ] as const) {
+      expect(hasAdminAreaAccess(customOfficerSessionUser, requirement)).toBe(
+        hasAdminAreaAccess(seededOfficer, requirement),
+      );
+      expect(hasAdminAreaAccess(customOfficerSessionUser, requirement)).toBe(
+        true,
+      );
+    }
+
+    // The cancel service's on-behalf role mapping (#1313 option A2) follows.
+    expect(bookingManagementAuthorizationRole(customOfficerSessionUser)).toBe(
+      bookingManagementAuthorizationRole({
+        accessRoles: ["ADMIN_BOOKINGS"],
+      }),
+    );
+    expect(bookingManagementAuthorizationRole(customOfficerSessionUser)).toBe(
+      "ADMIN",
+    );
+
+    // Portal access opens; Full-Admin separation-of-duties gates stay shut.
+    expect(hasAdminPortalAccess(customOfficerSessionUser)).toBe(true);
+    expect(hasAdminAccess(customOfficerSessionUser)).toBe(false);
+    // No leakage into areas the definition does not grant.
+    expect(
+      hasAdminAreaAccess(customOfficerSessionUser, {
+        area: "membership",
+        level: "view",
+      }),
+    ).toBe(false);
+  });
+
+  it("treats the embedded matrix as authoritative over enum bundles (a narrowed seeded role must not widen back)", () => {
+    // The club edited the seeded Booking Officer definition down to view-only;
+    // the jwt refresh embedded that narrowed matrix. The enum claim alone
+    // would re-derive the WIDER legacy bundle — it must not win.
+    const narrowedOfficer = {
+      accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole],
+      adminPermissionMatrix: { ...ALL_NONE, bookings: "view" },
+    };
+
+    expect(
+      hasAdminAreaAccess(narrowedOfficer, { area: "bookings", level: "view" }),
+    ).toBe(true);
+    expect(
+      hasAdminAreaAccess(narrowedOfficer, { area: "bookings", level: "edit" }),
+    ).toBe(false);
+  });
+
+  it("falls back to role derivation when the embedded value is not a matrix at all", () => {
+    expect(
+      hasAdminAreaAccess(
+        {
+          accessRoles: ["ADMIN_BOOKINGS" as AppAccessRole],
+          adminPermissionMatrix: "garbage",
+        },
+        { area: "bookings", level: "edit" },
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps canLogin=false ahead of the embedded matrix (cleared access stays cleared)", () => {
+    expect(
+      getAdminPermissionMatrix({
+        accessRoles: [],
+        canLogin: false,
+        adminPermissionMatrix: { ...ALL_NONE, bookings: "edit" },
+      }),
+    ).toEqual(ALL_NONE);
+  });
+
+  it("sanitizes per area, failing closed on malformed or missing levels", () => {
+    // Non-objects are rejected outright.
+    expect(sanitizeAdminPermissionMatrix(null)).toBeNull();
+    expect(sanitizeAdminPermissionMatrix(undefined)).toBeNull();
+    expect(sanitizeAdminPermissionMatrix("edit")).toBeNull();
+    expect(sanitizeAdminPermissionMatrix(["edit"])).toBeNull();
+
+    // Partial/malformed objects keep valid areas and zero the rest, so a
+    // matrix minted before a new area existed denies that area instead of
+    // being discarded (which would fall back to the wider bundle derivation).
+    expect(
+      sanitizeAdminPermissionMatrix({
+        bookings: "edit",
+        finance: "ADMIN",
+        lodge: 3,
+      }),
+    ).toEqual({ ...ALL_NONE, bookings: "edit" });
   });
 });

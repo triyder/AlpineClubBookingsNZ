@@ -5,6 +5,10 @@
  * code keeps full type feedback when the Session interface changes.
  */
 import type { Session } from "next-auth";
+import {
+  emptyAdminPermissionMatrix,
+  getAdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 type SessionUser = Session["user"];
 
@@ -14,6 +18,10 @@ const DEFAULT_USER: SessionUser = {
   name: "Test User",
   role: "USER",
   accessRoles: ["USER"],
+  // #1367: sessions always carry the merged admin-permission matrix; the
+  // all-none default matches a plain member. Tests modelling scoped/custom
+  // admins should override this rather than accessRoles.
+  adminPermissionMatrix: emptyAdminPermissionMatrix(),
   forcePasswordChange: false,
   isEmailVerified: true,
   twoFactorRequired: false,
@@ -23,8 +31,17 @@ const DEFAULT_USER: SessionUser = {
 };
 
 export function makeSession(user: Partial<SessionUser> = {}): Session {
+  const merged = { ...DEFAULT_USER, ...user };
+  // Mirror production (#1367): unless a test pins its own matrix, derive it
+  // from the fixture's roles exactly as the jwt callback derives it from the
+  // member's assignment rows — so adminSession() et al keep granting.
+  if (user.adminPermissionMatrix === undefined) {
+    merged.adminPermissionMatrix = getAdminPermissionMatrix({
+      accessRoles: merged.accessRoles,
+    });
+  }
   return {
-    user: { ...DEFAULT_USER, ...user },
+    user: merged,
     expires: "2099-01-01T00:00:00.000Z",
   };
 }
