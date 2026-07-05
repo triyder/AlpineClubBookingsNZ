@@ -266,6 +266,8 @@ describe("sendQuoteExpiryReminders — expired hold release (issue #1254)", () =
 describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1254)", () => {
   const past = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
   const future = () => new Date(Date.now() + 24 * 60 * 60 * 1000);
+  // Placed before the (now-lapsed) quote window → eligible for release.
+  const wayPast = () => new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
   beforeEach(() => {
     mocks.mockGetSettings.mockResolvedValue({
@@ -280,6 +282,7 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
       {
         id: "req-m",
         heldBookingId: "held-m",
+        heldBooking: { createdAt: wayPast() },
         quotes: [{ responseTokenExpiresAt: past() }],
       },
     ] as never);
@@ -290,6 +293,7 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     mocks.tx.bookingRequestQuote.count.mockResolvedValue(0);
     mocks.tx.booking.findUnique.mockResolvedValue({
       status: BookingStatus.AWAITING_REVIEW,
+      createdAt: wayPast(),
     });
 
     const result = await sendQuoteExpiryReminders();
@@ -348,5 +352,29 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     expect(result.releasedHoldCount).toBe(0);
     expect(mocks.tx.booking.update).not.toHaveBeenCalled();
     expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps a manual re-hold that post-dates the lapsed quote window (#1296)", async () => {
+    // An admin re-held a lingering MODIFY/QUERY request via "Hold slots" *after*
+    // its original quote window had already lapsed. The fresh hold's createdAt
+    // post-dates the deadline, so the next cron tick must keep it — not release
+    // the beds the admin just re-held.
+    vi.mocked(prisma.bookingRequest.findMany).mockResolvedValue([
+      {
+        id: "req-m4",
+        heldBookingId: "held-m4",
+        // Re-held ~1h ago, well after the 24h-ago window lapsed.
+        heldBooking: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+        quotes: [{ responseTokenExpiresAt: past() }],
+      },
+    ] as never);
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.releasedHoldCount).toBe(0);
+    expect(mocks.tx.booking.update).not.toHaveBeenCalled();
+    expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
+    // The pre-lock guard short-circuits before opening a transaction.
+    expect(mocks.prismaMock.$transaction).not.toHaveBeenCalled();
   });
 });

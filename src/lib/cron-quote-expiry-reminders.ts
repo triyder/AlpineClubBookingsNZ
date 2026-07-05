@@ -248,6 +248,11 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
  * but a currently-SENT quote does — those requests are excluded and handled by
  * the expiry/accept paths instead.
  *
+ * A hold is only released when it was placed on or before that deadline. A hold
+ * that post-dates the lapsed window — e.g. an admin manually re-held the request
+ * via the "Hold slots" button after its original quote window had passed — is
+ * kept, so the next cron tick never undoes a deliberate re-hold (#1296).
+ *
  * Idempotent and concurrency-safe: each release runs under the shared booking
  * advisory lock and re-verifies the request is still in a modify/query state
  * with no SENT quote and a live AWAITING_REVIEW hold, so a race with a re-quote
@@ -270,6 +275,9 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
     select: {
       id: true,
       heldBookingId: true,
+      // The hold's own age gates release: a re-hold that post-dates the lapsed
+      // window is kept (#1296).
+      heldBooking: { select: { createdAt: true } },
       quotes: { select: { responseTokenExpiresAt: true } },
     },
   });
@@ -291,6 +299,15 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
       Math.max(...windows.map((date) => date.getTime())),
     );
     if (deadline > now) continue;
+
+    // Keep a hold placed *after* the lapsed window — an admin manually re-held
+    // the request via "Hold slots" once its original quote window had already
+    // passed. Only release holds placed on or before the deadline; releasing a
+    // fresh re-hold on the next tick would defeat the admin's intent (#1296).
+    // The under-lock re-read re-confirms this defensively.
+    if (request.heldBooking && request.heldBooking.createdAt > deadline) {
+      continue;
+    }
 
     try {
       const released = await prisma.$transaction(async (tx) => {
@@ -321,11 +338,15 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
 
         const held = await tx.booking.findUnique({
           where: { id: heldBookingId },
-          select: { status: true },
+          select: { status: true, createdAt: true },
         });
         if (!held || held.status !== BookingStatus.AWAITING_REVIEW) {
           return false;
         }
+        // Defensive re-check: keep a hold that post-dates the lapsed window (a
+        // manual re-hold via "Hold slots"); only release holds placed on or
+        // before the deadline (#1296).
+        if (held.createdAt > deadline) return false;
 
         await tx.booking.update({
           where: { id: heldBookingId },

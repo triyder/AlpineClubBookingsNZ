@@ -168,6 +168,10 @@ phase also frees holds stuck behind a MODIFICATION_REQUESTED / QUERY_PENDING
 request that has no outstanding SENT quote, once the latest response window
 (`max(responseTokenExpiresAt)` across its quotes) has lapsed — otherwise a
 "please change X" / "I have a question" bounce would hold a bed indefinitely.
+This release only fires when the held booking was itself placed on or before
+that deadline: a hold that post-dates the lapsed window — e.g. an admin manually
+re-held the request via "Hold slots" after its original quote window had passed —
+is kept, so the next cron tick never undoes the deliberate re-hold (#1296).
 
 Because an admin can cancel a held booking directly (every sent quote leaves one,
 tagged "Held" on the bed board), `heldBookingId` is detached wherever such a hold
