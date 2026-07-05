@@ -529,4 +529,55 @@ describe("startXeroSyncOperation", () => {
     expect(createArg.data.attemptCount).toBe(2);
     expect(createArg.data).not.toHaveProperty("store");
   });
+
+  it("denormalizes queueType from the persisted payload with no drift (#1271)", async () => {
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "payment_qt",
+      status: "PENDING",
+      idempotencyKey: "booking:booking_qt:invoice:v1",
+      correlationKey: "booking:booking_qt:invoice:v1",
+      requestPayload: {
+        queueType: "BOOKING_INVOICE",
+        bookingId: "booking_qt",
+      },
+    });
+
+    const createArg = mocks.operationCreate.mock.calls[0][0];
+    // The denormalized column is derived from the SAME persisted payload, so it
+    // is exactly equal to requestPayload.queueType -- the round-trip invariant.
+    expect(createArg.data.queueType).toBe("BOOKING_INVOICE");
+    expect(createArg.data.queueType).toBe(
+      (createArg.data.requestPayload as { queueType?: string }).queueType
+    );
+  });
+
+  it("persists a null queueType for a REQUEUE payload that carries none (#1271)", async () => {
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "REQUEUE",
+      localModel: "Payment",
+      localId: "payment_rq",
+      status: "PENDING",
+      correlationKey: "xero-operation:requeue:op_original_1",
+      replayable: false,
+      requestPayload: {
+        originalOperationId: "op_original_1",
+        originalOperationType: "CREATE",
+        originalStatus: "FAILED",
+      },
+    });
+
+    const createArg = mocks.operationCreate.mock.calls[0][0];
+    // REQUEUE rows have no queueType in their payload, so the denormalized
+    // column stays null and never invents a value.
+    expect(createArg.data.queueType).toBeNull();
+    expect(
+      (createArg.data.requestPayload as { queueType?: string }).queueType
+    ).toBeUndefined();
+  });
 });

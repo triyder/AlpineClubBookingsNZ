@@ -2072,6 +2072,13 @@ model XeroSyncOperation {
   lastErrorCode     String?
   lastErrorMessage  String?
   requestPayload    Json?
+  // Denormalized, indexed copy of the outbox `requestPayload.queueType` (#1271,
+  // item 3 of #1208). The payload field stays canonical: it is set at enqueue
+  // and is immutable thereafter, so this column is derived once at row creation
+  // in `startXeroSyncOperation` and never desyncs. Null for REQUEUE, BACKFILL,
+  // inbound, and any other non-outbox row that carries no queueType. Making this
+  // column the sole source (dropping the payload read) is deferred to #1272.
+  queueType         String?
   responsePayload   Json?
   xeroObjectType    String?
   xeroObjectId      String?
@@ -2092,6 +2099,7 @@ model XeroSyncOperation {
   @@index([status, createdAt])
   @@index([direction, status, createdAt])
   @@index([entityType, status, createdAt])
+  @@index([queueType, status, createdAt])
   @@index([localModel, localId, createdAt])
   // No @@unique on correlationKey/idempotencyKey by design (#1234, invariant (c)):
   // (1) the same key legitimately recurs across rows over time -- a terminal-status

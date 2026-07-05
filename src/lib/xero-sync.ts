@@ -332,6 +332,14 @@ export async function startXeroSyncOperation(
     ? (await db.xeroSyncOperation.count({ where: attemptWhere })) + 1
     : 1;
 
+  // Denormalized, indexed copy of the outbox queue type (#1271, item 3 of
+  // #1208). Derive it verbatim from the SAME sanitized payload that gets
+  // persisted so the column can never desync from `requestPayload.queueType`.
+  // Rows without a queueType (REQUEUE, inbound reconciles, backfill) stay null.
+  const requestPayload = sanitizeForJson(input.requestPayload);
+  const payloadRecord = asRecord(requestPayload);
+  const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;
+
   return db.xeroSyncOperation.create({
     data: {
       direction: input.direction,
@@ -344,7 +352,8 @@ export async function startXeroSyncOperation(
       correlationKey: input.correlationKey ?? null,
       attemptCount,
       replayable: input.replayable ?? true,
-      requestPayload: sanitizeForJson(input.requestPayload),
+      requestPayload,
+      queueType,
       createdByMemberId: input.createdByMemberId ?? null,
       startedAt: input.status === "PENDING" ? null : new Date(),
     },
