@@ -119,7 +119,7 @@ export async function submitLoginForm(
 // codes. Leaves the browser on the post-login destination.
 export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFactor> {
   await expect(
-    page.getByText("Set up two-factor authentication"),
+    page.getByRole("heading", { name: "Set up two-factor authentication" }),
   ).toBeVisible();
 
   const setupKey = page.locator("div.font-mono").first();
@@ -129,7 +129,9 @@ export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFa
   await page.locator("#totp-code").fill(totpCode(secret));
   await page.getByRole("button", { name: "Enroll" }).click();
 
-  await expect(page.getByText("Save your recovery codes")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Save your recovery codes" }),
+  ).toBeVisible();
   const recoveryCodes = (
     await page.locator("div.font-mono > div").allInnerTexts()
   ).map((code) => code.trim());
