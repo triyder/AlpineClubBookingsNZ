@@ -457,6 +457,23 @@ export async function createBookingRequestQuote(input: {
   const quotedAt = new Date();
 
   const quote = await prisma.$transaction(async (tx) => {
+    // #1423 lock-ordering invariant: lock the BookingRequest row BEFORE any
+    // BookingRequestQuote row (matching decline's claim-first order) so a
+    // concurrent decline + quote-create on the same request cannot deadlock.
+    // Pure statement reorder — same writes, same transaction.
+    await tx.bookingRequest.update({
+      where: { id: request.id },
+      data: {
+        status: BookingRequestStatus.QUOTED,
+        priceCents: options.length === 1 ? options[0].totalCents : null,
+        pricedByMemberId: input.adminMemberId,
+        pricedAt: quotedAt,
+        linkedGuestMembers: linkedGuestMembers as unknown as Prisma.InputJsonValue,
+        responseMessage: null,
+        responseMessageAt: null,
+      },
+    });
+
     const latest = await tx.bookingRequestQuote.findFirst({
       where: { bookingRequestId: request.id },
       orderBy: { version: "desc" },
@@ -488,19 +505,6 @@ export async function createBookingRequestQuote(input: {
         options: options as unknown as Prisma.InputJsonValue,
         message,
         createdByMemberId: input.adminMemberId,
-      },
-    });
-
-    await tx.bookingRequest.update({
-      where: { id: request.id },
-      data: {
-        status: BookingRequestStatus.QUOTED,
-        priceCents: options.length === 1 ? options[0].totalCents : null,
-        pricedByMemberId: input.adminMemberId,
-        pricedAt: quotedAt,
-        linkedGuestMembers: linkedGuestMembers as unknown as Prisma.InputJsonValue,
-        responseMessage: null,
-        responseMessageAt: null,
       },
     });
 
@@ -591,6 +595,23 @@ export async function sendBookingRequestQuote(input: {
   const expiresAt = new Date(sentAt.getTime() + ttlMs);
 
   const updated = await prisma.$transaction(async (tx) => {
+    // #1423 lock-ordering invariant: lock the BookingRequest row BEFORE the
+    // BookingRequestQuote row (matching decline's claim-first order) so a
+    // concurrent decline + re-send on the same request cannot deadlock. Pure
+    // statement reorder — same writes, same transaction. (Pre-existing gap, not
+    // fixed here to avoid touching the hold placed before this tx: this request
+    // update is unguarded, so an admin re-send racing a decline in the narrow
+    // window after holdBookingRequestSlots' own status check could resurrect a
+    // just-DECLINED request to QUOTE_SENT — a possible follow-up.)
+    await tx.bookingRequest.update({
+      where: { id: quote.bookingRequestId },
+      data: {
+        status: BookingRequestStatus.QUOTE_SENT,
+        reviewedByMemberId: input.adminMemberId,
+        reviewedAt: sentAt,
+      },
+    });
+
     const saved = await tx.bookingRequestQuote.update({
       where: { id: quote.id },
       data: {
@@ -600,15 +621,6 @@ export async function sendBookingRequestQuote(input: {
         sentAt,
         reminderSentAt: null,
         createdByMemberId: quote.createdByMemberId ?? input.adminMemberId,
-      },
-    });
-
-    await tx.bookingRequest.update({
-      where: { id: quote.bookingRequestId },
-      data: {
-        status: BookingRequestStatus.QUOTE_SENT,
-        reviewedByMemberId: input.adminMemberId,
-        reviewedAt: sentAt,
       },
     });
 
@@ -729,20 +741,41 @@ export async function respondToBookingRequestQuote(input: {
   const respondedAt = new Date();
 
   if (input.action === "CANCEL") {
-    await prisma.$transaction(async (tx) => {
+    // #1423 lock-ordering invariant: acquire the BookingRequest row lock BEFORE
+    // the BookingRequestQuote row lock, matching decline's forced claim-first
+    // order, so a concurrent decline + cancel on the same request cannot
+    // deadlock (Postgres 40P01, which would otherwise abort one side into an
+    // unhandled 500). The status update is also status-guarded: if a concurrent
+    // admin decline already finalised the request (and released any hold), CANCEL
+    // must NOT overwrite DECLINED/CONVERTED/etc. -> CANCELLED — it claims nothing
+    // and touches neither the quote nor the hold.
+    const cancelled = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.bookingRequest.updateMany({
+        where: {
+          id: quote.bookingRequestId,
+          status: {
+            notIn: [
+              BookingRequestStatus.DECLINED,
+              BookingRequestStatus.CANCELLED,
+              BookingRequestStatus.CONVERTED,
+              BookingRequestStatus.APPROVED,
+            ],
+          },
+        },
+        data: {
+          status: BookingRequestStatus.CANCELLED,
+          responseMessage: message,
+          responseMessageAt: respondedAt,
+        },
+      });
+      if (claimed.count === 0) {
+        return { finalised: true as const };
+      }
       await tx.bookingRequestQuote.update({
         where: { id: quote.id },
         data: {
           status: BookingRequestQuoteStatus.CANCELLED,
           cancelledAt: respondedAt,
-        },
-      });
-      await tx.bookingRequest.update({
-        where: { id: quote.bookingRequestId },
-        data: {
-          status: BookingRequestStatus.CANCELLED,
-          responseMessage: message,
-          responseMessageAt: respondedAt,
         },
       });
       if (quote.bookingRequest.heldBookingId) {
@@ -753,14 +786,27 @@ export async function respondToBookingRequestQuote(input: {
         });
         // Release the reserved beds and detach the pointer so the hold no longer
         // consumes capacity and a later re-hold can never reuse a cancelled row
-        // (issue #1254).
+        // (issue #1254). Locking the Booking row after the BookingRequest row
+        // adds no new cycle — decline releases its hold in a SEPARATE self-locked
+        // cancelBooking tx, outside decline's claim transaction.
         await reconcileBedAllocationsForBooking({ bookingId: heldBookingId, db: tx });
         await tx.bookingRequest.update({
           where: { id: quote.bookingRequestId },
           data: { heldBookingId: null },
         });
       }
+      return { finalised: false as const };
     });
+    if (cancelled.finalised) {
+      // A concurrent admin decline (or a prior cancel) already finalised the
+      // request in the narrow window after loadSentQuoteByToken read this quote
+      // as SENT. Surface a clean 409 rather than letting a later write clobber
+      // the finalised state.
+      throw new BookingRequestQuoteError(
+        "This quote can no longer be cancelled — the booking request has already been finalised.",
+        409
+      );
+    }
     logAudit({
       action: "booking_request.quote_cancelled",
       targetId: quote.bookingRequestId,
@@ -781,15 +827,27 @@ export async function respondToBookingRequestQuote(input: {
 
   if (input.action === "MODIFY" || input.action === "QUERY") {
     await prisma.$transaction(async (tx) => {
-      await tx.bookingRequestQuote.update({
-        where: { id: quote.id },
-        data: {
-          status: BookingRequestQuoteStatus.SUPERSEDED,
-          supersededAt: respondedAt,
+      // #1423 lock-ordering invariant + resurrection guard: acquire the
+      // BookingRequest row lock FIRST (matching decline's claim-first order, so a
+      // concurrent decline + modify/query cannot deadlock), and status-guard it.
+      // A concurrent admin decline (or requester cancel) may have finalised this
+      // request to DECLINED/CANCELLED between loadSentQuoteByToken and here (the
+      // decline retires the SENT quote, but a POST already in flight had loaded
+      // it a moment earlier). The guarded updateMany refuses to resurrect a
+      // finalised request into MODIFICATION_REQUESTED/QUERY_PENDING; because it
+      // runs BEFORE the quote supersede below, a throw on count 0 leaves the
+      // quote untouched (no rollback needed). A normal MODIFY/QUERY on a live
+      // QUOTE_SENT request passes (count 1), so no happy-path regression.
+      const restated = await tx.bookingRequest.updateMany({
+        where: {
+          id: quote.bookingRequestId,
+          status: {
+            notIn: [
+              BookingRequestStatus.DECLINED,
+              BookingRequestStatus.CANCELLED,
+            ],
+          },
         },
-      });
-      await tx.bookingRequest.update({
-        where: { id: quote.bookingRequestId },
         data: {
           status:
             input.action === "MODIFY"
@@ -797,6 +855,19 @@ export async function respondToBookingRequestQuote(input: {
               : BookingRequestStatus.QUERY_PENDING,
           responseMessage: message,
           responseMessageAt: respondedAt,
+        },
+      });
+      if (restated.count === 0) {
+        throw new BookingRequestQuoteError(
+          "This quote can no longer be updated — the booking request has been declined or cancelled.",
+          409
+        );
+      }
+      await tx.bookingRequestQuote.update({
+        where: { id: quote.id },
+        data: {
+          status: BookingRequestQuoteStatus.SUPERSEDED,
+          supersededAt: respondedAt,
         },
       });
     });
@@ -838,11 +909,30 @@ export async function respondToBookingRequestQuote(input: {
     );
   }
 
-  // Re-arming a just-converted request back to PRICED here is safe: approve is
-  // idempotent on convertedBookingId (#1232), so a concurrent double-accept
-  // returns the existing booking instead of creating a second one.
-  await prisma.bookingRequest.update({
-    where: { id: quote.bookingRequestId },
+  // Re-arm the request to PRICED so approve can convert it. This is a
+  // status-guarded `updateMany`, NOT a plain `update`, to close the
+  // decline-wins-first resurrection race (#1423): an admin decline (or a
+  // requester quote-cancel) may have finalised this request to DECLINED/CANCELLED
+  // and released its capacity hold AFTER this accept passed the SENT-token check.
+  // A plain overwrite to PRICED would resurrect that finalised request — approve
+  // would see a null convertedBookingId, so its #1232 idempotency replay would
+  // NOT fire and it would mint a brand-new PENDING booking + Payment + PaymentLink
+  // off a declined request (money/capacity correctness bug). We therefore refuse
+  // to re-arm only when the request is already DECLINED/CANCELLED.
+  //
+  // We deliberately use `notIn [DECLINED, CANCELLED]` rather than
+  // `status = QUOTE_SENT`: a request already CONVERTED/APPROVED (the #1232
+  // double-accept case) must STILL re-arm to PRICED so approve's idempotency
+  // replay (booking-request.ts ~900-919 — reads the still-set convertedBookingId
+  // and returns the existing booking) keeps returning the one real booking. Only
+  // a decline/cancel finalisation blocks the re-arm.
+  const rearmed = await prisma.bookingRequest.updateMany({
+    where: {
+      id: quote.bookingRequestId,
+      status: {
+        notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
+      },
+    },
     data: {
       status: BookingRequestStatus.PRICED,
       priceCents: option.totalCents,
@@ -855,6 +945,12 @@ export async function respondToBookingRequestQuote(input: {
       responseMessageAt: message ? respondedAt : null,
     },
   });
+  if (rearmed.count === 0) {
+    throw new BookingRequestQuoteError(
+      "This quote can no longer be accepted — the booking request has been declined or cancelled.",
+      409
+    );
+  }
 
   const conversion =
     quote.bookingRequest.type === BookingRequestType.SCHOOL
@@ -868,8 +964,18 @@ export async function respondToBookingRequestQuote(input: {
         });
 
   if (conversion.type === "capacityExceeded") {
-    await prisma.bookingRequest.update({
-      where: { id: quote.bookingRequestId },
+    // #1423: revert the losing accept to QUOTE_SENT, but ONLY if the request is
+    // not already finalised — a concurrent admin decline (or requester cancel)
+    // may have moved it to DECLINED/CANCELLED. Guard with updateMany + notIn so
+    // the revert can never un-decline a finalised request; if it was finalised
+    // we simply do not revert (the accept already 409s below via capacityExceeded).
+    await prisma.bookingRequest.updateMany({
+      where: {
+        id: quote.bookingRequestId,
+        status: {
+          notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
+        },
+      },
       data: {
         status: BookingRequestStatus.QUOTE_SENT,
         acceptedQuoteId: null,

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingRequestStatus, BookingStatus, PaymentStatus } from "@prisma/client";
+import {
+  BookingRequestQuoteStatus,
+  BookingRequestStatus,
+  BookingStatus,
+  PaymentStatus,
+} from "@prisma/client";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -13,6 +18,9 @@ vi.mock("@/lib/prisma", () => ({
     bookingRequestSettings: {
       findUnique: vi.fn(),
       upsert: vi.fn(),
+    },
+    bookingRequestQuote: {
+      updateMany: vi.fn(),
     },
     member: {
       create: vi.fn(),
@@ -134,6 +142,7 @@ const mockedLogAudit = vi.mocked(logAudit);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
 const mockedBookingFindUnique = vi.mocked(prisma.booking.findUnique);
 const mockedCancelBooking = vi.mocked(cancelBooking);
+const mockedQuoteUpdateMany = vi.mocked(prisma.bookingRequestQuote.updateMany);
 
 function memberNightConflictError() {
   return new BookingMemberNightConflictError([
@@ -475,6 +484,14 @@ describe("priceBookingRequest", () => {
 describe("declineBookingRequest", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // #1423: the claim + SENT-quote retirement now run in one interactive
+    // transaction; run the callback against the same prisma mock so the inner
+    // tx.bookingRequest.updateMany / tx.bookingRequestQuote.updateMany are the
+    // spied mocks.
+    mockedTransaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
+      fn(prisma)
+    );
+    mockedQuoteUpdateMany.mockResolvedValue({ count: 1 } as never);
   });
 
   it("throws 404 when the request does not exist", async () => {
@@ -507,15 +524,6 @@ describe("declineBookingRequest", () => {
     );
   });
 
-  it("rejects declining a request that is not VERIFIED or PRICED", async () => {
-    mockedFindUnique.mockResolvedValue(baseRequest({ status: BookingRequestStatus.CONVERTED }) as never);
-    mockedUpdateMany.mockResolvedValue({ count: 0 } as never);
-
-    await expect(
-      declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
   it("declining a request WITHOUT a hold never touches the cancel path (#1365)", async () => {
     mockedFindUnique
       .mockResolvedValueOnce(baseRequest({ status: BookingRequestStatus.PRICED }) as never)
@@ -535,30 +543,145 @@ describe("declineBookingRequest", () => {
     expect(mockedBookingFindUnique).not.toHaveBeenCalled();
   });
 
-  it("does NOT decline a generic QUOTE_SENT held request and never touches its hold (#1365)", async () => {
-    // Regression guard (Blocker 1): after #1385 a generic held request is
-    // QUOTE_SENT (auto-hold-on-send #1280), NOT VERIFIED/PRICED, so this route
-    // must 409 WITHOUT touching the hold. Claim-first ordering guarantees a
-    // failed decline has no destructive side effect on the held booking.
-    mockedFindUnique.mockResolvedValue(
-      baseRequest({
-        status: BookingRequestStatus.QUOTE_SENT,
-        heldBookingId: "held-1",
-      }) as never
-    );
-    mockedUpdateMany.mockResolvedValue({ count: 0 } as never);
+  it("declines a QUOTE_SENT held request and releases its AWAITING_REVIEW hold (#1423)", async () => {
+    // #1423 broadened decline to the six held/editor states, including a generic
+    // QUOTE_SENT request (auto-hold-on-send #1280). It must now claim DECLINED
+    // and release the held booking via the shared cancel path (requireRequestHold
+    // so a racing requester accept that already converted the hold is not
+    // clobbered).
+    mockedFindUnique
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.QUOTE_SENT,
+          heldBookingId: "held-1",
+        }) as never
+      )
+      .mockResolvedValueOnce(
+        baseRequest({
+          status: BookingRequestStatus.DECLINED,
+          heldBookingId: null,
+        }) as never
+      );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedBookingFindUnique.mockResolvedValue({
+      id: "held-1",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    mockedCancelBooking.mockResolvedValue({
+      status: 200,
+      data: { success: true },
+    } as never);
 
-    await expect(
-      declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
-    ).rejects.toMatchObject({ status: 409 });
+    const updated = await declineBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+      reason: "No longer available",
+      ipAddress: "203.0.113.9",
+    });
 
-    // Hold left completely intact: no held-booking read, no cancel, no detach.
-    expect(mockedCancelBooking).not.toHaveBeenCalled();
-    expect(mockedBookingFindUnique).not.toHaveBeenCalled();
-    expect(mockedUpdateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: { heldBookingId: null } })
+    expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+    // The decline claim ran, then the hold was released (cancelBooking detaches
+    // heldBookingId + frees the beds — asserted in booking-cancel's own tests).
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: BookingRequestStatus.DECLINED }),
+      })
     );
+    expect(mockedCancelBooking).toHaveBeenCalledWith(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "203.0.113.9",
+      "card",
+      { suppressCustomerNotification: true, requireRequestHold: true }
+    );
+    // #1423: the outstanding SENT quote is retired (SENT -> SUPERSEDED) in the
+    // same transaction as the claim, so no requester quote action or reminder
+    // cron can act on the declined request.
+    expect(mockedQuoteUpdateMany).toHaveBeenCalledWith({
+      where: {
+        bookingRequestId: "req-1",
+        status: BookingRequestQuoteStatus.SENT,
+      },
+      data: expect.objectContaining({
+        status: BookingRequestQuoteStatus.SUPERSEDED,
+      }),
+    });
   });
+
+  it.each([
+    BookingRequestStatus.QUERY_PENDING,
+    BookingRequestStatus.MODIFICATION_REQUESTED,
+  ])(
+    "declines a %s held request and releases its AWAITING_REVIEW hold (#1423)",
+    async (status) => {
+      mockedFindUnique
+        .mockResolvedValueOnce(
+          baseRequest({ status, heldBookingId: "held-1" }) as never
+        )
+        .mockResolvedValueOnce(
+          baseRequest({
+            status: BookingRequestStatus.DECLINED,
+            heldBookingId: null,
+          }) as never
+        );
+      mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+      mockedBookingFindUnique.mockResolvedValue({
+        id: "held-1",
+        status: BookingStatus.AWAITING_REVIEW,
+      } as never);
+      mockedCancelBooking.mockResolvedValue({
+        status: 200,
+        data: { success: true },
+      } as never);
+
+      const updated = await declineBookingRequest({
+        requestId: "req-1",
+        adminMemberId: "admin-1",
+        ipAddress: "203.0.113.10",
+      });
+
+      expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
+      expect(mockedCancelBooking).toHaveBeenCalledWith(
+        "held-1",
+        "admin-1",
+        "ADMIN",
+        "203.0.113.10",
+        "card",
+        { suppressCustomerNotification: true, requireRequestHold: true }
+      );
+    }
+  );
+
+  it.each([
+    BookingRequestStatus.APPROVED,
+    BookingRequestStatus.CONVERTED,
+    BookingRequestStatus.DECLINED,
+    BookingRequestStatus.CANCELLED,
+  ])(
+    "409s a terminal %s request and never touches its hold (#1423)",
+    async (status) => {
+      // The updateMany claim finds nothing (status not in the declinable set),
+      // so it 409s claim-first: no held-booking read, no cancel, no detach.
+      mockedFindUnique.mockResolvedValue(
+        baseRequest({ status, heldBookingId: "held-1" }) as never
+      );
+      mockedUpdateMany.mockResolvedValue({ count: 0 } as never);
+
+      await expect(
+        declineBookingRequest({ requestId: "req-1", adminMemberId: "admin-1" })
+      ).rejects.toMatchObject({ status: 409 });
+
+      expect(mockedCancelBooking).not.toHaveBeenCalled();
+      expect(mockedBookingFindUnique).not.toHaveBeenCalled();
+      expect(mockedUpdateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { heldBookingId: null } })
+      );
+      // A failed (wrong-state) decline retires NO quote — claim-first, the tx
+      // returns before the quote retirement.
+      expect(mockedQuoteUpdateMany).not.toHaveBeenCalled();
+    }
+  );
 
   it("releases an AWAITING_REVIEW hold via the shared cancel path AFTER the decline claim (#1365)", async () => {
     // A PRICED request carrying a SCHOOL-style manual hold: claim DECLINED
