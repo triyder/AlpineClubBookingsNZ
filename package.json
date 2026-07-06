@@ -49,7 +49,8 @@
     "db:push": "npx prisma db push",
     "db:check-drift": "prisma migrate diff --from-migrations ./prisma/migrations --to-schema ./prisma/schema.prisma --exit-code",
     "db:audit-access-role-cleanup": "tsx scripts/audit-access-role-membership-cleanup.ts",
-    "xero:audit-invoice-rounding": "tsx scripts/audit-xero-invoice-rounding.ts"
+    "xero:audit-invoice-rounding": "tsx scripts/audit-xero-invoice-rounding.ts",
+    "finance:backfill-monthly-facts": "tsx scripts/backfill-finance-monthly-facts.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

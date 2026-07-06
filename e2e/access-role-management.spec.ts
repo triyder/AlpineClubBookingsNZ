@@ -107,7 +107,7 @@ test("a full admin creates, edits, assigns a custom access role and sees the eff
   // Wanda derives as a plain "User", so the picker (and the custom role's
   // checkbox) only appears once the type is switched to Admin. "Also a club
   // member" defaults on, so her USER token is kept alongside the new role.
-  await accessGroup.getByRole("combobox").click();
+  await accessGroup.getByRole("combobox", { name: "User Type" }).click();
   await page.getByRole("option", { name: "Admin", exact: true }).click();
 
   // Tick the new role's checkbox — scoped through its wrapping <label> (whose

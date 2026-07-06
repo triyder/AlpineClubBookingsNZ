@@ -3,6 +3,7 @@
 // xero-booking-repair.ts (#1208 item 2).
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { getOperationQueueTypeHint } from "./xero-booking-repair-utils";
 import type {
   BlockingOperationMatch,
   ResolvedLocalObject,
@@ -28,6 +29,25 @@ function buildObjectUrl(
   return null;
 }
 
+// #1427: an operation of a DIFFERENT queueType belongs to another money
+// object that happens to share entityType/operationType (a modification
+// holds both an invoice-applied credit-note op and an account-credit-note
+// op). getOperationQueueTypeHint resolves the kind across every ledger era
+// (column, payload, correlation-key segment — executors overwrite payloads
+// at dispatch and the #1347 column backfill copied from those overwritten
+// payloads, so the key segment is decisive for pre-column executed rows).
+// Rows carrying no hint at all stay admissible.
+function payloadQueueTypeCompatible(
+  operation: XeroOperationRecord,
+  payloadQueueType: string | undefined
+): boolean {
+  if (!payloadQueueType) {
+    return true;
+  }
+  const queueType = getOperationQueueTypeHint(operation);
+  return queueType === null || queueType === payloadQueueType;
+}
+
 export function resolveObjectFromCandidates(params: {
   fieldObjectId?: string | null;
   fieldObjectNumber?: string | null;
@@ -38,6 +58,9 @@ export function resolveObjectFromCandidates(params: {
   role?: string;
   entityType?: string;
   operationType?: string;
+  // When set, operation candidates must carry this payload queueType (or a
+  // legacy payload naming none) — link/field candidates are unaffected.
+  payloadQueueType?: string;
 }): ResolvedLocalObject | null {
   const candidates: ResolvedLocalObject[] = [];
 
@@ -92,6 +115,9 @@ export function resolveObjectFromCandidates(params: {
     if (!operation.xeroObjectId) {
       continue;
     }
+    if (!payloadQueueTypeCompatible(operation, params.payloadQueueType)) {
+      continue;
+    }
 
     candidates.push({
       objectId: operation.xeroObjectId,
@@ -127,7 +153,8 @@ export function resolveObjectFromCandidates(params: {
 export function getBlockingOperation(
   operations: XeroOperationRecord[],
   entityType: string,
-  operationType: string
+  operationType: string,
+  options?: { payloadQueueType?: string }
 ): BlockingOperationMatch | null {
   // WAITING_PAYMENT blocks like PENDING/RUNNING (#1356): a supplementary
   // invoice legitimately parked on its additional Stripe payment must not be
@@ -140,7 +167,8 @@ export function getBlockingOperation(
       operation.operationType === operationType &&
       ["FAILED", "PARTIAL", "PENDING", "RUNNING", "WAITING_PAYMENT"].includes(
         operation.status
-      )
+      ) &&
+      payloadQueueTypeCompatible(operation, options?.payloadQueueType)
   );
 
   if (relevant.length === 0) {

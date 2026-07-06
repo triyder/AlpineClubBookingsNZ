@@ -650,6 +650,85 @@ describe("N-02: sendAdminNewBookingAlert", () => {
   });
 });
 
+describe("F20 / #1377: sendAdminOwnerSubstitutionAlert", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "finance@example.org" }]);
+    mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
+    mockPrisma.emailLog.update.mockResolvedValue({});
+    mockPrisma.emailSuppression.findFirst.mockResolvedValue(null);
+    mockPrisma.auditLog.create.mockResolvedValue({});
+    mockTransporter.sendMail.mockResolvedValue({ messageId: "msg-123" });
+  });
+
+  const ownerSubstitutionData = {
+    requestId: "req-xyz",
+    bookingId: "bk-123",
+    intendedMemberId: "intended-1",
+    intendedMemberName: "Alpine Org",
+    substituteMemberId: "fresh-9",
+    substituteMemberName: "Casey Requester",
+    reason: "held owner is now login-capable",
+    requesterName: "Casey Requester",
+    requesterEmail: "casey@example.com",
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+  };
+
+  it("sends with the admin-owner-substitution template and renders the reconciliation facts", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+
+    const { sendAdminOwnerSubstitutionAlert } = await import("../email");
+    await sendAdminOwnerSubstitutionAlert(ownerSubstitutionData);
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        to: "finance@example.org",
+        templateName: "admin-owner-substitution",
+      }),
+    });
+    const sentHtml = mockTransporter.sendMail.mock.calls[0][0].html as string;
+    expect(sentHtml).toContain("Owner Substitution");
+    expect(sentHtml).toContain("reconcile the invoice");
+    expect(sentHtml).toContain("req-xyz");
+    expect(sentHtml).toContain("bk-123");
+    expect(sentHtml).toContain("intended-1");
+    expect(sentHtml).toContain("fresh-9");
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
+  });
+
+  it("is gated by the Xero-sync-error admin preference", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      {
+        email: "enabled@example.org",
+        notificationPreference: { adminXeroSyncError: true },
+      },
+      {
+        email: "disabled@example.org",
+        notificationPreference: { adminXeroSyncError: false },
+      },
+      {
+        email: "default@example.org",
+        notificationPreference: null,
+      },
+    ]);
+
+    const { sendAdminOwnerSubstitutionAlert } = await import("../email");
+    await sendAdminOwnerSubstitutionAlert(ownerSubstitutionData);
+
+    const recipients = mockPrisma.emailLog.create.mock.calls.map(
+      (call) => call[0].data.to
+    );
+
+    expect(recipients).toContain("enabled@example.org");
+    expect(recipients).toContain("default@example.org");
+    expect(recipients).not.toContain("disabled@example.org");
+  });
+});
+
 describe("Admin member request alerts", () => {
   beforeEach(() => {
     vi.clearAllMocks();

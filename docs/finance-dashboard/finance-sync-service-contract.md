@@ -50,6 +50,11 @@ Optional snapshot metadata:
 - `periodEnd`
 - `currency`
 - `sourceUpdatedAt`
+- `monthlyFacts` — derived monthly per-account fact rows; when present, the
+  service persists them to `FinanceAccountMonthlyBalance` (replacing the
+  covered months) right after the snapshot upsert, and records
+  `factRowCount`/`unresolvedFactRowCount` in the dataset result and run
+  summary. See `finance-monthly-facts-contract.md`.
 
 The first scheduled Xero dataset handlers now use the service contract to persist:
 
@@ -60,6 +65,8 @@ The first scheduled Xero dataset handlers now use the service contract to persis
 - organisation-level accounts receivable invoice snapshots derived from open receivable invoices
 - organisation-level aged payables snapshots derived from open payable invoices
 - organisation-level accounts payable invoice snapshots derived from open payable invoices
+- multi-period (12-month) profit-and-loss and balance-sheet report snapshots
+  with derived monthly per-account facts
 
 Those handlers still return `FinanceSyncSnapshotInput` objects and do not bypass `FinanceSyncRun` or `FinanceSnapshot`.
 

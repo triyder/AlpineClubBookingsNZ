@@ -370,6 +370,18 @@ refunds missing credit notes (flagged when the refunded amount still exceeds the
 cents already covered by active refund credit notes, so multi-note refunds are
 handled), and per-record activity shows the ledger for one booking/payment/member.
 
+Owner-substitution alert (operator runbook): when a booking request's held owner
+is no longer a valid non-login contact at conversion, the accept substitutes a
+fresh contact rather than failing the requester, and the invoice bills that fresh
+contact instead of the intended organisation. This raises the
+`admin-owner-substitution` admin email alert (gated by the "Xero sync errors"
+preference) alongside a durable `booking_request.owner_substituted` audit row.
+On this alert the finance admin reconciles the invoice's Xero contact: repoint the
+booking's invoice from the newly-created contact to the intended organisation in
+Xero (and archive/merge the stray contact if appropriate). The alert names the
+booking request, the booking, the intended vs. substituted contact, and the
+substitution reason to guide the fix.
+
 Expanding an operation in the admin Xero operations panel shows a plain-English
 summary by default instead of raw JSON (#1448). `summarizeXeroOperation`
 (`src/lib/xero-operation-summaries.ts`, a framework-agnostic pure module the

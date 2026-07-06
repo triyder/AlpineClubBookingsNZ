@@ -52,6 +52,7 @@ import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
+  sendAdminOwnerSubstitutionAlert,
   sendAdminSchoolManualInvoiceEmail,
   sendBookingRequestVerificationEmail,
   sendHutLeaderAssignmentEmail,
@@ -968,17 +969,22 @@ export async function approveSchoolBookingRequest(input: {
     // substituted (issue #1255 residual-risk decision 1). Surface it for admin
     // follow-up: the confirmed booking (and its Xero invoice / manual-invoice
     // notice) now bill the fresh contact rather than the intended mapped
-    // organisation, so an admin may need to reconcile the Xero contact. A
-    // durable audit row is the attention channel (see the PR body for why this
-    // is not an email alert).
+    // organisation, so an admin must reconcile the Xero contact. Two attention
+    // channels run post-commit (outside the tx/advisory lock, under
+    // !alreadyConverted so a replay never re-fires): a durable audit row AND an
+    // active admin email alert (F20 residual #2 / #1377) routed to the
+    // Xero-sync-error audience. School org contacts are the case most likely to
+    // be substituted-and-billed, so the alert must fire here for parity with the
+    // generic approveBookingRequest path.
     if (conversion.ownerSubstitution) {
+      const ownerSubstitution = conversion.ownerSubstitution;
       logger.warn(
         {
           bookingRequestId: request.id,
           bookingId: conversion.bookingId,
-          invalidMemberId: conversion.ownerSubstitution.invalidMemberId,
-          substituteMemberId: conversion.ownerSubstitution.substituteMemberId,
-          reason: conversion.ownerSubstitution.reason,
+          invalidMemberId: ownerSubstitution.invalidMemberId,
+          substituteMemberId: ownerSubstitution.substituteMemberId,
+          reason: ownerSubstitution.reason,
         },
         "Held school booking owner was invalid at conversion; substituted a fresh non-login contact"
       );
@@ -997,11 +1003,64 @@ export async function approveSchoolBookingRequest(input: {
         metadata: {
           bookingId: conversion.bookingId,
           requestId: request.id,
-          invalidMemberId: conversion.ownerSubstitution.invalidMemberId,
-          substituteMemberId: conversion.ownerSubstitution.substituteMemberId,
-          reason: conversion.ownerSubstitution.reason,
+          invalidMemberId: ownerSubstitution.invalidMemberId,
+          substituteMemberId: ownerSubstitution.substituteMemberId,
+          reason: ownerSubstitution.reason,
         },
       });
+
+      // Fire-and-forget admin email alert. A failed alert must NOT fail the
+      // conversion (the booking is already committed), so it mirrors the
+      // teacher-PIN/manual-invoice try/catch above. Names are a best-effort
+      // readability lookup outside the tx; ids are the source of truth.
+      try {
+        const [intendedMember, substituteMember] = await Promise.all([
+          prisma.member
+            .findUnique({
+              where: { id: ownerSubstitution.invalidMemberId },
+              select: { firstName: true, lastName: true },
+            })
+            .catch(() => null),
+          prisma.member
+            .findUnique({
+              where: { id: ownerSubstitution.substituteMemberId },
+              select: { firstName: true, lastName: true },
+            })
+            .catch(() => null),
+        ]);
+        const fullName = (
+          member: { firstName?: string | null; lastName?: string | null } | null
+        ): string | null => {
+          const name = [member?.firstName, member?.lastName]
+            .filter((part): part is string => Boolean(part && part.trim()))
+            .join(" ")
+            .trim();
+          return name.length > 0 ? name : null;
+        };
+        await sendAdminOwnerSubstitutionAlert({
+          requestId: request.id,
+          bookingId: conversion.bookingId,
+          intendedMemberId: ownerSubstitution.invalidMemberId,
+          intendedMemberName: fullName(intendedMember),
+          substituteMemberId: ownerSubstitution.substituteMemberId,
+          substituteMemberName: fullName(substituteMember),
+          reason: ownerSubstitution.reason,
+          requesterName:
+            `${request.contactFirstName} ${request.contactLastName}`.trim(),
+          requesterEmail: request.contactEmail,
+          checkIn: request.checkIn,
+          checkOut: request.checkOut,
+        });
+      } catch (err) {
+        logger.error(
+          {
+            err,
+            bookingRequestId: request.id,
+            bookingId: conversion.bookingId,
+          },
+          "Failed to send owner-substitution admin alert for school conversion"
+        );
+      }
     }
   } else {
     // Observability-only note that a duplicate accept was absorbed (#1232).

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only"
+import { OccupancyCalendar } from "@/components/admin/occupancy-calendar"
 
 interface Guest {
   id: string
@@ -345,6 +346,14 @@ export default function RosterPage() {
             >
               Regenerate Roster
             </Button>
+          </div>
+          <div className="mt-4">
+            <OccupancyCalendar
+              mode="single"
+              selectedStartDate={selectedDate}
+              selectedEndDate={selectedDate}
+              onSelectionChange={({ startDate }) => setSelectedDate(startDate)}
+            />
           </div>
         </CardContent>
       </Card>

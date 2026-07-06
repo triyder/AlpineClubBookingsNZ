@@ -36,6 +36,10 @@ vi.mock("@/lib/email", () => ({
   sendBookingRequestVerificationEmail: vi.fn().mockResolvedValue(undefined),
   sendHutLeaderAssignmentEmail: vi.fn().mockResolvedValue(undefined),
   sendAdminSchoolManualInvoiceEmail: vi.fn().mockResolvedValue(undefined),
+  // #1377: the school approve path now fires an owner-substitution admin alert
+  // on the substitute path. Stub it under the partial mock or the real approve
+  // path calls undefined → throw (mock-safety, see #1417).
+  sendAdminOwnerSubstitutionAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
@@ -87,6 +91,7 @@ import {
   sendBookingRequestVerificationEmail,
   sendHutLeaderAssignmentEmail,
   sendAdminSchoolManualInvoiceEmail,
+  sendAdminOwnerSubstitutionAlert,
 } from "@/lib/email";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
@@ -118,6 +123,7 @@ const mockedEnqueueInvoice = vi.mocked(enqueueXeroBookingInvoiceOperation);
 const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
 const mockedSendPin = vi.mocked(sendHutLeaderAssignmentEmail);
 const mockedSendManualInvoice = vi.mocked(sendAdminSchoolManualInvoiceEmail);
+const mockedSendOwnerSubstitution = vi.mocked(sendAdminOwnerSubstitutionAlert);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
 const mockedLogAudit = vi.mocked(logAudit);
 
@@ -436,6 +442,8 @@ describe("approveSchoolBookingRequest", () => {
       expect.objectContaining({ createdByMemberId: "admin-1" })
     );
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
+    // No substitution on a normal conversion → no owner-substitution alert (#1377).
+    expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
   });
 
   it("maps the school owner to an existing non-login SCHOOL contact instead of creating one (#1255)", async () => {
@@ -670,6 +678,17 @@ describe("approveSchoolBookingRequest", () => {
           invalidMemberId: "held-invalid-school",
           substituteMemberId: "school-member",
         }),
+      })
+    );
+    // #1377 parity: the school path also fires the active admin email alert
+    // post-commit (fire-and-forget) so finance/Xero admins reconcile the invoice.
+    expect(mockedSendOwnerSubstitution).toHaveBeenCalledTimes(1);
+    expect(mockedSendOwnerSubstitution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req-school",
+        bookingId: "held-1",
+        intendedMemberId: "held-invalid-school",
+        substituteMemberId: "school-member",
       })
     );
   });

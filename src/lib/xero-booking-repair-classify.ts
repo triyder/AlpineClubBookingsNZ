@@ -1,9 +1,11 @@
 // Per-booking finding/action classification for the booking-vs-Xero repair
-// tool. classifyBookingContext is a single sequential function that mutates its
-// own local findings/actionMap accumulators; it is kept whole (one function,
-// one module) because splitting its inner blocks would edit the function body,
-// which #1208 item 2 forbids (behavior-preserving move only). It therefore
-// exceeds the ~700-LOC soft cap. Extracted verbatim from xero-booking-repair.ts.
+// tool. classifyBookingContext is a single sequential function that mutates
+// its own local findings/actionMap accumulators and is kept whole (one
+// function, one module), exceeding the ~700-LOC soft cap. Originally
+// extracted verbatim from xero-booking-repair.ts under #1208 item 2's
+// behavior-preserving-move rule; that one-off extraction constraint no
+// longer binds — the body has since gained behavior deliberately (#1356
+// supplementary-invoice arms, #1427 evidence-first credit-note sizing).
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type {
   BookingClassificationContext,
@@ -39,8 +41,17 @@ import {
   buildLinkRepairAction,
   buildManualReviewAction,
   buildRetryAction,
+  recoverStoredXeroAmountCents,
 } from "./xero-booking-repair-findings";
-import { toDateOnly } from "./xero-booking-repair-utils";
+import {
+  getOperationQueueTypeHint,
+  toDateOnly,
+} from "./xero-booking-repair-utils";
+import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+} from "@/lib/xero-operation-outbox-payload";
 
 export function classifyBookingContext(
   context: BookingClassificationContext
@@ -463,6 +474,12 @@ export function classifyBookingContext(
     }
 
     if (netAmountCents < 0 && primaryInvoice) {
+      const refundDueCents = Math.abs(netAmountCents);
+      // Captured money via the payment status OR the transaction ledger —
+      // ledger-first states (a SUCCEEDED capture row under a still-PENDING
+      // aggregate status) must count as captured for the policy split below.
+      const paymentHasCapturedMoney =
+        hasCapturedPayment(payment) || capturedPaymentTransactions.length > 0;
       const modificationCreditNote = resolveObjectFromCandidates({
         links: modificationLinks,
         operations: modificationOperations,
@@ -470,13 +487,79 @@ export function classifyBookingContext(
         role: "MODIFICATION_CREDIT_NOTE",
         entityType: "CREDIT_NOTE",
         operationType: "CREATE",
+        // Same discrimination as the evidence read below: a SUCCEEDED
+        // ACCOUNT-credit-note op for this modification must not resolve as
+        // the invoice-applied note (allocating a cash-refund note against
+        // the primary invoice would double-count the credit).
+        payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
       });
+
+      // #1427 (review finding): a net<0 modification legitimately settled
+      // by an ACCOUNT credit note (the member keeps the value as account
+      // credit; the paid primary invoice stays untouched) has NO
+      // invoice-applied note to repair — classifying it as "missing" would
+      // nag manual review forever. Positive identification only: a link
+      // with the account role, or an executed op whose queue-type hint
+      // names the account variant (hint-less rows never count).
+      const settledByAccountCredit =
+        modificationLinks.some(
+          (link) =>
+            link.xeroObjectType === "CREDIT_NOTE" &&
+            link.role === "MODIFICATION_ACCOUNT_CREDIT_NOTE"
+        ) ||
+        modificationOperations.some(
+          (operation) =>
+            operation.entityType === "CREDIT_NOTE" &&
+            operation.operationType === "CREATE" &&
+            ["SUCCEEDED", "PARTIAL"].includes(operation.status) &&
+            getOperationQueueTypeHint(operation) ===
+              XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
+        );
+      if (!modificationCreditNote && settledByAccountCredit) {
+        continue;
+      }
+
+      // #1427: abs(net) is only an upper bound on the credit note — the
+      // primary path caps the credit at the policy-limited settlement
+      // (classifyXeroBookingEditSettlement), which the modification row
+      // cannot reconstruct. Stored evidence is the record of record:
+      // the enqueue-time operation payload (the #1354 queued-payload-first
+      // rule — requeueing that amount also rebuilds the identical
+      // amount-embedding correlation key, so a note that already hit Xero
+      // dedups instead of duplicating), then link metadata, then executed
+      // note totals. A stored amount outside (0, abs(net)] is inconsistent
+      // and is ignored.
+      const storedEvidence = recoverStoredXeroAmountCents({
+        links: modificationLinks,
+        operations: modificationOperations,
+        xeroObjectType: "CREDIT_NOTE",
+        role: "MODIFICATION_CREDIT_NOTE",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        objectId: modificationCreditNote?.objectId ?? null,
+        // A modification can also hold an ACCOUNT-credit-note op with the
+        // same entityType/operationType and a different amount — only
+        // payloads that name themselves invoice-applied count as evidence.
+        payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+      });
+      const storedSettlement =
+        storedEvidence &&
+        storedEvidence.amountCents > 0 &&
+        storedEvidence.amountCents <= refundDueCents
+          ? storedEvidence
+          : null;
+      const expectedCreditNoteCents =
+        storedSettlement?.amountCents ?? refundDueCents;
+      const expectedAmountSource = storedSettlement?.source ?? "net-amount";
 
       if (!modificationCreditNote) {
         const blockingOperation = getBlockingOperation(
           modificationOperations,
           "CREDIT_NOTE",
-          "CREATE"
+          "CREATE",
+          // A pending ACCOUNT-credit-note op must not mask the genuinely
+          // missing invoice-applied note behind a blocked finding.
+          { payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE }
         );
         if (blockingOperation && blockingOperation.retryMeta.supported) {
           const action = addAction(
@@ -496,31 +579,88 @@ export function classifyBookingContext(
             actionKeys: [action.key],
           });
         } else if (!blockingOperation) {
-          const action = addAction(actionMap, {
-            key: `queue:mod-credit-note:${modification.id}`,
-            bookingId: booking.id,
-            type: "QUEUE_MODIFICATION_CREDIT_NOTE",
-            description:
-              "Queue the missing Xero modification credit note for a price-decrease booking modification.",
-            safeToAutoApply: true,
-            payload: {
+          if (storedSettlement !== null || !paymentHasCapturedMoney) {
+            // Sizing is safe: either the stored ledger records the
+            // settlement this note was enqueued with, or no money was ever
+            // captured, so no cancellation-policy tier can have applied and
+            // the full delta is the correct bookkeeping correction (#1015).
+            const action = addAction(actionMap, {
+              key: `queue:mod-credit-note:${modification.id}`,
               bookingId: booking.id,
-              bookingModificationId: modification.id,
-              refundAmountCents: Math.abs(netAmountCents),
-            },
-          });
+              type: "QUEUE_MODIFICATION_CREDIT_NOTE",
+              description:
+                "Queue the missing Xero modification credit note for a price-decrease booking modification.",
+              safeToAutoApply: true,
+              payload: {
+                bookingId: booking.id,
+                bookingModificationId: modification.id,
+                refundAmountCents: expectedCreditNoteCents,
+              },
+            });
+            addFinding(findings, {
+              code: "MISSING_MODIFICATION_CREDIT_NOTE",
+              severity: "critical",
+              summary: "A booking modification reduced the amount owing, but no modification Xero credit note exists.",
+              safeToAutoApply: true,
+              details: {
+                modificationId: modification.id,
+                refundAmountCents: expectedCreditNoteCents,
+                refundAmountSource: expectedAmountSource,
+                refundDueCents,
+                priceDiffCents: modification.priceDiffCents,
+                changeFeeCents: modification.changeFeeCents,
+              },
+              actionKeys: [action.key],
+            });
+          } else {
+            // Captured money and NO stored evidence: a cancellation-policy
+            // tier may have limited the settlement below abs(net), and
+            // auto-queueing abs(net) would over-credit Xero income by the
+            // policy-retained share (#1427). A human sizes this one.
+            const action = addAction(
+              actionMap,
+              buildManualReviewAction(
+                booking.id,
+                "A modification credit note is missing, the payment has captured money, and no stored evidence records the policy-limited settlement - size the credit note manually."
+              )
+            );
+            addFinding(findings, {
+              code: "MISSING_MODIFICATION_CREDIT_NOTE",
+              severity: "manual_review",
+              summary:
+                "A booking modification reduced the amount owing and no modification Xero credit note exists, but the settlement amount cannot be reconstructed safely (captured payment, no stored evidence).",
+              safeToAutoApply: false,
+              details: {
+                modificationId: modification.id,
+                refundDueCents,
+                priceDiffCents: modification.priceDiffCents,
+                changeFeeCents: modification.changeFeeCents,
+              },
+              actionKeys: [action.key],
+            });
+          }
+        } else {
+          // #1427 (the #1356 third-arm rule): a live-but-not-retryable
+          // credit-note operation must surface as blocked — silence here
+          // let the modification look healthy while nothing progressed.
+          const summary = ["FAILED", "PARTIAL"].includes(
+            blockingOperation.operation.status
+          )
+            ? "A Xero modification credit note operation failed and cannot be auto-retried - resolve the operation manually."
+            : isStuckOperation(blockingOperation.operation)
+              ? "A pending or running Xero modification credit note operation looks stuck."
+              : "A Xero modification credit note operation is already pending or running.";
           addFinding(findings, {
-            code: "MISSING_MODIFICATION_CREDIT_NOTE",
-            severity: "critical",
-            summary: "A booking modification reduced the amount owing, but no modification Xero credit note exists.",
-            safeToAutoApply: true,
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary,
+            safeToAutoApply: false,
             details: {
               modificationId: modification.id,
-              refundAmountCents: Math.abs(netAmountCents),
-              priceDiffCents: modification.priceDiffCents,
-              changeFeeCents: modification.changeFeeCents,
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
             },
-            actionKeys: [action.key],
+            actionKeys: [],
           });
         }
       } else {
@@ -528,7 +668,7 @@ export function classifyBookingContext(
           findings,
           actionMap,
           bookingId: booking.id,
-          expectedAmountCents: Math.abs(netAmountCents),
+          expectedAmountCents: expectedCreditNoteCents,
           resolved: modificationCreditNote,
           links: modificationLinks,
           operations: modificationOperations,
@@ -536,11 +676,13 @@ export function classifyBookingContext(
           role: "MODIFICATION_CREDIT_NOTE",
           entityType: "CREDIT_NOTE",
           operationType: "CREATE",
+          payloadQueueType: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
           summary:
             "The modification credit-note amount evidence does not match the local booking modification refund amount.",
           details: {
             modificationId: modification.id,
-            refundAmountCents: Math.abs(netAmountCents),
+            refundAmountCents: expectedCreditNoteCents,
+            refundAmountSource: expectedAmountSource,
             priceDiffCents: modification.priceDiffCents,
             changeFeeCents: modification.changeFeeCents,
           },
@@ -609,35 +751,92 @@ export function classifyBookingContext(
               },
               actionKeys: [action.key],
             });
+          } else if (!blockingOperation) {
+            if (storedSettlement !== null || !paymentHasCapturedMoney) {
+              // The allocation must match the NOTE's evidenced amount, not
+              // abs(net): allocating more than a policy-limited note's total
+              // both over-repairs the books and fails Xero-side (#1427).
+              const action = addAction(actionMap, {
+                key: `queue:allocation:${modification.id}:${modificationCreditNote.objectId}`,
+                bookingId: booking.id,
+                type: "QUEUE_CREDIT_NOTE_ALLOCATION",
+                description:
+                  "Queue the missing Xero allocation linking the modification credit note back to the primary invoice.",
+                safeToAutoApply: true,
+                payload: {
+                  localModel: "BookingModification",
+                  localId: modification.id,
+                  creditNoteId: modificationCreditNote.objectId,
+                  invoiceId: primaryInvoice.objectId,
+                  amountCents: expectedCreditNoteCents,
+                  role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+                },
+              });
+              addFinding(findings, {
+                code: "MISSING_CREDIT_NOTE_ALLOCATION",
+                severity: "critical",
+                summary: "A modification credit note exists, but it is not allocated back to the original invoice.",
+                safeToAutoApply: true,
+                details: {
+                  modificationId: modification.id,
+                  creditNoteId: modificationCreditNote.objectId,
+                  invoiceId: primaryInvoice.objectId,
+                  amountCents: expectedCreditNoteCents,
+                  amountSource: expectedAmountSource,
+                },
+                actionKeys: [action.key],
+              });
+            } else {
+              // #1427: the note exists but nothing records its settlement
+              // and the payment captured money — allocating abs(net) against
+              // a possibly policy-limited note over-repairs the books (or
+              // fails Xero-side). A human confirms the note's total first.
+              const action = addAction(
+                actionMap,
+                buildManualReviewAction(
+                  booking.id,
+                  "A modification credit note exists without an allocation, but no stored evidence records its settlement amount - confirm the note's total in Xero and allocate manually."
+                )
+              );
+              addFinding(findings, {
+                code: "MISSING_CREDIT_NOTE_ALLOCATION",
+                severity: "manual_review",
+                summary:
+                  "A modification credit note exists without an allocation, but its settlement amount cannot be reconstructed safely (captured payment, no stored evidence).",
+                safeToAutoApply: false,
+                details: {
+                  modificationId: modification.id,
+                  creditNoteId: modificationCreditNote.objectId,
+                  invoiceId: primaryInvoice.objectId,
+                  refundDueCents,
+                },
+                actionKeys: [action.key],
+              });
+            }
           } else {
-            const action = addAction(actionMap, {
-              key: `queue:allocation:${modification.id}:${modificationCreditNote.objectId}`,
-              bookingId: booking.id,
-              type: "QUEUE_CREDIT_NOTE_ALLOCATION",
-              description:
-                "Queue the missing Xero allocation linking the modification credit note back to the primary invoice.",
-              safeToAutoApply: true,
-              payload: {
-                localModel: "BookingModification",
-                localId: modification.id,
-                creditNoteId: modificationCreditNote.objectId,
-                invoiceId: primaryInvoice.objectId,
-                amountCents: Math.abs(netAmountCents),
-                role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
-              },
-            });
+            // #1427 third arm: a live-but-not-retryable allocation operation
+            // must block, not be re-queued beside it — evidence-sized
+            // amounts can differ from the pending op's, so the
+            // amount-embedding correlation key no longer dedups a re-queue
+            // the way identical abs(net) amounts once did.
+            const summary = ["FAILED", "PARTIAL"].includes(
+              blockingOperation.operation.status
+            )
+              ? "A Xero credit-note allocation operation failed and cannot be auto-retried - resolve the operation manually."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero credit-note allocation operation looks stuck."
+                : "A Xero credit-note allocation operation is already pending or running.";
             addFinding(findings, {
-              code: "MISSING_CREDIT_NOTE_ALLOCATION",
-              severity: "critical",
-              summary: "A modification credit note exists, but it is not allocated back to the original invoice.",
-              safeToAutoApply: true,
+              code: "BLOCKED_BY_XERO_OPERATION",
+              severity: "warning",
+              summary,
+              safeToAutoApply: false,
               details: {
                 modificationId: modification.id,
-                creditNoteId: modificationCreditNote.objectId,
-                invoiceId: primaryInvoice.objectId,
-                amountCents: Math.abs(netAmountCents),
+                operationId: blockingOperation.operation.id,
+                operationStatus: blockingOperation.operation.status,
               },
-              actionKeys: [action.key],
+              actionKeys: [],
             });
           }
         } else {
@@ -645,7 +844,7 @@ export function classifyBookingContext(
             findings,
             actionMap,
             bookingId: booking.id,
-            expectedAmountCents: Math.abs(netAmountCents),
+            expectedAmountCents: expectedCreditNoteCents,
             resolved: allocation,
             links: modificationLinks,
             operations: modificationOperations,
@@ -659,7 +858,8 @@ export function classifyBookingContext(
               modificationId: modification.id,
               creditNoteId: modificationCreditNote.objectId,
               invoiceId: primaryInvoice.objectId,
-              amountCents: Math.abs(netAmountCents),
+              amountCents: expectedCreditNoteCents,
+              amountSource: expectedAmountSource,
             },
           });
 

@@ -354,9 +354,11 @@ export async function startXeroSyncOperation(
   // the SAME sanitized payload that gets persisted so it mirrors the
   // enqueue-time `requestPayload.queueType` exactly. Dispatch reads queueType
   // from the payload (not this column) BEFORE handlers may overwrite
-  // requestPayload, so the two can legitimately diverge post-dispatch -- safe
-  // because nothing reads this column yet (see the schema comment; #1272). Rows
-  // without a queueType (REQUEUE, inbound reconciles, backfill) stay null.
+  // requestPayload, so the two can legitimately diverge post-dispatch. The
+  // booking-vs-Xero repair pass reads this column as the AUTHORITATIVE
+  // discriminator precisely because it survives those overwrites (#1427).
+  // Rows without a queueType (REQUEUE, inbound reconciles, backfill) stay
+  // null.
   const requestPayload = sanitizeForJson(input.requestPayload);
   const payloadRecord = asRecord(requestPayload);
   const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;
