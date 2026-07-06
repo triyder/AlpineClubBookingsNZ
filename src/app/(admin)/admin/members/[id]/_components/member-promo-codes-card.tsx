@@ -9,9 +9,9 @@ import {
 } from "@/lib/admin-member-detail-helpers"
 import type { MemberPromoCode } from "../_types"
 
-export function MemberPromoCodesCard({ promoCodes }: { promoCodes: MemberPromoCode[] }) {
+export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: MemberPromoCode[]; className?: string }) {
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle className="text-base font-medium">Promo Codes</CardTitle>
       </CardHeader>
