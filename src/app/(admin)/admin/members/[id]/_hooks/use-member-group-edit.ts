@@ -9,6 +9,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { formatValidationErrorResponse } from "@/lib/format-validation-errors";
 
 /** What group components receive to render their unlock-to-edit UI. */
 export interface MemberGroupEditState<TForm> {
@@ -86,7 +87,10 @@ export function useMemberGroupEdit<TForm>({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Save failed");
+        // Surface per-field zod errors (one line each) instead of a bare
+        // "Validation failed"; the error box renders them with
+        // `whitespace-pre-line`.
+        throw new Error(formatValidationErrorResponse(data).join("\n"));
       }
       setEditing(false);
       setForm(null);

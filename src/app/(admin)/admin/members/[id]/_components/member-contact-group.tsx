@@ -95,7 +95,7 @@ export function MemberContactGroup({
             ref={errorRef}
             role="alert"
             tabIndex={-1}
-            className="scroll-mt-20 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+            className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
           >
             {error}
           </div>

@@ -52,6 +52,7 @@ import {
   unlinkMemberXeroContact,
 } from "@/lib/admin-member-xero-actions";
 import { memberName } from "@/lib/member-serialization";
+import { formatValidationErrorResponse } from "@/lib/format-validation-errors";
 import type {
   Member,
   MemberForm,
@@ -518,7 +519,9 @@ export function MemberEditorDialog({
       const data = (await res
         .json()
         .catch(() => ({}))) as MemberSaveResponse & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Save failed");
+      // Surface per-field zod errors (one line each) instead of a bare
+      // "Validation failed"; the banner renders them with `whitespace-pre-line`.
+      if (!res.ok) throw new Error(formatValidationErrorResponse(data).join("\n"));
 
       let warning = data.warning;
       let successMessage = currentEditingMember
@@ -662,7 +665,7 @@ export function MemberEditorDialog({
               ref={formErrorRef}
               role="alert"
               tabIndex={-1}
-              className="scroll-mt-20 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+              className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
             >
               {formError}
             </div>
