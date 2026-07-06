@@ -367,6 +367,22 @@ const adminHelpEntries: HelpEntry[] = [
             "The kiosk access code used by the hut leader; reset it only when necessary.",
         },
       ],
+      [
+        "The New Assignment picker is booking-derived: it only lists adult members who hold the standard member (USER) role and have an operational booking overlapping the selected dates. A season-long custodian with no booking will not appear.",
+        "To assign a custodian who has no booking, first book a stay on their behalf covering the period — a 100%-off promo code makes it free — then return here and assign them as hut leader as usual. Use Book on Behalf to create the stay and Promo Codes to set up the free code.",
+        "A member whose only roles are custom (definition-backed) roles cannot be assigned as hut leader. Keep the standard member (USER) role ticked on their account so they stay eligible.",
+      ],
+      [
+        {
+          title: "Make a season-long custodian a hut leader",
+          details: [
+            "On Promo Codes, create a 100%-off code covering the custodian's stay.",
+            "On Book on Behalf, book the custodian's lodge nights and apply the free code so the stay costs nothing.",
+            "Confirm the custodian's account still has the standard member (USER) role ticked.",
+            "Return here, choose the matching dates, and assign the custodian as hut leader — they now appear in the picker and receive a lodge PIN.",
+          ],
+        },
+      ],
     ),
   ),
   entry(
