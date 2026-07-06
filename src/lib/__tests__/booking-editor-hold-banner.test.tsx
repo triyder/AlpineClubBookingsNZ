@@ -29,7 +29,6 @@ function makeBooking(
         priceCents: 5000,
       },
     ],
-    bookingMemberId: "mem_1",
     viewerRole: "MEMBER",
     totalPriceCents: 5000,
     discountCents: 0,

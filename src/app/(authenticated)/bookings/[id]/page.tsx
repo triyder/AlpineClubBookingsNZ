@@ -461,7 +461,6 @@ export default async function BookingDetailPage({
       priceCents: g.priceCents,
       nights: g.nights.map((n) => n.stayDate.toISOString().slice(0, 10)),
     })),
-    bookingMemberId: booking.memberId,
     viewerRole: viewerAuthorizationRole,
     totalPriceCents: booking.totalPriceCents,
     discountCents: booking.discountCents,

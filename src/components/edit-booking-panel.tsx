@@ -64,7 +64,6 @@ interface BookingData {
   checkIn: string;
   checkOut: string;
   guests: Guest[];
-  bookingMemberId: string;
   viewerRole: string;
   finalPriceCents: number;
   totalPriceCents: number;

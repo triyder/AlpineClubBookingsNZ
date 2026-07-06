@@ -3,6 +3,14 @@ import { requireAdmin } from "@/lib/session-guards";
 import { resolveMemberFamily } from "@/lib/resolve-member-family";
 
 /**
+ * DEPRECATED / ORPHANED (as of #1376): this route currently has no callers.
+ * Both admin booking-on-behalf pickers moved to the bookings-scoped endpoints
+ * (/api/admin/bookings/[id]/eligible-family and
+ * /api/admin/bookings/eligible-family), which serve the same shape but gate on
+ * bookings:edit. Retained (not deleted) for a potential membership-surface use
+ * of the member-scoped, membership:view-gated variant; slated for removal if no
+ * consumer emerges. See #1419.
+ *
  * GET /api/admin/members/[id]/family
  * Returns the target member's family group members for admin booking-on-behalf.
  * Same shape as /api/members/family but for any member (admin only).

@@ -45,7 +45,6 @@ export interface BookingEditorData {
   nights: number;
   status: string;
   guests: Guest[];
-  bookingMemberId: string;
   viewerRole: string;
   totalPriceCents: number;
   discountCents: number;
@@ -84,7 +83,6 @@ export function BookingEditor({
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guests: booking.guests,
-          bookingMemberId: booking.bookingMemberId,
           viewerRole: booking.viewerRole,
           finalPriceCents: booking.finalPriceCents,
           totalPriceCents: booking.totalPriceCents,
