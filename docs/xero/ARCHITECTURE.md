@@ -271,7 +271,13 @@ credit-note allocation — the app's own invoice-clearing notes do exactly that
 on every unpaid-IB cancellation — settles nothing (#1435): identifiers are
 stamped for linkage only, admins are alerted if the booking is still live,
 and a payload carrying neither cash field fails the event into the
-FAILED-retry sweep rather than settling blind.
+FAILED-retry sweep rather than settling blind. Both credit-minting arms —
+cash landing on an already-cancelled booking's stale invoice, and the
+late-capacity-failure cancel — mint member credit sized by the invoice's
+quantified cash, clamped to the payment amount (#1357/#1459): a mixed
+cash+allocation invoice credits only the cash portion, the admin alert names
+both amounts so the allocation source gets verified, and verified cash
+arriving after a mint alerts with the delta (it never credits automatically).
 
 ```mermaid
 sequenceDiagram

@@ -128,10 +128,31 @@ Future reviews and issues should cite this file when proposing changes.
   to actual payment records), a payment that never settled (PENDING/FAILED),
   and no credit already minted by this pipeline (matched by its own credit
   descriptions — never by amount, which collides with unrelated
-  cancellation-flow rows). When it mints, the inbound reconcile creates the
-  member credit, retires the now-obsolete still-PENDING invoice-clearing
-  refund note, and enqueues the offsetting account-credit note — all in ONE
-  transaction — then alerts the admins exactly once. A PAID invoice event
+  cancellation-flow rows). Both credit-minting arms (already-cancelled and
+  late-capacity-failure) size the mint by the invoice's QUANTIFIED cash
+  (#1459), clamped per payment to the payment's own amount — `amountPaid`
+  plus overpayment/prepayment allocations (which accrue to `amountCredited`,
+  so they are additive), falling back to the invoice's non-DELETED payment
+  records only when `amountPaid` is unusable — never by the payment's face
+  amount alone: on a mixed invoice (part cash, remainder cleared by credit
+  allocation) the member is credited only the cash that actually arrived, and
+  the admin alert names both amounts so the operator can verify the
+  allocation source. Partially quantifiable evidence floors the mint at the
+  verified cash and the alert says the figures are unverified; only evidence
+  that quantifies NOTHING (degraded shapes only; the fresh getInvoice fetch
+  carries the amount fields) falls back to the full payment amount rather
+  than silently under-crediting. The clamp is per payment, not apportioned
+  across multiple payments matched to one invoice — a shape no app flow
+  produces (group settlements ride their own settlement path). When it mints,
+  the inbound reconcile creates the member credit and enqueues the offsetting
+  account-credit note — both sized at the minted amount — and retires the
+  now-obsolete still-PENDING invoice-clearing refund note, all in ONE
+  transaction — then alerts the admins exactly once. Cash arriving AFTER a
+  mint never credits automatically (the settled-payment and dedup gates hold);
+  when a later event's fully-verified cash exceeds the already-minted credit,
+  the reconcile alerts the admins with the delta instead of staying silent,
+  and cash-classified evidence that quantifies to zero on a never-settled
+  payment alerts as a payload anomaly rather than settling without a credit. A PAID invoice event
   never overwrites a (PARTIALLY_)REFUNDED payment or transaction status back
   to SUCCEEDED.
 - The same cash-evidence rule gates Internet Banking SETTLEMENT itself, not
