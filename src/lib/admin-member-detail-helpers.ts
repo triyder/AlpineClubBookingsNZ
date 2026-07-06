@@ -75,11 +75,19 @@ export interface XeroCreateFormFields {
   postalCountry: string
 }
 
+// Storage keys are member-agnostic on purpose: an admin's expanded/collapsed
+// choices follow them from one member page to the next. Keys retired by the
+// grouped-layout redesign (subs/bookings/xero/audit) are left stale in
+// localStorage; every group simply starts collapsed on first visit.
 export const collapsibleMemberSections = [
-  "subs",
-  "bookings",
-  "xero",
-  "audit",
+  "contact",
+  "account",
+  "family",
+  "membership",
+  "finance",
+  "committee",
+  "history",
+  "lifecycle",
 ] as const
 export type CollapsibleMemberSection =
   (typeof collapsibleMemberSections)[number]
@@ -88,10 +96,14 @@ export const memberSectionStorageKeys: Record<
   CollapsibleMemberSection,
   string
 > = {
-  subs: "admin-member-section:subs",
-  bookings: "admin-member-section:bookings",
-  xero: "admin-member-section:xero",
-  audit: "admin-member-section:audit",
+  contact: "admin-member-section:contact",
+  account: "admin-member-section:account",
+  family: "admin-member-section:family",
+  membership: "admin-member-section:membership",
+  finance: "admin-member-section:finance",
+  committee: "admin-member-section:committee",
+  history: "admin-member-section:history",
+  lifecycle: "admin-member-section:lifecycle",
 }
 
 export function isCollapsibleMemberSection(
@@ -256,4 +268,141 @@ export function formatMemberDateNz(value: string) {
     month: "short",
     year: "numeric",
   })
+}
+
+export function formatMemberPhone(parts: {
+  phoneCountryCode: string | null
+  phoneAreaCode: string | null
+  phoneNumber: string | null
+}) {
+  if (!parts.phoneNumber) return null
+  return [
+    parts.phoneCountryCode ? `+${parts.phoneCountryCode}` : null,
+    parts.phoneAreaCode,
+    parts.phoneNumber,
+  ]
+    .filter(Boolean)
+    .join(" ")
+}
+
+// Collapsed-header preview lines for the member detail groups. Each takes the
+// narrow fields it needs (not MemberDetail — _types.ts imports from this file)
+// and returns a single "a · b · c" line.
+const PREVIEW_SEPARATOR = " · "
+
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+export function formatMemberContactPreview(input: {
+  email: string
+  phoneCountryCode: string | null
+  phoneAreaCode: string | null
+  phoneNumber: string | null
+  streetCity: string | null
+}) {
+  return [input.email, formatMemberPhone(input), input.streetCity]
+    .filter(Boolean)
+    .join(PREVIEW_SEPARATOR)
+}
+
+export function formatMemberAccountPreview(input: {
+  canLogin: boolean
+  accessRoleCount: number
+  active: boolean
+}) {
+  return [
+    input.canLogin ? "Can log in" : "No login",
+    input.canLogin ? pluralize(input.accessRoleCount, "role") : null,
+    input.active ? "Active" : "Inactive",
+  ]
+    .filter(Boolean)
+    .join(PREVIEW_SEPARATOR)
+}
+
+export function formatMemberFamilyPreview(input: {
+  parentCount: number
+  dependentCount: number
+  familyGroupCount: number
+}) {
+  const parts = [
+    input.parentCount > 0 ? pluralize(input.parentCount, "parent") : null,
+    input.dependentCount > 0
+      ? pluralize(input.dependentCount, "dependent")
+      : null,
+    input.familyGroupCount > 0
+      ? pluralize(input.familyGroupCount, "family group")
+      : null,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(PREVIEW_SEPARATOR) : "None"
+}
+
+export function formatMemberMembershipPreview(input: {
+  currentSeasonYear: number
+  currentSeasonTypeName: string | null
+  currentSeasonSubscriptionLabel: string | null
+}) {
+  const season = `${input.currentSeasonYear}/${input.currentSeasonYear + 1}`
+  return [
+    `${season}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
+    input.currentSeasonSubscriptionLabel,
+  ]
+    .filter(Boolean)
+    .join(PREVIEW_SEPARATOR)
+}
+
+export function formatMemberFinancePreview(input: {
+  creditBalanceCents: number | null
+  promoCodeCount: number
+  xeroLinked: boolean
+}) {
+  return [
+    input.creditBalanceCents === null
+      ? "Credit —"
+      : `Credit $${(input.creditBalanceCents / 100).toFixed(2)}`,
+    input.promoCodeCount > 0
+      ? pluralize(input.promoCodeCount, "promo code")
+      : null,
+    input.xeroLinked ? "Xero linked" : "Not linked to Xero",
+  ]
+    .filter(Boolean)
+    .join(PREVIEW_SEPARATOR)
+}
+
+export function formatMemberCommitteePreview(input: {
+  assignmentCount: number
+}) {
+  return input.assignmentCount > 0
+    ? pluralize(input.assignmentCount, "assignment")
+    : "None"
+}
+
+export function formatMemberHistoryPreview(input: {
+  totalBookings: number
+  lastStay: string | null
+}) {
+  return [
+    pluralize(input.totalBookings, "booking"),
+    input.lastStay ? `last stay ${formatMemberDateNz(input.lastStay)}` : null,
+  ]
+    .filter(Boolean)
+    .join(PREVIEW_SEPARATOR)
+}
+
+export function formatMemberLifecyclePreview(input: {
+  active: boolean
+  cancelledAt: string | null
+  archivedAt: string | null
+  hasPendingDeleteRequest: boolean
+}) {
+  const status = input.archivedAt
+    ? "Archived"
+    : input.cancelledAt
+      ? "Cancelled"
+      : input.active
+        ? "Active"
+        : "Inactive"
+  return [status, input.hasPendingDeleteRequest ? "delete requested" : null]
+    .filter(Boolean)
+    .join(PREVIEW_SEPARATOR)
 }

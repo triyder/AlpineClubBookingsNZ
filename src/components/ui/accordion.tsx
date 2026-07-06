@@ -40,6 +40,30 @@ const AccordionTrigger = React.forwardRef<
 ));
 AccordionTrigger.displayName = AccordionPrimitive.Trigger.displayName;
 
+const AccordionHeader = React.forwardRef<
+  React.ElementRef<typeof AccordionPrimitive.Header>,
+  React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Header>
+>(({ className, ...props }, ref) => (
+  <AccordionPrimitive.Header
+    ref={ref}
+    className={cn("flex", className)}
+    {...props}
+  />
+));
+AccordionHeader.displayName = AccordionPrimitive.Header.displayName;
+
+// Unstyled trigger for headers composed via AccordionHeader (e.g. with action
+// buttons beside the trigger, which must not nest inside it).
+const AccordionPlainTrigger = React.forwardRef<
+  React.ElementRef<typeof AccordionPrimitive.Trigger>,
+  React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Trigger>
+>(({ className, children, ...props }, ref) => (
+  <AccordionPrimitive.Trigger ref={ref} className={className} {...props}>
+    {children}
+  </AccordionPrimitive.Trigger>
+));
+AccordionPlainTrigger.displayName = "AccordionPlainTrigger";
+
 const AccordionContent = React.forwardRef<
   React.ElementRef<typeof AccordionPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Content>
@@ -54,4 +78,11 @@ const AccordionContent = React.forwardRef<
 ));
 AccordionContent.displayName = AccordionPrimitive.Content.displayName;
 
-export { Accordion, AccordionContent, AccordionItem, AccordionTrigger };
+export {
+  Accordion,
+  AccordionContent,
+  AccordionHeader,
+  AccordionItem,
+  AccordionPlainTrigger,
+  AccordionTrigger,
+};

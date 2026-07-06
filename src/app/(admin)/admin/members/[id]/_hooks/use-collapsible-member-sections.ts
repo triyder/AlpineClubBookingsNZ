@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   collapsibleMemberSections,
   isCollapsibleMemberSection,
@@ -9,13 +9,19 @@ import {
 } from "@/lib/admin-member-detail-helpers"
 
 export function useCollapsibleMemberSections() {
-  const [openSections, setOpenSections] = useState<CollapsibleMemberSection[]>(
-    []
-  )
+  const [persistedSections, setPersistedSections] = useState<
+    CollapsibleMemberSection[]
+  >([])
+  // Sections opened programmatically (deep links like ?edit=true or
+  // #account-credit). They stay out of localStorage so a deep-linked visit
+  // does not pin the group open for every future member page.
+  const [forcedSections, setForcedSections] = useState<
+    CollapsibleMemberSection[]
+  >([])
 
   useEffect(() => {
     try {
-      setOpenSections(
+      setPersistedSections(
         collapsibleMemberSections.filter((section) => {
           const storedValue = window.localStorage.getItem(
             memberSectionStorageKeys[section]
@@ -28,15 +34,34 @@ export function useCollapsibleMemberSections() {
     }
   }, [])
 
+  const openSections = useMemo(
+    () =>
+      collapsibleMemberSections.filter(
+        (section) =>
+          persistedSections.includes(section) ||
+          forcedSections.includes(section)
+      ),
+    [persistedSections, forcedSections]
+  )
+
   const onValueChange = (value: string[]) => {
     const nextSections = value.filter(isCollapsibleMemberSection)
-    setOpenSections(nextSections)
+    // A forced-open section stays transient while open; closing it clears the
+    // force. Only user-driven opens beyond the forced set are persisted.
+    const nextForced = forcedSections.filter((section) =>
+      nextSections.includes(section)
+    )
+    const nextPersisted = nextSections.filter(
+      (section) => !nextForced.includes(section)
+    )
+    setForcedSections(nextForced)
+    setPersistedSections(nextPersisted)
 
     try {
       collapsibleMemberSections.forEach((section) => {
         window.localStorage.setItem(
           memberSectionStorageKeys[section],
-          String(nextSections.includes(section))
+          String(nextPersisted.includes(section))
         )
       })
     } catch {
@@ -44,5 +69,34 @@ export function useCollapsibleMemberSections() {
     }
   }
 
-  return { openSections, onValueChange }
+  const openSection = useCallback(
+    (
+      section: CollapsibleMemberSection,
+      { persist = false }: { persist?: boolean } = {}
+    ) => {
+      if (persist) {
+        setPersistedSections((current) =>
+          current.includes(section) ? current : [...current, section]
+        )
+        try {
+          window.localStorage.setItem(
+            memberSectionStorageKeys[section],
+            "true"
+          )
+        } catch {
+          // Ignore storage failures.
+        }
+        return
+      }
+      // Already persisted-open: forcing it would demote it to transient on
+      // the next accordion interaction, silently unpinning it.
+      if (persistedSections.includes(section)) return
+      setForcedSections((current) =>
+        current.includes(section) ? current : [...current, section]
+      )
+    },
+    [persistedSections]
+  )
+
+  return { openSections, onValueChange, openSection }
 }

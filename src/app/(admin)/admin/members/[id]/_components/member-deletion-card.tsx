@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Trash2 } from "lucide-react"
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+import { cn } from "@/lib/utils"
 import type {
   MemberDeleteEligibility,
   MemberLifecycleActionRequest,
@@ -20,6 +21,7 @@ interface MemberDeletionCardProps {
     request: MemberLifecycleActionRequest,
     action: "approve" | "reject"
   ) => void
+  className?: string
 }
 
 const deleteStatusLabel: Record<MemberLifecycleActionRequest["status"], string> = {
@@ -36,11 +38,12 @@ export function MemberDeletionCard({
   canReviewPendingDeleteRequest,
   onOpenRequestDialog,
   onOpenReviewDialog,
+  className,
 }: MemberDeletionCardProps) {
   const deleteBlockers = deleteEligibility.blockers
 
   return (
-    <Card className="border-red-200">
+    <Card className={cn("border-red-200", className)}>
       <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <CardTitle className="text-base font-medium">Member Deletion</CardTitle>

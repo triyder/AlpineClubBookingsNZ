@@ -48,7 +48,9 @@ vi.mock("@/components/ui/dialog", () => ({
 vi.mock("@/components/ui/accordion", () => ({
   Accordion: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   AccordionContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AccordionHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   AccordionItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AccordionPlainTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
   AccordionTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
 }));
 
