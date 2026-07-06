@@ -27,6 +27,23 @@ describe("xero-config", () => {
     });
   });
 
+  it("widens the xero-node OAuth HTTP timeout past the 3500ms library default", () => {
+    delete process.env.XERO_HTTP_TIMEOUT_MS;
+
+    expect(getOperationalXeroConfig().httpTimeout).toBe(10_000);
+  });
+
+  it("honours XERO_HTTP_TIMEOUT_MS and ignores non-positive or malformed values", () => {
+    process.env.XERO_HTTP_TIMEOUT_MS = "20000";
+    expect(getOperationalXeroConfig().httpTimeout).toBe(20_000);
+
+    process.env.XERO_HTTP_TIMEOUT_MS = "0";
+    expect(getOperationalXeroConfig().httpTimeout).toBe(10_000);
+
+    process.env.XERO_HTTP_TIMEOUT_MS = "not-a-number";
+    expect(getOperationalXeroConfig().httpTimeout).toBe(10_000);
+  });
+
   it("includes only the granular report scopes finance sync uses", () => {
     const scopes = getOperationalXeroConfig().scopes;
 

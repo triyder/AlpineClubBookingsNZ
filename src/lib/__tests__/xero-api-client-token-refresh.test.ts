@@ -124,6 +124,43 @@ describe("getAuthenticatedXeroClient token refresh lease", () => {
     );
   });
 
+  it("releases the lease and does not cache the rejection when client construction fails during refresh", async () => {
+    // Regression: buildAuthenticatedXeroClient (initialize -> identity.xero.com
+    // discovery) used to run before the try/finally, so one timeout left the
+    // rejected promise cached in the refresh mutex and the DB lease claimed —
+    // every later call replayed the stale error until the process restarted.
+    const tokens = makeTokens();
+    const leaseUntil = new Date("2026-06-21T12:02:00.000Z");
+    const failingXero = makeXeroClient();
+    failingXero.initialize = vi
+      .fn()
+      .mockRejectedValue(new Error("outgoing request timed out after 3500ms"));
+    const workingXero = makeXeroClient();
+    mocks.createXeroClient
+      .mockReturnValueOnce(failingXero)
+      .mockReturnValue(workingXero);
+    mocks.loadXeroTokens.mockResolvedValue(tokens);
+    mocks.claimXeroTokenRefreshLease.mockResolvedValue({
+      claimed: true,
+      tokens,
+      leaseUntil,
+    });
+
+    await expect(getAuthenticatedXeroClient()).rejects.toThrow(
+      "outgoing request timed out after 3500ms"
+    );
+    expect(mocks.releaseXeroTokenRefreshLease).toHaveBeenCalledWith(
+      "xero-token-1",
+      leaseUntil
+    );
+
+    const result = await getAuthenticatedXeroClient();
+
+    expect(result).toEqual({ xero: workingXero, tenantId: "tenant-1" });
+    expect(workingXero.refreshWithRefreshToken).toHaveBeenCalledTimes(1);
+    expect(mocks.saveXeroTokens).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for another worker's refresh lease instead of double-refreshing", async () => {
     const expiredTokens = makeTokens({
       refreshInProgressUntil: new Date("2026-06-21T12:01:00.000Z"),
