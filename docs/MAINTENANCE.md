@@ -188,7 +188,12 @@ with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.
 `XERO_AMOUNT_MISMATCH` findings are manual-review only: the tool reports stored
 Xero operation/link amount evidence that disagrees with local cents, but it
-does not auto-adjust financial amounts.
+does not auto-adjust financial amounts. Since #1427,
+`MISSING_MODIFICATION_CREDIT_NOTE` and `MISSING_CREDIT_NOTE_ALLOCATION` are
+also manual-review (not auto-queued) when the payment captured money and no
+stored evidence records the policy-limited settlement — the report tells you
+to size the credit note (or confirm the note's total) by hand from the
+cancellation-policy history before acting; `--apply` will not touch these.
 
 ## Quarterly Backup Restore Drill
 

@@ -260,6 +260,7 @@ export const xeroOperationSelect = Prisma.validator<Prisma.XeroSyncOperationSele
   status: true,
   idempotencyKey: true,
   correlationKey: true,
+  queueType: true,
   lastErrorCode: true,
   lastErrorMessage: true,
   requestPayload: true,

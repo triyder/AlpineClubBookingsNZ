@@ -14,6 +14,7 @@ import type {
 } from "./xero-booking-repair-types";
 import { buildMemberName } from "./xero-booking-repair-analysis";
 import {
+  getOperationQueueTypeHint,
   readStoredXeroAmountCents,
   toIsoDate,
 } from "./xero-booking-repair-utils";
@@ -81,6 +82,7 @@ function collectXeroAmountEvidence(params: {
   role: string;
   entityType: string;
   operationType: string;
+  payloadQueueType?: string;
 }): XeroAmountEvidence[] {
   const evidence: XeroAmountEvidence[] = [];
 
@@ -108,7 +110,11 @@ function collectXeroAmountEvidence(params: {
       operation.entityType !== params.entityType ||
       operation.operationType !== params.operationType ||
       !["SUCCEEDED", "PARTIAL"].includes(operation.status) ||
-      (operation.xeroObjectId && operation.xeroObjectId !== params.resolved.objectId)
+      (operation.xeroObjectId && operation.xeroObjectId !== params.resolved.objectId) ||
+      // #1427: an op of a DIFFERENT queueType is another money object's
+      // ledger (e.g. an account-credit note beside the invoice-applied
+      // note) — it must not pollute this object's evidence.
+      !operationQueueTypeCompatible(operation, params.payloadQueueType)
     ) {
       continue;
     }
@@ -135,6 +141,120 @@ function collectXeroAmountEvidence(params: {
   return evidence;
 }
 
+// #1427: is this operation the queueType we are recovering evidence for? A
+// DIFFERENT queueType belongs to another money object (a modification holds
+// BOTH an invoice-applied credit-note op and an account-credit-note op —
+// same entityType and operationType, different amounts) and must never be
+// read as this object's evidence. getOperationQueueTypeHint resolves the
+// kind across every ledger era (column, payload, correlation-key segment —
+// executors overwrite payloads at dispatch and the #1347 column backfill
+// copied from those overwritten payloads, so the key segment is decisive
+// for pre-column executed rows). Rows carrying no hint at all stay
+// admissible.
+function operationQueueTypeCompatible(
+  operation: XeroOperationRecord,
+  payloadQueueType: string | undefined
+): boolean {
+  if (!payloadQueueType) {
+    return true;
+  }
+  const queueType = getOperationQueueTypeHint(operation);
+  return queueType === null || queueType === payloadQueueType;
+}
+
+// #1427: recover the amount a Xero money object was actually enqueued or
+// executed with. The policy-limited settlement a modification credit note
+// carries is NOT reconstructable from the modification row (the
+// cancellation-policy tier depended on days-until-check-in at modification
+// time), so the stored ledger is the record of record. Priority:
+//  1. the best-ranked typed enqueue payload — replaying that amount rebuilds
+//     the identical amount-embedding correlation key, keeping Xero-side
+//     dedup intact on a requeue (the #1354 queued-payload-first rule);
+//  2. link metadata;
+//  3. an executed object's response totals;
+//  4. last resort, an untyped legacy enqueue payload (no queueType named).
+// Operation rank within each arm: an op tied to the resolved object's own
+// id beats null-id rows from other attempts; CANCELLED attempts rank last
+// (a deliberately retired row — often a mis-sized re-queue an operator
+// killed — is the weakest record); then OLDEST first, because the first
+// enqueue is the primary-path settlement decision and later rows are
+// re-queues and repair attempts; then id, so equal timestamps stay
+// deterministic across runs. Unlike collectXeroAmountEvidence this reads
+// operations in ANY status: a FAILED or CANCELLED attempt still records
+// what the app decided the settlement was.
+export function recoverStoredXeroAmountCents(params: {
+  links: XeroObjectLinkRecord[];
+  operations: XeroOperationRecord[];
+  xeroObjectType: string;
+  role: string;
+  entityType: string;
+  operationType: string;
+  objectId?: string | null;
+  payloadQueueType?: string;
+}): {
+  amountCents: number;
+  source: "operation-request" | "link" | "operation-response";
+} | null {
+  const operations = params.operations
+    .filter(
+      (operation) =>
+        operation.entityType === params.entityType &&
+        operation.operationType === params.operationType &&
+        (!params.objectId ||
+          !operation.xeroObjectId ||
+          operation.xeroObjectId === params.objectId) &&
+        operationQueueTypeCompatible(operation, params.payloadQueueType)
+    )
+    .sort((a, b) => {
+      const aExact = params.objectId && a.xeroObjectId === params.objectId ? 0 : 1;
+      const bExact = params.objectId && b.xeroObjectId === params.objectId ? 0 : 1;
+      const aCancelled = a.status === "CANCELLED" ? 1 : 0;
+      const bCancelled = b.status === "CANCELLED" ? 1 : 0;
+      return (
+        aExact - bExact ||
+        aCancelled - bCancelled ||
+        a.createdAt.getTime() - b.createdAt.getTime() ||
+        a.id.localeCompare(b.id)
+      );
+    });
+
+  // The list above is queue-type-vetted, so the loose read is safe here:
+  // both request-payload generations carry the settlement under
+  // refundAmountCents — the enqueue-time typed shape AND the shape the
+  // invoice-applied executor overwrites at dispatch (which readQueuedOutbox-
+  // Payload could not parse, having lost its queueType key).
+  for (const operation of operations) {
+    const amountCents = readStoredXeroAmountCents(operation.requestPayload);
+    if (amountCents !== null) {
+      return { amountCents, source: "operation-request" };
+    }
+  }
+
+  for (const link of params.links) {
+    if (
+      link.xeroObjectType !== params.xeroObjectType ||
+      link.role !== params.role ||
+      (params.objectId ? link.xeroObjectId !== params.objectId : false)
+    ) {
+      continue;
+    }
+
+    const amountCents = readStoredXeroAmountCents(link.metadata);
+    if (amountCents !== null) {
+      return { amountCents, source: "link" };
+    }
+  }
+
+  for (const operation of operations) {
+    const amountCents = readStoredXeroAmountCents(operation.responsePayload);
+    if (amountCents !== null) {
+      return { amountCents, source: "operation-response" };
+    }
+  }
+
+  return null;
+}
+
 export function addXeroAmountMismatchFinding(params: {
   findings: MutableFinding[];
   actionMap: Map<string, BookingXeroRepairAction>;
@@ -147,6 +267,7 @@ export function addXeroAmountMismatchFinding(params: {
   role: string;
   entityType: string;
   operationType: string;
+  payloadQueueType?: string;
   summary: string;
   details: Record<string, unknown>;
 }) {
@@ -158,6 +279,7 @@ export function addXeroAmountMismatchFinding(params: {
     role: params.role,
     entityType: params.entityType,
     operationType: params.operationType,
+    payloadQueueType: params.payloadQueueType,
   });
   const mismatches = evidence.filter(
     (item) => item.amountCents !== params.expectedAmountCents
