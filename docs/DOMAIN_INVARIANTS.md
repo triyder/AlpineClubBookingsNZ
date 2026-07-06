@@ -397,6 +397,22 @@ replays rather than repeats. The mirror of this rule is the group-cancel
 settlement, which persists its per-child `refundPlan` before its Stripe refund
 for the same reason.
 
+Stepped Stripe refunds settle into Xero as per-delta credit notes whose cents
+must sum exactly to the payment's refunded total (#1354). The amounts billed
+to Xero are derived from EXECUTION-TIME state (`refundedAmountCents` minus the
+sum of active covering notes), never trusted from an enqueue-time watermark —
+so operations executing out of order, replays through the retry stack (which
+re-enters delta mode via the queued payload or the enqueue-time `queueType`
+column), and races between enqueue and execution all converge on the same
+books. Inbound reconciliation MERGES link metadata over the outbound
+per-delta keys instead of replacing them; the outbox processor fails errored
+operations for every queue type (keeping them replayable rather than
+RUNNING-stuck dead-ends); the daily credit-reconciliation cron re-enqueues
+the uncovered delta for any flagged payment so historical gaps self-heal; and
+a partial unique index allows at most one ACTIVE outbox operation per
+correlation key (owner-approved defence in depth — terminal rows may repeat
+the key across attempts).
+
 For `source: STRIPE` payments the local refund ledger is Stripe-truth and
 inbound Xero reconciliation may only raise it, never lower it (#1353). The
 inbound credit-note repair keeps the local `refundedAmountCents` when the

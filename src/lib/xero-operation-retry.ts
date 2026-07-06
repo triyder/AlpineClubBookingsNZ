@@ -1,4 +1,8 @@
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
+import {
+  XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+} from "@/lib/xero-operation-outbox-payload";
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
@@ -23,7 +27,13 @@ type RetryableOperation = Pick<
   | "responsePayload"
   | "xeroObjectId"
   | "xeroObjectNumber"
->;
+> & {
+  // #1354: enqueue-time queue type (never updated afterward) — the only
+  // reliable delta-mode marker once a handler has overwritten requestPayload.
+  // Optional so row shapes selected before #1354 stay assignable; callers
+  // that omit it simply fall back to payload-based delta detection.
+  queueType?: XeroSyncOperation["queueType"];
+};
 
 export class XeroOperationRetryError extends Error {
   status: number;
@@ -173,10 +183,43 @@ function containsRedactedContactRetryData(input: { data: XeroContactUpdateData }
 
 function parsePaymentCreditNoteRetryInput(
   operation: Pick<RetryableOperation, "requestPayload">
-): { amountCents: number; kind: "refund" | "unapplied" } | null {
+): {
+  amountCents: number;
+  kind: "refund" | "unapplied";
+  /**
+   * F4 (#1354): present when the operation is a per-delta Stripe refund note.
+   * The retry MUST re-enter delta mode — pre-#1354 it dropped the watermark,
+   * fell into legacy single-note mode, and silently skipped as soon as ANY
+   * refund note existed, reporting the swallowed delta as resolved. The
+   * value itself is advisory: createXeroCreditNote recomputes coverage at
+   * execution time.
+   */
+  watermarkCents?: number;
+} | null {
   const payload = asRecord(operation.requestPayload);
   if (!payload) {
     return null;
+  }
+
+  // Queued payload shape (#1354): an operation that failed BEFORE the handler
+  // overwrote requestPayload still carries the enqueue-time
+  // {queueType, refundAmountCents[, watermarkCents]} — previously unparseable
+  // here, leaving operator-reset operations permanently dead-ended.
+  const queueType = typeof payload.queueType === "string" ? payload.queueType : null;
+  const queuedRefundAmount = readNumber(payload.refundAmountCents);
+  if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
+    const queuedWatermark = readNumber(payload.watermarkCents);
+    return {
+      amountCents: Math.round(queuedRefundAmount),
+      kind: "refund",
+      watermarkCents: queuedWatermark !== null ? Math.round(queuedWatermark) : 0,
+    };
+  }
+  if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE && queuedRefundAmount !== null) {
+    return {
+      amountCents: Math.round(queuedRefundAmount),
+      kind: "unapplied",
+    };
   }
 
   const allocation = asRecord(payload.allocation);
@@ -812,9 +855,22 @@ export async function retryXeroSyncOperation(
       }
 
       if (retryInput.kind === "refund") {
+        // F4 (#1354): re-enter delta mode when the payload carries a
+        // watermark OR the operation's denormalized queue type says this was
+        // a per-delta refund note whose payload was later overwritten with
+        // the Xero request shape. The advisory value 0 is safe:
+        // createXeroCreditNote recomputes coverage at execution time.
+        const deltaWatermarkCents =
+          retryInput.watermarkCents ??
+          (operation.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
+            ? 0
+            : undefined);
         await xero.createXeroCreditNote(operation.localId!, retryInput.amountCents, {
           createdByMemberId,
           repairExistingLink: true,
+          ...(deltaWatermarkCents !== undefined
+            ? { watermarkCents: deltaWatermarkCents }
+            : {}),
         });
         return { message: "Retried Xero refund credit note creation." };
       }

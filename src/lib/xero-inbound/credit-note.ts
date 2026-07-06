@@ -77,6 +77,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
             appliedAmount: creditNote.appliedAmount ?? null,
             remainingCredit: creditNote.remainingCredit ?? null,
           },
+          // F4 (#1354): merge over the outbound {amountCents, watermarkCents}
+          // instead of destroying the per-delta covering inputs.
+          mergeMetadata: true,
         }) satisfies XeroObjectLinkInput
     ),
     ...canonicalPaymentLinks
@@ -96,6 +99,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               appliedAmount: creditNote.appliedAmount ?? null,
               remainingCredit: creditNote.remainingCredit ?? null,
             },
+            // F4 (#1354): merge over the outbound {amountCents, watermarkCents}
+            // instead of destroying the per-delta covering inputs.
+            mergeMetadata: true,
           }) satisfies XeroObjectLinkInput
       ),
     ...canonicalAccountCreditPayments
@@ -115,6 +121,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               appliedAmount: creditNote.appliedAmount ?? null,
               remainingCredit: creditNote.remainingCredit ?? null,
             },
+            // F4 (#1354): merge over the outbound {amountCents, watermarkCents}
+            // instead of destroying the per-delta covering inputs.
+            mergeMetadata: true,
           }) satisfies XeroObjectLinkInput
       ),
   ]);
@@ -238,6 +247,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
               appliedAmount: creditNote.appliedAmount ?? null,
               remainingCredit: creditNote.remainingCredit ?? null,
             },
+            // F4 (#1354): merge over the outbound {amountCents, watermarkCents}
+            // instead of destroying the per-delta covering inputs.
+            mergeMetadata: true,
           }) satisfies XeroObjectLinkInput
       ),
   ]);

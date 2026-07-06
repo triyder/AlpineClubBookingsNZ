@@ -1964,15 +1964,25 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
-      if (
-        error instanceof Error &&
-        (
-          error.message === "Queued Xero outbox payload is incomplete." ||
-          payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE ||
-          payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE
-        )
-      ) {
-        await failXeroSyncOperation(queuedOperation.id, error);
+      // F4 (#1354): fail the operation for EVERY queue type, not just the two
+      // membership-cancellation types and payload-shape errors. An operation
+      // erroring BEFORE its handler overwrote requestPayload (token refresh,
+      // contact resolution, account mapping) previously stayed RUNNING with
+      // the queued payload; after an operator stale-reset the retry stack
+      // could not parse that shape — a permanent manual dead-end. FAILED rows
+      // are replayable, and the retry parser now understands the queued
+      // payload shape, so failing fast here closes the dead-end for all
+      // types.
+      try {
+        await failXeroSyncOperation(
+          queuedOperation.id,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      } catch (failErr) {
+        logger.error(
+          { err: failErr, queueOperationId: queuedOperation.id },
+          "Failed to mark queued Xero outbox operation FAILED after an error"
+        );
       }
       logger.error(
         {
