@@ -161,11 +161,20 @@ describe("CSP proxy", () => {
       ...allFeaturesOn,
       waitlist: false,
     });
+    const bedAllocationResponse = getFeatureFlagBlockResponse(
+      "/admin/bed-allocation",
+      {
+        ...allFeaturesOn,
+        bedAllocation: false,
+      },
+    );
 
     expect(pageResponse).not.toBeNull();
     expect(apiResponse).not.toBeNull();
+    expect(bedAllocationResponse).not.toBeNull();
     expect(pageResponse?.status).toBe(404);
     expect(apiResponse?.status).toBe(404);
+    expect(bedAllocationResponse?.status).toBe(404);
     await expect(apiResponse!.json()).resolves.toEqual({ error: "Not found" });
   });
 
