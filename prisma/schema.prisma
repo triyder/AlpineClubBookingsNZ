@@ -2105,17 +2105,20 @@ model XeroSyncOperation {
   @@index([entityType, status, createdAt])
   @@index([queueType, status, createdAt])
   @@index([localModel, localId, createdAt])
-  // No @@unique on correlationKey/idempotencyKey by design (#1234, invariant (c)):
-  // (1) the same key legitimately recurs across rows over time -- a terminal-status
-  //     row from attempt 1 plus a fresh PENDING re-enqueue -- so the outbox dedup is
-  //     a `findFirst` scoped to status IN (PENDING, RUNNING[, WAITING_PAYMENT]); a
-  //     full unique would reject a legitimate re-enqueue and break retries.
-  // (2) the only correct DB form is a PARTIAL unique WHERE status IN (...), which
-  //     Prisma schema cannot express -- it would live only in raw migration SQL and
-  //     the Migration drift check (schema-vs-DB) would flag it as drift and fail.
-  // (3) the enqueue race is bounded: both rows carry the same Xero idempotency key,
-  //     so Xero dedups the actual call within its 24h window, and the findFirst
-  //     dedup handles the common sequential case. Not exploitable on any caller path.
+  // No FULL @@unique on correlationKey/idempotencyKey (#1234 invariant (c)(1)
+  // still holds: the same key legitimately recurs across rows over time -- a
+  // terminal-status row from attempt 1 plus a fresh PENDING re-enqueue). The
+  // #1234 rationale points (2)/(3) are superseded by #1354 (owner-approved,
+  // #1375 sitting item 10): a raw PARTIAL unique index
+  // "XeroSyncOperation_active_correlationKey_unique" ON (correlationKey)
+  // WHERE correlationKey IS NOT NULL AND status IN
+  // ('PENDING','RUNNING','WAITING_PAYMENT') lives in migration
+  // 20260706040000 -- prisma cannot model it here, but `prisma migrate diff`
+  // tolerates raw partial indexes (precedent: Member_email_login_unique), so
+  // the drift check stays green. The findFirst dedup in the enqueue paths
+  // remains the fast path; startXeroSyncOperation resolves a lost concurrent
+  // race by catching the unique violation and returning the winner's active
+  // row.
   @@index([correlationKey])
   @@index([idempotencyKey])
   @@index([xeroObjectType, xeroObjectId])

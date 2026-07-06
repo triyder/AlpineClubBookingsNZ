@@ -9,6 +9,7 @@ import {
   redactSensitiveText,
 } from "./redact-sensitive-json";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -34,6 +35,16 @@ export interface XeroObjectLinkInput {
   role: string;
   active?: boolean;
   metadata?: unknown;
+  /**
+   * F4 (#1354): merge the new metadata over the existing row's metadata
+   * instead of replacing it wholesale. Inbound reconcile writes
+   * {status,total,appliedAmount,remainingCredit} onto links whose outbound
+   * writer stored {amountCents,watermarkCents} — a replace destroyed the
+   * per-delta idempotency/covering inputs minutes after every refund credit
+   * note was created. Only inbound writers should set this; outbound writers
+   * own their metadata shape and keep replace semantics.
+   */
+  mergeMetadata?: boolean;
 }
 
 export interface XeroSyncOperationCompletion {
@@ -344,24 +355,44 @@ export async function startXeroSyncOperation(
   const payloadRecord = asRecord(requestPayload);
   const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;
 
-  return db.xeroSyncOperation.create({
-    data: {
-      direction: input.direction,
-      entityType: input.entityType,
-      operationType: input.operationType,
-      localModel: input.localModel ?? null,
-      localId: input.localId ?? null,
-      status: input.status ?? "RUNNING",
-      idempotencyKey: input.idempotencyKey ?? null,
-      correlationKey: input.correlationKey ?? null,
-      attemptCount,
-      replayable: input.replayable ?? true,
-      requestPayload,
-      queueType,
-      createdByMemberId: input.createdByMemberId ?? null,
-      startedAt: input.status === "PENDING" ? null : new Date(),
-    },
-  });
+  try {
+    return await db.xeroSyncOperation.create({
+      data: {
+        direction: input.direction,
+        entityType: input.entityType,
+        operationType: input.operationType,
+        localModel: input.localModel ?? null,
+        localId: input.localId ?? null,
+        status: input.status ?? "RUNNING",
+        idempotencyKey: input.idempotencyKey ?? null,
+        correlationKey: input.correlationKey ?? null,
+        attemptCount,
+        replayable: input.replayable ?? true,
+        requestPayload,
+        queueType,
+        createdByMemberId: input.createdByMemberId ?? null,
+        startedAt: input.status === "PENDING" ? null : new Date(),
+      },
+    });
+  } catch (error) {
+    // #1354: the partial unique index (one ACTIVE operation per correlation
+    // key) turns a lost concurrent-enqueue race into a unique violation here.
+    // Resolve it the same way the findFirst fast-path dedup would have:
+    // return the winner's active row so the caller's enqueue is idempotent.
+    if (isPrismaUniqueConstraintError(error) && input.correlationKey) {
+      const existing = await db.xeroSyncOperation.findFirst({
+        where: {
+          correlationKey: input.correlationKey,
+          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+    throw error;
+  }
 }
 
 async function normalizePaymentRefundLinkWithClient(
@@ -510,6 +541,37 @@ async function upsertXeroObjectLinkWithClient(
     normalizedLink.xeroObjectUrl ??
     buildXeroObjectUrl(normalizedLink.xeroObjectType, normalizedLink.xeroObjectId);
 
+  let metadataForUpdate: unknown = normalizedLink.metadata;
+  if (normalizedLink.mergeMetadata) {
+    const existing = await client.xeroObjectLink.findUnique({
+      where: {
+        localModel_localId_xeroObjectType_xeroObjectId_role: {
+          localModel: normalizedLink.localModel,
+          localId: normalizedLink.localId,
+          xeroObjectType: normalizedLink.xeroObjectType,
+          xeroObjectId: normalizedLink.xeroObjectId,
+          role: normalizedLink.role,
+        },
+      },
+      select: { metadata: true },
+    });
+    const existingRecord =
+      existing?.metadata &&
+      typeof existing.metadata === "object" &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : null;
+    const incomingRecord =
+      normalizedLink.metadata &&
+      typeof normalizedLink.metadata === "object" &&
+      !Array.isArray(normalizedLink.metadata)
+        ? (normalizedLink.metadata as Record<string, unknown>)
+        : null;
+    if (existingRecord || incomingRecord) {
+      metadataForUpdate = { ...(existingRecord ?? {}), ...(incomingRecord ?? {}) };
+    }
+  }
+
   return client.xeroObjectLink.upsert({
     where: {
       localModel_localId_xeroObjectType_xeroObjectId_role: {
@@ -535,7 +597,7 @@ async function upsertXeroObjectLinkWithClient(
       xeroObjectNumber: normalizedLink.xeroObjectNumber ?? null,
       xeroObjectUrl,
       active: normalizedLink.active ?? true,
-      metadata: sanitizeForJson(normalizedLink.metadata),
+      metadata: sanitizeForJson(metadataForUpdate),
     },
   });
 }

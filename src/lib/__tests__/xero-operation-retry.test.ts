@@ -249,6 +249,86 @@ describe("retryXeroSyncOperation", () => {
     }));
   });
 
+  it("replays a queued-shape refund credit note op in delta mode (#1354)", async () => {
+    // An op that failed BEFORE its handler overwrote requestPayload still
+    // carries the enqueue-time queued shape. Pre-#1354 the parser returned
+    // null ("Stored credit note payload is incomplete.") — a permanent
+    // dead-end after an operator stale-reset.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero refund credit note creation." });
+
+    // Delta mode re-entered: the watermark is threaded through (the value is
+    // advisory — createXeroCreditNote recomputes coverage at execution time).
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 8000,
+    });
+  });
+
+  it("re-enters delta mode via the queueType column when the payload was overwritten (#1354)", async () => {
+    // Overwritten (Xero-request-shaped) payload with no watermark: the
+    // denormalized enqueue-time queueType still marks it as a per-delta op.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "REFUND_CREDIT_NOTE",
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ unitAmount: 30 }] }],
+          allocation: { invoiceId: "inv_1", amount: 30 },
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero refund credit note creation." });
+
+    expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_9", 3000, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+      watermarkCents: 0,
+    });
+  });
+
+  it("replays a queued-shape account-credit note op (#1354)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        localId: "pay_9",
+        queueType: "ACCOUNT_CREDIT_NOTE",
+        requestPayload: {
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 4500,
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried Xero account-credit note creation." });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_9", 4500, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
   it("replays booking invoice creation through the booking payment relationship", async () => {
     mocks.findUniqueOperation.mockResolvedValue(makeOperation());
     mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });

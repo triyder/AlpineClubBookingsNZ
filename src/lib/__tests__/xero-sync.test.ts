@@ -298,6 +298,81 @@ describe("upsertXeroObjectLink", () => {
     );
   });
 
+  it("merges inbound metadata over the outbound per-delta keys when mergeMetadata is set (#1354)", async () => {
+    const txLinkFindUnique = vi.fn().mockResolvedValue({
+      metadata: { amountCents: 3000, watermarkCents: 8000 },
+    });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        payment: {
+          findUnique: mocks.txPaymentFindUnique,
+        },
+        xeroObjectLink: {
+          updateMany: mocks.txLinkUpdateMany,
+          upsert: mocks.txLinkUpsert,
+          findUnique: txLinkFindUnique,
+        },
+      })
+    );
+    // STRIPE payment: per-delta links bypass canonical deactivation.
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      source: "STRIPE",
+      xeroRefundCreditNoteId: null,
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_delta",
+      xeroObjectNumber: "CN-8",
+      role: "REFUND_CREDIT_NOTE",
+      metadata: { status: "AUTHORISED", total: 30 },
+      mergeMetadata: true,
+    });
+
+    // The update clause carries BOTH the outbound per-delta keys and the
+    // inbound reconcile fields — pre-#1354 the replace destroyed
+    // amountCents/watermarkCents minutes after every note was created.
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          metadata: {
+            amountCents: 3000,
+            watermarkCents: 8000,
+            status: "AUTHORISED",
+            total: 30,
+          },
+        }),
+      })
+    );
+  });
+
+  it("keeps replace semantics when mergeMetadata is not set", async () => {
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      source: "STRIPE",
+      xeroRefundCreditNoteId: null,
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_delta",
+      xeroObjectNumber: "CN-8",
+      role: "REFUND_CREDIT_NOTE",
+      metadata: { amountCents: 3000, watermarkCents: 8000 },
+    });
+
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          metadata: { amountCents: 3000, watermarkCents: 8000 },
+        }),
+      })
+    );
+  });
+
   it("deactivates older active refund credit note links when the payment already has a canonical note", async () => {
     mocks.txPaymentFindUnique.mockResolvedValue({
       xeroRefundCreditNoteId: "cn_canonical",
@@ -452,6 +527,53 @@ describe("startXeroSyncOperation", () => {
       id: "op_started_1",
       data,
     }));
+  });
+
+  it("returns the winner's active row when the partial unique index rejects a lost concurrent enqueue (#1354)", async () => {
+    mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
+    mocks.operationFindFirst.mockResolvedValue({
+      id: "op_winner",
+      status: "PENDING",
+      correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+    });
+
+    const result = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "payment_1",
+      status: "PENDING",
+      idempotencyKey: "payment:payment_1:refund-credit-note:8000:v2",
+      correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+    });
+
+    expect(result).toMatchObject({ id: "op_winner" });
+    expect(mocks.operationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+        },
+      })
+    );
+  });
+
+  it("rethrows a unique violation with no surviving active row (or no correlation key)", async () => {
+    mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
+    mocks.operationFindFirst.mockResolvedValue(null);
+
+    await expect(
+      startXeroSyncOperation({
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_1",
+        status: "PENDING",
+        correlationKey: "key-x",
+      })
+    ).rejects.toMatchObject({ code: "P2002" });
   });
 
   it("writes via the global prisma client when no store is supplied and never leaks store into the payload", async () => {
