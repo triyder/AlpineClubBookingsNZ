@@ -7,6 +7,7 @@ import {
   ArrowUp,
   Eye,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -16,6 +17,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -25,21 +34,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { getSeasonYear } from "@/lib/utils";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
 type SubscriptionBehavior = "REQUIRED" | "NOT_REQUIRED";
-type AgeTier = "INFANT" | "CHILD" | "YOUTH" | "ADULT";
+type AgeTier = string;
 type XeroContactGroupRuleMode = "MANAGED" | "ACCEPTED";
 
 interface MembershipType {
@@ -115,6 +117,10 @@ interface DraftXeroContactGroupRule {
   sortOrder: number;
 }
 
+type EditorTarget =
+  | { mode: "new" }
+  | { mode: "edit"; membershipTypeId: string };
+
 const bookingBehaviorLabels: Record<BookingBehavior, string> = {
   MEMBER_RATE: "Member rate",
   NON_MEMBER_RATE: "Non-member rate",
@@ -126,30 +132,43 @@ const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
   NOT_REQUIRED: "Subscription not required",
 };
 
-const ageTierLabels: Record<AgeTier, string> = {
-  INFANT: "Infant",
-  CHILD: "Child",
-  YOUTH: "Youth",
-  ADULT: "Adult",
-};
-
 const xeroRuleModeLabels: Record<XeroContactGroupRuleMode, string> = {
   MANAGED: "Managed",
   ACCEPTED: "Accepted",
 };
 
-const ageTierOrder: AgeTier[] = ["INFANT", "CHILD", "YOUTH", "ADULT"];
+const knownAgeTierOrder = ["INFANT", "CHILD", "YOUTH", "ADULT"];
 const allAgeTierValue = "__all__";
 const noXeroGroupValue = "__none__";
 
-function createEmptyDraft(): DraftMembershipType {
+function formatAgeTierLabel(ageTier: AgeTier) {
+  return ageTier
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function sortAgeTiers(ageTiers: readonly AgeTier[]) {
+  const knownOrder = new Map(
+    knownAgeTierOrder.map((ageTier, index) => [ageTier, index]),
+  );
+  return [...new Set(ageTiers)].sort((left, right) => {
+    const leftOrder = knownOrder.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = knownOrder.get(right) ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return left.localeCompare(right);
+  });
+}
+
+function createEmptyDraft(ageTiers: readonly AgeTier[]): DraftMembershipType {
   return {
     name: "",
     description: "",
     isActive: true,
     bookingBehavior: "MEMBER_RATE",
     subscriptionBehavior: "REQUIRED",
-    allowedAgeTiers: [...ageTierOrder],
+    allowedAgeTiers: sortAgeTiers(ageTiers),
     xeroContactGroupRules: [],
   };
 }
@@ -190,11 +209,15 @@ function draftFromType(type: MembershipType): DraftMembershipType {
   };
 }
 
-function comparableDraft(draft: DraftMembershipType) {
+function comparableDraft(
+  draft: DraftMembershipType,
+  availableAgeTiers: readonly AgeTier[],
+) {
   return {
     ...draft,
+    name: draft.name.trim(),
     description: draft.description.trim(),
-    allowedAgeTiers: ageTierOrder.filter((ageTier) =>
+    allowedAgeTiers: sortAgeTiers(availableAgeTiers).filter((ageTier) =>
       draft.allowedAgeTiers.includes(ageTier),
     ),
     xeroContactGroupRules: draft.xeroContactGroupRules.map((rule, index) => ({
@@ -208,12 +231,29 @@ function comparableDraft(draft: DraftMembershipType) {
   };
 }
 
-function isDirty(type: MembershipType, draft: DraftMembershipType) {
-  return JSON.stringify(comparableDraft(draftFromType(type))) !==
-    JSON.stringify(comparableDraft(draft));
+function isDirty(
+  type: MembershipType,
+  draft: DraftMembershipType,
+  availableAgeTiers: readonly AgeTier[],
+) {
+  return (
+    JSON.stringify(comparableDraft(draftFromType(type), availableAgeTiers)) !==
+    JSON.stringify(comparableDraft(draft, availableAgeTiers))
+  );
+}
+
+function isNewDirty(draft: DraftMembershipType) {
+  return (
+    draft.name.trim().length > 0 ||
+    draft.description.trim().length > 0 ||
+    draft.xeroContactGroupRules.length > 0
+  );
 }
 
 function validateDraft(draft: DraftMembershipType): string | null {
+  if (draft.name.trim().length === 0) {
+    return "Enter a membership type name.";
+  }
   if (draft.allowedAgeTiers.length === 0) {
     return "Select at least one allowed age tier.";
   }
@@ -225,14 +265,17 @@ function validateDraft(draft: DraftMembershipType): string | null {
   return null;
 }
 
-function draftPayload(draft: DraftMembershipType) {
+function draftPayload(
+  draft: DraftMembershipType,
+  availableAgeTiers: readonly AgeTier[],
+) {
   return {
     name: draft.name,
     description: draft.description,
     isActive: draft.isActive,
     bookingBehavior: draft.bookingBehavior,
     subscriptionBehavior: draft.subscriptionBehavior,
-    allowedAgeTiers: ageTierOrder.filter((ageTier) =>
+    allowedAgeTiers: sortAgeTiers(availableAgeTiers).filter((ageTier) =>
       draft.allowedAgeTiers.includes(ageTier),
     ),
     xeroContactGroupRules: draft.xeroContactGroupRules.map((rule, index) => ({
@@ -252,18 +295,667 @@ function formatSeasonLabel(seasonYear: number) {
 
 function rollForwardExceptionLabel(exception: RollForwardException) {
   if (exception.code === "inactive_membership_type") {
-    return `Inactive type${exception.membershipTypeName ? `: ${exception.membershipTypeName}` : ""}`;
+    return `Inactive type${
+      exception.membershipTypeName ? `: ${exception.membershipTypeName}` : ""
+    }`;
   }
   return "Missing prior assignment";
+}
+
+function collectAvailableAgeTiers(types: readonly MembershipType[]) {
+  const fromTypes = types.flatMap((type) => [
+    ...type.allowedAgeTiers,
+    ...type.xeroContactGroupRules
+      .map((rule) => rule.ageTier)
+      .filter((ageTier): ageTier is AgeTier => Boolean(ageTier)),
+  ]);
+  return sortAgeTiers(fromTypes.length > 0 ? fromTypes : knownAgeTierOrder);
+}
+
+function replaceOrAppendDraft(
+  drafts: Record<string, DraftMembershipType>,
+  type: MembershipType,
+) {
+  return {
+    ...drafts,
+    [type.id]: draftFromType(type),
+  };
+}
+
+interface MembershipTypeEditorDialogProps {
+  target: EditorTarget | null;
+  membershipType: MembershipType | null;
+  draft: DraftMembershipType;
+  availableAgeTiers: AgeTier[];
+  xeroGroups: XeroContactGroup[];
+  loadingXeroGroups: boolean;
+  refreshingXeroGroups: boolean;
+  saving: boolean;
+  onDraftChange: (patch: Partial<DraftMembershipType>) => void;
+  onRuleChange: (
+    draftRuleId: string,
+    patch: Partial<DraftXeroContactGroupRule>,
+  ) => void;
+  onAddRule: () => void;
+  onRemoveRule: (draftRuleId: string) => void;
+  onRefreshXeroGroups: () => void;
+  onSave: () => void;
+  onClose: () => void;
+  onSetActive: (isActive: boolean) => void;
+}
+
+function MembershipTypeEditorDialog({
+  target,
+  membershipType,
+  draft,
+  availableAgeTiers,
+  xeroGroups,
+  loadingXeroGroups,
+  refreshingXeroGroups,
+  saving,
+  onDraftChange,
+  onRuleChange,
+  onAddRule,
+  onRemoveRule,
+  onRefreshXeroGroups,
+  onSave,
+  onClose,
+  onSetActive,
+}: MembershipTypeEditorDialogProps) {
+  const validationError = validateDraft(draft);
+  const dirty =
+    target?.mode === "edit" && membershipType
+      ? isDirty(membershipType, draft, availableAgeTiers)
+      : isNewDirty(draft);
+  const isOpen = target !== null;
+  const title =
+    target?.mode === "new"
+      ? "New membership type"
+      : `Edit ${membershipType?.name ?? "membership type"}`;
+
+  function toggleAgeTier(ageTier: AgeTier, checked: boolean) {
+    onDraftChange({
+      allowedAgeTiers: checked
+        ? sortAgeTiers([...draft.allowedAgeTiers, ageTier])
+        : draft.allowedAgeTiers.filter((tier) => tier !== ageTier),
+    });
+  }
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-5xl">
+        <DialogHeader>
+          <div className="flex flex-wrap items-center gap-2 pr-8">
+            <DialogTitle>{title}</DialogTitle>
+            {dirty && (
+              <Badge variant="secondary" className="text-xs">
+                Unsaved changes
+              </Badge>
+            )}
+          </div>
+          <DialogDescription>
+            Configure identity, booking policy, allowed tiers, and Xero group
+            rules for this seasonal membership type.
+          </DialogDescription>
+        </DialogHeader>
+
+        {validationError && dirty && (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            {validationError}
+          </div>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.75fr)]">
+          <div className="space-y-6">
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Identity
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Display fields shown anywhere admins assign seasonal
+                  membership policy.
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="membership-type-editor-name">Name</Label>
+                  <Input
+                    id="membership-type-editor-name"
+                    value={draft.name}
+                    onChange={(event) =>
+                      onDraftChange({ name: event.target.value })
+                    }
+                    maxLength={120}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <div className="flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3">
+                    <Checkbox
+                      id="membership-type-editor-active"
+                      checked={draft.isActive}
+                      onCheckedChange={(checked) =>
+                        onDraftChange({ isActive: checked === true })
+                      }
+                    />
+                    <Label htmlFor="membership-type-editor-active">
+                      Active and assignable
+                    </Label>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="membership-type-editor-description">
+                  Description
+                </Label>
+                <Textarea
+                  id="membership-type-editor-description"
+                  value={draft.description}
+                  onChange={(event) =>
+                    onDraftChange({ description: event.target.value })
+                  }
+                  maxLength={1000}
+                  rows={4}
+                />
+              </div>
+            </section>
+
+            <Separator />
+
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Booking and subscription behavior
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  These settings drive future booking policy and effective
+                  subscription status without changing access roles.
+                </p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Booking behavior</Label>
+                  <Select
+                    value={draft.bookingBehavior}
+                    onValueChange={(value) =>
+                      onDraftChange({
+                        bookingBehavior: value as BookingBehavior,
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(bookingBehaviorLabels).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Subscription behavior</Label>
+                  <Select
+                    value={draft.subscriptionBehavior}
+                    onValueChange={(value) =>
+                      onDraftChange({
+                        subscriptionBehavior: value as SubscriptionBehavior,
+                      })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(subscriptionBehaviorLabels).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </section>
+
+            <Separator />
+
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Allowed age tiers
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Select every age tier this membership type can be assigned to.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {availableAgeTiers.map((ageTier) => {
+                  const inputId = `membership-type-editor-age-${ageTier}`;
+                  return (
+                    <label
+                      key={ageTier}
+                      htmlFor={inputId}
+                      className="inline-flex min-h-10 items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                    >
+                      <Checkbox
+                        id={inputId}
+                        checked={draft.allowedAgeTiers.includes(ageTier)}
+                        onCheckedChange={(checked) =>
+                          toggleAgeTier(ageTier, checked === true)
+                        }
+                      />
+                      {formatAgeTierLabel(ageTier)}
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+
+          <aside className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Xero rules
+                </h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Membership Type Xero group rules are separate from age-tier
+                  Xero groups.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={onRefreshXeroGroups}
+                disabled={refreshingXeroGroups}
+                aria-label="Refresh Xero groups"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${
+                    refreshingXeroGroups ? "animate-spin" : ""
+                  }`}
+                />
+              </Button>
+            </div>
+
+            <div className="space-y-3">
+              {draft.xeroContactGroupRules.length === 0 ? (
+                <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-4 text-sm text-slate-500">
+                  No membership-type Xero rules.
+                </div>
+              ) : (
+                draft.xeroContactGroupRules.map((rule, index) => {
+                  const selectedGroup = xeroGroups.find(
+                    (group) => group.id === rule.groupId,
+                  );
+                  const groupSelectId = `membership-type-editor-xero-group-${rule.draftId}`;
+                  const modeSelectId = `membership-type-editor-xero-mode-${rule.draftId}`;
+                  const ageSelectId = `membership-type-editor-xero-age-${rule.draftId}`;
+                  const activeInputId = `membership-type-editor-xero-active-${rule.draftId}`;
+
+                  return (
+                    <div
+                      key={rule.draftId}
+                      className="space-y-3 rounded-md border border-slate-200 bg-white p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-sm font-medium text-slate-900">
+                          Rule {index + 1}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => onRemoveRule(rule.draftId)}
+                          aria-label="Remove Xero group rule"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                        <div className="space-y-1.5">
+                          <Label htmlFor={modeSelectId}>Mode</Label>
+                          <Select
+                            value={rule.mode}
+                            onValueChange={(value) =>
+                              onRuleChange(rule.draftId, {
+                                mode: value as XeroContactGroupRuleMode,
+                              })
+                            }
+                          >
+                            <SelectTrigger id={modeSelectId}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(xeroRuleModeLabels).map(
+                                ([value, label]) => (
+                                  <SelectItem key={value} value={value}>
+                                    {label}
+                                  </SelectItem>
+                                ),
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label htmlFor={ageSelectId}>Age scope</Label>
+                          <Select
+                            value={rule.ageTier ?? allAgeTierValue}
+                            onValueChange={(value) =>
+                              onRuleChange(rule.draftId, {
+                                ageTier:
+                                  value === allAgeTierValue ? null : value,
+                              })
+                            }
+                          >
+                            <SelectTrigger id={ageSelectId}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={allAgeTierValue}>
+                                All ages
+                              </SelectItem>
+                              {availableAgeTiers.map((ageTier) => (
+                                <SelectItem key={ageTier} value={ageTier}>
+                                  {formatAgeTierLabel(ageTier)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor={groupSelectId}>Group</Label>
+                        <Select
+                          value={rule.groupId || noXeroGroupValue}
+                          onValueChange={(value) => {
+                            if (value === noXeroGroupValue) {
+                              onRuleChange(rule.draftId, {
+                                groupId: "",
+                                groupName: "",
+                              });
+                              return;
+                            }
+                            const group = xeroGroups.find(
+                              (candidate) => candidate.id === value,
+                            );
+                            onRuleChange(rule.draftId, {
+                              groupId: value,
+                              groupName: group?.name ?? rule.groupName,
+                            });
+                          }}
+                          disabled={loadingXeroGroups}
+                        >
+                          <SelectTrigger id={groupSelectId}>
+                            <SelectValue placeholder="Select group" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={noXeroGroupValue}>
+                              Select group
+                            </SelectItem>
+                            {rule.groupId && !selectedGroup ? (
+                              <SelectItem value={rule.groupId}>
+                                {rule.groupName || rule.groupId}
+                              </SelectItem>
+                            ) : null}
+                            {xeroGroups.map((group) => (
+                              <SelectItem key={group.id} value={group.id}>
+                                {group.name} ({group.contactCount})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          id={activeInputId}
+                          checked={rule.isActive}
+                          onCheckedChange={(checked) =>
+                            onRuleChange(rule.draftId, {
+                              isActive: checked === true,
+                            })
+                          }
+                        />
+                        <Label htmlFor={activeInputId}>Rule active</Label>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={onAddRule}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add Xero rule
+            </Button>
+          </aside>
+        </div>
+
+        <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
+          <div>
+            {target?.mode === "edit" && membershipType ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onSetActive(!membershipType.isActive)}
+                disabled={saving}
+              >
+                {membershipType.isActive ? (
+                  <Archive className="mr-2 h-4 w-4" />
+                ) : (
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                )}
+                {membershipType.isActive ? "Archive" : "Reactivate"}
+              </Button>
+            ) : null}
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              type="button"
+              onClick={onSave}
+              disabled={saving || Boolean(validationError) || !dirty}
+            >
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : target?.mode === "new" ? (
+                <Plus className="mr-2 h-4 w-4" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              {target?.mode === "new" ? "Create type" : "Save changes"}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface MembershipTypeListProps {
+  membershipTypes: MembershipType[];
+  drafts: Record<string, DraftMembershipType>;
+  availableAgeTiers: AgeTier[];
+  savingId: string | null;
+  reordering: boolean;
+  onEdit: (type: MembershipType) => void;
+  onMove: (index: number, direction: -1 | 1) => void;
+  onSetActive: (type: MembershipType, isActive: boolean) => void;
+}
+
+function MembershipTypeList({
+  membershipTypes,
+  drafts,
+  availableAgeTiers,
+  savingId,
+  reordering,
+  onEdit,
+  onMove,
+  onSetActive,
+}: MembershipTypeListProps) {
+  if (membershipTypes.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+        No membership types have been configured yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {membershipTypes.map((type, index) => {
+        const draft = drafts[type.id] ?? draftFromType(type);
+        const dirty = isDirty(type, draft, availableAgeTiers);
+
+        return (
+          <article
+            key={type.id}
+            className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
+          >
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1.7fr)_120px_112px] xl:items-center">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="truncate text-base font-semibold text-slate-900">
+                    {type.name}
+                  </h3>
+                  <Badge variant={type.isActive ? "default" : "secondary"}>
+                    {type.isActive ? "Active" : "Archived"}
+                  </Badge>
+                  <Badge variant={type.isBuiltIn ? "outline" : "secondary"}>
+                    {type.isBuiltIn ? "Built-in" : "Custom"}
+                  </Badge>
+                  {dirty && <Badge variant="secondary">Unsaved</Badge>}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span>{type.key}</span>
+                  <span aria-hidden="true">/</span>
+                  <span>
+                    {type.assignmentCount} assignment
+                    {type.assignmentCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {type.description ? (
+                  <p className="mt-2 line-clamp-2 text-sm text-slate-600">
+                    {type.description}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline">
+                    {bookingBehaviorLabels[type.bookingBehavior]}
+                  </Badge>
+                  <Badge variant="outline">
+                    {subscriptionBehaviorLabels[type.subscriptionBehavior]}
+                  </Badge>
+                  {type.xeroContactGroupRules.length > 0 ? (
+                    <Badge variant="secondary">
+                      {type.xeroContactGroupRules.length} Xero rule
+                      {type.xeroContactGroupRules.length === 1 ? "" : "s"}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline">No Xero rules</Badge>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {sortAgeTiers(type.allowedAgeTiers).map((ageTier) => (
+                    <span
+                      key={ageTier}
+                      className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700"
+                    >
+                      {formatAgeTierLabel(ageTier)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-1 xl:justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => onMove(index, -1)}
+                  disabled={index === 0 || reordering}
+                  aria-label={`Move ${type.name} up`}
+                >
+                  <ArrowUp className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => onMove(index, 1)}
+                  disabled={index === membershipTypes.length - 1 || reordering}
+                  aria-label={`Move ${type.name} down`}
+                >
+                  <ArrowDown className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 xl:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onEdit(type)}
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onSetActive(type, !type.isActive)}
+                  disabled={savingId === type.id}
+                >
+                  {savingId === type.id ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : type.isActive ? (
+                    <Archive className="mr-2 h-4 w-4" />
+                  ) : (
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                  )}
+                  {type.isActive ? "Archive" : "Reactivate"}
+                </Button>
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function AdminMembershipTypesPage() {
   const defaultSeasonYear = getSeasonYear(new Date());
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftMembershipType>>({});
-  const [newDraft, setNewDraft] = useState<DraftMembershipType>(
-    createEmptyDraft,
+  const [newDraft, setNewDraft] = useState<DraftMembershipType>(() =>
+    createEmptyDraft(knownAgeTierOrder),
   );
+  const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
   const [xeroGroups, setXeroGroups] = useState<XeroContactGroup[]>([]);
   const [loadingXeroGroups, setLoadingXeroGroups] = useState(true);
   const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false);
@@ -297,6 +989,30 @@ export default function AdminMembershipTypesPage() {
       }),
     [membershipTypes],
   );
+
+  const availableAgeTiers = useMemo(
+    () => collectAvailableAgeTiers(sortedTypes),
+    [sortedTypes],
+  );
+
+  const editingType =
+    editorTarget?.mode === "edit"
+      ? (membershipTypes.find(
+          (type) => type.id === editorTarget.membershipTypeId,
+        ) ?? null)
+      : null;
+
+  const editorDraft =
+    editorTarget?.mode === "edit" && editingType
+      ? (drafts[editingType.id] ?? draftFromType(editingType))
+      : newDraft;
+
+  useEffect(() => {
+    setNewDraft((current) => {
+      if (isNewDirty(current)) return current;
+      return createEmptyDraft(availableAgeTiers);
+    });
+  }, [availableAgeTiers]);
 
   async function loadMembershipTypes() {
     setLoading(true);
@@ -380,106 +1096,72 @@ export default function AdminMembershipTypesPage() {
     void loadXeroGroups();
   }, []);
 
-  function updateDraft(id: string, patch: Partial<DraftMembershipType>) {
-    setDrafts((current) => ({
-      ...current,
-      [id]: { ...current[id], ...patch },
-    }));
-    setSavedMessage("");
-  }
-
-  function toggleNewDraftAgeTier(ageTier: AgeTier, checked: boolean) {
-    setNewDraft((current) => ({
-      ...current,
-      allowedAgeTiers: checked
-        ? ageTierOrder.filter((tier) =>
-            [...current.allowedAgeTiers, ageTier].includes(tier),
-          )
-        : current.allowedAgeTiers.filter((tier) => tier !== ageTier),
-    }));
-    setSavedMessage("");
-  }
-
-  function toggleDraftAgeTier(id: string, ageTier: AgeTier, checked: boolean) {
-    setDrafts((current) => {
-      const draft = current[id];
-      if (!draft) return current;
-      return {
+  function updateEditorDraft(patch: Partial<DraftMembershipType>) {
+    if (editorTarget?.mode === "edit" && editingType) {
+      setDrafts((current) => ({
         ...current,
-        [id]: {
-          ...draft,
-          allowedAgeTiers: checked
-            ? ageTierOrder.filter((tier) =>
-                [...draft.allowedAgeTiers, ageTier].includes(tier),
-              )
-            : draft.allowedAgeTiers.filter((tier) => tier !== ageTier),
+        [editingType.id]: {
+          ...(current[editingType.id] ?? draftFromType(editingType)),
+          ...patch,
         },
-      };
-    });
+      }));
+    } else {
+      setNewDraft((current) => ({ ...current, ...patch }));
+    }
     setSavedMessage("");
   }
 
-  function addDraftXeroRule(id: string) {
-    setDrafts((current) => {
-      const draft = current[id];
-      if (!draft) return current;
-      return {
-        ...current,
-        [id]: {
-          ...draft,
-          xeroContactGroupRules: [
-            ...draft.xeroContactGroupRules,
-            {
-              draftId: nextDraftRuleId(),
-              ageTier: null,
-              mode: "MANAGED",
-              groupId: "",
-              groupName: "",
-              isActive: true,
-              sortOrder: draft.xeroContactGroupRules.length,
-            },
-          ],
-        },
-      };
-    });
-    setSavedMessage("");
-  }
-
-  function updateDraftXeroRule(
-    id: string,
+  function updateEditorRule(
     draftRuleId: string,
     patch: Partial<DraftXeroContactGroupRule>,
   ) {
-    setDrafts((current) => {
-      const draft = current[id];
-      if (!draft) return current;
-      return {
-        ...current,
-        [id]: {
-          ...draft,
-          xeroContactGroupRules: draft.xeroContactGroupRules.map((rule) =>
-            rule.draftId === draftRuleId ? { ...rule, ...patch } : rule,
-          ),
-        },
-      };
+    updateEditorDraft({
+      xeroContactGroupRules: editorDraft.xeroContactGroupRules.map((rule) =>
+        rule.draftId === draftRuleId ? { ...rule, ...patch } : rule,
+      ),
     });
+  }
+
+  function addEditorRule() {
+    updateEditorDraft({
+      xeroContactGroupRules: [
+        ...editorDraft.xeroContactGroupRules,
+        {
+          draftId: nextDraftRuleId(),
+          ageTier: null,
+          mode: "MANAGED",
+          groupId: "",
+          groupName: "",
+          isActive: true,
+          sortOrder: editorDraft.xeroContactGroupRules.length,
+        },
+      ],
+    });
+  }
+
+  function removeEditorRule(draftRuleId: string) {
+    updateEditorDraft({
+      xeroContactGroupRules: editorDraft.xeroContactGroupRules.filter(
+        (rule) => rule.draftId !== draftRuleId,
+      ),
+    });
+  }
+
+  function openNewEditor() {
+    setNewDraft((current) =>
+      isNewDirty(current) ? current : createEmptyDraft(availableAgeTiers),
+    );
+    setEditorTarget({ mode: "new" });
+    setError("");
     setSavedMessage("");
   }
 
-  function removeDraftXeroRule(id: string, draftRuleId: string) {
-    setDrafts((current) => {
-      const draft = current[id];
-      if (!draft) return current;
-      return {
-        ...current,
-        [id]: {
-          ...draft,
-          xeroContactGroupRules: draft.xeroContactGroupRules.filter(
-            (rule) => rule.draftId !== draftRuleId,
-          ),
-        },
-      };
-    });
+  function openEditEditor(type: MembershipType) {
+    setDrafts((current) =>
+      current[type.id] ? current : replaceOrAppendDraft(current, type),
+    );
+    setEditorTarget({ mode: "edit", membershipTypeId: type.id });
+    setError("");
     setSavedMessage("");
   }
 
@@ -497,7 +1179,7 @@ export default function AdminMembershipTypesPage() {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftPayload(newDraft)),
+        body: JSON.stringify(draftPayload(newDraft, availableAgeTiers)),
       });
       const body = (await response.json()) as
         | { membershipType: MembershipType }
@@ -508,11 +1190,9 @@ export default function AdminMembershipTypesPage() {
         );
       }
       setMembershipTypes((current) => [...current, body.membershipType]);
-      setDrafts((current) => ({
-        ...current,
-        [body.membershipType.id]: draftFromType(body.membershipType),
-      }));
-      setNewDraft(createEmptyDraft());
+      setDrafts((current) => replaceOrAppendDraft(current, body.membershipType));
+      setNewDraft(createEmptyDraft(availableAgeTiers));
+      setEditorTarget({ mode: "edit", membershipTypeId: body.membershipType.id });
       setSavedMessage("Membership type created.");
     } catch (createError) {
       setError(
@@ -545,7 +1225,7 @@ export default function AdminMembershipTypesPage() {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftPayload(draft)),
+        body: JSON.stringify(draftPayload(draft, availableAgeTiers)),
       });
       const body = (await response.json()) as
         | { membershipType: MembershipType }
@@ -560,10 +1240,7 @@ export default function AdminMembershipTypesPage() {
           item.id === body.membershipType.id ? body.membershipType : item,
         ),
       );
-      setDrafts((current) => ({
-        ...current,
-        [body.membershipType.id]: draftFromType(body.membershipType),
-      }));
+      setDrafts((current) => replaceOrAppendDraft(current, body.membershipType));
       setSavedMessage("Membership type saved.");
     } catch (saveError) {
       setError(
@@ -700,6 +1377,11 @@ export default function AdminMembershipTypesPage() {
     );
   }
 
+  const editorSaving =
+    editorTarget?.mode === "new"
+      ? creating
+      : Boolean(editingType && savingId === editingType.id);
+
   return (
     <div ref={pageRef} className="space-y-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -717,22 +1399,15 @@ export default function AdminMembershipTypesPage() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => void loadXeroGroups(true)}
-            disabled={refreshingXeroGroups}
-          >
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${refreshingXeroGroups ? "animate-spin" : ""}`}
-            />
-            {refreshingXeroGroups ? "Refreshing Xero" : "Refresh Xero Groups"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
             onClick={() => void loadMembershipTypes()}
             disabled={loading || creating || reordering || savingId !== null}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
+          </Button>
+          <Button type="button" onClick={openNewEditor}>
+            <Plus className="mr-2 h-4 w-4" />
+            New membership type
           </Button>
         </div>
       </div>
@@ -751,6 +1426,35 @@ export default function AdminMembershipTypesPage() {
           {error || savedMessage}
         </div>
       )}
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">
+              Type list
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm text-slate-500">
+              Scan policy behavior, allowed tiers, assignment count, and order.
+              Open a type to edit details or Xero rules.
+            </p>
+          </div>
+          <div className="text-sm text-slate-500">
+            {sortedTypes.length} configured type
+            {sortedTypes.length === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        <MembershipTypeList
+          membershipTypes={sortedTypes}
+          drafts={drafts}
+          availableAgeTiers={availableAgeTiers}
+          savingId={savingId}
+          reordering={reordering}
+          onEdit={openEditEditor}
+          onMove={moveType}
+          onSetActive={(type, isActive) => void setActive(type, isActive)}
+        />
+      </section>
 
       <section className="rounded-md border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -881,15 +1585,17 @@ export default function AdminMembershipTypesPage() {
                   Exceptions ({rollForwardResult.exceptionCount})
                 </div>
                 <div className="mt-2 space-y-1">
-                  {rollForwardResult.exceptions.slice(0, 10).map((exception) => (
-                    <div
-                      key={`${exception.code}-${exception.memberId}`}
-                      className="text-xs text-amber-900"
-                    >
-                      {exception.memberName} ({exception.memberEmail}) -{" "}
-                      {rollForwardExceptionLabel(exception)}
-                    </div>
-                  ))}
+                  {rollForwardResult.exceptions
+                    .slice(0, 10)
+                    .map((exception) => (
+                      <div
+                        key={`${exception.code}-${exception.memberId}`}
+                        className="text-xs text-amber-900"
+                      >
+                        {exception.memberName} ({exception.memberEmail}) -{" "}
+                        {rollForwardExceptionLabel(exception)}
+                      </div>
+                    ))}
                 </div>
                 {rollForwardResult.exceptionCount > 10 && (
                   <p className="mt-2 text-xs text-amber-800">
@@ -902,498 +1608,32 @@ export default function AdminMembershipTypesPage() {
         )}
       </section>
 
-      <section className="rounded-md border border-slate-200 bg-white p-4">
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_220px_220px_auto] lg:items-end">
-          <div className="space-y-2">
-            <Label htmlFor="membership-type-name">Name</Label>
-            <Input
-              id="membership-type-name"
-              value={newDraft.name}
-              onChange={(event) =>
-                setNewDraft((current) => ({
-                  ...current,
-                  name: event.target.value,
-                }))
-              }
-              maxLength={120}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="membership-type-description">Description</Label>
-            <Textarea
-              id="membership-type-description"
-              value={newDraft.description}
-              onChange={(event) =>
-                setNewDraft((current) => ({
-                  ...current,
-                  description: event.target.value,
-                }))
-              }
-              maxLength={1000}
-              rows={2}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Booking behavior</Label>
-            <Select
-              value={newDraft.bookingBehavior}
-              onValueChange={(value) =>
-                setNewDraft((current) => ({
-                  ...current,
-                  bookingBehavior: value as BookingBehavior,
-                }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(bookingBehaviorLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Subscription behavior</Label>
-            <Select
-              value={newDraft.subscriptionBehavior}
-              onValueChange={(value) =>
-                setNewDraft((current) => ({
-                  ...current,
-                  subscriptionBehavior: value as SubscriptionBehavior,
-                }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(subscriptionBehaviorLabels).map(
-                  ([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ),
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Button
-            type="button"
-            onClick={() => void createMembershipType()}
-            disabled={creating || newDraft.name.trim().length === 0}
-          >
-            {creating ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="mr-2 h-4 w-4" />
-            )}
-            Add
-          </Button>
-        </div>
-        <div className="mt-4 space-y-2">
-          <Label>Allowed age tiers</Label>
-          <div className="flex flex-wrap gap-2">
-            {ageTierOrder.map((ageTier) => {
-              const inputId = `new-membership-type-age-${ageTier}`;
-              return (
-                <label
-                  key={ageTier}
-                  htmlFor={inputId}
-                  className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-sm"
-                >
-                  <Checkbox
-                    id={inputId}
-                    checked={newDraft.allowedAgeTiers.includes(ageTier)}
-                    onCheckedChange={(checked) =>
-                      toggleNewDraftAgeTier(ageTier, checked === true)
-                    }
-                  />
-                  {ageTierLabels[ageTier]}
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="min-w-[220px]">Name</TableHead>
-              <TableHead className="min-w-[260px]">Description</TableHead>
-              <TableHead className="min-w-[190px]">Booking</TableHead>
-              <TableHead className="min-w-[210px]">Subscription</TableHead>
-              <TableHead className="min-w-[250px]">Age Tiers</TableHead>
-              <TableHead className="min-w-[560px]">Xero Groups</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Assignments</TableHead>
-              <TableHead className="w-[180px]">Order</TableHead>
-              <TableHead className="w-[210px] text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sortedTypes.map((type, index) => {
-              const draft = drafts[type.id] ?? draftFromType(type);
-              const rowDirty = isDirty(type, draft);
-
-              return (
-                <TableRow key={type.id}>
-                  <TableCell className="align-top">
-                    <div className="space-y-2">
-                      <Input
-                        value={draft.name}
-                        onChange={(event) =>
-                          updateDraft(type.id, { name: event.target.value })
-                        }
-                        maxLength={120}
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <Badge variant={type.isBuiltIn ? "default" : "secondary"}>
-                          {type.isBuiltIn ? "Built-in" : "Custom"}
-                        </Badge>
-                        <Badge variant="outline">{type.key}</Badge>
-                      </div>
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <Textarea
-                      value={draft.description}
-                      onChange={(event) =>
-                        updateDraft(type.id, {
-                          description: event.target.value,
-                        })
-                      }
-                      maxLength={1000}
-                      rows={3}
-                    />
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <Select
-                      value={draft.bookingBehavior}
-                      onValueChange={(value) =>
-                        updateDraft(type.id, {
-                          bookingBehavior: value as BookingBehavior,
-                        })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(bookingBehaviorLabels).map(
-                          ([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ),
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <Select
-                      value={draft.subscriptionBehavior}
-                      onValueChange={(value) =>
-                        updateDraft(type.id, {
-                          subscriptionBehavior: value as SubscriptionBehavior,
-                        })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(subscriptionBehaviorLabels).map(
-                          ([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ),
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <div className="grid grid-cols-2 gap-2">
-                      {ageTierOrder.map((ageTier) => {
-                        const inputId = `membership-type-${type.id}-age-${ageTier}`;
-                        return (
-                          <label
-                            key={ageTier}
-                            htmlFor={inputId}
-                            className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
-                          >
-                            <Checkbox
-                              id={inputId}
-                              checked={draft.allowedAgeTiers.includes(ageTier)}
-                              onCheckedChange={(checked) =>
-                                toggleDraftAgeTier(
-                                  type.id,
-                                  ageTier,
-                                  checked === true,
-                                )
-                              }
-                            />
-                            {ageTierLabels[ageTier]}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <div className="space-y-2">
-                      {draft.xeroContactGroupRules.length === 0 ? (
-                        <p className="text-xs text-slate-500">
-                          No membership-type Xero rules.
-                        </p>
-                      ) : (
-                        draft.xeroContactGroupRules.map((rule) => {
-                          const selectedGroup = xeroGroups.find(
-                            (group) => group.id === rule.groupId,
-                          );
-                          const groupSelectId = `membership-type-${type.id}-xero-group-${rule.draftId}`;
-                          const modeSelectId = `membership-type-${type.id}-xero-mode-${rule.draftId}`;
-                          const ageSelectId = `membership-type-${type.id}-xero-age-${rule.draftId}`;
-                          const activeInputId = `membership-type-${type.id}-xero-active-${rule.draftId}`;
-
-                          return (
-                            <div
-                              key={rule.draftId}
-                              className="grid gap-2 rounded-md border border-slate-200 p-2 lg:grid-cols-[110px_120px_minmax(180px,1fr)_90px_36px]"
-                            >
-                              <div className="space-y-1">
-                                <Label htmlFor={modeSelectId}>Mode</Label>
-                                <Select
-                                  value={rule.mode}
-                                  onValueChange={(value) =>
-                                    updateDraftXeroRule(type.id, rule.draftId, {
-                                      mode: value as XeroContactGroupRuleMode,
-                                    })
-                                  }
-                                >
-                                  <SelectTrigger id={modeSelectId}>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {Object.entries(xeroRuleModeLabels).map(
-                                      ([value, label]) => (
-                                        <SelectItem key={value} value={value}>
-                                          {label}
-                                        </SelectItem>
-                                      ),
-                                    )}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="space-y-1">
-                                <Label htmlFor={ageSelectId}>Age</Label>
-                                <Select
-                                  value={rule.ageTier ?? allAgeTierValue}
-                                  onValueChange={(value) =>
-                                    updateDraftXeroRule(type.id, rule.draftId, {
-                                      ageTier:
-                                        value === allAgeTierValue
-                                          ? null
-                                          : (value as AgeTier),
-                                    })
-                                  }
-                                >
-                                  <SelectTrigger id={ageSelectId}>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value={allAgeTierValue}>
-                                      All ages
-                                    </SelectItem>
-                                    {ageTierOrder.map((ageTier) => (
-                                      <SelectItem key={ageTier} value={ageTier}>
-                                        {ageTierLabels[ageTier]}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="space-y-1">
-                                <Label htmlFor={groupSelectId}>Group</Label>
-                                <Select
-                                  value={rule.groupId || noXeroGroupValue}
-                                  onValueChange={(value) => {
-                                    if (value === noXeroGroupValue) {
-                                      updateDraftXeroRule(
-                                        type.id,
-                                        rule.draftId,
-                                        { groupId: "", groupName: "" },
-                                      );
-                                      return;
-                                    }
-                                    const group = xeroGroups.find(
-                                      (candidate) => candidate.id === value,
-                                    );
-                                    updateDraftXeroRule(type.id, rule.draftId, {
-                                      groupId: value,
-                                      groupName: group?.name ?? rule.groupName,
-                                    });
-                                  }}
-                                  disabled={loadingXeroGroups}
-                                >
-                                  <SelectTrigger id={groupSelectId}>
-                                    <SelectValue placeholder="Select group" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value={noXeroGroupValue}>
-                                      Select group
-                                    </SelectItem>
-                                    {rule.groupId && !selectedGroup ? (
-                                      <SelectItem value={rule.groupId}>
-                                        {rule.groupName || rule.groupId}
-                                      </SelectItem>
-                                    ) : null}
-                                    {xeroGroups.map((group) => (
-                                      <SelectItem key={group.id} value={group.id}>
-                                        {group.name} ({group.contactCount})
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="flex items-end gap-2 pb-2">
-                                <Checkbox
-                                  id={activeInputId}
-                                  checked={rule.isActive}
-                                  onCheckedChange={(checked) =>
-                                    updateDraftXeroRule(type.id, rule.draftId, {
-                                      isActive: checked === true,
-                                    })
-                                  }
-                                />
-                                <Label htmlFor={activeInputId}>Active</Label>
-                              </div>
-
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                className="self-end"
-                                onClick={() =>
-                                  removeDraftXeroRule(type.id, rule.draftId)
-                                }
-                                aria-label="Remove Xero group rule"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          );
-                        })
-                      )}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => addDraftXeroRule(type.id)}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add Xero Rule
-                      </Button>
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id={`membership-type-active-${type.id}`}
-                        checked={draft.isActive}
-                        onCheckedChange={(checked) =>
-                          updateDraft(type.id, { isActive: checked === true })
-                        }
-                      />
-                      <Label htmlFor={`membership-type-active-${type.id}`}>
-                        Active
-                      </Label>
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="align-top text-sm text-slate-600">
-                    {type.assignmentCount}
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <div className="flex gap-1">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => moveType(index, -1)}
-                        disabled={index === 0 || reordering}
-                        aria-label={`Move ${type.name} up`}
-                      >
-                        <ArrowUp className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => moveType(index, 1)}
-                        disabled={index === sortedTypes.length - 1 || reordering}
-                        aria-label={`Move ${type.name} down`}
-                      >
-                        <ArrowDown className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-
-                  <TableCell className="align-top">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void saveMembershipType(type)}
-                        disabled={!rowDirty || savingId === type.id}
-                      >
-                        {savingId === type.id ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Save className="mr-2 h-4 w-4" />
-                        )}
-                        Save
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void setActive(type, !type.isActive)}
-                        disabled={savingId === type.id}
-                      >
-                        {type.isActive ? (
-                          <Archive className="mr-2 h-4 w-4" />
-                        ) : (
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                        )}
-                        {type.isActive ? "Archive" : "Reactivate"}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
+      <MembershipTypeEditorDialog
+        target={editorTarget}
+        membershipType={editingType}
+        draft={editorDraft}
+        availableAgeTiers={availableAgeTiers}
+        xeroGroups={xeroGroups}
+        loadingXeroGroups={loadingXeroGroups}
+        refreshingXeroGroups={refreshingXeroGroups}
+        saving={editorSaving}
+        onDraftChange={updateEditorDraft}
+        onRuleChange={updateEditorRule}
+        onAddRule={addEditorRule}
+        onRemoveRule={removeEditorRule}
+        onRefreshXeroGroups={() => void loadXeroGroups(true)}
+        onSave={() => {
+          if (editorTarget?.mode === "new") {
+            void createMembershipType();
+          } else if (editingType) {
+            void saveMembershipType(editingType);
+          }
+        }}
+        onClose={() => setEditorTarget(null)}
+        onSetActive={(isActive) => {
+          if (editingType) void setActive(editingType, isActive);
+        }}
+      />
     </div>
   );
 }

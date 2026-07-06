@@ -103,8 +103,10 @@ test("a full admin creates, edits, assigns a custom access role and sees the eff
     .getByRole("button", { name: "Edit", exact: true })
     .click();
 
-  // #1439 hides admin-role checkboxes until the derived User Type is set to
-  // Admin. Drive that public control before assigning the custom role.
+  // Since #1439 the Access Roles picker sits behind the User Type select:
+  // Wanda derives as a plain "User", so the picker (and the custom role's
+  // checkbox) only appears once the type is switched to Admin. "Also a club
+  // member" defaults on, so her USER token is kept alongside the new role.
   await accessGroup.getByRole("combobox", { name: "User Type" }).click();
   await page.getByRole("option", { name: "Admin", exact: true }).click();
 

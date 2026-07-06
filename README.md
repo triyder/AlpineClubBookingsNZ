@@ -82,8 +82,9 @@ fork for another organisation. See `NOTICE.md`.
    (Full Admin only) to rename them, adjust their per-area permissions, delete
    unused ones, or create brand-new roles.
 7. Use **Admin > Membership Types** to review the seeded seasonal membership
-   types: Full, Associate, Life, School, Non-Member, and Family. Associate is
-   the built-in Associate/Reserve-style type and can be renamed by the club.
+   types in the ordered list, then open a type editor to adjust its settings:
+   Full, Associate, Life, School, Non-Member, and Family. Associate is the
+   built-in Associate/Reserve-style type and can be renamed by the club.
    These records drive season-aware booking policy (`MEMBER_RATE`,
    `NON_MEMBER_RATE`, `BLOCK_BOOKING`) and subscription policy (`REQUIRED`,
    `NOT_REQUIRED`) without granting app access. Admins can also configure the

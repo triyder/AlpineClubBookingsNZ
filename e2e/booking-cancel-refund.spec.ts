@@ -65,9 +65,9 @@ test("member cancels a paid booking for account credit and the money outcome is 
     .click();
 
   // After Confirm, the dialog's inline success message races the refreshed
-  // server render of the now-CANCELLED booking (CI trace: the refresh can
-  // replace the component before the message is observed). Accept either
-  // signal; the authoritative money assertions follow after the reload.
+  // server render of the now-CANCELLED booking (the refresh can replace the
+  // component before the message is observed — seen in CI). Accept either
+  // signal here; the authoritative money assertions follow after the reload.
   await expect(
     memberPage
       .getByText("Booking cancelled successfully")
@@ -78,17 +78,21 @@ test("member cancels a paid booking for account credit and the money outcome is 
   // Money outcome #1: a hard reload re-renders the server page (router.refresh()
   // is a soft refresh; the waitlist/IB specs use a hard reload for badge/DOM
   // assertions). The booking is now CANCELLED — proven by the Cancellation
-  // Outcome card, which only renders for a CANCELLED booking — with the
-  // account-credit settlement row, and the cancel affordance is gone.
+  // Outcome card, which only renders for a CANCELLED booking — with a
+  // POSITIVE account-credit settlement row (so a real money outcome, not a
+  // $0 no-op), and the cancel affordance is gone.
+  // /bookings/[id] streams behind loading.tsx, so a reload can leave a
+  // persistent HIDDEN duplicate of the page content in the DOM (root-caused in
+  // #1400, PR #1462); scope every post-reload assertion to <main> — the final
+  // visible render — or strict-mode locators trip on the hidden copy.
   await memberPage.reload();
+  const main = memberPage.getByRole("main");
+  await expect(main.getByText("Cancellation Outcome").last()).toBeVisible();
   await expect(
-    memberPage.getByRole("main").getByText("Cancellation Outcome").last(),
+    main.getByText(/Held as account credit: \$(?!0\.00)\d+\.\d{2}/).last(),
   ).toBeVisible();
   await expect(
-    memberPage.getByRole("main").getByText("Held as account credit:").last(),
-  ).toBeVisible();
-  await expect(
-    memberPage.getByRole("button", { name: "Cancel Booking" }),
+    main.getByRole("button", { name: "Cancel Booking" }),
   ).toHaveCount(0);
 
   await memberPage.close();
@@ -99,17 +103,22 @@ test("member cancels a paid booking for account credit and the money outcome is 
   const adminPage = await adminContext.newPage();
   await loginPersona(adminPage, E2E_ADMIN.email);
 
+  // The payments page defaults its "last updated" window's To-bound to the
+  // BROWSER's local date, while the server interprets that bound as
+  // end-of-day in the club timezone (NZ). On a UTC runner, everything that
+  // happens after NZ midnight (the ~12h window each day) falls outside the
+  // default window and the list renders empty — which is why this assertion
+  // passed in an afternoon-UTC PR run and failed after NZ midnight. Pin an
+  // explicit far-future bound so the assertion is time-of-day independent.
   await adminPage.goto(
     `/admin/payments?${new URLSearchParams({
       search: NOMINATOR_TWO.email,
       lastUpdatedFrom: "2026-01-01",
-      lastUpdatedTo: "2026-12-31",
+      lastUpdatedTo: "2030-01-01",
       settlement: "accountCredit",
     })}`,
   );
-  // The explicit updated range avoids the page's rolling "today" filter hiding
-  // rows just after midnight NZ in CI, while the email and settlement filters
-  // keep the assertion unambiguous.
+  // The email and settlement filters keep the assertion unambiguous.
 
   // The row shows the member as "lastName, firstName" and its settlement badge
   // reads "Account credit" (deriveSettlementKind → accountCredit for a
