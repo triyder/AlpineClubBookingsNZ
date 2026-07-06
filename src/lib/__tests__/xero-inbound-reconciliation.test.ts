@@ -887,6 +887,8 @@ describe("processStoredXeroInboundEvents", () => {
         paymentId: "pay_ib_1",
         source: "INTERNET_BANKING",
         kind: "PRIMARY",
+        // Refunded rows keep their refund bookkeeping on replays (#1357).
+        status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] },
       },
       data: {
         status: "SUCCEEDED",
@@ -1156,6 +1158,343 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.txOperationFindFirst).toHaveBeenCalledTimes(1);
     // Not the paid path.
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  // #1357 (F17): a member paying the stale open invoice of an already-cancelled
+  // booking must not land silently — the money becomes an idempotent member
+  // credit with its offsetting Xero account-credit note enqueued in the SAME
+  // transaction, plus an admin alert and a member email.
+  const txOperationUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+
+  function mockAlreadyCancelledInboundEvent(params: {
+    paymentStatus: string;
+    existingCredit: { id: string } | null;
+    invoicePayments?: unknown[];
+    amountPaid?: number;
+    xeroRefundCreditNoteId?: string | null;
+  }) {
+    const txRef: { current: unknown } = { current: null };
+    txOperationUpdateMany.mockClear();
+    mocks.transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          $executeRaw: mocks.txExecuteRaw,
+          processedWebhookEvent: { deleteMany: mocks.processedDeleteMany },
+          xeroInboundEvent: { update: mocks.inboundUpdate },
+          payment: {
+            findUnique: mocks.paymentFindUnique,
+            update: mocks.paymentUpdate,
+          },
+          paymentTransaction: {
+            updateMany: mocks.paymentTransactionUpdateMany,
+            findFirst: vi.fn().mockResolvedValue({ id: "ptx_primary" }),
+            create: mocks.paymentTransactionCreate,
+          },
+          booking: { update: mocks.bookingUpdate },
+          memberCredit: {
+            findFirst: mocks.memberCreditFindFirst,
+            create: mocks.memberCreditCreate,
+          },
+          xeroObjectLink: { findFirst: mocks.txLinkFindFirst },
+          xeroSyncOperation: {
+            findFirst: mocks.txOperationFindFirst,
+            updateMany: txOperationUpdateMany,
+          },
+        };
+        txRef.current = tx;
+        return callback(tx);
+      }
+    );
+
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_ib_cancelled",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_ib_cancelled",
+        correlationKey: "corr_ib_cancelled",
+        payload: { resourceId: "inv_ib_cancelled" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_ib_cancelled" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_ib_cancelled",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    const booking = {
+      id: "booking_ib_cancelled",
+      memberId: "mem_cancelled",
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      status: "CANCELLED",
+      finalPriceCents: 12345,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      guests: [{ id: "guest_cancelled", nights: [] }],
+      member: {
+        email: "member@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+      promoRedemption: null,
+    };
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_cancelled",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_cancelled",
+          bookingId: "booking_ib_cancelled",
+          amountCents: 12345,
+          status: params.paymentStatus,
+          source: "INTERNET_BANKING",
+          reference: "BOOKING-CANC1234",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          booking,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_cancelled",
+          bookingId: "booking_ib_cancelled",
+          booking: { memberId: "mem_cancelled" },
+        },
+      ]);
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "pay_ib_cancelled",
+      bookingId: "booking_ib_cancelled",
+      amountCents: 12345,
+      status: params.paymentStatus,
+      source: "INTERNET_BANKING",
+      reference: "BOOKING-CANC1234",
+      xeroInvoiceId: params.paymentStatus === "SUCCEEDED" ? "inv_ib_cancelled" : null,
+      xeroInvoiceNumber:
+        params.paymentStatus === "SUCCEEDED" ? "INV-IB-CANCELLED" : null,
+      internetBankingHoldSlots: true,
+      xeroRefundCreditNoteId: params.xeroRefundCreditNoteId ?? null,
+      booking,
+    });
+    mocks.memberCreditFindFirst.mockResolvedValue(params.existingCredit);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_account_credit_cancelled" });
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_ib_cancelled",
+              invoiceNumber: "INV-IB-CANCELLED",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              ...(params.amountPaid !== undefined
+                ? { amountPaid: params.amountPaid }
+                : {}),
+              payments: params.invoicePayments ?? [
+                {
+                  paymentID: "xpay_ib_cancelled",
+                  amount: 123.45,
+                  invoiceNumber: "INV-IB-CANCELLED",
+                  status: "PAID",
+                },
+              ],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    return txRef;
+  }
+
+  it("credits and alerts when an Internet Banking payment lands on an already-cancelled booking (#1357)", async () => {
+    const txRef = mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // The booking keeps its CANCELLED status — no status write at all.
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    // The credit dedupe keys on THIS pipeline's own descriptions — never on
+    // amount, which collides with unrelated cancellation-flow credit rows.
+    expect(mocks.memberCreditFindFirst).toHaveBeenCalledWith({
+      where: {
+        memberId: "mem_cancelled",
+        sourceBookingId: "booking_ib_cancelled",
+        type: "CANCELLATION_REFUND",
+        description: {
+          in: [
+            "Internet Banking payment credit for booking booking_",
+            "Internet Banking payment credit for cancelled booking booking_",
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    // The now-obsolete invoice-clearing refund note was retired in the SAME
+    // transaction (real cash arrived; the note would post a fictional refund).
+    expect(txOperationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localId: "pay_ib_cancelled",
+        status: "PENDING",
+        correlationKey: {
+          startsWith: "payment:pay_ib_cancelled:refund-credit-note:",
+        },
+      }),
+      data: { status: "CANCELLED" },
+    });
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        memberId: "mem_cancelled",
+        amountCents: 12345,
+        type: "CANCELLATION_REFUND",
+        sourceBookingId: "booking_ib_cancelled",
+      }),
+    });
+    // The offsetting account-credit note was enqueued through the SAME
+    // transaction client as the credit.
+    expect(txRef.current).not.toBeNull();
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "Payment",
+        localId: "pay_ib_cancelled",
+        requestPayload: expect.objectContaining({
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 12345,
+        }),
+        store: txRef.current,
+      })
+    );
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 12345,
+        errorMessage: expect.stringContaining("already-cancelled booking"),
+      })
+    );
+    expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Alice",
+      expect.any(Date),
+      expect.any(Date),
+      12345,
+      "credit"
+    );
+    expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  it("stays silent on a webhook replay for an already-credited cancelled booking (#1357)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "SUCCEEDED",
+      existingCredit: { id: "credit_existing" },
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // Replay: no second credit, no second account-credit outbox row (the
+    // pipeline's own inbound-event operation rows don't count), no alert spam.
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    const accountCreditEnqueues = mocks.startXeroSyncOperation.mock.calls.filter(
+      ([input]) => input?.requestPayload?.queueType === "ACCOUNT_CREDIT_NOTE"
+    );
+    expect(accountCreditEnqueues).toHaveLength(0);
+    expect(sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
+  });
+
+  // The killer counter-case (#1357 review): our OWN invoice-clearing credit
+  // notes flip invoices to PAID by ALLOCATION — zero cash. Every ordinary
+  // unpaid-IB cancellation produces this event, and it must mint nothing.
+  it("mints nothing when the invoice was cleared by credit allocation, not cash (#1357)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "FAILED",
+      existingCredit: null,
+      amountPaid: 0,
+      invoicePayments: [],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    const accountCreditEnqueues = mocks.startXeroSyncOperation.mock.calls.filter(
+      ([input]) => input?.requestPayload?.queueType === "ACCOUNT_CREDIT_NOTE"
+    );
+    expect(accountCreditEnqueues).toHaveLength(0);
+    expect(txOperationUpdateMany).not.toHaveBeenCalled();
+    expect(sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
+  });
+
+  // A paid-then-cancelled booking's replayed event is old, already-settled
+  // money: the cancellation flow applied its refund policy, and this pipeline
+  // must neither mint a new credit nor clobber the refund bookkeeping.
+  it("keeps refund state and mints nothing on a paid-then-cancelled replay (#1357)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PARTIALLY_REFUNDED",
+      existingCredit: null,
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // Never settled is false — no credit despite cash evidence on the invoice.
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    // The identifier backfill runs, but the (PARTIALLY_)REFUNDED status is
+    // never overwritten back to SUCCEEDED.
+    for (const [args] of mocks.paymentUpdate.mock.calls) {
+      expect(args.data.status).toBeUndefined();
+    }
+    // The PRIMARY transaction update excludes refunded rows.
+    expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { notIn: ["REFUNDED", "PARTIALLY_REFUNDED"] },
+        }),
+      })
+    );
   });
 
   it("settles an organiser group when its combined invoice is paid", async () => {

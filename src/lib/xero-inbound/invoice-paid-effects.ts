@@ -96,6 +96,10 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           paymentId: fresh.id,
           source: PaymentSource.INTERNET_BANKING,
           kind: PaymentTransactionKind.PRIMARY,
+          // Refunded rows keep their refund bookkeeping on replays (#1357).
+          status: {
+            notIn: [PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED],
+          },
         },
         data: {
           status: PaymentStatus.SUCCEEDED,
@@ -105,28 +109,46 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       });
 
       if (transactionUpdate.count === 0) {
-        await tx.paymentTransaction.create({
-          data: {
+        // A refunded PRIMARY row is excluded from the update above but still
+        // exists — only mint a fresh SUCCEEDED row when none exists at all.
+        const existingPrimary = await tx.paymentTransaction.findFirst({
+          where: {
             paymentId: fresh.id,
-            kind: PaymentTransactionKind.PRIMARY,
             source: PaymentSource.INTERNET_BANKING,
-            stripePaymentIntentId: null,
-            xeroInvoiceId: invoiceId,
-            xeroInvoiceNumber: invoiceNumber,
-            reference: fresh.reference ?? undefined,
-            amountCents: fresh.amountCents,
-            status: PaymentStatus.SUCCEEDED,
-            reason: "xero_invoice_paid_reconciliation",
+            kind: PaymentTransactionKind.PRIMARY,
           },
+          select: { id: true },
         });
+        if (!existingPrimary) {
+          await tx.paymentTransaction.create({
+            data: {
+              paymentId: fresh.id,
+              kind: PaymentTransactionKind.PRIMARY,
+              source: PaymentSource.INTERNET_BANKING,
+              stripePaymentIntentId: null,
+              xeroInvoiceId: invoiceId,
+              xeroInvoiceNumber: invoiceNumber,
+              reference: fresh.reference ?? undefined,
+              amountCents: fresh.amountCents,
+              status: PaymentStatus.SUCCEEDED,
+              reason: "xero_invoice_paid_reconciliation",
+            },
+          });
+        }
       }
 
       const paymentWasPending = fresh.status !== PaymentStatus.SUCCEEDED;
+      // A PAID invoice event must never un-refund money (#1357, the #1353
+      // raise-only spirit): a payment already (PARTIALLY_)REFUNDED keeps its
+      // refund state on replays — only the invoice identifiers are refreshed.
+      const paymentInRefundedState =
+        fresh.status === PaymentStatus.REFUNDED ||
+        fresh.status === PaymentStatus.PARTIALLY_REFUNDED;
       if (paymentWasPending || !fresh.xeroInvoiceId || fresh.xeroInvoiceNumber !== invoiceNumber) {
         await tx.payment.update({
           where: { id: fresh.id },
           data: {
-            status: PaymentStatus.SUCCEEDED,
+            ...(paymentInRefundedState ? {} : { status: PaymentStatus.SUCCEEDED }),
             xeroInvoiceId: invoiceId,
             xeroInvoiceNumber: invoiceNumber,
           },
@@ -142,10 +164,94 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       }
 
       if (fresh.booking.status === BookingStatus.CANCELLED) {
+        // A member paying the stale open invoice of an already-cancelled
+        // booking (#1357, F17) must not land silently — but this branch is
+        // reachable for EVERY cancelled booking whose invoice reports PAID,
+        // and Xero also reports PAID when our own invoice-clearing credit
+        // note is allocated (zero cash). Minting therefore requires ALL of:
+        //  1. positive CASH evidence on the invoice (amountPaid, falling back
+        //     to actual payment records) — an allocation-cleared invoice has
+        //     credit applied, not cash, and must mint nothing;
+        //  2. a payment that never settled (PENDING/FAILED) — a
+        //     paid-then-cancelled booking's replayed event is old money that
+        //     the cancellation flow already settled under its own policy;
+        //  3. no credit already minted by THIS pipeline (matched by its own
+        //     descriptions — never by amount, which collides with unrelated
+        //     cancellation-flow rows and misses policy-tiered ones).
+        const invoiceCashPaidCents =
+          typeof invoice.amountPaid === "number"
+            ? Math.round(invoice.amountPaid * 100)
+            : null;
+        const invoiceHasCashPayment =
+          invoiceCashPaidCents !== null
+            ? invoiceCashPaidCents > 0
+            : (invoice.payments?.length ?? 0) > 0;
+        const paymentNeverSettled =
+          fresh.status === PaymentStatus.PENDING ||
+          fresh.status === PaymentStatus.FAILED;
+        const bookingLabel = fresh.bookingId.slice(0, 8);
+
+        let credited = false;
+        if (invoiceHasCashPayment && paymentNeverSettled && fresh.amountCents > 0) {
+          const existingCredit = await tx.memberCredit.findFirst({
+            where: {
+              memberId: fresh.booking.memberId,
+              sourceBookingId: fresh.bookingId,
+              type: CreditType.CANCELLATION_REFUND,
+              description: {
+                in: [
+                  `Internet Banking payment credit for booking ${bookingLabel}`,
+                  `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+                ],
+              },
+            },
+            select: { id: true },
+          });
+          credited = !existingCredit;
+        }
+
+        if (credited) {
+          await tx.memberCredit.create({
+            data: {
+              memberId: fresh.booking.memberId,
+              amountCents: fresh.amountCents,
+              type: CreditType.CANCELLATION_REFUND,
+              description: `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+              sourceBookingId: fresh.bookingId,
+            },
+          });
+          // Real cash arrived, so the hold-expiry release's still-pending
+          // invoice-clearing refund credit note (which would post a fictional
+          // cash refund) is obsolete — retire it in the same transaction. An
+          // already-executed note can't be retired here; the admin alert
+          // below calls out that state for manual reconciliation.
+          await tx.xeroSyncOperation.updateMany({
+            where: {
+              localModel: "Payment",
+              localId: fresh.id,
+              direction: "OUTBOUND",
+              entityType: "CREDIT_NOTE",
+              operationType: "CREATE",
+              status: "PENDING",
+              correlationKey: {
+                startsWith: `payment:${fresh.id}:refund-credit-note:`,
+              },
+            },
+            data: {
+              status: "CANCELLED",
+            },
+          });
+          await enqueueXeroAccountCreditNoteOperation(fresh.id, fresh.amountCents, {
+            store: tx,
+          });
+        }
+
         return {
           type: "alreadyCancelled" as const,
           payment: fresh,
           paymentWasPending,
+          credited,
+          clearingNoteAlreadyIssued: Boolean(fresh.xeroRefundCreditNoteId),
         };
       }
 
@@ -250,6 +356,48 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     }
 
     if (outcome.type === "alreadyCancelled") {
+      // Everything is gated on `credited` — the one state where new cash
+      // actually landed and was minted. Replays, allocation-driven PAID flips
+      // (our own clearing notes), and paid-then-cancelled histories all reach
+      // this arm with credited=false and must stay silent.
+      if (outcome.credited) {
+        result.creditedInternetBankingBookings += 1;
+        await recordBookingEvent({
+          bookingId: outcome.payment.bookingId,
+          type: BookingEventType.CREDITED,
+          amountCents: outcome.payment.amountCents,
+          reason:
+            "Internet Banking payment received after cancellation; amount held as account credit.",
+        });
+        sendBookingCancelledEmail(
+          outcome.payment.booking.member.email,
+          outcome.payment.booking.member.firstName,
+          outcome.payment.booking.checkIn,
+          outcome.payment.booking.checkOut,
+          outcome.payment.amountCents,
+          "credit",
+        ).catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to email member about credit for payment on cancelled booking"
+          )
+        );
+        sendAdminPaymentFailureAlert({
+          memberName: `${outcome.payment.booking.member.firstName} ${outcome.payment.booking.member.lastName}`,
+          checkIn: outcome.payment.booking.checkIn,
+          checkOut: outcome.payment.booking.checkOut,
+          amountCents: outcome.payment.amountCents,
+          errorMessage: outcome.clearingNoteAlreadyIssued
+            ? "Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit — and an invoice-clearing credit note was ALREADY issued for this invoice, so Xero needs manual reconciliation (void the clearing note's refund payment or the duplicate artifact)."
+            : "Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit; follow up with the member if a bank refund is more appropriate.",
+          paymentIntentId: invoiceId,
+        }).catch((err) =>
+          logger.error(
+            { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
+            "Failed to alert admins about Internet Banking payment on cancelled booking"
+          )
+        );
+      }
       continue;
     }
 

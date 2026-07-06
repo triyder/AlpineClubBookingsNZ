@@ -485,9 +485,18 @@ export async function enqueueXeroBookingInvoiceUpdateOperation(
 export async function enqueueXeroRefundCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string }
+  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient }
 ) {
-  const payment = await prisma.payment.findUnique({
+  // Optional transaction client (#1357) so callers (e.g. the Internet Banking
+  // hold-expiry cron) can enqueue the outbox row inside the same transaction
+  // that releases the hold — the invoice-clearing intent then commits
+  // atomically with the release instead of riding a post-commit crash window.
+  // Every internal read/write goes through the same client so the #1354
+  // correlation-key dedupe sees a consistent (uncommitted) state. Defaults to
+  // the global `prisma`, keeping existing callers unchanged.
+  const db = options?.store ?? prisma;
+
+  const payment = await db.payment.findUnique({
     where: { id: paymentId },
     select: {
       id: true,
@@ -508,7 +517,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
     };
   }
 
-  const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId);
+  const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId, db);
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
 
@@ -518,7 +527,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // is the cumulative refund ledger and already includes this delta at enqueue
     // time, so capping the note to `refundedAmountCents - coveredCents` yields
     // this delta while replays of an already-covered state cap at zero.
-    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId);
+    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId, db);
     noteAmountCents = Math.max(
       0,
       Math.min(refundAmountCents, payment.refundedAmountCents - coveredCents)
@@ -535,21 +544,24 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // refund per payment and re-enqueue on cron reruns; the single-note skip
     // absorbs those replays by repointing at the existing note.
     if (payment.xeroRefundCreditNoteId !== canonicalLink.xeroObjectId) {
-      await prisma.payment.update({
+      await db.payment.update({
         where: { id: paymentId },
         data: {
           xeroRefundCreditNoteId: canonicalLink.xeroObjectId,
         },
       });
     }
-    await upsertXeroObjectLink({
-      localModel: "Payment",
-      localId: paymentId,
-      xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: canonicalLink.xeroObjectId,
-      xeroObjectNumber: canonicalLink.xeroObjectNumber,
-      role: "REFUND_CREDIT_NOTE",
-    });
+    await upsertXeroObjectLink(
+      {
+        localModel: "Payment",
+        localId: paymentId,
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: canonicalLink.xeroObjectId,
+        xeroObjectNumber: canonicalLink.xeroObjectNumber,
+        role: "REFUND_CREDIT_NOTE",
+      },
+      options?.store ? { store: options.store } : undefined
+    );
 
     return {
       queueOperationId: null,
@@ -568,7 +580,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
     payment.source === PaymentSource.STRIPE ? "v2" : "v1"
   );
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -607,6 +619,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       watermarkCents,
     },
     createdByMemberId: options?.createdByMemberId ?? null,
+    store: db,
   });
 
   return {

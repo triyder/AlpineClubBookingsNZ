@@ -89,6 +89,26 @@ Future reviews and issues should cite this file when proposing changes.
 - Internet Banking defaults are non-holding and no-cutoff. If bed holding is
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
+- The hold-expiry release and its invoice-clearing Xero credit-note outbox row
+  commit in ONE transaction (#1357): the release marks the hold consumed
+  (re-runs skip it), so an intent enqueued post-commit would ride a crash
+  window with no self-heal. The outbox enqueue is a pure local insert — the
+  Xero call itself stays in the outbox worker, outside the transaction.
+- A payment landing on an already-CANCELLED booking's stale open invoice must
+  never settle silently (#1357) — but a PAID invoice event alone proves
+  nothing: Xero also reports PAID when OUR OWN clearing credit note is
+  allocated (zero cash), and every paid-then-cancelled booking replays PAID
+  events for money the cancellation flow already settled. Minting therefore
+  requires positive CASH evidence on the invoice (`amountPaid`, falling back
+  to actual payment records), a payment that never settled (PENDING/FAILED),
+  and no credit already minted by this pipeline (matched by its own credit
+  descriptions — never by amount, which collides with unrelated
+  cancellation-flow rows). When it mints, the inbound reconcile creates the
+  member credit, retires the now-obsolete still-PENDING invoice-clearing
+  refund note, and enqueues the offsetting account-credit note — all in ONE
+  transaction — then alerts the admins exactly once. A PAID invoice event
+  never overwrites a (PARTIALLY_)REFUNDED payment or transaction status back
+  to SUCCEEDED.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
 - External provider side effects require clear retry and idempotency behavior.

@@ -150,9 +150,12 @@ export function buildXeroIdempotencyKey(
  * note carries.
  */
 export async function sumCoveredRefundCreditNoteCents(
-  paymentId: string
+  paymentId: string,
+  // Optional transaction client (#1357) so a tx-scoped enqueue sees its own
+  // uncommitted writes; defaults to the global client for existing callers.
+  db: Prisma.TransactionClient = prisma
 ): Promise<number> {
-  const links = await prisma.xeroObjectLink.findMany({
+  const links = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
       localId: paymentId,
@@ -171,7 +174,7 @@ export async function sumCoveredRefundCreditNoteCents(
       coveredCents += Math.max(0, Math.round(recorded));
       continue;
     }
-    const operation = await prisma.xeroSyncOperation.findFirst({
+    const operation = await db.xeroSyncOperation.findFirst({
       where: {
         direction: "OUTBOUND",
         entityType: "CREDIT_NOTE",
@@ -194,68 +197,71 @@ export async function sumCoveredRefundCreditNoteCents(
 }
 
 export async function findCanonicalPaymentRefundCreditNote(
-  paymentId: string
+  paymentId: string,
+  // Optional transaction client (#1357); defaults to the global client.
+  db: Prisma.TransactionClient = prisma
 ): Promise<CanonicalPaymentRefundCreditNoteLink | null> {
-  const [payment, refundCreditNoteLinks, refundPaymentLinks, succeededOperation] =
-    await Promise.all([
-      prisma.payment.findUnique({
-        where: { id: paymentId },
-        select: {
-          xeroRefundCreditNoteId: true,
-        },
-      }),
-      prisma.xeroObjectLink.findMany({
-        where: {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "CREDIT_NOTE",
-          role: "REFUND_CREDIT_NOTE",
-          active: true,
-        },
-        orderBy: [
-          { updatedAt: "desc" },
-          { createdAt: "desc" },
-        ],
-        select: {
-          xeroObjectId: true,
-          xeroObjectNumber: true,
-        },
-      }),
-      prisma.xeroObjectLink.findMany({
-        where: {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "PAYMENT",
-          role: "REFUND_PAYMENT",
-          active: true,
-        },
-        orderBy: [
-          { updatedAt: "desc" },
-          { createdAt: "desc" },
-        ],
-        select: {
-          metadata: true,
-        },
-      }),
-      prisma.xeroSyncOperation.findFirst({
-        where: {
-          status: "SUCCEEDED",
-          entityType: "CREDIT_NOTE",
-          operationType: "CREATE",
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectId: { not: null },
-        },
-        orderBy: [
-          { completedAt: "desc" },
-          { createdAt: "desc" },
-        ],
-        select: {
-          xeroObjectId: true,
-          xeroObjectNumber: true,
-        },
-      }),
-    ]);
+  // Sequential on purpose (#1357): an interactive transaction client
+  // serializes queries onto one connection anyway, and concurrent dispatch on
+  // an itx lets a failing sibling surface as a masking secondary
+  // "transaction already closed" error.
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      xeroRefundCreditNoteId: true,
+    },
+  });
+  const refundCreditNoteLinks = await db.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "REFUND_CREDIT_NOTE",
+      active: true,
+    },
+    orderBy: [
+      { updatedAt: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      xeroObjectId: true,
+      xeroObjectNumber: true,
+    },
+  });
+  const refundPaymentLinks = await db.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "PAYMENT",
+      role: "REFUND_PAYMENT",
+      active: true,
+    },
+    orderBy: [
+      { updatedAt: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      metadata: true,
+    },
+  });
+  const succeededOperation = await db.xeroSyncOperation.findFirst({
+    where: {
+      status: "SUCCEEDED",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectId: { not: null },
+    },
+    orderBy: [
+      { completedAt: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      xeroObjectId: true,
+      xeroObjectNumber: true,
+    },
+  });
 
   const xeroObjectNumberById = new Map<string, string | null>();
   for (const link of refundCreditNoteLinks) {
@@ -602,7 +608,15 @@ async function upsertXeroObjectLinkWithClient(
   });
 }
 
-export async function upsertXeroObjectLink(link: XeroObjectLinkInput) {
+export async function upsertXeroObjectLink(
+  link: XeroObjectLinkInput,
+  // Optional in-flight transaction client (#1357): callers already inside a
+  // transaction must not open a nested one, so the write joins theirs.
+  options?: { store?: Prisma.TransactionClient }
+) {
+  if (options?.store) {
+    return upsertXeroObjectLinkWithClient(options.store, link);
+  }
   return prisma.$transaction((tx) => upsertXeroObjectLinkWithClient(tx, link));
 }
 

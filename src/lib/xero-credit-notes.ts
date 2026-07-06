@@ -486,7 +486,17 @@ async function backfillCancellationCreditXeroNote(params: {
       sourceBookingId: params.bookingId,
       amountCents: params.refundAmountCents,
       type: CreditType.CANCELLATION_REFUND,
-      description: `Cancellation refund for booking ${bookingLabel}`,
+      // Every credit this pipeline mints must link back to its Xero note: the
+      // cancellation-flow literal plus the two Internet Banking payment-credit
+      // literals (late capacity failure, and a payment landing on an
+      // already-cancelled booking, #1357).
+      description: {
+        in: [
+          `Cancellation refund for booking ${bookingLabel}`,
+          `Internet Banking payment credit for booking ${bookingLabel}`,
+          `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+        ],
+      },
       xeroCreditNoteId: null,
     },
     data: {

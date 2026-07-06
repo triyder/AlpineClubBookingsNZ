@@ -609,6 +609,54 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     expect(mocks.sumCoveredRefundCreditNoteCents).not.toHaveBeenCalled();
   });
 
+  // #1357 (F17): a transaction-scoped enqueue must route EVERY internal
+  // read/write through the caller's client so the outbox row commits
+  // atomically with the caller's release (and the dedupe sees uncommitted
+  // state), never through the global prisma client.
+  it("routes all reads and the insert through the caller's store client", async () => {
+    const store = {
+      payment: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "payment_1",
+          source: "INTERNET_BANKING",
+          refundedAmountCents: 5000,
+          xeroRefundCreditNoteId: null,
+        }),
+        update: vi.fn(),
+      },
+      xeroSyncOperation: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    };
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 5000, {
+        createdByMemberId: "cron",
+        store: store as never,
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_credit_note_1",
+      message: "Xero refund credit note queued for background processing.",
+    });
+
+    expect(store.payment.findUnique).toHaveBeenCalledTimes(1);
+    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(1);
+    // The global-prisma delegates stayed untouched.
+    expect(mocks.findUniquePayment).not.toHaveBeenCalled();
+    expect(mocks.findFirstOperation).not.toHaveBeenCalled();
+    // Helpers and the operation insert received the same client.
+    expect(mocks.findCanonicalPaymentRefundCreditNote).toHaveBeenCalledWith(
+      "payment_1",
+      store
+    );
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localId: "payment_1",
+        store,
+      })
+    );
+  });
+
   it("queues the uncovered delta with a v2 watermark key for a second Stripe refund", async () => {
     mocks.findUniquePayment.mockResolvedValue({
       id: "payment_1",
