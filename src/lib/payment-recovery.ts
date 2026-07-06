@@ -427,6 +427,106 @@ export async function recordBookingCancellationRefundRecoveryInlineError({
   });
 }
 
+const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX =
+  "group_settlement_refund_recovery_";
+
+export function buildGroupSettlementRefundRecoveryIdempotencyKey(
+  settlementId: string,
+) {
+  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
+}
+
+/**
+ * Durable retry for a group organiser-cancel settlement refund (F3, #1351,
+ * owner-decided auto-retry). Enqueued BEFORE the inline Stripe refund (the
+ * #1349 enqueue-then-execute pattern) with a short delay so the cron only
+ * picks it up when the inline run failed or died; the inline happy path marks
+ * it SUCCEEDED. The processor replays the settlement's PERSISTED refund plan
+ * verbatim under the same `group_cancel_refund_<settlementId>` Stripe key —
+ * a >24h retry never recomputes the cancellation tier, and an ambiguous
+ * failure (Stripe refunded, response lost) is replayed, not repeated. The
+ * recovery machinery supplies backoff and alerts ONLY on exhaustion.
+ *
+ * `paymentId` is an anchor row for the schema FK (the organiser's own
+ * payment): the processor never reads it — the group-settlement branch
+ * dispatches on the idempotency-key prefix before any payment lookup.
+ */
+export async function enqueueGroupSettlementRefundRecovery({
+  organiserBookingId,
+  paymentId,
+  settlementId,
+  paymentIntentId,
+  amountCents,
+  retryDelayMs = 0,
+  lastError,
+  store = prisma,
+}: {
+  organiserBookingId: string;
+  paymentId: string;
+  settlementId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  retryDelayMs?: number;
+  lastError?: string;
+  store?: PaymentRecoveryStore;
+}) {
+  const idempotencyKey =
+    buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId);
+  const nextRetryAt = new Date(Date.now() + retryDelayMs);
+
+  return store.paymentRecoveryOperation.upsert({
+    where: { idempotencyKey },
+    create: {
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      status: PaymentRecoveryOperationStatus.PENDING,
+      bookingId: organiserBookingId,
+      paymentId,
+      paymentIntentId,
+      amountCents,
+      idempotencyKey,
+      nextRetryAt,
+      lastError: lastError ?? null,
+    },
+    update: {
+      amountCents,
+      // Re-arming after an inline failure pulls the retry forward; a FAILED
+      // row keeps its status/attempts, so an exhausted operation stays
+      // exhausted (alert already sent) until the retry itself succeeds.
+      nextRetryAt,
+      ...(lastError !== undefined ? { lastError } : {}),
+    },
+  });
+}
+
+/**
+ * Happy-path close after the inline settlement refund + flip completed
+ * (#1351). Best-effort: a lost close leaves a PENDING row whose replay is a
+ * no-op (the settlement is no longer SUCCEEDED, so the processor only
+ * re-applies any missing per-child mirrors idempotently).
+ */
+export async function markGroupSettlementRefundRecoverySucceeded({
+  settlementId,
+  store = prisma,
+}: {
+  settlementId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey:
+        buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+}
+
 async function enqueueSupersededPaymentRefundRecovery({
   bookingId,
   paymentId,
@@ -865,6 +965,31 @@ function parseRefundAllocationPlan(
 async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
 ) {
+  // Group settlement refund replay (F3, #1351): dispatch on the key prefix
+  // BEFORE any payment lookup — these operations anchor paymentId to the
+  // organiser's own payment purely for the schema FK, and deriving a refund
+  // from that payment's transactions would refund the wrong money. The
+  // executor replays the settlement's persisted plan under the inline
+  // `group_cancel_refund_<settlementId>` Stripe key and applies the
+  // per-child refundedAmountCents mirrors idempotently.
+  if (
+    operation.idempotencyKey.startsWith(
+      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
+    )
+  ) {
+    const settlementId = operation.idempotencyKey.slice(
+      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length,
+    );
+    // Dynamic import: group-cancel imports this module for the enqueue/mark
+    // helpers (same pattern as booking-payment-cleanup above).
+    const { executeGroupSettlementRefundPlan } = await import(
+      "@/lib/group-cancel"
+    );
+    await executeGroupSettlementRefundPlan(settlementId);
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   const payment = await prisma.payment.findUnique({
     where: { id: operation.paymentId },
     include: { transactions: true },

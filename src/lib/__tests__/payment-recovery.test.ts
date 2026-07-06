@@ -32,6 +32,7 @@ const {
   mockUpsertPaymentIntentTransaction,
   mockQueueSupersededAdditionalIntentCancellations,
   mockAttachIntentToWaitingOps,
+  mockExecuteGroupSettlementRefundPlan,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
@@ -63,6 +64,9 @@ const {
     .fn()
     .mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
+  mockExecuteGroupSettlementRefundPlan: vi
+    .fn()
+    .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -100,6 +104,11 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: (...args: unknown[]) => mockCreatePaymentIntent(...args),
   findOrCreateCustomer: (...args: unknown[]) =>
     mockFindOrCreateCustomer(...args),
+}));
+
+vi.mock("@/lib/group-cancel", () => ({
+  executeGroupSettlementRefundPlan: (...args: unknown[]) =>
+    mockExecuteGroupSettlementRefundPlan(...args),
 }));
 
 vi.mock("@/lib/booking-payment-cleanup", () => ({
@@ -144,6 +153,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
+  enqueueGroupSettlementRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 
@@ -897,6 +907,127 @@ describe("payment recovery worker", () => {
         }),
       }),
     );
+  });
+
+  it("dispatches a group settlement refund recovery to the frozen-plan executor (#1351)", async () => {
+    const groupOp = makeOperation({
+      id: "recovery-group-settlement",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 9000,
+      idempotencyKey: "group_settlement_refund_recovery_settle-1",
+      paymentTransactionId: null,
+      paymentIntentId: "pi_settle_1",
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockExecuteGroupSettlementRefundPlan).toHaveBeenCalledWith(
+      "settle-1",
+    );
+    // The anchor payment is never read and no refund is derived from it.
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-group-settlement" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        }),
+      }),
+    );
+  });
+
+  it("retries a group settlement replay whose Stripe call failed, alerting only on exhaustion (#1351)", async () => {
+    const groupOp = makeOperation({
+      id: "recovery-group-settlement-fail",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 9000,
+      attempts: 1,
+      idempotencyKey: "group_settlement_refund_recovery_settle-1",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
+      },
+    );
+    mockExecuteGroupSettlementRefundPlan.mockRejectedValueOnce(
+      new Error("stripe still down"),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.retried).toBe(1);
+    // Not exhausted yet: retry scheduled, NO admin alert.
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-group-settlement-fail" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.FAILED,
+          nextRetryAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it("enqueueGroupSettlementRefundRecovery upserts a delayed operation and re-arms it on inline failure (#1351)", async () => {
+    await enqueueGroupSettlementRefundRecovery({
+      organiserBookingId: "org-booking-1",
+      paymentId: "org-payment-1",
+      settlementId: "settle-1",
+      paymentIntentId: "pi_settle_1",
+      amountCents: 9000,
+      retryDelayMs: 10 * 60 * 1000,
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          idempotencyKey: "group_settlement_refund_recovery_settle-1",
+        },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "org-booking-1",
+          paymentId: "org-payment-1",
+          paymentIntentId: "pi_settle_1",
+          amountCents: 9000,
+          nextRetryAt: expect.any(Date),
+        }),
+      }),
+    );
+    const created = mockPaymentRecoveryUpsert.mock.calls[0][0].create;
+    expect(created.nextRetryAt.getTime()).toBeGreaterThan(
+      Date.now() + 9 * 60 * 1000,
+    );
+
+    // Inline failure re-arms for immediate retry with the error recorded.
+    await enqueueGroupSettlementRefundRecovery({
+      organiserBookingId: "org-booking-1",
+      paymentId: "org-payment-1",
+      settlementId: "settle-1",
+      paymentIntentId: "pi_settle_1",
+      amountCents: 9000,
+      retryDelayMs: 0,
+      lastError: "stripe down",
+    });
+    const rearm = mockPaymentRecoveryUpsert.mock.calls[1][0].update;
+    expect(rearm.lastError).toBe("stripe down");
+    expect(rearm.nextRetryAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it("skips the Stripe call when the outstanding refund balance has already been settled", async () => {

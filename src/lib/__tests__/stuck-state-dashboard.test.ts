@@ -375,6 +375,57 @@ describe("getStuckStateDashboard", () => {
     expect(dashboard.items).toEqual([]);
   });
 
+  it("surfaces settled group cancellations whose refund plan has not executed (#1351)", async () => {
+    const settlementFindMany = vi.fn(
+      async (args: { where?: { status?: unknown } }) => {
+        // The #1351 detector queries SUCCEEDED settlements under CANCELLED
+        // groups; the stale-settlement tile queries PENDING/FAILED ones.
+        if (args?.where?.status === "SUCCEEDED") {
+          return [
+            { refundPlan: { "child-1": 4500 } },
+            { refundPlan: null }, // no plan -> refund executed or never due
+          ];
+        }
+        return [];
+      },
+    );
+    const deps = buildDeps({
+      db: {
+        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(0) },
+        booking: {
+          findMany: vi.fn().mockResolvedValue([]),
+          count: vi.fn().mockResolvedValue(0),
+        },
+        groupBookingSettlement: { findMany: settlementFindMany },
+        issueReport: { count: vi.fn().mockResolvedValue(0) },
+      },
+    });
+
+    const dashboard = await getStuckStateDashboard({
+      deps,
+      now: new Date("2026-06-22T00:00:00.000Z"),
+    });
+
+    expect(settlementFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: "SUCCEEDED",
+          groupBooking: { status: "CANCELLED" },
+        },
+        select: { refundPlan: true },
+      }),
+    );
+    expect(
+      dashboard.items.find(
+        (item) => item.id === "payment-group-settlement-refund-unexecuted",
+      ),
+    ).toMatchObject({
+      severity: "critical",
+      owner: "Finance",
+      count: 1,
+    });
+  });
+
   it("scopes the cancelled-with-unrecorded-refund detector to the crash-window signature (#1349)", async () => {
     const bookingCount = vi.fn().mockResolvedValue(1);
     const deps = buildDeps({

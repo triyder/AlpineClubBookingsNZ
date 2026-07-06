@@ -125,6 +125,14 @@ Future reviews and issues should cite this file when proposing changes.
   re-enqueue a Xero refund credit note for a child that crashed after its
   cancel committed but before its credit note was queued — pre-existing
   books-drift of the #1233 reconcile class.)
+- A failed settlement refund must stay durably owed (#1351): the frozen plan
+  is never nulled, a payment-recovery operation persisted before the inline
+  Stripe call retries the refund under the same
+  `group_cancel_refund_<settlementId>` key, and no interleaving of the inline
+  run, the recovery replay, and the reaper resume may apply a per-child
+  refund mirror twice — the replay only ever writes a mirror to an
+  already-CANCELLED plan child whose `refundedAmountCents` is still zero,
+  via a conditional update. Alerts fire on retry exhaustion only.
 
 ## Booking Modifications
 

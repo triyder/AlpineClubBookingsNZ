@@ -55,6 +55,19 @@ a different cancellation tier) and applies the per-child `refundedAmountCents`
 mirror, and the `SUCCEEDED` guard plus the Stripe idempotency key fire the
 refund at most once.
 
+A transient Stripe failure during that settlement refund no longer abandons it
+(#1351, owner-decided durable auto-retry). A recovery operation is persisted
+**before** the inline refund (closed on the happy path) and the frozen plan is
+kept, never nulled: the payment-recovery cron replays the refund under the
+same `group_cancel_refund_<settlementId>` Stripe key — so an ambiguous failure
+where Stripe actually refunded is replayed, not repeated — flips the
+settlement, applies the per-child `refundedAmountCents` mirrors idempotently
+(only to already-`CANCELLED` plan children whose mirror is still zero; ACTIVE
+children stay owned by the reaper resume path), and enqueues the per-child
+Xero credit notes. Admins are alerted only when the retries exhaust, and the
+stuck-state dashboard flags any `SUCCEEDED` settlement under a `CANCELLED`
+group whose refund plan has not executed.
+
 Booking quote and create paths reject a linked member who is already present on
 another live booking for any requested lodge night. The guard covers draft,
 pending, confirmed/paid/completed, waitlist, offered, and admin-review bookings,

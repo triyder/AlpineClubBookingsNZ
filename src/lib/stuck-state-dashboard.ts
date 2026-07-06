@@ -241,7 +241,23 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
   overduePending: number;
   staleSettlements: number;
   cancelledUnrecordedRefunds: number;
+  unexecutedSettlementRefunds: number;
 }) {
+  addItem(items, {
+    id: "payment-group-settlement-refund-unexecuted",
+    domain: "payment",
+    title: "Unexecuted group settlement refunds",
+    severity: "critical",
+    owner: "Finance",
+    count: counts.unexecutedSettlementRefunds,
+    href: "/admin/bookings",
+    summary: `${counts.unexecutedSettlementRefunds} cancelled organiser-pays ${plural(
+      counts.unexecutedSettlementRefunds,
+      "group",
+    )} still ${
+      counts.unexecutedSettlementRefunds === 1 ? "holds" : "hold"
+    } an unexecuted settlement refund plan — the organiser has not been refunded yet; the recovery queue retries it and alerts if retries exhaust.`,
+  });
   addItem(items, {
     id: "payment-cancelled-refund-unrecorded",
     domain: "payment",
@@ -669,6 +685,21 @@ async function getPaymentCounts(
     now.getTime() - PAYMENT_PENDING_OVERDUE_MINUTES * 60 * 1000,
   );
 
+  // F3 (#1351): a SUCCEEDED settlement under a CANCELLED group whose persisted
+  // refund plan was never executed — the organiser's settlement refund has not
+  // completed. The recovery queue retries it (and alerts on exhaustion); this
+  // tile keeps the state visible to operators the whole time, including for
+  // incidents that predate the durable retry.
+  const unexecutedSettlementRefunds = (
+    (await deps.db.groupBookingSettlement.findMany({
+      where: {
+        status: "SUCCEEDED",
+        groupBooking: { status: "CANCELLED" },
+      },
+      select: { refundPlan: true },
+    })) as Array<{ refundPlan: unknown }>
+  ).filter((settlement) => settlement.refundPlan != null).length;
+
   const staleSettlements = (
     (await deps.db.groupBookingSettlement.findMany({
       where: { status: { in: ["PENDING", "FAILED"] } },
@@ -755,6 +786,7 @@ async function getPaymentCounts(
     overduePending,
     staleSettlements,
     cancelledUnrecordedRefunds,
+    unexecutedSettlementRefunds,
   };
 }
 
