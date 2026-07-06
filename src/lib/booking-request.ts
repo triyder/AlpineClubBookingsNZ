@@ -568,10 +568,19 @@ export async function declineBookingRequest(input: {
         "ADMIN",
         input.ipAddress ?? "",
         "card",
-        // Admin declining, not the requester cancelling: suppress the
-        // requester's "booking cancelled" email. The detach/reconcile/audit in
-        // the shared cancel path still run.
-        { suppressCustomerNotification: true }
+        {
+          // Admin declining, not the requester cancelling: suppress the
+          // requester's "booking cancelled" email. The detach/reconcile/audit in
+          // the shared cancel path still run.
+          suppressCustomerNotification: true,
+          // #1406: defense-in-depth. Today's declinable states (VERIFIED/PRICED)
+          // carry no sent quote, so their AWAITING_REVIEW hold can never be
+          // converted to a live PENDING booking by a requester accept. Pass the
+          // opt-in guard anyway so the shared cancel path refuses (409, no side
+          // effect) rather than clobbering a PENDING booking — a prerequisite
+          // for broadening decline to QUOTE_SENT (#1423).
+          requireRequestHold: true,
+        }
       );
       // Defensive: a concurrent cancel of the SAME held booking (a
       // double-submitted decline, or a simultaneous admin "Release hold") won

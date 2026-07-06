@@ -72,10 +72,19 @@ export async function POST(
     "ADMIN",
     getClientIp(req),
     "card",
-    // #1255 RR-2: suppress the requester's "booking cancelled" email — this is
-    // an admin releasing a hold to re-map, not the requester cancelling. The
-    // detach/reconcile/audit in the shared cancel path still run.
-    { suppressCustomerNotification: true }
+    {
+      // #1255 RR-2: suppress the requester's "booking cancelled" email — this is
+      // an admin releasing a hold to re-map, not the requester cancelling. The
+      // detach/reconcile/audit in the shared cancel path still run.
+      suppressCustomerNotification: true,
+      // #1406: this path releases a hold it expects to still be AWAITING_REVIEW.
+      // The pre-check above (held.status guard) already 409s a just-accepted
+      // hold, but pass the opt-in guard so the shared cancel path itself refuses
+      // (409, no side effect) rather than clobbering a booking a concurrent
+      // quote-accept flipped to PENDING between that read and cancelBooking's
+      // own outer read.
+      requireRequestHold: true,
+    }
   );
 
   // A concurrent cancel/accept won the race (#1160 single-flight): surface the

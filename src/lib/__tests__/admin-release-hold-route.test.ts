@@ -132,7 +132,9 @@ describe("POST /api/admin/booking-requests/[id]/release-hold", () => {
       "ADMIN",
       "203.0.113.9",
       "card",
-      { suppressCustomerNotification: true }
+      // #1406: opt-in guard so the shared cancel path refuses (409, no side
+      // effect) if a concurrent quote-accept flipped the hold to PENDING.
+      { suppressCustomerNotification: true, requireRequestHold: true }
     );
   });
 

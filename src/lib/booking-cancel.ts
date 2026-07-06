@@ -119,6 +119,16 @@ type CancelBookingResponse =
  * Stripe / email / audit logic never reads it beyond the gate below, so the
  * money outcome is independent of which authorized actor triggered the cancel.
  * Defaults to `false`, so every existing caller is unchanged.
+ *
+ * `options.requireRequestHold` (#1406): when `true`, the caller asserts it is
+ * releasing a held booking-request slot that MUST still be AWAITING_REVIEW (the
+ * admin "Release hold" route and `declineBookingRequest`). If the outer read
+ * finds any other status — e.g. a concurrent quote-accept already flipped the
+ * hold AWAITING_REVIEW -> PENDING — cancel refuses with a 409 BEFORE branch
+ * dispatch and takes no side effect, so a just-accepted booking is never routed
+ * into the unlocked generic PENDING branch and clobbered (its brand-new payment
+ * links revoked). Defaults to `false`, so callers cancelling genuine PENDING
+ * bookings (member self-cancel, deletion cleanup) are unaffected.
  */
 export async function cancelBooking(
   bookingId: string,
@@ -129,6 +139,7 @@ export async function cancelBooking(
   options: {
     suppressCustomerNotification?: boolean;
     hasBookingsEditAccess?: boolean;
+    requireRequestHold?: boolean;
   } = {}
 ): Promise<CancelBookingResponse> {
   const result = await performBookingCancellation(
@@ -138,7 +149,8 @@ export async function cancelBooking(
     ipAddress,
     refundMethod,
     options.suppressCustomerNotification ?? false,
-    options.hasBookingsEditAccess ?? false
+    options.hasBookingsEditAccess ?? false,
+    options.requireRequestHold ?? false
   );
 
   if (result.status === 200) {
@@ -243,7 +255,8 @@ async function performBookingCancellation(
   ipAddress: string,
   refundMethod: "card" | "credit" = "card",
   suppressCustomerNotification = false,
-  hasBookingsEditAccess = false
+  hasBookingsEditAccess = false,
+  requireRequestHold = false
 ): Promise<CancelBookingResponse> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -273,6 +286,32 @@ async function performBookingCancellation(
     return {
       status: 400,
       error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled",
+    };
+  }
+
+  // ── #1406: opt-in caller guard for the two "release a held request" paths ──
+  //
+  // The admin "Release hold" route and `declineBookingRequest` release a held
+  // booking-request slot they expect to still be AWAITING_REVIEW. This OUTER
+  // read is UN-locked, so a concurrent quote-accept
+  // (`convertBookingRequestToBooking`) can flip the hold AWAITING_REVIEW ->
+  // PENDING before it runs. Without this guard the PENDING snapshot would be
+  // dispatched straight into the generic PENDING branch below — which is
+  // UNLOCKED and has NO status re-guard — and that branch would clobber the
+  // just-accepted booking to CANCELLED and revoke its brand-new payment links.
+  // Refuse with a 409 loser (NO side effect) BEFORE branch dispatch so a
+  // now-PENDING booking is never cancelled by a hold-release. An accept that
+  // commits AFTER this read but BEFORE the AWAITING_REVIEW branch takes
+  // pg_advisory_xact_lock(1) is caught by that branch's under-lock re-read
+  // (the NO_PAYMENT_CANCELLABLE_STATUSES guard) — the two together fully close
+  // the race. Opt-in only: callers cancelling genuine member-created PENDING
+  // bookings (member self-cancel, deletion cleanup) never pass this option and
+  // reach the generic PENDING branch exactly as before.
+  if (requireRequestHold && booking.status !== "AWAITING_REVIEW") {
+    return {
+      status: 409,
+      error:
+        "This hold can no longer be released (it may have just been accepted).",
     };
   }
 

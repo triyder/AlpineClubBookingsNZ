@@ -609,7 +609,9 @@ describe("declineBookingRequest", () => {
       "ADMIN",
       "203.0.113.7",
       "card",
-      { suppressCustomerNotification: true }
+      // #1406: opt-in guard (defense-in-depth) so the shared cancel path refuses
+      // (409, no side effect) if the hold ever leaves AWAITING_REVIEW.
+      { suppressCustomerNotification: true, requireRequestHold: true }
     );
     expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
   });
@@ -652,7 +654,8 @@ describe("declineBookingRequest", () => {
       "ADMIN",
       "203.0.113.8",
       "card",
-      { suppressCustomerNotification: true }
+      // #1406: opt-in guard (defense-in-depth), see above.
+      { suppressCustomerNotification: true, requireRequestHold: true }
     );
     expect(updated?.status).toBe(BookingRequestStatus.DECLINED);
   });

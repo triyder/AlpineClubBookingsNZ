@@ -323,7 +323,11 @@ customer "booking cancelled" email (`cancelBooking`'s
 `suppressCustomerNotification` option — the detach/reconcile/audit still run),
 and it deliberately does **not** revoke the requester's quote response token:
 the link stays active, so the admin is warned to re-send a fresh quote after
-re-mapping. Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
+re-mapping. Releasing a hold (and declining a held request) refuses with HTTP
+409 rather than cancelling if the requester accepted the quote concurrently —
+i.e. the held booking has already left `AWAITING_REVIEW` (`cancelBooking`'s
+`requireRequestHold` guard, #1406) — so a just-accepted booking is never
+cancelled and its payment links never revoked out from under the requester. Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
 if a previously mapped contact is no longer a valid non-login contact by the time
 the requester accepts (login enabled, archived, deactivated, role changed), the
 accept still succeeds — a fresh non-login contact is substituted and an

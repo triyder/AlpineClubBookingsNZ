@@ -150,6 +150,20 @@ runs no side effects (no status flip, pointer detach, bed reconcile, audit,
 email, or waitlist re-process), so a just-accepted booking is never clobbered
 back to `CANCELLED`.
 
+That under-lock re-guard catches an accept committing AFTER the cancel's
+under-lock read, but the cancel *dispatches its branch* from an earlier OUTER,
+un-locked read. So the two callers that exist to release a held request — the
+admin **Release hold** route and the decline path — pass a `requireRequestHold`
+flag: if that outer read already shows the hold has left `AWAITING_REVIEW` (e.g.
+a concurrent quote-accept flipped it to `PENDING`), the cancel refuses with HTTP
+409 and takes no side effect, rather than dispatching into the generic `PENDING`
+cancel branch and cancelling the just-accepted booking / revoking its brand-new
+payment links (#1406). The two guards close the race together: the flag covers
+an accept that commits before the outer read, the under-lock re-read covers one
+that commits after it. Callers cancelling a genuine member-created `PENDING`
+booking (member self-cancel, account-deletion cleanup) never set the flag and
+are unaffected.
+
 ### BookingEvent Scope
 
 `BookingEvent` is a durable narrative fact store, not the complete transition

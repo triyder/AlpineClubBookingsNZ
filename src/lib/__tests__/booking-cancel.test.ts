@@ -49,6 +49,9 @@ const mocks = vi.hoisted(() => {
   markBookingCancellationRefundRecoverySucceeded: vi.fn(),
   recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
   txPaymentTransactionFindFirst: vi.fn(),
+  // #1406: spy on the payment-link revoke so the guard test can prove a
+  // just-accepted booking's brand-new payment links are NEVER revoked.
+  revokePaymentLinksForBooking: vi.fn(),
   // The tx client handed to the paid-path claim callback, captured so tests
   // can prove the #1349 recovery enqueue ran INSIDE the claim transaction.
   lastTx: null as unknown,
@@ -147,6 +150,10 @@ vi.mock("@/lib/payment-recovery", () => ({
     mocks.markBookingCancellationRefundRecoverySucceeded,
   recordBookingCancellationRefundRecoveryInlineError:
     mocks.recordBookingCancellationRefundRecoveryInlineError,
+}));
+
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinksForBooking: mocks.revokePaymentLinksForBooking,
 }));
 
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -1630,5 +1637,177 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     expect(auditMetadata.checkIn).toBe(freshCheckIn.toISOString());
     expect(auditMetadata.checkOut).toBe(freshCheckOut.toISOString());
     expect(auditMetadata.checkIn).not.toBe(staleCheckIn.toISOString());
+  });
+});
+
+// #1406: opt-in caller guard (`requireRequestHold`) for the two "release a held
+// request" paths — the admin "Release hold" route and `declineBookingRequest`.
+// They expect an AWAITING_REVIEW hold. cancelBooking dispatches its branch from
+// an OUTER, un-locked read, so a concurrent quote-accept can flip the hold
+// AWAITING_REVIEW -> PENDING before that read runs. Without the guard the
+// PENDING snapshot would fall into the generic PENDING branch — which is
+// UNLOCKED and has NO status re-guard — and cancel the just-accepted booking,
+// revoking its brand-new payment links. The guard refuses (409, no side effect)
+// BEFORE branch dispatch. It is opt-in: callers cancelling genuine PENDING
+// bookings never pass it and are unaffected.
+describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
+  const heldBooking = {
+    id: "held-1",
+    memberId: "owner-1",
+    status: "AWAITING_REVIEW" as const,
+    finalPriceCents: 1000,
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+    member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+    payment: null,
+  };
+
+  function lockWasAcquired() {
+    return mocks.txExecuteRaw.mock.calls.some((call) =>
+      String((call as unknown[])[0]).includes("pg_advisory_xact_lock"),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
+    mocks.prismaTransaction.mockImplementation(
+      async (
+        arg: ((tx: unknown) => Promise<unknown>) | Array<Promise<unknown>>,
+      ) => {
+        if (typeof arg === "function") {
+          const mockTx = {
+            $executeRaw: mocks.txExecuteRaw,
+            booking: {
+              findUnique: mocks.txBookingFindUnique,
+              update: mocks.bookingUpdate,
+            },
+            bookingRequest: { updateMany: mocks.bookingRequestUpdateMany },
+            payment: { update: mocks.paymentUpdate },
+          };
+          return arg(mockTx);
+        }
+        return Promise.all(arg);
+      },
+    );
+    mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+    mocks.revokePaymentLinksForBooking.mockResolvedValue(undefined);
+  });
+
+  it("refuses with 409 and clobbers NOTHING when the outer read shows the hold already accepted (PENDING)", async () => {
+    // A concurrent quote-accept already flipped the hold AWAITING_REVIEW ->
+    // PENDING, so cancelBooking's own outer read sees PENDING. Absent the guard
+    // this would dispatch into the unlocked generic PENDING branch and cancel
+    // the just-accepted booking + revoke its brand-new payment links.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking, status: "PENDING" });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { requireRequestHold: true },
+    );
+
+    // Real 409 loser, never a false 200.
+    expect(result.status).toBe(409);
+    // The guard fired BEFORE any branch dispatch: no transaction, no status
+    // flip to CANCELLED, and — critically — no payment-link revocation on the
+    // just-accepted booking. Nothing was clobbered.
+    expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.revokePaymentLinksForBooking).not.toHaveBeenCalled();
+    expect(mocks.bookingRequestUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(mocks.processWaitlistForDates).not.toHaveBeenCalled();
+  });
+
+  it("cancels a genuine AWAITING_REVIEW hold normally and detaches heldBookingId", async () => {
+    // Both reads see AWAITING_REVIEW: the guard passes, the no-payment
+    // claim-first branch runs, the hold is released and its pointer detached.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ ...heldBooking });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { requireRequestHold: true },
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "held-1" },
+      data: {
+        status: "CANCELLED",
+        waitlistOfferedAt: null,
+        waitlistOfferExpiresAt: null,
+        waitlistPosition: null,
+      },
+    });
+    // The booking-request pointer to this hold is detached at the source (#1254).
+    expect(mocks.bookingRequestUpdateMany).toHaveBeenCalledWith({
+      where: { heldBookingId: "held-1" },
+      data: { heldBookingId: null },
+    });
+  });
+
+  it("still refuses with 409 (no clobber) when the outer read is AWAITING_REVIEW but the under-lock re-read finds PENDING", async () => {
+    // The accept committed AFTER cancel's outer read but BEFORE cancel won the
+    // advisory lock. The guard passed (outer read was AWAITING_REVIEW); the
+    // existing #1311 under-lock re-read (NO_PAYMENT_CANCELLABLE_STATUSES guard)
+    // is the second half of the fix and catches it here.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ status: "PENDING" });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { requireRequestHold: true },
+    );
+
+    expect(result.status).toBe(409);
+    expect(lockWasAcquired()).toBe(true);
+    expect(mocks.txBookingFindUnique).toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.revokePaymentLinksForBooking).not.toHaveBeenCalled();
+    expect(mocks.bookingRequestUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("regression: WITHOUT the option, a genuine PENDING member booking is still cancelled via the generic PENDING branch", async () => {
+    // The opt-in guard must not touch the legitimate PENDING callers (member
+    // self-cancel, deletion cleanup, split-cascade). A member cancelling their
+    // own PENDING booking with no option passed still flows through the generic
+    // PENDING branch and cancels normally.
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "pending-1",
+      memberId: "owner-1",
+      status: "PENDING",
+      finalPriceCents: 1000,
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+      payment: null,
+    });
+
+    const result = await cancelBooking("pending-1", "owner-1", "USER", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "pending-1" },
+      data: { status: "CANCELLED" },
+    });
   });
 });
