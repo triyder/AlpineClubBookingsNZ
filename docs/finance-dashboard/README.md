@@ -42,21 +42,43 @@ page render.
 ## Dashboard Surface
 
 `/finance` is the only finance UI route. It is controlled by query selectors:
-`view`, `range`, custom `from`/`to`, `compare`, custom comparison dates,
-`forward`, custom forward dates, and the costs-only `expenseCategoryId` and
-`expenseLine` filters.
+`view`, `range`, custom `from`/`to` months, `compare`, custom comparison
+months, `forward` (bookings view only), custom forward months, and the
+costs-only `expenseCategoryId` and `expenseLine` filters.
+
+The dashboard is **month-granular**: ranges are whole-month windows over the
+monthly fact table (`last-month`, `last-3-months`, `last-6-months`,
+`last-12-months`, `financial-year-to-date`, `last-financial-year`, or a custom
+month range), and comparisons are `previous-period`, `same-period-last-year`,
+`none`, or custom months. Financial-year ranges use the club's configured
+year-end month (override → Xero organisation → 31 March default). Custom
+params accept `YYYY-MM`; legacy `YYYY-MM-DD` bookmarks are clamped to their
+containing month with a warning, and legacy option values (`last-quarter`,
+`previous-month`, …) map onto their month-granular equivalents. The
+in-progress month appears only in ranges that include it (e.g. financial year
+to date) and is flagged as month-to-date. Day-level detail lives in Xero.
 
 The default dashboard state is:
 
 - view: Bookings
 - range: Last Month
-- compare: Previous Month
+- compare: Previous Period
 - forward: Next Month
 
-The dashboard renders visual summaries only: KPI cards, trend charts, mix
+The dashboard renders visual summaries only: KPI cards, trend charts (one
+point per month, with the comparison period overlaid as a second series), mix
 charts, reconciliation/status panels, compact source notes, warnings, and
-PDF/CSV exports for the active selection. It does not render daily detail tables
-or route users to the removed `/finance/*` report pages.
+PDF/CSV exports for the active selection. Dashboard displays show whole
+dollars with thousands separators; exact cents appear only where tie-out
+matters (the reconciliation panel and CSV/PDF export rows). It does not render
+daily detail tables or route users to the removed `/finance/*` report pages.
+
+The revenue, costs, pricing-sensitivity, cash, working-capital, and
+balance-sheet views read `FinanceAccountMonthlyBalance` facts (see
+[finance-monthly-facts-contract.md](finance-monthly-facts-contract.md));
+the bookings view reads local booking/payment data. The cash view's "latest
+bank balance" KPI is the one figure still read from the daily bank-summary
+snapshot, since it is a point-in-time value rather than a monthly one.
 
 ## Data Model
 

@@ -5,6 +5,8 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { getFinancialYearEndMonth } from "@/lib/financial-year";
+import { isMonthKey, shiftMonthKey } from "@/lib/finance-monthly-facts";
 
 export const FINANCE_DASHBOARD_VIEWS = [
   "bookings",
@@ -18,11 +20,15 @@ export const FINANCE_DASHBOARD_VIEWS = [
 
 export type FinanceDashboardView = (typeof FINANCE_DASHBOARD_VIEWS)[number];
 
+// The dashboard is month-granular by design: every range is a whole-month
+// window over the monthly fact table. Day-level detail lives in Xero.
 export const FINANCE_DASHBOARD_RANGE_OPTIONS = [
   "last-month",
-  "last-quarter",
-  "year-to-date",
+  "last-3-months",
+  "last-6-months",
   "last-12-months",
+  "financial-year-to-date",
+  "last-financial-year",
   "custom",
 ] as const;
 
@@ -30,10 +36,9 @@ export type FinanceDashboardRangeOption =
   (typeof FINANCE_DASHBOARD_RANGE_OPTIONS)[number];
 
 export const FINANCE_DASHBOARD_COMPARE_OPTIONS = [
-  "previous-month",
-  "previous-quarter",
-  "previous-year",
-  "previous-year-to-date",
+  "previous-period",
+  "same-period-last-year",
+  "none",
   "custom",
 ] as const;
 
@@ -69,9 +74,11 @@ export const FINANCE_DASHBOARD_RANGE_LABELS: Record<
   string
 > = {
   "last-month": "Last Month",
-  "last-quarter": "Last Quarter",
-  "year-to-date": "Year to Date",
+  "last-3-months": "Last 3 Months",
+  "last-6-months": "Last 6 Months",
   "last-12-months": "Last 12 Months",
+  "financial-year-to-date": "Financial Year to Date",
+  "last-financial-year": "Last Financial Year",
   custom: "Custom",
 };
 
@@ -79,10 +86,9 @@ export const FINANCE_DASHBOARD_COMPARE_LABELS: Record<
   FinanceDashboardCompareOption,
   string
 > = {
-  "previous-month": "Previous Month",
-  "previous-quarter": "Previous Quarter",
-  "previous-year": "Previous Year",
-  "previous-year-to-date": "Previous Year to Date",
+  "previous-period": "Previous Period",
+  "same-period-last-year": "Same Period Last Year",
+  none: "None",
   custom: "Custom",
 };
 
@@ -97,6 +103,21 @@ export const FINANCE_DASHBOARD_FORWARD_LABELS: Record<
   custom: "Custom",
 };
 
+// Pre-rebuild option values still arriving from bookmarks map onto their
+// closest month-granular equivalent instead of silently falling back.
+const LEGACY_RANGE_OPTION_MAP: Record<string, FinanceDashboardRangeOption> = {
+  "last-quarter": "last-3-months",
+  "year-to-date": "financial-year-to-date",
+};
+
+const LEGACY_COMPARE_OPTION_MAP: Record<string, FinanceDashboardCompareOption> =
+  {
+    "previous-month": "previous-period",
+    "previous-quarter": "previous-period",
+    "previous-year": "same-period-last-year",
+    "previous-year-to-date": "same-period-last-year",
+  };
+
 type SearchParams = Record<string, string | string[] | undefined>;
 
 export interface FinanceDashboardSeasonWindow {
@@ -107,8 +128,13 @@ export interface FinanceDashboardSeasonWindow {
 }
 
 export interface FinanceDashboardDateWindow {
+  /** First day of fromMonth, date-only. */
   from: string;
+  /** Last day of toMonth, date-only. */
   to: string;
+  /** Inclusive month-key range ("YYYY-MM") the window covers. */
+  fromMonth: string;
+  toMonth: string;
   label: string;
 }
 
@@ -125,8 +151,12 @@ export interface FinanceDashboardSelection {
   compare: FinanceDashboardCompareOption;
   forward: FinanceDashboardForwardOption;
   primary: FinanceDashboardDateWindow;
-  comparison: FinanceDashboardDateWindow;
+  /** Null when compare is "none". */
+  comparison: FinanceDashboardDateWindow | null;
   forwardWindow: FinanceDashboardForwardWindow;
+  /** Month key of the in-progress month (data for it is provisional). */
+  currentMonth: string;
+  financialYearEndMonth: number;
   expenseCategoryId: string | null;
   expenseLine: string | null;
   warnings: string[];
@@ -144,90 +174,137 @@ function isOneOf<T extends readonly string[]>(
   return Boolean(value && (options as readonly string[]).includes(value));
 }
 
-function startOfMonth(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+function monthKeyFromDate(date: Date): string {
+  return formatDateOnly(date).slice(0, 7);
 }
 
-function endOfMonth(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+function monthStartString(monthKey: string): string {
+  return `${monthKey}-01`;
 }
 
-function addMonths(date: Date, months: number) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate()));
+function monthEndString(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${monthKey}-${String(lastDay).padStart(2, "0")}`;
 }
 
-function monthWindow(year: number, monthIndex: number): FinanceDashboardDateWindow {
-  const start = new Date(Date.UTC(year, monthIndex, 1));
-  const end = endOfMonth(start);
+function formatMonthLabel(monthKey: string) {
+  return parseDateOnly(monthStartString(monthKey)).toLocaleDateString(
+    APP_LOCALE,
+    {
+      month: "long",
+      year: "numeric",
+      timeZone: APP_TIME_ZONE,
+    }
+  );
+}
+
+function monthRangeLabel(fromMonth: string, toMonth: string) {
+  return fromMonth === toMonth
+    ? formatMonthLabel(fromMonth)
+    : `${formatMonthLabel(fromMonth)} to ${formatMonthLabel(toMonth)}`;
+}
+
+function monthRangeWindow(
+  fromMonth: string,
+  toMonth: string,
+  label?: string
+): FinanceDashboardDateWindow {
   return {
-    from: formatDateOnly(start),
-    to: formatDateOnly(end),
-    label: formatMonthLabel(start),
+    from: monthStartString(fromMonth),
+    to: monthEndString(toMonth),
+    fromMonth,
+    toMonth,
+    label: label ?? monthRangeLabel(fromMonth, toMonth),
   };
 }
 
-function completedMonthBefore(today: Date, monthsBack = 1) {
-  const month = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - monthsBack, 1));
-  return monthWindow(month.getUTCFullYear(), month.getUTCMonth());
+export function financeDashboardMonthCount(window: {
+  fromMonth: string;
+  toMonth: string;
+}): number {
+  const [fromYear, fromMonth] = window.fromMonth.split("-").map(Number);
+  const [toYear, toMonth] = window.toMonth.split("-").map(Number);
+  return (toYear - fromYear) * 12 + (toMonth - fromMonth) + 1;
 }
 
-function quarterForMonth(monthIndex: number) {
-  return Math.floor(monthIndex / 3);
+/**
+ * First month of the financial year containing `monthKey`, for a financial
+ * year ending in `yearEndMonth` (1-12; March = NZ convention).
+ */
+function financialYearStartMonth(monthKey: string, yearEndMonth: number): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const startMonth = (yearEndMonth % 12) + 1;
+  const startYear = month >= startMonth ? year : year - 1;
+  return `${startYear}-${String(startMonth).padStart(2, "0")}`;
 }
 
-function quarterWindow(year: number, quarterIndex: number): FinanceDashboardDateWindow {
-  const start = new Date(Date.UTC(year, quarterIndex * 3, 1));
-  const end = new Date(Date.UTC(year, quarterIndex * 3 + 3, 0));
-  return {
-    from: formatDateOnly(start),
-    to: formatDateOnly(end),
-    label: `Q${quarterIndex + 1} ${year}`,
-  };
+/** NZ convention: the financial year is named for its end year (FY2027 ends 31 Mar 2027). */
+function financialYearName(fyStartMonth: string): string {
+  const endMonth = shiftMonthKey(fyStartMonth, 11);
+  return `FY${endMonth.slice(0, 4)}`;
 }
 
-function previousCompletedQuarter(today: Date) {
-  let quarter = quarterForMonth(today.getUTCMonth()) - 1;
-  let year = today.getUTCFullYear();
-  if (quarter < 0) {
-    quarter = 3;
-    year -= 1;
+/**
+ * Read a custom boundary param as a month key. Accepts "YYYY-MM" (month
+ * pickers) and clamps legacy "YYYY-MM-DD" values from old bookmarks to their
+ * containing month with a warning.
+ */
+function readCustomMonthParam(input: {
+  value: string | undefined;
+  label: string;
+  warnings: string[];
+}): string | null {
+  const value = input.value?.trim();
+  if (!value) {
+    return null;
   }
-  return quarterWindow(year, quarter);
+  if (isMonthKey(value)) {
+    return value;
+  }
+  if (isDateOnlyString(value)) {
+    const monthKey = value.slice(0, 7);
+    input.warnings.push(
+      `${input.label} now uses whole months; ${value} was read as ${formatMonthLabel(monthKey)}.`
+    );
+    return monthKey;
+  }
+  return null;
 }
 
-function validateCustomWindow(input: {
-  from?: string;
-  to?: string;
+function resolveCustomMonthWindow(input: {
+  fromParam: string | undefined;
+  toParam: string | undefined;
   fallback: FinanceDashboardDateWindow;
   label: string;
   warnings: string[];
-}) {
-  if (!input.from || !input.to) {
+}): FinanceDashboardDateWindow {
+  const fromMonth = readCustomMonthParam({
+    value: input.fromParam,
+    label: input.label,
+    warnings: input.warnings,
+  });
+  const toMonth = readCustomMonthParam({
+    value: input.toParam,
+    label: input.label,
+    warnings: input.warnings,
+  });
+
+  if (!fromMonth || !toMonth) {
     input.warnings.push(
-      `${input.label} custom dates were incomplete. Showing ${input.fallback.label}.`
+      `${input.label} custom months were incomplete or invalid. Showing ${input.fallback.label}.`
     );
     return input.fallback;
   }
 
-  if (!isDateOnlyString(input.from) || !isDateOnlyString(input.to)) {
+  if (fromMonth > toMonth) {
     input.warnings.push(
-      `${input.label} custom dates were invalid. Showing ${input.fallback.label}.`
+      `${input.label} custom end month must be on or after the start month. Showing ${input.fallback.label}.`
     );
     return input.fallback;
   }
 
-  if (parseDateOnly(input.from) > parseDateOnly(input.to)) {
-    input.warnings.push(
-      `${input.label} custom end date must be on or after the start date. Showing ${input.fallback.label}.`
-    );
-    return input.fallback;
-  }
-
-  return {
-    from: input.from,
-    to: input.to,
-    label: `${formatDate(input.from)} to ${formatDate(input.to)}`,
-  };
+  return monthRangeWindow(fromMonth, toMonth);
 }
 
 // test seam
@@ -235,43 +312,57 @@ export function resolvePrimaryFinanceRange(input: {
   option: FinanceDashboardRangeOption;
   searchParams?: SearchParams;
   today?: Date;
+  financialYearEndMonth?: number;
   warnings?: string[];
 }): FinanceDashboardDateWindow {
   const today = input.today ?? getTodayDateOnly();
   const warnings = input.warnings ?? [];
+  const yearEndMonth = input.financialYearEndMonth ?? getFinancialYearEndMonth();
+  const currentMonth = monthKeyFromDate(today);
+  const lastCompleted = shiftMonthKey(currentMonth, -1);
 
   if (input.option === "last-month") {
-    return completedMonthBefore(today);
+    return monthRangeWindow(lastCompleted, lastCompleted);
   }
 
-  if (input.option === "last-quarter") {
-    return previousCompletedQuarter(today);
+  if (input.option === "last-3-months") {
+    return monthRangeWindow(shiftMonthKey(lastCompleted, -2), lastCompleted);
   }
 
-  if (input.option === "year-to-date") {
-    const start = new Date(Date.UTC(today.getUTCFullYear(), 0, 1));
-    return {
-      from: formatDateOnly(start),
-      to: formatDateOnly(today),
-      label: `Year to ${formatDate(formatDateOnly(today))}`,
-    };
+  if (input.option === "last-6-months") {
+    return monthRangeWindow(shiftMonthKey(lastCompleted, -5), lastCompleted);
   }
 
   if (input.option === "last-12-months") {
-    const lastMonth = completedMonthBefore(today);
-    const end = parseDateOnly(lastMonth.to);
-    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 11, 1));
-    return {
-      from: formatDateOnly(start),
-      to: lastMonth.to,
-      label: `${formatMonthLabel(start)} to ${lastMonth.label}`,
-    };
+    return monthRangeWindow(shiftMonthKey(lastCompleted, -11), lastCompleted);
   }
 
-  return validateCustomWindow({
-    from: readParam(input.searchParams, "from"),
-    to: readParam(input.searchParams, "to"),
-    fallback: completedMonthBefore(today),
+  if (input.option === "financial-year-to-date") {
+    // "To date" includes the in-progress month; its figures are provisional
+    // month-to-date and flagged as such by the fact-table readers.
+    const fyStart = financialYearStartMonth(currentMonth, yearEndMonth);
+    return monthRangeWindow(
+      fyStart,
+      currentMonth,
+      `${financialYearName(fyStart)} to date (${monthRangeLabel(fyStart, currentMonth)})`
+    );
+  }
+
+  if (input.option === "last-financial-year") {
+    const currentFyStart = financialYearStartMonth(currentMonth, yearEndMonth);
+    const lastFyStart = shiftMonthKey(currentFyStart, -12);
+    const lastFyEnd = shiftMonthKey(currentFyStart, -1);
+    return monthRangeWindow(
+      lastFyStart,
+      lastFyEnd,
+      `${financialYearName(lastFyStart)} (${monthRangeLabel(lastFyStart, lastFyEnd)})`
+    );
+  }
+
+  return resolveCustomMonthWindow({
+    fromParam: readParam(input.searchParams, "from"),
+    toParam: readParam(input.searchParams, "to"),
+    fallback: monthRangeWindow(lastCompleted, lastCompleted),
     label: "Primary range",
     warnings,
   });
@@ -281,49 +372,35 @@ export function resolveComparisonFinanceRange(input: {
   option: FinanceDashboardCompareOption;
   primary: FinanceDashboardDateWindow;
   searchParams?: SearchParams;
-  today?: Date;
   warnings?: string[];
-}): FinanceDashboardDateWindow {
-  const today = input.today ?? getTodayDateOnly();
+}): FinanceDashboardDateWindow | null {
   const warnings = input.warnings ?? [];
-  const primaryStart = parseDateOnly(input.primary.from);
-  const primaryEnd = parseDateOnly(input.primary.to);
 
-  if (input.option === "previous-month") {
-    const startMonth = addMonths(startOfMonth(primaryStart), -1);
-    return monthWindow(startMonth.getUTCFullYear(), startMonth.getUTCMonth());
+  if (input.option === "none") {
+    return null;
   }
 
-  if (input.option === "previous-quarter") {
-    const quarter = quarterForMonth(primaryStart.getUTCMonth()) - 1;
-    const year = primaryStart.getUTCFullYear() + (quarter < 0 ? -1 : 0);
-    return quarterWindow(year, quarter < 0 ? 3 : quarter);
+  const monthCount = financeDashboardMonthCount(input.primary);
+  const previousPeriod = monthRangeWindow(
+    shiftMonthKey(input.primary.fromMonth, -monthCount),
+    shiftMonthKey(input.primary.fromMonth, -1)
+  );
+
+  if (input.option === "previous-period") {
+    return previousPeriod;
   }
 
-  if (input.option === "previous-year") {
-    const start = new Date(Date.UTC(primaryStart.getUTCFullYear() - 1, primaryStart.getUTCMonth(), primaryStart.getUTCDate()));
-    const end = new Date(Date.UTC(primaryEnd.getUTCFullYear() - 1, primaryEnd.getUTCMonth(), primaryEnd.getUTCDate()));
-    return {
-      from: formatDateOnly(start),
-      to: formatDateOnly(end),
-      label: `${formatDate(formatDateOnly(start))} to ${formatDate(formatDateOnly(end))}`,
-    };
+  if (input.option === "same-period-last-year") {
+    return monthRangeWindow(
+      shiftMonthKey(input.primary.fromMonth, -12),
+      shiftMonthKey(input.primary.toMonth, -12)
+    );
   }
 
-  if (input.option === "previous-year-to-date") {
-    const end = new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate()));
-    const start = new Date(Date.UTC(end.getUTCFullYear(), 0, 1));
-    return {
-      from: formatDateOnly(start),
-      to: formatDateOnly(end),
-      label: `Previous year to ${formatDate(formatDateOnly(end))}`,
-    };
-  }
-
-  return validateCustomWindow({
-    from: readParam(input.searchParams, "compareFrom"),
-    to: readParam(input.searchParams, "compareTo"),
-    fallback: completedMonthBefore(primaryStart, 1),
+  return resolveCustomMonthWindow({
+    fromParam: readParam(input.searchParams, "compareFrom"),
+    toParam: readParam(input.searchParams, "compareTo"),
+    fallback: previousPeriod,
     label: "Comparison range",
     warnings,
   });
@@ -339,30 +416,34 @@ export function resolveForwardFinanceWindow(input: {
 }): FinanceDashboardForwardWindow {
   const today = input.today ?? getTodayDateOnly();
   const warnings = input.warnings ?? [];
-  const nextMonthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+  const currentMonth = monthKeyFromDate(today);
+  const nextMonth = shiftMonthKey(currentMonth, 1);
 
   if (input.option === "next-month") {
-    const window = monthWindow(nextMonthStart.getUTCFullYear(), nextMonthStart.getUTCMonth());
-    return { ...window, seasonName: undefined };
+    const window = monthRangeWindow(nextMonth, nextMonth);
+    return { from: window.from, to: window.to, label: window.label };
   }
 
   if (input.option === "next-quarter") {
-    let quarter = quarterForMonth(today.getUTCMonth()) + 1;
-    let year = today.getUTCFullYear();
+    const [year, month] = currentMonth.split("-").map(Number);
+    let quarter = Math.floor((month - 1) / 3) + 1;
+    let quarterYear = year;
     if (quarter > 3) {
       quarter = 0;
-      year += 1;
+      quarterYear += 1;
     }
-    return quarterWindow(year, quarter);
+    const startMonth = `${quarterYear}-${String(quarter * 3 + 1).padStart(2, "0")}`;
+    const window = monthRangeWindow(startMonth, shiftMonthKey(startMonth, 2));
+    return {
+      from: window.from,
+      to: window.to,
+      label: `Q${quarter + 1} ${quarterYear}`,
+    };
   }
 
   if (input.option === "next-12-months") {
-    const end = endOfMonth(addMonths(nextMonthStart, 11));
-    return {
-      from: formatDateOnly(nextMonthStart),
-      to: formatDateOnly(end),
-      label: `${formatMonthLabel(nextMonthStart)} to ${formatMonthLabel(end)}`,
-    };
+    const window = monthRangeWindow(nextMonth, shiftMonthKey(nextMonth, 11));
+    return { from: window.from, to: window.to, label: window.label };
   }
 
   if (input.option === "rest-of-season") {
@@ -395,25 +476,28 @@ export function resolveForwardFinanceWindow(input: {
     };
   }
 
-  const custom = validateCustomWindow({
-    from: readParam(input.searchParams, "forwardFrom"),
-    to: readParam(input.searchParams, "forwardTo"),
-    fallback: {
-      ...monthWindow(nextMonthStart.getUTCFullYear(), nextMonthStart.getUTCMonth()),
-    },
+  const fallback = monthRangeWindow(nextMonth, nextMonth);
+  const custom = resolveCustomMonthWindow({
+    fromParam: readParam(input.searchParams, "forwardFrom"),
+    toParam: readParam(input.searchParams, "forwardTo"),
+    fallback,
     label: "Forward window",
     warnings,
   });
 
-  return custom;
+  return { from: custom.from, to: custom.to, label: custom.label };
 }
 
 export function resolveFinanceDashboardSelection(input: {
   searchParams?: SearchParams;
   today?: Date;
   seasons?: FinanceDashboardSeasonWindow[];
+  financialYearEndMonth?: number;
 }): FinanceDashboardSelection {
   const warnings: string[] = [];
+  const today = input.today ?? getTodayDateOnly();
+  const financialYearEndMonth =
+    input.financialYearEndMonth ?? getFinancialYearEndMonth();
   const requestedView = readParam(input.searchParams, "view");
   const requestedRange = readParam(input.searchParams, "range");
   const requestedCompare = readParam(input.searchParams, "compare");
@@ -423,30 +507,31 @@ export function resolveFinanceDashboardSelection(input: {
     : "bookings";
   const range = isOneOf(requestedRange, FINANCE_DASHBOARD_RANGE_OPTIONS)
     ? requestedRange
-    : "last-month";
+    : (requestedRange && LEGACY_RANGE_OPTION_MAP[requestedRange]) || "last-month";
   const compare = isOneOf(requestedCompare, FINANCE_DASHBOARD_COMPARE_OPTIONS)
     ? requestedCompare
-    : "previous-month";
+    : (requestedCompare && LEGACY_COMPARE_OPTION_MAP[requestedCompare]) ||
+      "previous-period";
   const forward = isOneOf(requestedForward, FINANCE_DASHBOARD_FORWARD_OPTIONS)
     ? requestedForward
     : "next-month";
   const primary = resolvePrimaryFinanceRange({
     option: range,
     searchParams: input.searchParams,
-    today: input.today,
+    today,
+    financialYearEndMonth,
     warnings,
   });
   const comparison = resolveComparisonFinanceRange({
     option: compare,
     primary,
     searchParams: input.searchParams,
-    today: input.today,
     warnings,
   });
   const forwardWindow = resolveForwardFinanceWindow({
     option: forward,
     searchParams: input.searchParams,
-    today: input.today,
+    today,
     seasons: input.seasons,
     warnings,
   });
@@ -459,18 +544,12 @@ export function resolveFinanceDashboardSelection(input: {
     primary,
     comparison,
     forwardWindow,
+    currentMonth: monthKeyFromDate(today),
+    financialYearEndMonth,
     expenseCategoryId: readParam(input.searchParams, "expenseCategoryId") ?? null,
     expenseLine: readParam(input.searchParams, "expenseLine") ?? null,
     warnings,
   };
-}
-
-function formatMonthLabel(date: Date) {
-  return date.toLocaleDateString(APP_LOCALE, {
-    month: "long",
-    year: "numeric",
-    timeZone: APP_TIME_ZONE,
-  });
 }
 
 function formatDate(dateOnly: string) {
@@ -482,12 +561,26 @@ function formatDate(dateOnly: string) {
   });
 }
 
-export function financeDashboardWindowDetail(window: {
-  from: string | null;
-  to: string | null;
-}) {
-  if (!window.from || !window.to) {
-    return "Unavailable";
+/** Short month label ("Jun 2026") for trend axes. */
+export function financeDashboardTrendMonthLabel(monthKey: string) {
+  return parseDateOnly(monthStartString(monthKey)).toLocaleDateString(
+    APP_LOCALE,
+    {
+      month: "short",
+      year: "numeric",
+      timeZone: APP_TIME_ZONE,
+    }
+  );
+}
+
+export function financeDashboardWindowDetail(
+  window: {
+    from: string | null;
+    to: string | null;
+  } | null
+) {
+  if (!window || !window.from || !window.to) {
+    return window ? "Unavailable" : "None";
   }
   return `${formatDate(window.from)} to ${formatDate(window.to)}`;
 }
@@ -499,4 +592,15 @@ export function financeDashboardDateRangeDayCount(window: {
   const from = parseDateOnly(window.from);
   const to = parseDateOnly(window.to);
   return Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
+}
+
+/** Ordered list of month keys covered by a window, oldest first. */
+export function financeDashboardWindowMonths(window: {
+  fromMonth: string;
+  toMonth: string;
+}): string[] {
+  const count = financeDashboardMonthCount(window);
+  return Array.from({ length: Math.max(count, 0) }, (_, index) =>
+    shiftMonthKey(window.fromMonth, index)
+  );
 }

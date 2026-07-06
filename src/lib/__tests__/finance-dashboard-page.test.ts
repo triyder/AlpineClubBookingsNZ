@@ -2,22 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
 const {
-  mockBuildFinanceMappedPnlSummary,
+  mockBuildFinanceMonthlyPnlSummary,
+  mockBuildFinanceMonthlyBalanceSeries,
   mockBuildFinanceRevenueReconciliation,
   mockGetFinanceBookingMetrics,
   mockGetFinanceSyncDiagnosticsStatus,
   mockListFinanceSnapshots,
-  mockParseBalanceSheetSnapshot,
   mockParseCashSnapshot,
+  mockRefreshFinancialYearConfig,
   mockSeasonFindMany,
 } = vi.hoisted(() => ({
-  mockBuildFinanceMappedPnlSummary: vi.fn(),
+  mockBuildFinanceMonthlyPnlSummary: vi.fn(),
+  mockBuildFinanceMonthlyBalanceSeries: vi.fn(),
   mockBuildFinanceRevenueReconciliation: vi.fn(),
   mockGetFinanceBookingMetrics: vi.fn(),
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
   mockListFinanceSnapshots: vi.fn(),
-  mockParseBalanceSheetSnapshot: vi.fn(),
   mockParseCashSnapshot: vi.fn(),
+  mockRefreshFinancialYearConfig: vi.fn(),
   mockSeasonFindMany: vi.fn(),
 }));
 
@@ -37,8 +39,16 @@ vi.mock("@/lib/finance-booking-metrics", () => ({
   getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
 }));
 
-vi.mock("@/lib/finance-report-mappings", () => ({
-  buildFinanceMappedPnlSummary: mockBuildFinanceMappedPnlSummary,
+vi.mock("@/lib/finance-monthly-pnl", () => ({
+  buildFinanceMonthlyPnlSummary: mockBuildFinanceMonthlyPnlSummary,
+}));
+
+vi.mock("@/lib/finance-monthly-balance", () => ({
+  buildFinanceMonthlyBalanceSeries: mockBuildFinanceMonthlyBalanceSeries,
+}));
+
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: mockRefreshFinancialYearConfig,
 }));
 
 vi.mock("@/lib/finance-revenue-reconciliation", () => ({
@@ -52,10 +62,6 @@ vi.mock("@/lib/finance-sync-storage", () => ({
 
 vi.mock("@/lib/finance-cash-report-page", () => ({
   parseCashSnapshot: mockParseCashSnapshot,
-}));
-
-vi.mock("@/lib/finance-balance-sheet-report-page", () => ({
-  parseBalanceSheetSnapshot: mockParseBalanceSheetSnapshot,
 }));
 
 import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
@@ -225,16 +231,12 @@ function bookingMetrics() {
 function mappedSummary(kind: "REVENUE" | "EXPENSE") {
   return {
     kind,
-    from: "2026-05-01",
-    to: "2026-05-31",
-    compareFrom: "2026-04-01",
-    compareTo: "2026-04-30",
     amountCents: kind === "REVENUE" ? 100_000 : 40_000,
     comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
     deltaCents: kind === "REVENUE" ? 20_000 : 5_000,
-    formattedAmount: kind === "REVENUE" ? "$1000.00" : "$400.00",
-    formattedComparisonAmount: kind === "REVENUE" ? "$800.00" : "$350.00",
-    formattedDelta: kind === "REVENUE" ? "+$200.00" : "+$50.00",
+    formattedAmount: kind === "REVENUE" ? "$1,000" : "$400",
+    formattedComparisonAmount: kind === "REVENUE" ? "$800" : "$350",
+    formattedDelta: kind === "REVENUE" ? "+$200" : "+$50",
     groups: [
       {
         id: "group-1",
@@ -245,9 +247,9 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
         amountCents: kind === "REVENUE" ? 100_000 : 40_000,
         comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
         deltaCents: kind === "REVENUE" ? 20_000 : 5_000,
-        formattedAmount: kind === "REVENUE" ? "$1000.00" : "$400.00",
-        formattedComparisonAmount: kind === "REVENUE" ? "$800.00" : "$350.00",
-        formattedDelta: kind === "REVENUE" ? "+$200.00" : "+$50.00",
+        formattedAmount: kind === "REVENUE" ? "$1,000" : "$400",
+        formattedComparisonAmount: kind === "REVENUE" ? "$800" : "$350",
+        formattedDelta: kind === "REVENUE" ? "+$200" : "+$50",
         lineCount: 1,
         lines: [
           {
@@ -257,9 +259,9 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
             accountCode: kind === "REVENUE" ? "200" : null,
             amountCents: kind === "REVENUE" ? 100_000 : 40_000,
             comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
-            formattedAmount: kind === "REVENUE" ? "$1000.00" : "$400.00",
-            formattedComparisonAmount: kind === "REVENUE" ? "$800.00" : "$350.00",
-            formattedDelta: kind === "REVENUE" ? "+$200.00" : "+$50.00",
+            formattedAmount: kind === "REVENUE" ? "$1,000" : "$400",
+            formattedComparisonAmount: kind === "REVENUE" ? "$800" : "$350",
+            formattedDelta: kind === "REVENUE" ? "+$200" : "+$50",
             periodsPresent: 1,
           },
         ],
@@ -271,14 +273,48 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
         valueCents: kind === "REVENUE" ? 100_000 : 40_000,
       },
     ],
-    trend: [{ label: "May 2026", amountCents: kind === "REVENUE" ? 100_000 : 40_000 }],
+    trend: [
+      {
+        monthKey: "2026-05",
+        label: "May 2026",
+        amountCents: kind === "REVENUE" ? 100_000 : 40_000,
+        comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
+        isProvisional: false,
+      },
+    ],
     availableExpenseLines:
       kind === "EXPENSE"
-        ? [{ value: "Insurance", label: "Insurance", categoryId: "group-1" }]
+        ? [{ value: "INSURANCE", label: "Insurance", categoryId: "group-1" }]
         : [],
     warnings: [],
-    selectedSnapshotCount: 1,
-    comparisonSnapshotCount: 1,
+    monthsWithData: 1,
+    includesProvisionalMonth: false,
+  };
+}
+
+function balanceSeries() {
+  const point = {
+    monthKey: "2026-05",
+    label: "May 2026",
+    assetsCents: 500_000,
+    liabilitiesCents: 120_000,
+    equityCents: 380_000,
+    netAssetsCents: 380_000,
+    currentAssetsCents: 200_000,
+    currentLiabilitiesCents: 50_000,
+    workingCapitalCents: 150_000,
+    bankCents: 150_000,
+    hasData: true,
+    isProvisional: false,
+  };
+  return {
+    points: [point],
+    latest: point,
+    latestBankAccounts: [
+      { label: "Operating", balanceCents: 100_000 },
+      { label: "Savings", balanceCents: 50_000 },
+    ],
+    monthsWithData: 1,
   };
 }
 
@@ -297,9 +333,11 @@ describe("finance dashboard page model", () => {
       cron: { schedule: "0 5 * * *", timezone: "Pacific/Auckland" },
     });
     mockGetFinanceBookingMetrics.mockResolvedValue(bookingMetrics());
-    mockBuildFinanceMappedPnlSummary.mockImplementation(async (input: { kind: "REVENUE" | "EXPENSE" }) =>
+    mockRefreshFinancialYearConfig.mockResolvedValue(3);
+    mockBuildFinanceMonthlyPnlSummary.mockImplementation(async (input: { kind: "REVENUE" | "EXPENSE" }) =>
       mappedSummary(input.kind)
     );
+    mockBuildFinanceMonthlyBalanceSeries.mockResolvedValue(balanceSeries());
     mockBuildFinanceRevenueReconciliation.mockResolvedValue({
       overallStatus: "TIES",
       periods: [
@@ -322,23 +360,6 @@ describe("finance dashboard page model", () => {
         { label: "Operating", balanceCents: 100_000 },
         { label: "Savings", balanceCents: 50_000 },
       ],
-    });
-    mockParseBalanceSheetSnapshot.mockReturnValue({
-      snapshotLabel: "31 May 2026",
-      totalAssets: "$5000.00",
-      totalLiabilities: "$1200.00",
-      netAssets: "$3800.00",
-      totalAssetsCents: 500_000,
-      totalLiabilitiesCents: 120_000,
-      netAssetsCents: 380_000,
-      currentAssets: "$2000.00",
-      currentLiabilities: "$500.00",
-      workingCapital: "$1500.00",
-      currentAssetsCents: 200_000,
-      currentLiabilitiesCents: 50_000,
-      workingCapitalCents: 150_000,
-      currentRatio: 4,
-      lineItemCount: 8,
     });
   });
 
@@ -373,7 +394,7 @@ describe("finance dashboard page model", () => {
     );
     expect(panel).toBeDefined();
     const subheading = panel?.items.find((item) => item.emphasis);
-    expect(subheading).toMatchObject({ label: "Operating", value: "$1000.00" });
+    expect(subheading).toMatchObject({ label: "Operating", value: "$1,000" });
     expect(panel?.items.some((item) => item.label === "Hut Fees")).toBe(true);
   });
 
@@ -391,7 +412,13 @@ describe("finance dashboard page model", () => {
     expect(viewerModel.isManager).toBe(false);
   });
 
-  it("surfaces missing stored snapshot coverage as a compact warning", async () => {
+  it("surfaces missing stored monthly data as a compact warning", async () => {
+    mockBuildFinanceMonthlyBalanceSeries.mockResolvedValue({
+      points: [],
+      latest: null,
+      latestBankAccounts: [],
+      monthsWithData: 0,
+    });
     mockListFinanceSnapshots.mockImplementation(async (input?: { snapshotType?: FinanceSnapshotType }) => {
       if (input?.snapshotType === FinanceSnapshotType.BANK_BALANCES) {
         return [];
@@ -404,8 +431,36 @@ describe("finance dashboard page model", () => {
       searchParams: { view: "cash" },
     });
 
-    expect(model.warnings).toContain(
-      "No stored bank-balance snapshots cover the selected range."
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("No monthly Xero balance data is stored")
+      )
+    ).toBe(true);
+  });
+
+  it("overlays the comparison series on the revenue trend and omits it when compare is none", async () => {
+    const withComparison = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue" },
+    });
+    const revenueTrend = withComparison.trends[0];
+    expect(revenueTrend.series.map((series) => series.key)).toEqual([
+      "amount",
+      "comparison",
+    ]);
+    expect(revenueTrend.data[0]).toMatchObject({
+      label: "May 2026",
+      amount: 100_000,
+      comparison: 80_000,
+    });
+
+    const withoutComparison = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue", compare: "none" },
+    });
+    expect(mockBuildFinanceMonthlyPnlSummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ comparison: null })
     );
+    expect(withoutComparison.selectionLabels.comparisonWindow).toBe("None");
   });
 });

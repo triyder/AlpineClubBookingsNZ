@@ -1,30 +1,36 @@
 import { FinanceSnapshotType } from "@prisma/client";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
-  parseBalanceSheetSnapshot,
-  type ParsedBalanceSheetSnapshot,
-} from "@/lib/finance-balance-sheet-report-page";
-import {
   getFinanceBookingMetrics,
   type FinanceBookingMetricsResult,
 } from "@/lib/finance-booking-metrics";
 import { parseCashSnapshot } from "@/lib/finance-cash-report-page";
-import type { ParsedCashSnapshot } from "@/lib/finance-cash-report-page";
 import {
   FINANCE_DASHBOARD_COMPARE_LABELS,
   FINANCE_DASHBOARD_FORWARD_LABELS,
   FINANCE_DASHBOARD_RANGE_LABELS,
   FINANCE_DASHBOARD_VIEW_LABELS,
   financeDashboardDateRangeDayCount,
+  financeDashboardMonthCount,
   financeDashboardWindowDetail,
   resolveFinanceDashboardSelection,
   type FinanceDashboardSelection,
 } from "@/lib/finance-dashboard-ranges";
 import {
-  buildFinanceMappedPnlSummary,
-  type FinanceMappedPnlCategorySummary,
-} from "@/lib/finance-report-mappings";
+  formatDollarsDisplay,
+  formatFinanceNumber as formatNumber,
+  formatFinancePercent as formatPercent,
+  formatFinanceSignedNumber as formatSignedNumber,
+  formatSignedDollarsDisplay,
+} from "@/lib/finance-format";
+import { buildFinanceMonthlyBalanceSeries } from "@/lib/finance-monthly-balance";
+import {
+  buildFinanceMonthlyPnlSummary,
+  type FinanceMonthlyPnlSummary,
+} from "@/lib/finance-monthly-pnl";
+import type { FinanceMappedPnlCategorySummary } from "@/lib/finance-report-mappings";
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
 import type { FinanceAccessMember } from "@/lib/finance-auth";
 import {
@@ -139,22 +145,10 @@ const SERIES_COLORS = {
   positive: "#16a34a",
   negative: "#dc2626",
   neutral: "#4d4d46",
+  comparison: "#a8a29e",
 } as const;
 
-function formatNumber(value: number, maximumFractionDigits = 0) {
-  return new Intl.NumberFormat(APP_LOCALE, {
-    maximumFractionDigits,
-  }).format(value);
-}
-
-function formatPercent(value: number) {
-  return new Intl.NumberFormat(APP_LOCALE, {
-    style: "percent",
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  }).format(value);
-}
-
+// Exact cents (reconciliation and export rows only; displays use whole dollars).
 function formatSignedCents(value: number) {
   if (value === 0) {
     return formatCents(0);
@@ -293,19 +287,20 @@ async function buildBookingsDashboard(
         }
       : {}),
   };
-  const comparisonQuery = {
-    realized: {
-      from: selection.comparison.from,
-      to: selection.comparison.to,
-      cutoffDate: selection.comparison.to,
-    },
-  };
   const [metrics, comparison] = await Promise.all([
     getFinanceBookingMetrics(query),
-    getFinanceBookingMetrics(comparisonQuery),
+    selection.comparison
+      ? getFinanceBookingMetrics({
+          realized: {
+            from: selection.comparison.from,
+            to: selection.comparison.to,
+            cutoffDate: selection.comparison.to,
+          },
+        })
+      : Promise.resolve(null),
   ]);
   const realized = metrics.realized;
-  const compareRealized = comparison.realized;
+  const compareRealized = comparison?.realized ?? null;
 
   if (!realized) {
     warnings.push("Realized booking metrics were unavailable for the selected range.");
@@ -332,15 +327,15 @@ async function buildBookingsDashboard(
     },
     {
       title: "Booked revenue",
-      value: formatCents(realizedTotals?.bookedRevenueCents ?? 0),
+      value: formatDollarsDisplay(realizedTotals?.bookedRevenueCents ?? 0),
       description: "Booking-system revenue allocated across realized stay nights.",
       footnote: compareTotals
-        ? `${formatSignedCents((realizedTotals?.bookedRevenueCents ?? 0) - compareTotals.bookedRevenueCents)} vs comparison.`
+        ? `${formatSignedDollarsDisplay((realizedTotals?.bookedRevenueCents ?? 0) - compareTotals.bookedRevenueCents)} vs comparison.`
         : undefined,
     },
     {
       title: "Net collected cash",
-      value: formatCents(metrics.paymentSummary.netCollectedCents),
+      value: formatDollarsDisplay(metrics.paymentSummary.netCollectedCents),
       description: "Captured payments less refunds from local payment rows.",
       footnote: "Cash is local payment-derived and separate from Xero revenue.",
     },
@@ -461,7 +456,7 @@ function buildBookingStatusPanels(
         ([status, summary]) => ({
           label: status,
           value: formatNumber(summary.guestNights),
-          detail: `${formatNumber(summary.bookingCount)} bookings, ${formatCents(summary.bookedRevenueCents)}`,
+          detail: `${formatNumber(summary.bookingCount)} bookings, ${formatDollarsDisplay(summary.bookedRevenueCents)}`,
         })
       ),
     });
@@ -476,12 +471,16 @@ function buildBookingStatusPanels(
         {
           label: "Committed",
           value: formatNumber(metrics.forward.totals.committed.guestNights),
-          detail: formatCents(metrics.forward.totals.committed.bookedRevenueCents),
+          detail: formatDollarsDisplay(
+            metrics.forward.totals.committed.bookedRevenueCents
+          ),
         },
         {
           label: "At risk",
           value: formatNumber(metrics.forward.totals.atRisk.guestNights),
-          detail: formatCents(metrics.forward.totals.atRisk.bookedRevenueCents),
+          detail: formatDollarsDisplay(
+            metrics.forward.totals.atRisk.bookedRevenueCents
+          ),
         },
       ],
     });
@@ -494,7 +493,8 @@ function buildBookingStatusPanels(
 // subtype (including the synthetic "Unmapped" group) render flat, after the
 // labelled subtypes.
 function buildGroupStatusItems(
-  groups: FinanceMappedPnlCategorySummary[]
+  groups: FinanceMappedPnlCategorySummary[],
+  hasComparison: boolean
 ): FinanceDashboardStatusPanel["items"] {
   const withSubtype = groups.filter((group) => group.subtype);
   const withoutSubtype = groups.filter((group) => !group.subtype);
@@ -515,7 +515,9 @@ function buildGroupStatusItems(
   const groupItem = (group: FinanceMappedPnlCategorySummary) => ({
     label: group.name,
     value: group.formattedAmount,
-    detail: `${group.lineCount} lines, ${group.formattedDelta} vs comparison`,
+    detail: hasComparison
+      ? `${group.lineCount} lines, ${group.formattedDelta} vs comparison`
+      : `${group.lineCount} lines`,
   });
 
   const items: FinanceDashboardStatusPanel["items"] = [];
@@ -532,7 +534,7 @@ function buildGroupStatusItems(
     );
     items.push({
       label: subtype,
-      value: formatCents(subtotalCents),
+      value: formatDollarsDisplay(subtotalCents),
       detail: `${members.length} group${members.length === 1 ? "" : "s"} subtotal`,
       emphasis: true,
     });
@@ -546,30 +548,42 @@ async function buildMappedPnlDashboard(input: {
   selection: FinanceDashboardSelection;
   kind: "REVENUE" | "EXPENSE";
 }) {
-  const summary = await buildFinanceMappedPnlSummary({
+  const summary = await buildFinanceMonthlyPnlSummary({
     kind: input.kind,
-    from: input.selection.primary.from,
-    to: input.selection.primary.to,
-    compareFrom: input.selection.comparison.from,
-    compareTo: input.selection.comparison.to,
+    primary: input.selection.primary,
+    comparison: input.selection.comparison,
+    currentMonth: input.selection.currentMonth,
     expenseCategoryId: input.selection.expenseCategoryId,
     expenseLine: input.selection.expenseLine,
   });
 
   const noun = input.kind === "REVENUE" ? "revenue" : "costs";
-  const largest = summary.groups[0];
+  const hasComparison = input.selection.comparison !== null;
+  const rankedGroups = [...summary.groups].sort(
+    (left, right) => right.amountCents - left.amountCents
+  );
+  const largest = rankedGroups[0];
   const cards: FinanceDashboardKpiCard[] = [
     {
-      title: input.kind === "REVENUE" ? "Mapped revenue" : "Mapped costs",
+      title: input.kind === "REVENUE" ? "Revenue" : "Costs",
       value: summary.formattedAmount,
-      description: `Selected-period ${noun} from stored monthly profit-and-loss snapshots.`,
-      footnote: `${summary.formattedDelta} vs ${summary.formattedComparisonAmount} comparison.`,
+      description: `Selected-period ${noun} from stored monthly Xero account balances.`,
+      footnote:
+        summary.formattedDelta && summary.formattedComparisonAmount
+          ? `${summary.formattedDelta} vs ${summary.formattedComparisonAmount} comparison.`
+          : undefined,
     },
-    {
-      title: "Comparison period",
-      value: summary.formattedComparisonAmount,
-      description: `${input.selection.comparison.label} snapshot total.`,
-    },
+    hasComparison
+      ? {
+          title: "Comparison period",
+          value: summary.formattedComparisonAmount ?? formatDollarsDisplay(0),
+          description: `${input.selection.comparison?.label ?? ""} total.`,
+        }
+      : {
+          title: "Months covered",
+          value: `${summary.monthsWithData} of ${financeDashboardMonthCount(input.selection.primary)}`,
+          description: "Selected months with stored monthly Xero data.",
+        },
     {
       title: largest ? "Largest group" : "Groups",
       value: largest ? largest.formattedAmount : "No groups",
@@ -581,34 +595,47 @@ async function buildMappedPnlDashboard(input: {
       title: "Unmapped included",
       value:
         summary.groups.find((group) => group.id === "unmapped")?.formattedAmount ??
-        formatCents(0),
+        formatDollarsDisplay(0),
       description:
-        "Unmapped P&L lines remain in totals so missing mappings cannot hide data.",
+        "Unmapped account lines remain in totals so missing mappings cannot hide data.",
     },
   ];
+  const seriesName = input.kind === "REVENUE" ? "Revenue" : "Costs";
   const trends: FinanceDashboardTrend[] = [
     {
-      title:
-        input.kind === "REVENUE"
-          ? "Revenue trend"
-          : "Cost trend",
-      description: `Stored Xero P&L ${noun} across snapshots covering the selected period.`,
+      title: input.kind === "REVENUE" ? "Revenue trend" : "Cost trend",
+      description: hasComparison
+        ? `Monthly ${noun} for the selected period, with the comparison period aligned month by month.`
+        : `Monthly ${noun} for the selected period.`,
       variant: "bar",
       xKey: "label",
       data: summary.trend.map((point) => ({
-        label: point.label,
+        label: point.isProvisional ? `${point.label} (MTD)` : point.label,
         amount: point.amountCents,
+        ...(hasComparison
+          ? { comparison: point.comparisonAmountCents ?? 0 }
+          : {}),
       })),
       series: [
         {
           key: "amount",
-          name: input.kind === "REVENUE" ? "Revenue" : "Costs",
+          name: seriesName,
           color:
             input.kind === "REVENUE"
               ? SERIES_COLORS.revenue
               : SERIES_COLORS.costs,
           valueType: "currency",
         },
+        ...(hasComparison
+          ? [
+              {
+                key: "comparison",
+                name: "Comparison",
+                color: SERIES_COLORS.comparison,
+                valueType: "currency" as const,
+              },
+            ]
+          : []),
       ],
     },
   ];
@@ -617,9 +644,10 @@ async function buildMappedPnlDashboard(input: {
       title: input.kind === "REVENUE" ? "Revenue groups" : "Expense groups",
       description:
         "Mapped Treasurer-controlled groups under their subtype sub-headings, with Unmapped kept visible.",
-      items: buildGroupStatusItems(summary.groups),
+      items: buildGroupStatusItems(summary.groups, hasComparison),
     },
   ];
+  // Export rows keep exact cents so they tie out against Xero.
   const exportSections = [
     { title: "KPI cards", rows: cardRows(cards) },
     {
@@ -627,10 +655,22 @@ async function buildMappedPnlDashboard(input: {
       rows: summary.groups.map((group) => ({
         Subtype: group.subtype ?? "",
         Group: group.name,
-        Amount: group.formattedAmount,
-        Comparison: group.formattedComparisonAmount,
-        Delta: group.formattedDelta,
+        Amount: formatCents(group.amountCents),
+        Comparison: hasComparison ? formatCents(group.comparisonAmountCents) : "",
+        Delta: hasComparison ? formatSignedCents(group.deltaCents) : "",
         Lines: group.lineCount,
+      })),
+    },
+    {
+      title: "Monthly totals",
+      rows: summary.trend.map((point) => ({
+        Month: point.label,
+        Amount: formatCents(point.amountCents),
+        Comparison:
+          point.comparisonAmountCents === null
+            ? ""
+            : formatCents(point.comparisonAmountCents),
+        MonthToDate: point.isProvisional ? "yes" : "",
       })),
     },
     {
@@ -638,12 +678,11 @@ async function buildMappedPnlDashboard(input: {
       rows: summary.groups.flatMap((group) =>
         group.lines.map((line) => ({
           Group: group.name,
-          Section: line.sectionLabel,
           Line: line.lineLabel,
           AccountCode: line.accountCode ?? "",
-          Amount: line.formattedAmount,
-          Comparison: line.formattedComparisonAmount,
-          Delta: line.formattedDelta,
+          Amount: formatCents(line.amountCents),
+          Comparison: hasComparison ? formatCents(line.comparisonAmountCents) : "",
+          MonthsPresent: line.periodsPresent,
         }))
       ),
     },
@@ -676,14 +715,14 @@ async function buildMappedPnlDashboard(input: {
         : null,
     sourceNotes: [
       {
-        label: "Xero snapshots",
+        label: "Xero monthly facts",
         description:
-          "Revenue and costs come from stored Xero profit-and-loss snapshots. Opening the dashboard does not call Xero live.",
+          "Revenue and costs come from stored monthly Xero account balances (one amount per account and month). Opening the dashboard does not call Xero live; drill into Xero for day-level detail.",
       },
       {
         label: "Mappings",
         description:
-          "Treasurer-controlled setup mappings group P&L lines by Xero account code under named subtypes. Unmapped lines are included in totals.",
+          "Treasurer-controlled setup mappings group accounts by Xero account code under named subtypes. Unmapped accounts are included in totals.",
       },
     ],
     exportSections,
@@ -696,13 +735,13 @@ async function buildRevenueDashboard(selection: FinanceDashboardSelection) {
   try {
     const periods = Math.max(
       1,
-      Math.min(12, Math.ceil(financeDashboardDateRangeDayCount(selection.primary) / 31))
+      Math.min(12, financeDashboardMonthCount(selection.primary))
     );
     const reconciliation = await buildFinanceRevenueReconciliation({ periods });
     mapped.statusPanels.push({
       title: "Xero vs booking reconciliation",
       description:
-        "Hut-fee income from Xero compared with booking-system hut fee revenue.",
+        "Hut-fee income from Xero compared with booking-system hut fee revenue. Exact cents, for tie-out.",
       badgeLabel:
         reconciliation.overallStatus === "TIES"
           ? "Ties"
@@ -732,12 +771,11 @@ async function buildRevenueDashboard(selection: FinanceDashboardSelection) {
 
 async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelection) {
   const [costs, metrics] = await Promise.all([
-    buildFinanceMappedPnlSummary({
+    buildFinanceMonthlyPnlSummary({
       kind: "EXPENSE",
-      from: selection.primary.from,
-      to: selection.primary.to,
-      compareFrom: selection.comparison.from,
-      compareTo: selection.comparison.to,
+      primary: selection.primary,
+      comparison: null,
+      currentMonth: selection.currentMonth,
     }),
     getFinanceBookingMetrics({
       realized: {
@@ -771,6 +809,7 @@ async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelec
         realizedRateCents === null ? 0 : impliedGuestNights * realizedRateCents,
     };
   });
+  // Per-night rates keep cents: they are unit prices where cents are signal.
   const cards: FinanceDashboardKpiCard[] = [
     {
       title: "Break-even revenue / guest night",
@@ -784,7 +823,7 @@ async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelec
     },
     {
       title: "Booked revenue less costs",
-      value: formatSignedCents(bookedRevenueLessCostsCents),
+      value: formatSignedDollarsDisplay(bookedRevenueLessCostsCents),
       description: "Booking-system revenue less mapped Xero costs.",
     },
     {
@@ -828,7 +867,7 @@ async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelec
         items: scenarioData.map((scenario) => ({
           label: scenario.label,
           value: formatCents(scenario.requiredRate),
-          detail: `Revenue at realized rate ${formatCents(scenario.realizedRevenue)}`,
+          detail: `Revenue at realized rate ${formatDollarsDisplay(scenario.realizedRevenue)}`,
         })),
       },
     ],
@@ -836,7 +875,8 @@ async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelec
     sourceNotes: [
       {
         label: "Cost source",
-        description: "Costs come from stored Xero P&L snapshots and setup mappings.",
+        description:
+          "Costs come from stored monthly Xero account balances and setup mappings.",
       },
       {
         label: "Booking source",
@@ -851,56 +891,46 @@ async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelec
   };
 }
 
-async function loadSnapshotsForRange(
-  snapshotType: FinanceSnapshotType,
-  selection: FinanceDashboardSelection
-) {
+async function loadLatestBankBalancesSnapshot() {
   const snapshots = await listFinanceSnapshots({
-    snapshotType,
+    snapshotType: FinanceSnapshotType.BANK_BALANCES,
     scope: DEFAULT_FINANCE_SNAPSHOT_SCOPE,
-    limit: 100,
+    limit: 1,
   });
-  const from = new Date(`${selection.primary.from}T00:00:00.000Z`);
-  const to = new Date(`${selection.primary.to}T00:00:00.000Z`);
-  return snapshots.filter((snapshot) => {
-    const end = snapshot.periodEnd ?? snapshot.asOfDate;
-    const start = snapshot.periodStart ?? snapshot.asOfDate;
-    return end >= from && start <= to;
-  });
+  return snapshots[0] ? parseCashSnapshot(snapshots[0]) : null;
 }
 
 async function buildCashDashboard(selection: FinanceDashboardSelection) {
-  const snapshots = await loadSnapshotsForRange(
-    FinanceSnapshotType.BANK_BALANCES,
-    selection
-  );
-  const parsed = snapshots
-    .map(parseCashSnapshot)
-    .filter((snapshot): snapshot is ParsedCashSnapshot => snapshot !== null);
-  const latest = parsed[0] ?? null;
-  const average =
-    parsed.length > 0
+  const [series, latestSnapshot] = await Promise.all([
+    buildFinanceMonthlyBalanceSeries(selection.primary, {
+      currentMonth: selection.currentMonth,
+    }),
+    loadLatestBankBalancesSnapshot(),
+  ]);
+  const monthPoints = series.points.filter((point) => point.hasData);
+  const averageMonthEndCents =
+    monthPoints.length > 0
       ? Math.round(
-          parsed.reduce((total, snapshot) => total + snapshot.totalBalanceCents, 0) /
-            parsed.length
+          monthPoints.reduce((total, point) => total + point.bankCents, 0) /
+            monthPoints.length
         )
       : 0;
   const cards: FinanceDashboardKpiCard[] = [
     {
       title: "Latest bank balance",
-      value: latest ? latest.totalBalance : "Unavailable",
+      value: latestSnapshot ? latestSnapshot.totalBalance : "Unavailable",
       description: "Latest stored bank summary balance from Xero snapshots.",
-      footnote: latest?.sourceUpdatedAtLabel,
+      footnote: latestSnapshot?.sourceUpdatedAtLabel,
     },
     {
-      title: "Average stored balance",
-      value: formatCents(average),
-      description: "Average across stored bank-balance snapshots in the selected range.",
+      title: "Average month-end balance",
+      value: formatDollarsDisplay(averageMonthEndCents),
+      description: "Average of stored month-end bank balances in the selected range.",
     },
     {
       title: "Accounts tracked",
-      value: formatNumber(latest?.accountCount ?? 0),
-      description: "Bank accounts present in the latest stored snapshot.",
+      value: formatNumber(series.latestBankAccounts.length),
+      description: "Bank accounts present in the latest stored month.",
     },
   ];
   return {
@@ -908,12 +938,12 @@ async function buildCashDashboard(selection: FinanceDashboardSelection) {
     trends: [
       {
         title: "Bank balance trend",
-        description: "Stored bank balance snapshots across the selected period.",
+        description: "Month-end bank balances across the selected period.",
         variant: "line" as const,
         xKey: "label",
-        data: [...parsed].reverse().map((snapshot) => ({
-          label: snapshot.snapshotLabel,
-          balance: snapshot.totalBalanceCents,
+        data: monthPoints.map((point) => ({
+          label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+          balance: point.bankCents,
         })),
         series: [
           {
@@ -925,41 +955,50 @@ async function buildCashDashboard(selection: FinanceDashboardSelection) {
         ],
       },
     ],
-    mix: latest
-      ? {
-          title: "Account mix",
-          description: "Latest stored bank balance by account.",
-          valueType: "currency" as const,
-          data: latest.accounts.map((account) => ({
-            name: account.label,
-            value: account.balanceCents,
-          })),
-        }
-      : null,
+    mix:
+      series.latestBankAccounts.length > 0
+        ? {
+            title: "Account mix",
+            description: "Latest month-end bank balance by account.",
+            valueType: "currency" as const,
+            data: series.latestBankAccounts.map((account) => ({
+              name: account.label,
+              value: account.balanceCents,
+            })),
+          }
+        : null,
     statusPanels: [],
     costFilters: null,
     sourceNotes: [
       {
         label: "Cash source",
         description:
-          "Cash comes from stored Xero bank-balance snapshots, not live bank feeds or local payment totals.",
+          "Cash comes from stored monthly Xero balance-sheet bank balances, not live bank feeds or local payment totals.",
       },
     ],
     exportSections: [
       { title: "KPI cards", rows: cardRows(cards) },
       {
+        title: "Month-end balances",
+        rows: monthPoints.map((point) => ({
+          Month: point.label,
+          Balance: formatCents(point.bankCents),
+          MonthToDate: point.isProvisional ? "yes" : "",
+        })),
+      },
+      {
         title: "Accounts",
-        rows: latest
-          ? latest.accounts.map((account) => ({
-              Account: account.label,
-              Balance: formatCents(account.balanceCents),
-            }))
-          : [],
+        rows: series.latestBankAccounts.map((account) => ({
+          Account: account.label,
+          Balance: formatCents(account.balanceCents),
+        })),
       },
     ],
     warnings:
-      snapshots.length === 0
-        ? ["No stored bank-balance snapshots cover the selected range."]
+      series.monthsWithData === 0
+        ? [
+            `No monthly Xero balance data is stored for ${selection.primary.label}. Run the finance sync, or the monthly-facts backfill for older history.`,
+          ]
         : [],
   };
 }
@@ -968,72 +1007,74 @@ async function buildBalanceOrWorkingCapitalDashboard(input: {
   selection: FinanceDashboardSelection;
   workingCapitalOnly: boolean;
 }) {
-  const snapshots = await loadSnapshotsForRange(
-    FinanceSnapshotType.BALANCE_SHEET,
-    input.selection
-  );
-  const parsed = snapshots
-    .map(parseBalanceSheetSnapshot)
-    .filter(
-      (snapshot): snapshot is ParsedBalanceSheetSnapshot => snapshot !== null
-    );
-  const latest = parsed[0] ?? null;
+  const series = await buildFinanceMonthlyBalanceSeries(input.selection.primary, {
+    currentMonth: input.selection.currentMonth,
+  });
+  const monthPoints = series.points.filter((point) => point.hasData);
+  const latest = series.latest;
+  const currentRatio =
+    latest && latest.currentLiabilitiesCents !== 0
+      ? latest.currentAssetsCents / latest.currentLiabilitiesCents
+      : null;
   const cards: FinanceDashboardKpiCard[] = input.workingCapitalOnly
     ? [
         {
           title: "Current assets",
-          value: latest?.currentAssets ?? "Unavailable",
-          description: "Current assets from the latest stored balance sheet.",
+          value: latest ? formatDollarsDisplay(latest.currentAssetsCents) : "Unavailable",
+          description: "Current assets at the latest stored month end.",
         },
         {
           title: "Current liabilities",
-          value: latest?.currentLiabilities ?? "Unavailable",
-          description: "Current liabilities from the latest stored balance sheet.",
+          value: latest
+            ? formatDollarsDisplay(latest.currentLiabilitiesCents)
+            : "Unavailable",
+          description: "Current liabilities at the latest stored month end.",
         },
         {
           title: "Working capital",
-          value: latest?.workingCapital ?? "Unavailable",
+          value: latest ? formatDollarsDisplay(latest.workingCapitalCents) : "Unavailable",
           description: "Current assets less current liabilities.",
         },
         {
           title: "Current ratio",
-          value: latest?.currentRatio === null || !latest ? "Unavailable" : `${latest.currentRatio.toFixed(2)}x`,
+          value: currentRatio === null ? "Unavailable" : `${currentRatio.toFixed(2)}x`,
           description: "Current assets divided by current liabilities.",
         },
       ]
     : [
         {
           title: "Total assets",
-          value: latest?.totalAssets ?? "Unavailable",
-          description: "Assets from the latest stored balance sheet.",
+          value: latest ? formatDollarsDisplay(latest.assetsCents) : "Unavailable",
+          description: "Assets at the latest stored month end.",
         },
         {
           title: "Total liabilities",
-          value: latest?.totalLiabilities ?? "Unavailable",
-          description: "Liabilities from the latest stored balance sheet.",
+          value: latest ? formatDollarsDisplay(latest.liabilitiesCents) : "Unavailable",
+          description: "Liabilities at the latest stored month end.",
         },
         {
           title: "Net assets",
-          value: latest?.netAssets ?? "Unavailable",
-          description: "Assets less liabilities from stored balance-sheet data.",
+          value: latest ? formatDollarsDisplay(latest.netAssetsCents) : "Unavailable",
+          description: "Assets less liabilities at the latest stored month end.",
         },
         {
-          title: "Lines tracked",
-          value: formatNumber(latest?.lineItemCount ?? 0),
-          description: "Balance-sheet lines present in the latest stored snapshot.",
+          title: "Months covered",
+          value: `${series.monthsWithData} of ${financeDashboardMonthCount(input.selection.primary)}`,
+          description: "Selected months with stored balance-sheet data.",
         },
       ];
   const trend = input.workingCapitalOnly
     ? {
         title: "Working capital trend",
-        description: "Current assets, liabilities, and working capital across stored snapshots.",
+        description:
+          "Month-end current assets, current liabilities, and working capital.",
         variant: "line" as const,
         xKey: "label",
-        data: [...parsed].reverse().map((snapshot) => ({
-          label: snapshot.snapshotLabel,
-          currentAssets: snapshot.currentAssetsCents ?? 0,
-          currentLiabilities: snapshot.currentLiabilitiesCents ?? 0,
-          workingCapital: snapshot.workingCapitalCents ?? 0,
+        data: monthPoints.map((point) => ({
+          label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+          currentAssets: point.currentAssetsCents,
+          currentLiabilities: point.currentLiabilitiesCents,
+          workingCapital: point.workingCapitalCents,
         })),
         series: [
           {
@@ -1058,14 +1099,14 @@ async function buildBalanceOrWorkingCapitalDashboard(input: {
       }
     : {
         title: "Balance sheet trend",
-        description: "Assets, liabilities, and net assets across stored snapshots.",
+        description: "Month-end assets, liabilities, and net assets.",
         variant: "line" as const,
         xKey: "label",
-        data: [...parsed].reverse().map((snapshot) => ({
-          label: snapshot.snapshotLabel,
-          assets: snapshot.totalAssetsCents,
-          liabilities: snapshot.totalLiabilitiesCents,
-          netAssets: snapshot.netAssetsCents,
+        data: monthPoints.map((point) => ({
+          label: point.isProvisional ? `${point.label} (MTD)` : point.label,
+          assets: point.assetsCents,
+          liabilities: point.liabilitiesCents,
+          netAssets: point.netAssetsCents,
         })),
         series: [
           {
@@ -1096,11 +1137,11 @@ async function buildBalanceOrWorkingCapitalDashboard(input: {
       !input.workingCapitalOnly && latest
         ? {
             title: "Latest composition",
-            description: "Latest stored balance sheet composition.",
+            description: "Latest month-end balance sheet composition.",
             valueType: "currency" as const,
             data: [
-              { name: "Assets", value: latest.totalAssetsCents },
-              { name: "Liabilities", value: latest.totalLiabilitiesCents },
+              { name: "Assets", value: latest.assetsCents },
+              { name: "Liabilities", value: latest.liabilitiesCents },
               { name: "Net assets", value: latest.netAssetsCents },
             ],
           }
@@ -1111,44 +1152,49 @@ async function buildBalanceOrWorkingCapitalDashboard(input: {
       {
         label: "Balance-sheet source",
         description:
-          "Balance sheet and working-capital figures come from stored Xero balance-sheet snapshots.",
+          "Balance sheet and working-capital figures come from stored monthly Xero account balances (month-end positions per account).",
       },
     ],
     exportSections: [
       { title: "KPI cards", rows: cardRows(cards) },
       {
-        title: "Snapshots",
-        rows: parsed.map((snapshot) => ({
-          Period: snapshot.snapshotLabel,
-          Assets: snapshot.totalAssets,
-          Liabilities: snapshot.totalLiabilities,
-          NetAssets: snapshot.netAssets,
-          CurrentAssets: snapshot.currentAssets ?? "",
-          CurrentLiabilities: snapshot.currentLiabilities ?? "",
-          WorkingCapital: snapshot.workingCapital ?? "",
+        title: "Month-end positions",
+        rows: monthPoints.map((point) => ({
+          Month: point.label,
+          Assets: formatCents(point.assetsCents),
+          Liabilities: formatCents(point.liabilitiesCents),
+          NetAssets: formatCents(point.netAssetsCents),
+          CurrentAssets: formatCents(point.currentAssetsCents),
+          CurrentLiabilities: formatCents(point.currentLiabilitiesCents),
+          WorkingCapital: formatCents(point.workingCapitalCents),
+          MonthToDate: point.isProvisional ? "yes" : "",
         })),
       },
     ],
     warnings:
-      snapshots.length === 0
-        ? ["No stored balance-sheet snapshots cover the selected range."]
+      series.monthsWithData === 0
+        ? [
+            `No monthly Xero balance-sheet data is stored for ${input.selection.primary.label}. Run the finance sync, or the monthly-facts backfill for older history.`,
+          ]
         : [],
   };
-}
-
-function formatSignedNumber(value: number) {
-  if (value === 0) return "0";
-  return `${value > 0 ? "+" : "-"}${formatNumber(Math.abs(value))}`;
 }
 
 export async function buildFinanceDashboardPageModel(input: {
   member: FinanceAccessMember;
   searchParams?: SearchParams;
 }): Promise<FinanceDashboardPageModel> {
-  const [seasons, sync] = await Promise.all([loadSeasons(), buildSyncStatus()]);
+  // Seed the financial-year cache (override → Xero org → March default) so
+  // FY-aligned ranges resolve correctly before the selection is built.
+  const [seasons, sync, financialYearEndMonth] = await Promise.all([
+    loadSeasons(),
+    buildSyncStatus(),
+    refreshFinancialYearConfig(),
+  ]);
   const selection = resolveFinanceDashboardSelection({
     searchParams: input.searchParams,
     seasons,
+    financialYearEndMonth,
   });
   const labels = buildSelectionLabels(selection);
 
@@ -1212,3 +1258,5 @@ export async function buildFinanceDashboardPageModel(input: {
     ],
   };
 }
+
+export type { FinanceMonthlyPnlSummary };
