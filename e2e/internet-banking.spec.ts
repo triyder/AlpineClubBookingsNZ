@@ -72,26 +72,32 @@ test("member switches a card booking to Internet Banking with Xero absent", asyn
   // defaults off → no bed held, per #737). No soft-refresh race, no reload
   // crutch in the spec (#1148 / #1371 F28) — asserted against the reloaded DOM.
   await expect(switchButton).toHaveCount(0, { timeout: 30_000 });
-  // #1400: the reload transition can leave a second, persistently HIDDEN
-  // post-switch copy of the page content in the DOM (observed in CI: the
-  // strict getByText resolved to 2 elements for the full 30s window, one
-  // hidden — while the switch-button count above was already 0, so the extra
-  // copy is post-switch). Until the duplicate mount is root-caused, assert on
-  // a VISIBLE instance explicitly so a hidden artefact cannot strict-violate
-  // the member-visible outcome these assertions exist to pin.
+  // #1400 root cause (confirmed by inspecting the reloaded page's streamed HTML):
+  // /bookings/[id] has a loading.tsx, so Next.js wraps this async server page in a
+  // Suspense boundary and STREAMS it — the shell flushes first with the skeleton
+  // inside <main>, then the real content (including this Internet Banking card)
+  // arrives in a trailing `<div hidden id="S:…">` React streaming segment appended
+  // to <body>, which an inline reveal script then moves into <main>. On the
+  // window.location.reload() after the switch, on a loaded CI runner that
+  // reveal/cleanup races: for a window the card exists BOTH revealed in <main> AND
+  // still in the not-yet-removed hidden streaming segment, so an unscoped getByText
+  // resolves to two elements (one hidden) for the assertion window — the same
+  // hard-load streaming/hydration class as the login #email duplicate (#1154/#1207).
+  // The hidden copy is a benign framework artefact (the <main> copy IS the correct,
+  // complete member-visible render), so scope the post-reload assertions to the
+  // <main> region: it targets the revealed server render, and because the streaming
+  // segment sits OUTSIDE <main> a hidden artefact can never strict-violate — while a
+  // genuine double render INSIDE <main> still trips strict mode and fails, so no
+  // real regression is masked. Supersedes the visible=true guard from #1407.
+  const main = page.getByRole("main");
+  await expect(main.getByText("Internet Banking Payment")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(main.getByText(/Reference:/)).toBeVisible();
   await expect(
-    page.getByText("Internet Banking Payment").locator("visible=true").first(),
-  ).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.getByText(/Reference:/).locator("visible=true").first(),
-  ).toBeVisible();
-  await expect(
-    page
-      .getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
-        exact: true,
-      })
-      .locator("visible=true")
-      .first(),
+    main.getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
+      exact: true,
+    }),
   ).toBeVisible();
   await page.close();
 });
