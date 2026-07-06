@@ -588,6 +588,15 @@ Bundled and definition-backed rows are composed by the central admin
 permission matrix (maximum level per area); they must not be projected into
 legacy `Member.role = ADMIN`. Finance portal access derives from the merged
 `finance` area level, never from the enum values or `financeAccessLevel`.
+"User Type" (User / Organisation / Admin / Lodge) is a derived presentation
+concept over access-role tokens, not a stored field: the Edit Member screen's
+User Type select and the members-list Access column derive it via
+`deriveUserType` (any privileged token other than `LODGE` ⇒ Admin; `LODGE` ⇒
+Lodge kiosk; `ORG` ⇒ Organisation; otherwise User) and save it back as plain
+`accessRoles` tokens — the Admin type's "Also a club member" checkbox is the
+`USER` token. No new stored classification field may be introduced for it,
+organisations cannot hold admin roles, and the server-side Full-Admin gates
+on access-role writes remain the authority (the UI only mirrors them).
 On-behalf booking must not depend on `membership:view`: a Booking Officer
 (`bookings:edit`) reaches the booking owner's or target member's family group
 through the bookings-scoped pickers

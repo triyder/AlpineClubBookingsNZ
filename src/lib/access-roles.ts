@@ -319,6 +319,69 @@ export function hasLodgeAccess(input: AccessRoleInput) {
   return roles.includes("LODGE") || roles.includes("ADMIN");
 }
 
+/**
+ * Derived presentation-only classification over access-role tokens (issue
+ * #1439). There is no stored "user type" field: the admin UI derives this
+ * from the same tokens it submits, so it can never disagree with the
+ * capability system. Precedence: any privileged token other than LODGE
+ * (admin bundles, finance roles, definition-id custom roles) classifies as
+ * "admin"; LODGE without such a token is the kiosk account type; ORG is an
+ * organisation; anything else — including a non-login record with no tokens
+ * — is a plain user.
+ */
+export type UserType = "user" | "organisation" | "admin" | "lodge";
+
+export const USER_TYPE_LABELS: Record<UserType, string> = {
+  user: "User",
+  organisation: "Organisation",
+  admin: "Admin",
+  lodge: "Lodge (kiosk account)",
+};
+
+export function deriveUserType(
+  tokens: ReadonlyArray<string>,
+  canLogin?: boolean | null,
+): UserType {
+  const effective = canLogin === false ? [] : tokens;
+  if (
+    effective.some(
+      (token) => token !== "LODGE" && isPrivilegedAccessRole(token),
+    )
+  ) {
+    return "admin";
+  }
+  if (effective.includes("LODGE")) return "lodge";
+  if (effective.includes("ORG")) return "organisation";
+  return "user";
+}
+
+/**
+ * Token set produced by picking a User Type in the Edit Member UI (#1439).
+ * "user" and "organisation" are single-token classifications; "admin" keeps
+ * the current privileged tokens (dropping ORG — organisations cannot hold
+ * admin roles) and holds USER per the "also a club member" toggle. "lodge"
+ * is never selectable, so it is excluded from the input type. Callers still
+ * run the result through normalizeAssignableAccessRoleTokens.
+ */
+export function accessRoleTokensForUserType(
+  type: Exclude<UserType, "lodge">,
+  currentTokens: ReadonlyArray<string>,
+  options: { alsoClubMember?: boolean } = {},
+): string[] {
+  switch (type) {
+    case "user":
+      return ["USER"];
+    case "organisation":
+      return ["ORG"];
+    case "admin": {
+      const privileged = currentTokens.filter(isPrivilegedAccessRole);
+      return options.alsoClubMember === false
+        ? privileged
+        : ["USER", ...privileged];
+    }
+  }
+}
+
 // Finance viewer/manager access is derived from the merged finance area
 // level of the admin permission matrix; see hasFinanceViewerAccess and
 // hasFinanceManagerAccess in @/lib/admin-permissions.
