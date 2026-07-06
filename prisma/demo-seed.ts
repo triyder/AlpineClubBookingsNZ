@@ -40,6 +40,8 @@ import {
   NOMINATION_TOKEN_ONE,
   NOMINATION_TOKEN_TWO,
   NOMINATOR_TWO,
+  PAID_CANCEL_BOOKING_ID,
+  PAID_CANCEL_WINDOW,
   ROLE_PERSONAS,
   WAITLIST_FILL_GUEST_COUNT,
   WAITLIST_FULL_WINDOW,
@@ -961,6 +963,48 @@ async function main() {
       stripePaymentIntentId: "pi_e2e_ib_pending",
     },
   });
+
+  // Cancellation-with-refund spec: a future-dated PAID booking owned by Nadia on
+  // a December (Summer season) window no other spec or seeded booking uses, so
+  // the cancel spec can hold the whole amount as a positive account credit.
+  // Mirrors the PAID demo booking (bPaid) shape, but future-dated with a
+  // deterministic id and WITHOUT the additional/setup payment-intent fields, so
+  // the credit-method cancel makes no Stripe call (src/lib/booking-cancel.ts).
+  const paidCancelNights = nightsBetween(
+    PAID_CANCEL_WINDOW.checkIn,
+    PAID_CANCEL_WINDOW.checkOut,
+  ).length;
+  const paidCancelBooking = await prisma.booking.create({
+    data: {
+      id: PAID_CANCEL_BOOKING_ID,
+      memberId: nadia.id,
+      checkIn: d(PAID_CANCEL_WINDOW.checkIn),
+      checkOut: d(PAID_CANCEL_WINDOW.checkOut),
+      status: "PAID",
+      totalPriceCents: NIGHTLY * paidCancelNights,
+      finalPriceCents: NIGHTLY * paidCancelNights,
+    },
+  });
+  await addGuest(
+    paidCancelBooking.id,
+    { firstName: NOMINATOR_TWO.firstName, lastName: NOMINATOR_TWO.lastName, ageTier: "ADULT", isMember: true, memberId: nadia.id },
+    PAID_CANCEL_WINDOW.checkIn,
+    PAID_CANCEL_WINDOW.checkOut,
+    NIGHTLY,
+  );
+  const paidCancelPayment = await prisma.payment.create({
+    data: {
+      bookingId: paidCancelBooking.id,
+      amountCents: paidCancelBooking.finalPriceCents,
+      source: "STRIPE",
+      status: "SUCCEEDED",
+      stripePaymentIntentId: "pi_e2e_paid_cancel",
+    },
+  });
+  await prisma.paymentTransaction.create({
+    data: { paymentId: paidCancelPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: paidCancelBooking.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_e2e_paid_cancel" },
+  });
+  await prisma.bookingEvent.create({ data: { bookingId: paidCancelBooking.id, type: "MEMBER_PAID", actorMemberId: nadia.id, amountCents: paidCancelBooking.finalPriceCents } });
 
   // Membership application spec: PENDING_NOMINATORS with two nomination tokens
   // whose raw values are known (SHA-256 stored, matching action-tokens.ts), so

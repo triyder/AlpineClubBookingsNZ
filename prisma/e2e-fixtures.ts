@@ -133,6 +133,25 @@ export const IB_WINDOW = {
   nights: ["2026-09-07", "2026-09-08"],
 };
 
+// --- Cancellation-with-refund fixture (e2e/booking-cancel-refund.spec.ts) --
+// A future-dated PAID booking owned by Nadia (NOMINATOR_TWO) on a December
+// (Summer 2026-27 season) window that no other seeded booking or spec touches,
+// so the cancel spec can cancel it for a positive account-credit refund. The
+// seeded payment is a single SUCCEEDED Stripe charge with NO additional- or
+// setup-intent fields, so the credit-method cancel writes the account credit
+// with zero external (Stripe) calls (src/lib/booking-cancel.ts credit branch).
+// Nadia — not Wanda (heavily used by waitlist/IB) or Alice (kept unconfirmed
+// for booking.spec's #1124 gate) — owns it: no other spec asserts Nadia's
+// bookings or account credit (she only drives a nomination in
+// membership-application.spec), so crediting her account cannot perturb the
+// serial suite.
+export const PAID_CANCEL_BOOKING_ID = "e2e-paid-cancel";
+export const PAID_CANCEL_WINDOW = {
+  checkIn: "2026-12-15",
+  checkOut: "2026-12-17",
+  nights: ["2026-12-15", "2026-12-16"],
+};
+
 // --- Membership application fixture (e2e/membership-application.spec.ts) --
 // A PENDING_NOMINATORS application whose two nomination tokens have KNOWN raw
 // values (their SHA-256 is stored, matching src/lib/action-tokens.ts), so the

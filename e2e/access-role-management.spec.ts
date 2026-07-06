@@ -1,0 +1,119 @@
+import { expect, test } from "@playwright/test";
+import { loginPersona } from "./helpers/auth";
+import { E2E_ADMIN, WAITLISTER } from "./helpers/fixtures";
+
+// High row (docs/END_TO_END_TEST_MATRIX.md): access-role *management* — the
+// Full-Admin create → edit → assign → effect journey the seeded role-boundary
+// spec (admin-roles.spec) does not cover. A custom (non-seeded) definition-backed
+// role is created and edited on /admin/access-roles, assigned to a member from
+// /admin/members/[id], and its effect is confirmed (the member's Access Roles
+// badge + the role's holder count).
+//
+// E2E_ADMIN (the only Full Admin login) is required: scoped admins get 403 on
+// access-role management. The role is assigned to Wanda: no spec asserts her
+// access roles, and the app's owner-positive gating (#1303) means a scoped
+// view-role never changes her own member-page behaviour in the specs that log
+// in as her (IB, membership-application, waitlist).
+test.describe.configure({ mode: "serial" });
+
+// Run-unique so a manual re-run against a non-reseeded DB never collides on the
+// role label. Reused for every locator/assertion below.
+const roleLabel = `E2E Bookings Viewer ${Date.now()}`;
+
+test("a full admin creates, edits, assigns a custom access role and sees the effect", async ({
+  page,
+}) => {
+  // A fresh E2E_ADMIN login may enroll TOTP on a clean database.
+  test.setTimeout(180_000);
+  await loginPersona(page, E2E_ADMIN.email);
+
+  // ── Create the role ──
+  await page.goto("/admin/access-roles");
+  await page.getByRole("button", { name: "New Role" }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("New Access Role")).toBeVisible();
+  await page.locator("#access-role-label").fill(roleLabel);
+  await page
+    .locator("#access-role-description")
+    .fill("E2E-created role for the access-role management journey.");
+
+  // Set the "Bookings & Beds" area permission to View (Radix Select — pick by
+  // option text, not a native <select>). Each area row is a bordered card; the
+  // Bookings & Beds one is unique by its label.
+  await dialog
+    .locator("div.rounded-md.border")
+    .filter({ hasText: "Bookings & Beds" })
+    .first()
+    .getByRole("combobox")
+    .click();
+  await page.getByRole("option", { name: "View", exact: true }).click();
+
+  await page.getByRole("button", { name: "Create Role" }).click();
+  await expect(page.getByText("Access role created")).toBeVisible();
+
+  // ── Edit the role ──
+  const roleRow = page
+    .locator("div.rounded-md.border")
+    .filter({ hasText: roleLabel });
+  await expect(roleRow).toBeVisible({ timeout: 30_000 });
+  await roleRow.getByRole("button", { name: "Edit" }).click();
+
+  await expect(dialog.getByText(`Edit ${roleLabel}`)).toBeVisible();
+  await page
+    .locator("#access-role-description")
+    .fill("E2E-created role, description edited by the spec.");
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect(page.getByText("Access role updated")).toBeVisible();
+
+  // ── Assign the role to Wanda ──
+  // Resolve her member id by search (robust to members-list pagination), then
+  // drive her member detail page directly.
+  const membersRes = await page.request.get(
+    `/api/admin/members?search=${encodeURIComponent(WAITLISTER.email)}`,
+  );
+  expect(
+    membersRes.ok(),
+    `GET /api/admin/members (${membersRes.status()})`,
+  ).toBeTruthy();
+  const membersBody = (await membersRes.json()) as {
+    members?: Array<{ id: string; email: string }>;
+  };
+  const target = (membersBody.members ?? []).find(
+    (member) => member.email === WAITLISTER.email,
+  );
+  expect(target?.id, "Wanda should exist as an admin-visible member").toBeTruthy();
+
+  await page.goto(`/admin/members/${target!.id}`);
+  await expect(page).toHaveURL(/\/admin\/members\/(?!$)[^/?#]+/);
+
+  // Expand Account & Access (groups start collapsed) and edit it inline.
+  await page.getByRole("button", { name: /Account & Access/ }).click();
+  await expect(page.getByText("Access Roles", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit", exact: true }).first().click();
+
+  // Tick the new role's checkbox — scoped through its wrapping <label> (whose
+  // text carries the unique role label) so the Radix checkbox resolves robustly.
+  const roleCheckbox = page
+    .locator("label")
+    .filter({ hasText: roleLabel })
+    .getByRole("checkbox");
+  await expect(roleCheckbox).toBeVisible({ timeout: 30_000 });
+  await roleCheckbox.click();
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  await expect(page.getByText("Member updated successfully")).toBeVisible();
+
+  // ── Effect ──
+  // Back in display mode, the Access Roles value shows a badge for the role.
+  await expect(page.getByText(roleLabel)).toBeVisible({ timeout: 30_000 });
+
+  // And the role now has exactly one holder (authenticated admin API — robust
+  // vs a brittle UI count locator).
+  const rolesRes = await page.request.get("/api/admin/access-roles");
+  expect(rolesRes.ok(), `GET /api/admin/access-roles (${rolesRes.status()})`).toBeTruthy();
+  const rolesBody = (await rolesRes.json()) as {
+    roles?: Array<{ label: string; memberCount: number }>;
+  };
+  const created = (rolesBody.roles ?? []).find((role) => role.label === roleLabel);
+  expect(created?.memberCount, "the created role should have one holder").toBe(1);
+});
