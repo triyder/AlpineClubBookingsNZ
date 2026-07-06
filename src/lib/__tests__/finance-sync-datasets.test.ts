@@ -12,13 +12,20 @@ const SECTION = "Section" as never;
 const ROW = "Row" as never;
 const SUMMARY_ROW = "SummaryRow" as never;
 
-const { mockCallXeroApi } = vi.hoisted(() => ({
-  mockCallXeroApi: vi.fn(),
-}));
+const { mockCallXeroApi, mockLoadFinanceMonthlyChartContext } = vi.hoisted(
+  () => ({
+    mockCallXeroApi: vi.fn(),
+    mockLoadFinanceMonthlyChartContext: vi.fn(),
+  })
+);
 
 vi.mock("@/lib/xero", () => ({
   callXeroApi: (fn: () => unknown, options: unknown) =>
     mockCallXeroApi(fn, options),
+}));
+
+vi.mock("@/lib/finance-monthly-fact-store", () => ({
+  loadFinanceMonthlyChartContext: mockLoadFinanceMonthlyChartContext,
 }));
 
 import {
@@ -26,9 +33,11 @@ import {
   FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
   FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
+  FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_DATASET_KEY,
   FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
   FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
   FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY,
+  FINANCE_SYNC_XERO_PROFIT_AND_LOSS_BY_MONTH_DATASET_KEY,
   FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
   buildFinanceAccountsReceivableInvoicesSnapshot,
   buildFinanceAccountsPayableInvoicesSnapshot,
@@ -40,9 +49,11 @@ import {
   syncFinanceAccountsPayableInvoicesSnapshot,
   syncFinanceAgedReceivablesSnapshot,
   syncFinanceAgedPayablesSnapshot,
+  syncFinanceBalanceSheetByMonthFacts,
   syncFinanceBalanceSheetSnapshot,
   syncFinanceBankBalancesSnapshot,
   syncFinanceChartOfAccountsSnapshot,
+  syncFinanceProfitAndLossByMonthFacts,
   syncFinanceProfitAndLossMonthlySnapshot,
 } from "@/lib/finance-sync-xero-datasets";
 import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
@@ -138,6 +149,10 @@ describe("finance-sync-datasets", () => {
       FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
       FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
       FINANCE_SYNC_XERO_CHART_OF_ACCOUNTS_DATASET_KEY,
+      // Monthly-fact datasets stay after chart-of-accounts: they resolve
+      // report rows through the chart snapshot persisted earlier in the run.
+      FINANCE_SYNC_XERO_PROFIT_AND_LOSS_BY_MONTH_DATASET_KEY,
+      FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_DATASET_KEY,
     ]);
   });
 
@@ -1360,5 +1375,227 @@ describe("finance-sync-datasets", () => {
         `Xero is missing a required OAuth scope for ${testCase.operation}. Add ${testCase.requiredScope} to the Xero app and reconnect Xero from the admin panel.`
       );
     }
+  });
+
+  describe("monthly fact datasets", () => {
+    // The sync context starts at 2026-04-19T22:15Z, which is 2026-04-20 in
+    // Pacific/Auckland — so the current (provisional) month is April 2026.
+    function createMultiPeriodReport(overrides: Record<string, unknown> = {}) {
+      return {
+        reportID: "by-month-1",
+        reportName: "Profit and Loss",
+        reportTitle: "Profit and Loss",
+        reportTitles: ["Profit and Loss"],
+        reportDate: "2026-04-20",
+        updatedDateUTC: new Date("2026-04-20T00:05:00.000Z"),
+        rows: [
+          {
+            rowType: "Header" as never,
+            cells: [
+              { value: "" },
+              { value: "30 Apr 26" },
+              { value: "31 Mar 26" },
+            ],
+          },
+          {
+            rowType: SECTION,
+            title: "Income",
+            rows: [
+              {
+                rowType: ROW,
+                cells: [
+                  {
+                    value: "Hut Fees",
+                    attributes: [{ id: "account", value: "acc-hut" }],
+                  },
+                  { value: "1,250.00" },
+                  { value: "980.50" },
+                ],
+              },
+            ],
+          },
+        ],
+        ...overrides,
+      };
+    }
+
+    beforeEach(() => {
+      mockLoadFinanceMonthlyChartContext.mockResolvedValue({
+        accountsById: new Map([
+          [
+            "acc-hut",
+            {
+              accountId: "acc-hut",
+              code: "200",
+              name: "Hut Fees",
+              type: "SALES",
+              class: "REVENUE",
+            },
+          ],
+        ]),
+      });
+    });
+
+    it("pulls a 12-month profit-and-loss window and derives monthly facts", async () => {
+      const context = createFinanceSyncContext();
+      context.xero.accountingApi.getReportProfitAndLoss.mockResolvedValue({
+        body: { reports: [createMultiPeriodReport()] },
+      });
+
+      const snapshot = await syncFinanceProfitAndLossByMonthFacts(
+        context as never
+      );
+
+      expect(
+        context.xero.accountingApi.getReportProfitAndLoss
+      ).toHaveBeenCalledWith(
+        "tenant-123",
+        "2026-04-01",
+        "2026-04-30",
+        11,
+        "MONTH",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+        false
+      );
+      expect(snapshot).toMatchObject({
+        snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_BY_MONTH,
+        asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+        periodStart: new Date("2026-03-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-30T00:00:00.000Z"),
+        monthlyFacts: {
+          statementKind: "PROFIT_AND_LOSS",
+          months: ["2026-03", "2026-04"],
+          sourceReport: "getReportProfitAndLoss",
+          unresolvedRowLabels: [],
+          rows: [
+            {
+              month: "2026-03",
+              accountCode: "200",
+              accountId: "acc-hut",
+              accountName: "Hut Fees",
+              accountType: "SALES",
+              accountClass: "REVENUE",
+              amountCents: 98050,
+              isProvisional: false,
+            },
+            {
+              month: "2026-04",
+              accountCode: "200",
+              accountId: "acc-hut",
+              accountName: "Hut Fees",
+              accountType: "SALES",
+              accountClass: "REVENUE",
+              amountCents: 125000,
+              isProvisional: true,
+            },
+          ],
+        },
+      });
+    });
+
+    it("pulls month-end balance-sheet positions with the same window", async () => {
+      const context = createFinanceSyncContext();
+      context.xero.accountingApi.getReportBalanceSheet.mockResolvedValue({
+        body: {
+          reports: [
+            createMultiPeriodReport({
+              reportName: "Balance Sheet",
+              reportTitle: "Balance Sheet",
+            }),
+          ],
+        },
+      });
+
+      const snapshot = await syncFinanceBalanceSheetByMonthFacts(
+        context as never
+      );
+
+      expect(
+        context.xero.accountingApi.getReportBalanceSheet
+      ).toHaveBeenCalledWith(
+        "tenant-123",
+        "2026-04-30",
+        11,
+        "MONTH",
+        undefined,
+        undefined,
+        true,
+        false
+      );
+      expect(snapshot).toMatchObject({
+        snapshotType: FinanceSnapshotType.BALANCE_SHEET_BY_MONTH,
+        asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+        monthlyFacts: {
+          statementKind: "BALANCE_SHEET",
+          months: ["2026-03", "2026-04"],
+          sourceReport: "getReportBalanceSheet",
+        },
+      });
+    });
+
+    it("refuses to run without a stored chart of accounts", async () => {
+      mockLoadFinanceMonthlyChartContext.mockResolvedValue({
+        accountsById: new Map(),
+      });
+      const context = createFinanceSyncContext();
+
+      await expect(
+        syncFinanceProfitAndLossByMonthFacts(context as never)
+      ).rejects.toThrow(/No chart-of-accounts snapshot is stored yet/);
+      expect(
+        context.xero.accountingApi.getReportProfitAndLoss
+      ).not.toHaveBeenCalled();
+    });
+
+    it("fails loudly when the report header has no parseable period columns", async () => {
+      const context = createFinanceSyncContext();
+      context.xero.accountingApi.getReportProfitAndLoss.mockResolvedValue({
+        body: {
+          reports: [
+            createMultiPeriodReport({
+              rows: [
+                {
+                  rowType: "Header" as never,
+                  cells: [{ value: "" }, { value: "Account" }],
+                },
+              ],
+            }),
+          ],
+        },
+      });
+
+      await expect(
+        syncFinanceProfitAndLossByMonthFacts(context as never)
+      ).rejects.toThrow(/without parseable monthly period columns/);
+    });
+
+    it("fails loudly when no report row resolves to a GL code", async () => {
+      mockLoadFinanceMonthlyChartContext.mockResolvedValue({
+        accountsById: new Map([
+          [
+            "acc-other",
+            {
+              accountId: "acc-other",
+              code: "999",
+              name: "Other",
+              type: "EXPENSE",
+              class: "EXPENSE",
+            },
+          ],
+        ]),
+      });
+      const context = createFinanceSyncContext();
+      context.xero.accountingApi.getReportProfitAndLoss.mockResolvedValue({
+        body: { reports: [createMultiPeriodReport()] },
+      });
+
+      await expect(
+        syncFinanceProfitAndLossByMonthFacts(context as never)
+      ).rejects.toThrow(/could not be matched to GL codes/);
+    });
   });
 });

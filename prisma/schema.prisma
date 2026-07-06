@@ -56,15 +56,22 @@ enum TwoFactorMethod {
 
 enum FinanceSnapshotType {
   PROFIT_AND_LOSS_MONTHLY
+  PROFIT_AND_LOSS_BY_MONTH
   ACCOUNTS_RECEIVABLE_INVOICES
   ACCOUNTS_PAYABLE_INVOICES
   BANK_TRANSACTIONS
   AGED_RECEIVABLES
   AGED_PAYABLES
   BALANCE_SHEET
+  BALANCE_SHEET_BY_MONTH
   BANK_BALANCES
   CONTACTS
   CHART_OF_ACCOUNTS
+}
+
+enum FinanceMonthlyStatementKind {
+  PROFIT_AND_LOSS
+  BALANCE_SHEET
 }
 
 enum FinanceSyncRunStatus {
@@ -1990,6 +1997,7 @@ model FinanceSyncRun {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   snapshots           FinanceSnapshot[]
+  monthlyBalances     FinanceAccountMonthlyBalance[]
 
   @@index([workflow, startedAt])
   @@index([status, startedAt])
@@ -2015,6 +2023,44 @@ model FinanceSnapshot {
   @@unique([snapshotType, scope, asOfDate], map: "FinanceSnapshot_snapshotType_scope_asOfDate_key")
   @@index([snapshotType, asOfDate])
   @@index([scope, asOfDate])
+  @@index([syncRunId])
+}
+
+// One row per (statement kind, month, Xero account code): the monthly finance
+// fact table the dashboard reads. PROFIT_AND_LOSS rows hold the month's net
+// activity for a revenue/expense account; BALANCE_SHEET rows hold the closing
+// month-end position for an asset/liability/equity account. Rows are replaced
+// idempotently from multi-period Xero reports (12 months per sync), so late
+// edits in Xero self-heal for a year back; older months come from backfill.
+model FinanceAccountMonthlyBalance {
+  id            String                      @id @default(cuid())
+  statementKind FinanceMonthlyStatementKind
+  scope         String                      @default("default")
+  // Always the first day of the month, stored as an NZ date-only value.
+  month         DateTime                    @db.Date
+  // Normalized upper-case Xero GL code (matches FinanceReportCategoryMapping).
+  accountCode   String                      @db.VarChar(40)
+  accountId     String?
+  accountName   String?                     @db.VarChar(200)
+  // Xero account type (SALES, EXPENSE, BANK, CURRLIAB, ...) and class
+  // (REVENUE | EXPENSE | ASSET | LIABILITY | EQUITY) from the chart of accounts.
+  accountType   String?                     @db.VarChar(40)
+  accountClass  String?                     @db.VarChar(20)
+  amountCents   Int
+  currency      String?                     @db.VarChar(8)
+  // True while the month is still in progress (amounts are month-to-date);
+  // flipped false by the first sync after month end.
+  isProvisional Boolean                     @default(false)
+  sourceReport  String                      @db.VarChar(60)
+  syncRunId     String?
+  syncedAt      DateTime                    @default(now())
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+  syncRun       FinanceSyncRun?             @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
+  @@unique([statementKind, scope, month, accountCode])
+  @@index([statementKind, month])
+  @@index([accountCode, month])
   @@index([syncRunId])
 }
 

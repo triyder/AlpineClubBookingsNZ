@@ -185,6 +185,7 @@ Triggers and frequency:
 - Admin imports members with `sendInvites`.
 - Admin uses `POST /api/admin/members/send-setup-invite`.
 - One email per selected/new/imported member per admin action.
+- Bulk sends have no per-admin cooldown: the 100-ids-per-request cap plus SES batch pacing (batches of 10, 1 second between batches) are the sole provider protections. The response reports honest per-member outcomes (`sent`, `failed`, and a `results` array) so the admin UI surfaces failures inside the dialog and can retry the members whose email did not deliver.
 
 ### welcome
 

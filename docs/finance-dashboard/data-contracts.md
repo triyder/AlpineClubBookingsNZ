@@ -117,6 +117,11 @@ The minimum dataset surface is:
 - contacts snapshot
 - finance sync run history
 
+Monthly per-account reporting facts (one row per statement kind, month, and
+Xero GL account code) are stored in `FinanceAccountMonthlyBalance`, derived
+from multi-period profit-and-loss and balance-sheet report pulls; see
+`finance-monthly-facts-contract.md`.
+
 ## Aged Receivables Contract
 
 - The organisation-level aged receivables snapshot is derived from operational Xero `ACCREC` invoices because the currently verified `AgedReceivablesByContact` report surface remains contact-scoped.
