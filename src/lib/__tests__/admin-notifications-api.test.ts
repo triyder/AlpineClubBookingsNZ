@@ -152,6 +152,9 @@ describe("Admin notifications API", () => {
 
     const body = await res.json();
     expect(body.preferences.adminNewBooking).toBe(false);
+    // #1422: the dedicated review-required preference resolves to its default
+    // (true) so muting new-booking alerts never silences the review alert.
+    expect(body.preferences.adminBookingReviewRequired).toBe(true);
     expect(prisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

@@ -50,8 +50,9 @@ export async function sendAdminNewBookingAlert(data: {
 // F27 / #1372: Admin alert - paid booking edited into a minors-only (no-adult)
 // composition. The booking KEEPS its PAID status (Option A) but is blocked from
 // lodge check-in until an admin clears the review, so admins need a nudge that a
-// silent flag was set. Reuses the "New bookings" (Booking Review Required)
-// admin preference category.
+// silent flag was set. #1422: this fires on its own "Booking review required"
+// preference category so muting routine new-booking alerts does not silence a
+// review-required alert.
 export async function sendAdminMinorsOnlyReviewAlert(data: {
   memberName: string;
   checkIn: Date;
@@ -70,7 +71,7 @@ export async function sendAdminMinorsOnlyReviewAlert(data: {
       guestCount: data.guestCount,
       reviewReason: data.reviewReason,
     },
-    preferenceKey: "adminNewBooking",
+    preferenceKey: "adminBookingReviewRequired",
   });
 }
 

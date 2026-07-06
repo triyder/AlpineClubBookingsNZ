@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminReviewStatus } from "@prisma/client";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
 
-// F27 / #1372: every lodge check-in surface must exclude a paid booking that is
-// blocked by a pending minors-only (no-adult) review. These tests prove the
-// shared where-fragment reaches each query (guest list, arrive/depart, roster
-// generate/confirm), and that the admin alert sender is wired to sendToAdmins.
+// F27 / #1372 + #1422: a booking blocked by a pending admin review must not be
+// checkable-in at the lodge. #1422 broadened the block to ANY pending admin
+// review (reason-agnostic) and changed the guest LIST to INCLUDE-but-FLAG the
+// blocked booking (staff see it, arrival disabled) while the mutation paths
+// (arrive/depart, roster generate/confirm) keep EXCLUDING it. These tests prove
+// the shared where-fragment reaches each enforcement query, the guest list
+// surfaces `blockedFromCheckin`, the arrive endpoint still 404s a blocked
+// booking, and the admin alert sender is wired to sendToAdmins.
 
 const prismaMocks = vi.hoisted(() => ({
   bookingGuestFindFirst: vi.fn(),
@@ -52,10 +56,11 @@ import {
 } from "@/lib/lodge-date-scoping";
 import { routeParams } from "@/lib/__tests__/helpers/requests";
 
+// #1422: the where-fragment is now reason-agnostic — it excludes ANY pending
+// admin review, not just the adult-supervision reason.
 const BLOCK_FRAGMENT = {
   requiresAdminReview: true,
   adminReviewStatus: AdminReviewStatus.PENDING,
-  adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
 };
 
 function dateOnly(y: number, m: number, d: number) {
@@ -113,21 +118,51 @@ describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
     );
   });
 
-  it("lodge guest list query excludes the blocked booking", async () => {
-    prismaMocks.bookingFindMany.mockResolvedValueOnce([]);
+  it("#1422: lodge guest list INCLUDES the blocked booking and flags it", async () => {
+    // The blocked booking is NOT filtered out of the guest-list query...
+    prismaMocks.bookingFindMany.mockResolvedValueOnce([
+      {
+        id: "booking-blocked",
+        checkIn: dateOnly(2026, 6, 10),
+        checkOut: dateOnly(2026, 6, 12),
+        expectedArrivalTime: "15:00",
+        // Pending admin review => blockedFromCheckin should be true.
+        requiresAdminReview: true,
+        adminReviewStatus: AdminReviewStatus.PENDING,
+        adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+        member: { firstName: "Alex", lastName: "Parent" },
+        guests: [
+          {
+            id: "guest-blocked",
+            firstName: "Kid",
+            lastName: "Parent",
+            ageTier: "YOUTH",
+            isMember: false,
+            arrivedAt: null,
+            departedAt: null,
+            member: null,
+          },
+        ],
+      },
+    ]);
     const { GET } = await import("@/app/api/lodge/guests/[date]/route");
 
     const res = await GET(
-      new Request("http://localhost/api/lodge/guests/2026-07-10") as never,
+      new Request(
+        "http://localhost/api/lodge/guests/2026-07-10?scope=lodge-list",
+      ) as never,
       routeParams({ date: "2026-07-10" }),
     );
 
     expect(res.status).toBe(200);
-    expect(prismaMocks.bookingFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ NOT: BLOCK_FRAGMENT }),
-      }),
-    );
+    // ...the query no longer carries the block where-fragment...
+    const call = prismaMocks.bookingFindMany.mock.calls[0][0];
+    expect(call.where).not.toHaveProperty("NOT");
+    // ...and the response surfaces the booking flagged blockedFromCheckin.
+    const data = await res.json();
+    expect(data.bookings).toHaveLength(1);
+    expect(data.bookings[0].bookingId).toBe("booking-blocked");
+    expect(data.bookings[0].blockedFromCheckin).toBe(true);
   });
 
   it("roster generate query excludes the blocked booking", async () => {
@@ -153,9 +188,35 @@ describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
       }),
     );
   });
+
+  it("#1422: arrive endpoint 404s a blocked booking (server enforcement intact)", async () => {
+    // findLodgeGuestForDate excludes the blocked booking via its where-fragment,
+    // so the guest resolves to null and the arrive endpoint rejects it even
+    // though the guest list now shows it flagged.
+    prismaMocks.bookingGuestFindFirst.mockResolvedValueOnce(null);
+    const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+
+    const res = await PUT(
+      new Request("http://localhost/api/lodge/guests/2026-07-10/arrive", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bookingGuestId: "guest-blocked" }),
+      }) as never,
+      routeParams({ date: "2026-07-10" }),
+    );
+
+    expect(res.status).toBe(404);
+    expect(prismaMocks.bookingGuestFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          booking: expect.objectContaining({ NOT: BLOCK_FRAGMENT }),
+        }),
+      }),
+    );
+  });
 });
 
-describe("sendAdminMinorsOnlyReviewAlert (#1372)", () => {
+describe("sendAdminMinorsOnlyReviewAlert (#1372 / #1422)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -178,9 +239,9 @@ describe("sendAdminMinorsOnlyReviewAlert (#1372)", () => {
       expect.objectContaining({
         subject: expect.stringContaining("only under-18 guests"),
         templateName: "admin-minors-review",
-        // Recipients are the admins opted into the "New bookings / review
-        // required" category (reused per the owner's decision).
-        preferenceKey: "adminNewBooking",
+        // #1422: fires on its own "Booking review required" preference so
+        // muting routine new-booking alerts does not silence this review alert.
+        preferenceKey: "adminBookingReviewRequired",
         templateData: expect.objectContaining({
           memberName: "Alex Parent",
           guestCount: 2,

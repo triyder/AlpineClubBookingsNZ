@@ -239,15 +239,24 @@ refunds captured payments per the policy.
 Because a paid minors-only booking is deliberately **not** parked to
 AWAITING_REVIEW (Option A / F27, issue #1372 — parking a paid booking would
 collide with the captured-money invariant #1100), a second gate protects the
-child-safety concern: while its minors-only review is PENDING the booking is
-**blocked from lodge check-in** — hidden from every lodge check-in surface
-(guest list, arrive/depart, roster generate/confirm) via the single shared
-`checkinNotBlockedByMinorsReviewFilter()` predicate, scoped specifically to the
-adult-supervision review reason. The booking keeps its PAID status throughout;
-clearing the review to APPROVED makes it check-in-eligible again. When the flag
-newly trips on a paid booking a best-effort admin email fires (template
-`admin-minors-review`), since nothing changes the booking's visible status to
-signal the block.
+child-safety concern: while a paid/completed booking carries a PENDING admin
+review it is **blocked from lodge check-in**. The block is reason-agnostic
+(#1422) — ANY pending admin review gates check-in, not only the adult-supervision
+reason (today the only such reason, but a future review type inherits the gate
+automatically). Server enforcement lives in the shared
+`checkinNotBlockedByPendingReviewFilter()` where-fragment, which **excludes** the
+booking from the arrive/depart and roster generate/confirm queries
+(`src/lib/lodge-date-scoping.ts`) so its guest resolves to null server-side
+(arrive returns 404, roster-confirm 400); the check-in reminder cron skips it as
+well. The lodge **guest list** (the roster staff read on the kiosk) is the one
+surface that now **shows** the blocked booking rather than hiding it — flagged
+"Blocked from Check-In — see Booking Officer" with its arrival toggle disabled,
+so staff can see who is held while the booking stays un-arrivable server-side
+(defense in depth). The booking keeps its PAID status throughout; clearing the
+review to APPROVED makes it check-in-eligible again. When the flag newly trips on
+a paid booking a best-effort admin email fires (template `admin-minors-review`,
+gated by its own `adminBookingReviewRequired` notification preference #1422),
+since nothing changes the booking's visible status to signal the block.
 
 A quote hold spans the whole quote lifecycle (issue #1254). Sending a quote
 places the hold automatically: the held booking (AWAITING_REVIEW, a
