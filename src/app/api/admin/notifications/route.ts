@@ -28,6 +28,7 @@ const preferenceUpdateSchema = z
     adminRefundRequest: z.boolean().optional(),
     adminIssueReport: z.boolean().optional(),
     adminBookingRequest: z.boolean().optional(),
+    adminBookingReviewRequired: z.boolean().optional(),
   })
   .refine(
     (value) => Object.values(value).some((entry) => entry !== undefined),

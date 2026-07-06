@@ -1746,6 +1746,7 @@ Triggers and frequency:
 
 - A guest removal or batch edit newly drops a paid (capacity-holding) booking into a minors-only (no-adult) composition (F27 / #1372).
 - The booking keeps its PAID status but is blocked from lodge check-in until an admin clears the review; sent once to opted-in admins per event. Not sent when the booking already carried a pending review or still has an adult.
+- Gated by its own "Booking review required" (`adminBookingReviewRequired`) admin notification preference (#1422), separate from routine new-booking alerts, so muting new-booking mail does not silence this review alert.
 
 ### admin-new-booking
 

@@ -24,40 +24,51 @@ type ReviewGate = {
 };
 
 /**
- * F27 / #1372 (Option A). A booking left with only under-18 guests (no adult)
- * is flagged for admin review and KEPT in its PAID status — never parked to
+ * F27 / #1372 + #1422. A booking left with only under-18 guests (no adult) is
+ * flagged for admin review and KEPT in its PAID status — never parked to
  * AWAITING_REVIEW, so the captured-money invariant (#1100) holds. While that
- * minors-only review is still PENDING the booking must be BLOCKED from lodge
- * check-in (a child-safety gate): an admin has to clear the review before the
- * party can arrive.
+ * admin review is still PENDING the booking must be BLOCKED from lodge check-in
+ * (a child-safety gate): an admin has to clear the review before the party can
+ * arrive.
  *
  * This predicate is the single source of truth for "is this booking blocked
- * from check-in by a pending minors-only review". It is scoped specifically to
- * the adult-supervision reason (not every pending review) per the owner's
- * decision; today that is the only review reason in the system, but keying on
- * the reason keeps a future review type from silently inheriting the block.
+ * from check-in by a pending admin review". #1422 broadened it to key on ANY
+ * pending admin review (`requiresAdminReview === true && adminReviewStatus ===
+ * PENDING`) rather than the specific adult-supervision reason. This blocks any
+ * PAID/COMPLETED booking with a pending admin review; today the only such
+ * reason is adult-supervision, but the broadened scope is intentional (owner
+ * decision) so a future review type inherits the check-in gate automatically.
+ *
+ * Safe because every lodge query pre-filters `status IN
+ * OPERATIONAL_STAY_BOOKING_STATUSES = [PAID, COMPLETED]`; AWAITING_REVIEW
+ * (pre-payment) parked bookings are not in that set, so nothing new is
+ * over-blocked.
  */
-export function isCheckinBlockedByMinorsReview(booking: ReviewGate): boolean {
+export function isCheckinBlockedByPendingReview(booking: ReviewGate): boolean {
   return (
     booking.requiresAdminReview === true &&
-    booking.adminReviewStatus === AdminReviewStatus.PENDING &&
-    booking.adminReviewReason === ADULT_SUPERVISION_REVIEW_REASON
+    booking.adminReviewStatus === AdminReviewStatus.PENDING
   );
 }
 
 /**
  * Prisma `where` fragment (AND-able) that EXCLUDES bookings blocked from lodge
- * check-in by a pending minors-only review (#1372). Spread it into any
+ * check-in by a pending admin review (#1372 / #1422). Spread it into any
  * lodge-scoped `booking` filter — never hand-roll the condition — so every
- * check-in surface (guest list, arrive/depart, roster) enforces the block
- * identically and the gate can't be applied in one place and missed in another.
+ * check-in enforcement surface (arrive/depart, roster generate/confirm) applies
+ * the block identically and the gate can't be applied in one place and missed
+ * in another.
+ *
+ * NOTE (#1422): the guest LIST (check-in roster the kiosk shows staff) no
+ * longer spreads this filter — it INCLUDES blocked bookings and flags them via
+ * `isCheckinBlockedByPendingReview` so staff can see who is blocked. The
+ * mutation/enforcement paths below keep excluding them (defense in depth).
  */
-export function checkinNotBlockedByMinorsReviewFilter(): Prisma.BookingWhereInput {
+export function checkinNotBlockedByPendingReviewFilter(): Prisma.BookingWhereInput {
   return {
     NOT: {
       requiresAdminReview: true,
       adminReviewStatus: AdminReviewStatus.PENDING,
-      adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
     },
   };
 }
@@ -83,7 +94,7 @@ export function minorsReviewAlertShouldFire({
   };
   updated: ReviewGate & { status: string };
 }): boolean {
-  if (!isCheckinBlockedByMinorsReview(updated)) return false;
+  if (!isCheckinBlockedByPendingReview(updated)) return false;
 
   const wasAlreadyPendingReview =
     previous.requiresAdminReview === true &&

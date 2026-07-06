@@ -37,6 +37,27 @@ member bookings still cannot. The admin "Confirm pending guests" override
 to a capacity-holding status on its zero-dollar and charge-saved-card branches,
 returning 409 unless an explicit overbook is requested (#1366).
 
+Lodge check-in gate (F27 / #1372 + #1422) — status-preserving. A booking that
+carries a pending admin review (`requiresAdminReview` true and
+`adminReviewStatus = PENDING`) is BLOCKED from lodge check-in, but the block
+never changes the booking's status. The canonical case is a paid booking edited
+down to only under-18 guests (no adult): it stays PAID (captured-money
+invariant, #1100) yet cannot arrive until an admin clears the review. The block
+is reason-agnostic (#1422): any pending admin review gates check-in — today
+adult-supervision is the only such reason, but a future review type inherits the
+gate automatically. Enforcement is a single shared where-fragment
+(`checkinNotBlockedByPendingReviewFilter` in `src/lib/booking-review.ts`) applied
+to the arrive/depart and roster generate/confirm queries, so a blocked booking's
+guest resolves to null server-side (arrive returns 404, roster-confirm 400) — the
+block is safe because every lodge query already restricts to the operational
+stay statuses (PAID/COMPLETED), so no parked `AWAITING_REVIEW` booking is
+over-blocked. The lodge guest list (the check-in roster staff read on the kiosk)
+INCLUDES the blocked booking but flags it "Blocked from Check-In — see Booking
+Officer" and disables its arrival toggle — shown, not hidden, yet still
+un-arrivable server-side (defense in depth). The check-in reminder cron skips
+blocked bookings, and the review-required admin alert fires on its own
+notification preference so muting routine new-booking alerts does not silence it.
+
 To verify in later review: exact terminal transitions, non-member hold expiry,
 school group `CONFIRMED` semantics, and payment-failure back paths.
 

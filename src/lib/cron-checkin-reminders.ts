@@ -3,6 +3,7 @@ import { sendCheckinReminderEmail, shouldSendEmail } from "./email";
 import { getNZSTTomorrow } from "./nzst-date";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
 import { CLUB_LODGE_NAME } from "@/config/club-identity";
 
 /**
@@ -24,6 +25,10 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
         gte: tomorrowNZ,
         lt: dayAfterNZ,
       },
+      // #1422: a booking blocked by a pending admin review can't check in until
+      // an admin clears the review, so it should get no "check-in coming up"
+      // reminder while blocked.
+      ...checkinNotBlockedByPendingReviewFilter(),
     },
     include: {
       member: true,

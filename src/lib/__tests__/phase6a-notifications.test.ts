@@ -768,6 +768,23 @@ describe("N-01: sendCheckinReminders", () => {
     expect(result.sent).toBe(0);
     expect(result.skipped).toBe(0);
   });
+
+  it("#1422: excludes bookings blocked by a pending admin review", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+
+    const { sendCheckinReminders } = await import("../cron-checkin-reminders");
+    await sendCheckinReminders();
+
+    // A blocked booking can't check in until an admin clears the review, so the
+    // reminder query carries the shared NOT where-fragment that excludes it.
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: { requiresAdminReview: true, adminReviewStatus: "PENDING" },
+        }),
+      }),
+    );
+  });
 });
 
 // ============================================================================

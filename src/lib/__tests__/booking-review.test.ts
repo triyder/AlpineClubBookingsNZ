@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import {
   ADULT_SUPERVISION_REVIEW_REASON,
-  checkinNotBlockedByMinorsReviewFilter,
-  isCheckinBlockedByMinorsReview,
+  checkinNotBlockedByPendingReviewFilter,
+  isCheckinBlockedByPendingReview,
   minorsReviewAlertShouldFire,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
@@ -33,21 +33,21 @@ describe("booking review helper", () => {
   });
 });
 
-describe("minors-only check-in block (#1372)", () => {
+describe("pending-review check-in block (#1372 / #1422)", () => {
   const blocked = {
     requiresAdminReview: true,
     adminReviewStatus: AdminReviewStatus.PENDING,
     adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
   };
 
-  describe("isCheckinBlockedByMinorsReview", () => {
-    it("blocks a booking with a pending adult-supervision review", () => {
-      expect(isCheckinBlockedByMinorsReview(blocked)).toBe(true);
+  describe("isCheckinBlockedByPendingReview", () => {
+    it("blocks a booking with a pending admin review", () => {
+      expect(isCheckinBlockedByPendingReview(blocked)).toBe(true);
     });
 
     it("does not block once the review is APPROVED", () => {
       expect(
-        isCheckinBlockedByMinorsReview({
+        isCheckinBlockedByPendingReview({
           ...blocked,
           adminReviewStatus: AdminReviewStatus.APPROVED,
         }),
@@ -56,7 +56,7 @@ describe("minors-only check-in block (#1372)", () => {
 
     it("does not block when no review is flagged", () => {
       expect(
-        isCheckinBlockedByMinorsReview({
+        isCheckinBlockedByPendingReview({
           requiresAdminReview: false,
           adminReviewStatus: null,
           adminReviewReason: null,
@@ -64,23 +64,22 @@ describe("minors-only check-in block (#1372)", () => {
       ).toBe(false);
     });
 
-    it("is scoped to the adult-supervision reason (other reasons do not block)", () => {
+    it("#1422: blocks ANY pending review reason, not just adult-supervision", () => {
       expect(
-        isCheckinBlockedByMinorsReview({
+        isCheckinBlockedByPendingReview({
           ...blocked,
           adminReviewReason: "Some other pending review reason",
         }),
-      ).toBe(false);
+      ).toBe(true);
     });
   });
 
-  describe("checkinNotBlockedByMinorsReviewFilter", () => {
-    it("excludes exactly the blocked composite (reason-scoped)", () => {
-      expect(checkinNotBlockedByMinorsReviewFilter()).toEqual({
+  describe("checkinNotBlockedByPendingReviewFilter", () => {
+    it("excludes any pending admin review (reason-agnostic, #1422)", () => {
+      expect(checkinNotBlockedByPendingReviewFilter()).toEqual({
         NOT: {
           requiresAdminReview: true,
           adminReviewStatus: AdminReviewStatus.PENDING,
-          adminReviewReason: ADULT_SUPERVISION_REVIEW_REASON,
         },
       });
     });
