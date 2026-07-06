@@ -61,6 +61,13 @@ or route users to the removed `/finance/*` report pages.
 ## Data Model
 
 - Xero-derived accounting datasets are persisted as `FinanceSnapshot` rows.
+- Monthly per-account reporting facts (one row per statement kind, month, and
+  Xero GL account code) are persisted in `FinanceAccountMonthlyBalance`,
+  derived from multi-period profit-and-loss and balance-sheet pulls in the
+  same daily sync. Historical coverage comes from the re-runnable backfill
+  (`POST /api/finance/sync/backfill-monthly-facts` or
+  `npm run finance:backfill-monthly-facts`). See
+  [finance-monthly-facts-contract.md](finance-monthly-facts-contract.md).
 - Daily sync is handled by the finance sync cron and durable service layer.
 - Treasurer-controlled report groups are stored in `FinanceReportCategory` and
   `FinanceReportCategoryMapping`. Each group carries an optional `subtype`
@@ -78,6 +85,7 @@ or route users to the removed `/finance/*` report pages.
 - [finance-xero-config-contract.md](finance-xero-config-contract.md)
 - [finance-revenue-reconciliation-contract.md](finance-revenue-reconciliation-contract.md)
 - [finance-snapshot-storage-contract.md](finance-snapshot-storage-contract.md)
+- [finance-monthly-facts-contract.md](finance-monthly-facts-contract.md)
 - [finance-sync-service-contract.md](finance-sync-service-contract.md)
 - [finance-sync-cron-contract.md](finance-sync-cron-contract.md)
 - [finance-sync-diagnostics-contract.md](finance-sync-diagnostics-contract.md)

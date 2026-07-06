@@ -12,6 +12,8 @@ const {
   mockFailFinanceSyncRun,
   mockUpsertFinanceSnapshot,
   mockCallXeroApi,
+  mockReplaceMonthlyFacts,
+  mockLoadFinanceMonthlyChartContext,
 } = vi.hoisted(() => ({
   mockGetAuthenticatedXeroClient: vi.fn(),
   mockCreateFinanceSyncRun: vi.fn(),
@@ -19,6 +21,8 @@ const {
   mockFailFinanceSyncRun: vi.fn(),
   mockUpsertFinanceSnapshot: vi.fn(),
   mockCallXeroApi: vi.fn(),
+  mockReplaceMonthlyFacts: vi.fn(),
+  mockLoadFinanceMonthlyChartContext: vi.fn(),
 }));
 
 vi.mock("@/lib/xero-api-client", () => ({
@@ -30,6 +34,11 @@ vi.mock("@/lib/finance-sync-storage", () => ({
   completeFinanceSyncRun: mockCompleteFinanceSyncRun,
   failFinanceSyncRun: mockFailFinanceSyncRun,
   upsertFinanceSnapshot: mockUpsertFinanceSnapshot,
+}));
+
+vi.mock("@/lib/finance-monthly-fact-store", () => ({
+  replaceMonthlyFacts: mockReplaceMonthlyFacts,
+  loadFinanceMonthlyChartContext: mockLoadFinanceMonthlyChartContext,
 }));
 
 vi.mock("@/lib/xero", () => ({
@@ -70,6 +79,25 @@ describe("finance-sync-service", () => {
     mockCompleteFinanceSyncRun.mockResolvedValue({ id: "run-1" });
     mockFailFinanceSyncRun.mockResolvedValue({ id: "run-1" });
     mockUpsertFinanceSnapshot.mockResolvedValue({ id: "snapshot-1" });
+    mockReplaceMonthlyFacts.mockResolvedValue({
+      monthCount: 2,
+      deletedCount: 0,
+      createdCount: 2,
+    });
+    mockLoadFinanceMonthlyChartContext.mockResolvedValue({
+      accountsById: new Map([
+        [
+          "acc-1",
+          {
+            accountId: "acc-1",
+            code: "200",
+            name: "Hut Fees",
+            type: "SALES",
+            class: "REVENUE",
+          },
+        ],
+      ]),
+    });
     mockGetAuthenticatedXeroClient.mockResolvedValue({
       tenantId: "tenant-123",
       xero: createMockXeroClient(),
@@ -260,16 +288,78 @@ describe("finance-sync-service", () => {
       ],
     };
 
-    xeroClient.accountingApi.getReportProfitAndLoss.mockResolvedValue({
-      body: {
-        reports: [{ ...report, reportID: "pnl-1", reportName: "Profit and Loss" }],
-      },
-    });
-    xeroClient.accountingApi.getReportBalanceSheet.mockResolvedValue({
-      body: {
-        reports: [{ ...report, reportID: "bs-1", reportName: "Balance Sheet" }],
-      },
-    });
+    // Multi-period (periods=11) report shape served to the by-month fact
+    // datasets: a header of month-end date columns plus account-attributed
+    // leaf rows, matching Xero's newest-first column order.
+    const multiPeriodReport = {
+      reportTitle: "Demo Multi-Period Report",
+      reportTitles: ["Demo Multi-Period Report"],
+      reportDate: "2026-04-20",
+      updatedDateUTC: new Date("2026-04-20T00:05:00.000Z"),
+      rows: [
+        {
+          rowType: "Header",
+          cells: [
+            { value: "" },
+            { value: "30 Apr 26" },
+            { value: "31 Mar 26" },
+          ],
+        },
+        {
+          rowType: "Section",
+          title: "Income",
+          rows: [
+            {
+              rowType: "Row",
+              cells: [
+                {
+                  value: "Hut Fees",
+                  attributes: [{ id: "account", value: "acc-1" }],
+                },
+                { value: "1,250.00" },
+                { value: "980.50" },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    xeroClient.accountingApi.getReportProfitAndLoss.mockImplementation(
+      async (
+        _tenantId: string,
+        _fromDate: string,
+        _toDate: string,
+        periods: number
+      ) => ({
+        body: {
+          reports: [
+            periods === 11
+              ? {
+                  ...multiPeriodReport,
+                  reportID: "pnl-by-month-1",
+                  reportName: "Profit and Loss",
+                }
+              : { ...report, reportID: "pnl-1", reportName: "Profit and Loss" },
+          ],
+        },
+      })
+    );
+    xeroClient.accountingApi.getReportBalanceSheet.mockImplementation(
+      async (_tenantId: string, _date: string, periods: number) => ({
+        body: {
+          reports: [
+            periods === 11
+              ? {
+                  ...multiPeriodReport,
+                  reportID: "bs-by-month-1",
+                  reportName: "Balance Sheet",
+                }
+              : { ...report, reportID: "bs-1", reportName: "Balance Sheet" },
+          ],
+        },
+      })
+    );
     xeroClient.accountingApi.getReportBankSummary.mockResolvedValue({
       body: {
         reports: [{ ...report, reportID: "bank-1", reportName: "Bank Summary" }],
@@ -349,7 +439,7 @@ describe("finance-sync-service", () => {
       datasets: getFinanceSyncDatasets(),
     });
 
-    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(8);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(10);
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -429,15 +519,73 @@ describe("finance-sync-service", () => {
         syncRunId: "run-1",
       })
     );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      9,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_BY_MONTH,
+        asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+        periodStart: new Date("2026-03-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-30T00:00:00.000Z"),
+        syncRunId: "run-1",
+      })
+    );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      10,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.BALANCE_SHEET_BY_MONTH,
+        asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+        periodStart: new Date("2026-03-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-30T00:00:00.000Z"),
+        syncRunId: "run-1",
+      })
+    );
+    // The snapshot rows themselves never reach the snapshot store — the
+    // derived monthly facts go through replaceMonthlyFacts instead.
+    expect(mockUpsertFinanceSnapshot).not.toHaveBeenCalledWith(
+      expect.objectContaining({ monthlyFacts: expect.anything() })
+    );
+    const expectedFactRows = [
+      expect.objectContaining({
+        month: "2026-03",
+        accountCode: "200",
+        amountCents: 98050,
+        isProvisional: false,
+      }),
+      expect.objectContaining({
+        month: "2026-04",
+        accountCode: "200",
+        amountCents: 125000,
+        isProvisional: true,
+      }),
+    ];
+    expect(mockReplaceMonthlyFacts).toHaveBeenCalledTimes(2);
+    expect(mockReplaceMonthlyFacts).toHaveBeenNthCalledWith(1, {
+      statementKind: "PROFIT_AND_LOSS",
+      months: ["2026-03", "2026-04"],
+      rows: expectedFactRows,
+      sourceReport: "getReportProfitAndLoss",
+      scope: undefined,
+      currency: null,
+      syncRunId: "run-1",
+    });
+    expect(mockReplaceMonthlyFacts).toHaveBeenNthCalledWith(2, {
+      statementKind: "BALANCE_SHEET",
+      months: ["2026-03", "2026-04"],
+      rows: expectedFactRows,
+      sourceReport: "getReportBalanceSheet",
+      scope: undefined,
+      currency: null,
+      syncRunId: "run-1",
+    });
     expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
       runId: "run-1",
       completedAt: expect.any(Date),
-      snapshotCount: 8,
-      totalRowCount: 8,
+      snapshotCount: 10,
+      totalRowCount: 10,
       resultSummary: {
-        datasetCount: 8,
+        datasetCount: 10,
         failedDatasetCount: 0,
-        successfulDatasetCount: 8,
+        successfulDatasetCount: 10,
         datasets: [
           {
             datasetKey: "xero-profit-and-loss-monthly",
@@ -487,11 +635,120 @@ describe("finance-sync-service", () => {
             totalRowCount: 1,
             snapshotTypes: [FinanceSnapshotType.CHART_OF_ACCOUNTS],
           },
+          {
+            datasetKey: "xero-profit-and-loss-by-month",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.PROFIT_AND_LOSS_BY_MONTH],
+            factRowCount: 2,
+            unresolvedFactRowCount: 0,
+          },
+          {
+            datasetKey: "xero-balance-sheet-by-month",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.BALANCE_SHEET_BY_MONTH],
+            factRowCount: 2,
+            unresolvedFactRowCount: 0,
+          },
         ],
       },
     });
     expect(xeroClient.accountingApi.getInvoices).toHaveBeenCalledTimes(2);
     expect(result.status).toBe(FinanceSyncRunStatus.SUCCEEDED);
+  });
+
+  it("persists derived monthly facts through the fact store with run provenance", async () => {
+    const result = await runFinanceSync({
+      trigger: FinanceSyncRunTrigger.MANUAL,
+      datasets: [
+        {
+          key: "facts",
+          sync: async () => ({
+            snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_BY_MONTH,
+            asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+            rowCount: 1,
+            payload: { rows: [] },
+            monthlyFacts: {
+              statementKind: "PROFIT_AND_LOSS" as never,
+              months: ["2026-04"],
+              rows: [
+                {
+                  month: "2026-04",
+                  accountCode: "200",
+                  accountId: "acc-1",
+                  accountName: "Hut Fees",
+                  accountType: "SALES",
+                  accountClass: "REVENUE",
+                  amountCents: 125000,
+                  isProvisional: true,
+                },
+              ],
+              sourceReport: "getReportProfitAndLoss",
+              unresolvedRowLabels: ["Mystery line"],
+            },
+          }),
+        },
+      ],
+    });
+
+    expect(mockReplaceMonthlyFacts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statementKind: "PROFIT_AND_LOSS",
+        months: ["2026-04"],
+        sourceReport: "getReportProfitAndLoss",
+        syncRunId: "run-1",
+      })
+    );
+    expect(result.datasetResults[0]).toMatchObject({
+      datasetKey: "facts",
+      factRowCount: 1,
+      unresolvedFactRowCount: 1,
+    });
+  });
+
+  it("fails the dataset when persisting monthly facts fails", async () => {
+    mockReplaceMonthlyFacts.mockRejectedValue(new Error("facts write failed"));
+
+    const result = await runFinanceSync({
+      trigger: FinanceSyncRunTrigger.MANUAL,
+      datasets: [
+        {
+          key: "facts",
+          sync: async () => ({
+            snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_BY_MONTH,
+            asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+            rowCount: 1,
+            payload: { rows: [] },
+            monthlyFacts: {
+              statementKind: "PROFIT_AND_LOSS" as never,
+              months: ["2026-04"],
+              rows: [],
+              sourceReport: "getReportProfitAndLoss",
+            },
+          }),
+        },
+        {
+          key: "contacts",
+          sync: async () => ({
+            snapshotType: FinanceSnapshotType.CONTACTS,
+            asOfDate: new Date("2026-04-01T00:00:00.000Z"),
+            rowCount: 1,
+            payload: { contacts: [] },
+          }),
+        },
+      ],
+    });
+
+    expect(result.status).toBe(FinanceSyncRunStatus.PARTIAL);
+    expect(result.datasetResults[0]).toMatchObject({
+      datasetKey: "facts",
+      errorMessage: "facts write failed",
+    });
+    expect(result.datasetResults[1]).toMatchObject({
+      datasetKey: "contacts",
+      snapshotCount: 1,
+    });
   });
 
   it("fails the run durably when the operational Xero connection cannot be established", async () => {

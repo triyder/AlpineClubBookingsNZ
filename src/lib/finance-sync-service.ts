@@ -1,10 +1,13 @@
 import {
+  FinanceMonthlyStatementKind,
   FinanceSnapshotType,
   FinanceSyncRunStatus,
   FinanceSyncRunTrigger,
   Prisma,
 } from "@prisma/client";
 import { XeroClient } from "xero-node";
+import type { FinanceMonthlyFactRowInput } from "@/lib/finance-monthly-facts";
+import { replaceMonthlyFacts } from "@/lib/finance-monthly-fact-store";
 import { getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
   completeFinanceSyncRun,
@@ -14,6 +17,22 @@ import {
 } from "@/lib/finance-sync-storage";
 
 export const DEFAULT_FINANCE_SYNC_WORKFLOW = "daily-finance-sync";
+
+/**
+ * Monthly per-account fact rows derived from a snapshot's report payload.
+ * When present, runFinanceSync persists them to FinanceAccountMonthlyBalance
+ * (replacing the covered months) right after the snapshot itself is stored.
+ */
+export interface FinanceSyncSnapshotMonthlyFacts {
+  statementKind: FinanceMonthlyStatementKind;
+  /** Month keys ("YYYY-MM") covered by the pulled report window. */
+  months: string[];
+  rows: FinanceMonthlyFactRowInput[];
+  sourceReport: string;
+  scope?: string;
+  /** Leaf-row labels with amounts that could not be resolved to a GL code. */
+  unresolvedRowLabels?: string[];
+}
 
 export interface FinanceSyncSnapshotInput {
   snapshotType: FinanceSnapshotType;
@@ -25,6 +44,7 @@ export interface FinanceSyncSnapshotInput {
   periodEnd?: Date | null;
   currency?: string | null;
   sourceUpdatedAt?: Date | null;
+  monthlyFacts?: FinanceSyncSnapshotMonthlyFacts;
 }
 
 export interface FinanceSyncDatasetContext {
@@ -61,6 +81,10 @@ export interface FinanceSyncDatasetResult {
   snapshotCount: number;
   totalRowCount: number;
   snapshotTypes: FinanceSnapshotType[];
+  /** Monthly fact rows persisted from this dataset's snapshots, when any. */
+  factRowCount?: number;
+  /** Report rows that could not be resolved to a GL code, when facts ran. */
+  unresolvedFactRowCount?: number;
   errorMessage?: string;
 }
 
@@ -120,6 +144,17 @@ function buildDatasetResult(
   snapshots: FinanceSyncSnapshotInput[],
   errorMessage?: string
 ): FinanceSyncDatasetResult {
+  const factSnapshots = snapshots.filter((snapshot) => snapshot.monthlyFacts);
+  const factRowCount = factSnapshots.reduce(
+    (sum, snapshot) => sum + (snapshot.monthlyFacts?.rows.length ?? 0),
+    0
+  );
+  const unresolvedFactRowCount = factSnapshots.reduce(
+    (sum, snapshot) =>
+      sum + (snapshot.monthlyFacts?.unresolvedRowLabels?.length ?? 0),
+    0
+  );
+
   return {
     datasetKey,
     snapshotCount: snapshots.length,
@@ -127,6 +162,7 @@ function buildDatasetResult(
     snapshotTypes: Array.from(
       new Set(snapshots.map((snapshot) => snapshot.snapshotType))
     ),
+    ...(factSnapshots.length > 0 ? { factRowCount, unresolvedFactRowCount } : {}),
     ...(errorMessage ? { errorMessage } : {}),
   };
 }
@@ -146,6 +182,12 @@ function buildRunResultSummary(input: {
       snapshotCount: dataset.snapshotCount,
       totalRowCount: dataset.totalRowCount,
       snapshotTypes: dataset.snapshotTypes.map((snapshotType) => snapshotType),
+      ...(dataset.factRowCount !== undefined
+        ? {
+            factRowCount: dataset.factRowCount,
+            unresolvedFactRowCount: dataset.unresolvedFactRowCount ?? 0,
+          }
+        : {}),
       ...(dataset.errorMessage ? { errorMessage: dataset.errorMessage } : {}),
     })
   );
@@ -247,10 +289,24 @@ export async function runFinanceSync(
       const snapshots = normalizeSnapshots(await dataset.sync(context));
 
       for (const snapshot of snapshots) {
+        const { monthlyFacts, ...snapshotFields } = snapshot;
+
         await upsertFinanceSnapshot({
-          ...snapshot,
+          ...snapshotFields,
           syncRunId: run.id,
         });
+
+        if (monthlyFacts) {
+          await replaceMonthlyFacts({
+            statementKind: monthlyFacts.statementKind,
+            months: monthlyFacts.months,
+            rows: monthlyFacts.rows,
+            sourceReport: monthlyFacts.sourceReport,
+            scope: monthlyFacts.scope,
+            currency: snapshot.currency ?? null,
+            syncRunId: run.id,
+          });
+        }
       }
 
       const datasetResult = buildDatasetResult(dataset.key, snapshots);
