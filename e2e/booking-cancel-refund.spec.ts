@@ -80,9 +80,11 @@ test("member cancels a paid booking for account credit and the money outcome is 
   // Outcome card, which only renders for a CANCELLED booking — with the
   // account-credit settlement row, and the cancel affordance is gone.
   await memberPage.reload();
-  await expect(memberPage.getByText("Cancellation Outcome")).toBeVisible();
   await expect(
-    memberPage.getByText("Held as account credit:"),
+    memberPage.getByRole("main").getByText("Cancellation Outcome").last(),
+  ).toBeVisible();
+  await expect(
+    memberPage.getByRole("main").getByText("Held as account credit:").last(),
   ).toBeVisible();
   await expect(
     memberPage.getByRole("button", { name: "Cancel Booking" }),
@@ -96,11 +98,17 @@ test("member cancels a paid booking for account credit and the money outcome is 
   const adminPage = await adminContext.newPage();
   await loginPersona(adminPage, E2E_ADMIN.email);
 
-  await adminPage.goto("/admin/payments");
-  // The list re-fetches as the search term changes; narrowing to Nadia's email
-  // keeps the settlement assertion unambiguous (other seeded cancellations own
-  // their own rows).
-  await adminPage.locator("#payment-member-search").fill(NOMINATOR_TWO.email);
+  await adminPage.goto(
+    `/admin/payments?${new URLSearchParams({
+      search: NOMINATOR_TWO.email,
+      lastUpdatedFrom: "2026-01-01",
+      lastUpdatedTo: "2026-12-31",
+      settlement: "accountCredit",
+    })}`,
+  );
+  // The explicit updated range avoids the page's rolling "today" filter hiding
+  // rows just after midnight NZ in CI, while the email and settlement filters
+  // keep the assertion unambiguous.
 
   // The row shows the member as "lastName, firstName" and its settlement badge
   // reads "Account credit" (deriveSettlementKind → accountCredit for a

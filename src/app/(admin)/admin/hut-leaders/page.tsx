@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { OccupancyCalendar } from "@/components/admin/occupancy-calendar";
 
 interface HutLeaderAssignment {
   id: string;
@@ -319,6 +320,18 @@ export default function HutLeadersPage() {
                   />
                 </div>
               </div>
+              <OccupancyCalendar
+                mode="range"
+                selectedStartDate={formData.startDate}
+                selectedEndDate={formData.endDate}
+                onSelectionChange={({ startDate, endDate }) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    startDate,
+                    endDate,
+                  }))
+                }
+              />
               <div>
                 <Label>Members at the lodge</Label>
                 {!datesSelected ? (

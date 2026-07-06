@@ -175,6 +175,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/booking-reviews",
       "/api/admin/booking-change-requests",
       "/api/admin/bed-allocation",
+      "/api/admin/occupancy",
       "/api/admin/waitlist",
       "/api/admin/booking-policies",
       "/api/admin/seasons",

@@ -394,7 +394,6 @@ export default function MembersPage() {
         target={passwordActionTarget}
         onOpenChange={handlePasswordOpenChange}
         onComplete={handlePasswordComplete}
-        onError={setError}
       />
       <MemberImportDialog
         open={importDialogOpen}
