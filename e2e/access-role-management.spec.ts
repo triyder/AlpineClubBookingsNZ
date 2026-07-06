@@ -103,6 +103,11 @@ test("a full admin creates, edits, assigns a custom access role and sees the eff
     .getByRole("button", { name: "Edit", exact: true })
     .click();
 
+  // #1439 hides admin-role checkboxes until the derived User Type is set to
+  // Admin. Drive that public control before assigning the custom role.
+  await accessGroup.getByRole("combobox", { name: "User Type" }).click();
+  await page.getByRole("option", { name: "Admin", exact: true }).click();
+
   // Tick the new role's checkbox — scoped through its wrapping <label> (whose
   // text carries the unique role label) so the Radix checkbox resolves robustly.
   const roleCheckbox = accessGroup

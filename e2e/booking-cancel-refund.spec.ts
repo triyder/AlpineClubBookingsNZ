@@ -80,9 +80,11 @@ test("member cancels a paid booking for account credit and the money outcome is 
   // Outcome card, which only renders for a CANCELLED booking — with the
   // account-credit settlement row, and the cancel affordance is gone.
   await memberPage.reload();
-  await expect(memberPage.getByText("Cancellation Outcome")).toBeVisible();
   await expect(
-    memberPage.getByText("Held as account credit:"),
+    memberPage.getByRole("main").getByText("Cancellation Outcome").last(),
+  ).toBeVisible();
+  await expect(
+    memberPage.getByRole("main").getByText("Held as account credit:").last(),
   ).toBeVisible();
   await expect(
     memberPage.getByRole("button", { name: "Cancel Booking" }),
