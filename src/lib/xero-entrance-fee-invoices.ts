@@ -28,6 +28,7 @@ import {
 } from "./xero-api-client";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
+  ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
   getResolvedAccountMapping,
   type EntranceFeeContext,
@@ -84,6 +85,32 @@ export async function createXeroEntranceFeeInvoice(
   const entranceFee = options?.precomputedEntranceFee ?? (await getEntranceFeeContext(memberId));
   const { category, feeMapping } = entranceFee;
   const queuedOperationId = options?.syncOperationId ?? null;
+
+  // Organisations/schools are exempt from entrance fees (owner decision,
+  // 2026-07-07). The fresh tier read also covers replayed operations that
+  // were queued (with a precomputed context or amount override) before the
+  // member was reclassified as an organisation.
+  const exemptByCurrentTier =
+    (
+      await prisma.member.findUnique({
+        where: { id: memberId },
+        select: { ageTier: true },
+      })
+    )?.ageTier === "NOT_APPLICABLE";
+  if (entranceFee.exempt || exemptByCurrentTier) {
+    if (queuedOperationId) {
+      await completeXeroSyncOperation(queuedOperationId, {
+        status: "SUCCEEDED",
+        responsePayload: {
+          skipped: true,
+          reason: ENTRANCE_FEE_EXEMPT_MESSAGE,
+          category,
+        },
+      });
+    }
+
+    return null;
+  }
 
   if (!feeMapping.amountCents || feeMapping.amountCents <= 0) {
     if (queuedOperationId) {

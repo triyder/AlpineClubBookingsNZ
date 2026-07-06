@@ -17,7 +17,17 @@ export interface EntranceFeeContext {
     amountCents: number | null;
   };
   description?: string | null;
+  /**
+   * Organisations/schools (the NOT_APPLICABLE age tier) are exempt from
+   * entrance fees — owner decision, 2026-07-07 (#1440 follow-up). Both
+   * invoice paths skip (never bill) when this is set, even when an explicit
+   * amount override is supplied.
+   */
+  exempt?: boolean;
 }
+
+export const ENTRANCE_FEE_EXEMPT_MESSAGE =
+  "Organisations and schools (N/A age tier) are exempt from entrance fees.";
 
 /** Default fallbacks if no DB record exists or code is null */
 const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
@@ -159,11 +169,11 @@ export async function determineEntranceFeeCategory(
 
   if (member.ageTier === "YOUTH") return "YOUTH";
   if (member.ageTier === "CHILD" || member.ageTier === "INFANT") return "CHILD";
-  // NOT_APPLICABLE (organisations/schools, #1440) deliberately falls through
-  // to the ADULT path below: before the backfill these records carried the
-  // ADULT default, so this preserves the pre-existing fee behaviour instead
-  // of silently changing billing. Entrance fees are a person-onboarding
-  // concept and are not expected to run for organisations.
+  // NOT_APPLICABLE (organisations/schools, #1440) nominally falls through to
+  // ADULT so this stays a total function over the enum, but such members are
+  // exempt from entrance fees entirely — getEntranceFeeContext flags them
+  // and both invoice paths skip before any amount is considered (owner
+  // decision, 2026-07-07).
 
   // ADULT tier — check if they qualify for FAMILY rate
   const familyMemberships = await prisma.familyGroupMember.findMany({
@@ -195,6 +205,21 @@ export async function determineEntranceFeeCategory(
 export async function getEntranceFeeContext(
   memberId: string
 ): Promise<EntranceFeeContext> {
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: { ageTier: true },
+  });
+
+  if (member?.ageTier === "NOT_APPLICABLE") {
+    // Exempt: no fee mapping is looked up and callers must not bill, even
+    // with an explicit amount override.
+    return {
+      category: "ADULT",
+      feeMapping: { itemCode: null, amountCents: null },
+      exempt: true,
+    };
+  }
+
   const category = await determineEntranceFeeCategory(memberId);
   const feeMapping = await getEntranceFeeMapping(category);
 

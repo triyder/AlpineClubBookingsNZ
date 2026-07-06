@@ -29,6 +29,7 @@ import {
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
+  ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
   type EntranceFeeContext,
 } from "@/lib/xero-mappings";
@@ -128,6 +129,17 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   }
 
   const entranceFee = await getEntranceFeeContext(memberId);
+
+  // Organisations/schools are exempt from entrance fees (owner decision,
+  // 2026-07-07) — checked before the amount override so an explicitly
+  // entered amount can never bill an organisation.
+  if (entranceFee.exempt) {
+    return {
+      queueOperationId: null,
+      message: ENTRANCE_FEE_EXEMPT_MESSAGE,
+    };
+  }
+
   const feeAmountCents =
     options?.amountCents ?? entranceFee.feeMapping.amountCents;
   const description = options?.description?.trim() || null;

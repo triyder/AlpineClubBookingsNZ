@@ -755,7 +755,10 @@ Organisation. `NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no
 age range, is displayed as "N/A", and is excluded from every age-based
 automation — the season age-up cron, age-tier Xero contact-group sync (orgs
 are never added to a managed age group; a leftover membership is surfaced as
-a mismatch instead), and age-based subscription requirements. Booking guests
+a mismatch instead), and age-based subscription requirements. Organisations
+are also exempt from membership entrance fees: both Xero entrance-fee
+invoice paths (direct and outbox) skip N/A members before any amount —
+including an explicit override — is considered. Booking guests
 are always people: `NOT_APPLICABLE` is not a bookable tier, and organisation
 accounts cannot be linked as booking guests.
 Committee assignment controls public committee/contact presentation
