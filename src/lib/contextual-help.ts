@@ -460,6 +460,7 @@ const adminHelpEntries: HelpEntry[] = [
       [
         "Select the date or booking window, then review unallocated guests and room availability.",
         "Use auto-allocation for ordinary cases and manual moves for operational exceptions.",
+        "When a booking is paid or confirmed, automatic allocation gives Held bookings first claim: it may move a blocking Provisional allocation to a free bed, or return it to the awaiting queue, so a Held booking gets a bed. The manual 'Run auto-allocation' button does not displace; a Held or admin-approved allocation is never displaced.",
         "Approve allocations only after checking room rules, capacity, and any hut-leader notes.",
       ],
       [
