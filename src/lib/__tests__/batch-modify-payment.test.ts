@@ -219,7 +219,8 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 
 vi.mock("@/lib/age-tier-schema", () => ({
-  ageTierEnum: z.enum(["INFANT", "CHILD", "YOUTH", "ADULT"]),
+  ageTierEnum: z.enum(["INFANT", "CHILD", "YOUTH", "ADULT", "NOT_APPLICABLE"]),
+  bookableAgeTierEnum: z.enum(["INFANT", "CHILD", "YOUTH", "ADULT"]),
 }));
 
 vi.mock("@/lib/booking-guests", () => {

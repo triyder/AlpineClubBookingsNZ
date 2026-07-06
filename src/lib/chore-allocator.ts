@@ -75,6 +75,11 @@ function ageForTier(tier: AgeTier): number {
     case "INFANT":
     case "CHILD":
       return 0;
+    // Organisation/school records have no age (#1440). Guests are normally
+    // people, but if an org member ever lands in a guest list, treat it
+    // like age 0: excluded from ADULTS_ONLY and min-age chores.
+    case "NOT_APPLICABLE":
+      return 0;
   }
 }
 

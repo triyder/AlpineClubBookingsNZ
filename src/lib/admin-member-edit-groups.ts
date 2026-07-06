@@ -155,7 +155,10 @@ export function buildContactPayload(form: MemberContactEditForm) {
     joinedDate: form.joinedDate || null,
     occupation: form.occupation || null,
     comments: form.comments || null,
-    ageTier: form.ageTier,
+    // NOT_APPLICABLE is server-managed (#1440): organisations get it forced
+    // on every write, and a member reclassified away from Organisation needs
+    // the server to restore a DOB-derived tier — so it is never submitted.
+    ...(form.ageTier === "NOT_APPLICABLE" ? {} : { ageTier: form.ageTier }),
     streetAddressLine1: form.streetAddressLine1 || null,
     streetAddressLine2: form.streetAddressLine2 || null,
     streetCity: form.streetCity || null,

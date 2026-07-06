@@ -17,7 +17,7 @@ import {
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -48,7 +48,7 @@ const quoteSchema = z.object({
   checkOut: dateOnlyString.transform(parseDateOnly),
   guests: z.array(
     z.object({
-      ageTier: ageTierEnum,
+      ageTier: bookableAgeTierEnum,
       isMember: z.boolean(),
       memberId: z.string().min(1).optional(),
       stayStart: z.string().optional(),

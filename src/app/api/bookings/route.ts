@@ -9,7 +9,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -77,7 +77,7 @@ const createBookingSchema = z.object({
       z.object({
         firstName: nameField(),
         lastName: nameField(),
-        ageTier: ageTierEnum,
+        ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
         stayStart: z.string().optional(),

@@ -17,7 +17,7 @@ import {
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   BookingGuestStayRangeValidationError,
@@ -43,7 +43,7 @@ const validateSchema = z
     guests: z
       .array(
         z.object({
-          ageTier: ageTierEnum,
+          ageTier: bookableAgeTierEnum,
           isMember: z.boolean(),
           memberId: z.string().min(1).optional(),
           stayStart: z.string().optional(),

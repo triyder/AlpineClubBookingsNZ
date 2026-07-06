@@ -43,7 +43,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
 | `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |
 | `beds[].type`                                      | yes      | One of `dormitory`, `private`, or `shared`.                                                                      |
-| `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`.                                                                   |
+| `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. (`NOT_APPLICABLE` is the fixed organisation/school tier — server-managed, never configured here.) |
 | `ageTiers[].label`                                 | yes      | User-facing age-tier label.                                                                                      |
 | `ageTiers[].minAge`                                | yes      | Minimum age, inclusive.                                                                                          |
 | `ageTiers[].maxAge`                                | yes      | Maximum age, inclusive, or `null` for no upper bound.                                                            |

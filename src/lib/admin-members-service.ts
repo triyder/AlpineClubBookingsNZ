@@ -941,6 +941,22 @@ export async function createAdminMember(
       getSeasonStartDate(getSeasonYear()),
     );
   }
+  // Organisation-type members have no age (#1440): force NOT_APPLICABLE for
+  // ORG/SCHOOL accounts and refuse it on anyone else. requestedGrant is the
+  // canLogin-blind token set resolved above.
+  const isOrganisationMember =
+    requestedGrant.includes("ORG") || data.role === "SCHOOL";
+  if (isOrganisationMember) {
+    ageTier = "NOT_APPLICABLE";
+  } else if (ageTier === "NOT_APPLICABLE") {
+    return jsonResult(
+      {
+        error:
+          "The N/A age tier applies only to organisation and school accounts",
+      },
+      { status: 422 },
+    );
+  }
   if (data.joinedDate && data.joinedDate !== "") {
     joinedDate = new Date(data.joinedDate);
     if (isNaN(joinedDate.getTime())) {

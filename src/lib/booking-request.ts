@@ -50,7 +50,7 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import { prisma } from "@/lib/prisma";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
 import { getSeasonYear } from "@/lib/utils";
 
@@ -79,7 +79,7 @@ export const DECLINABLE_BOOKING_REQUEST_STATUSES = [
 export const bookingRequestGuestSchema = z.object({
   firstName: nameField(),
   lastName: nameField(),
-  ageTier: ageTierEnum,
+  ageTier: bookableAgeTierEnum,
 });
 
 export type BookingRequestGuest = z.infer<typeof bookingRequestGuestSchema>;

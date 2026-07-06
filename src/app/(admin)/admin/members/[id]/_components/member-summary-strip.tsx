@@ -5,6 +5,7 @@ import { Calendar, Clock, CreditCard, IdCard, User, Wallet } from "lucide-react"
 import { formatCents } from "@/lib/utils"
 import { formatAgeYearsMonths } from "@/lib/member-age"
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { MemberDetail } from "../_types"
 import type { LucideIcon } from "lucide-react"
 
@@ -58,9 +59,7 @@ export function MemberSummaryStrip({
         <SummaryItem
           icon={User}
           label="Age Tier"
-          value={
-            member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()
-          }
+          value={formatAgeTierName(member.ageTier)}
           detail={
             member.dateOfBirth
               ? `DOB: ${formatMemberDateNz(member.dateOfBirth)}${memberExactAge ? ` (${memberExactAge})` : ""}`

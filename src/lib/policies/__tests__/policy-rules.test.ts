@@ -77,6 +77,15 @@ describe("policy subscription rules", () => {
     expect(requiresPaidSubscriptionForAgeTier("YOUTH", AGE_TIER_DEFAULTS)).toBe(true);
     expect(requiresPaidSubscriptionForAgeTier(undefined, AGE_TIER_DEFAULTS)).toBe(true);
   });
+
+  it("never requires a subscription for the NOT_APPLICABLE organisation tier (#1440)", () => {
+    // N/A has no AgeTierSetting row, so without the explicit guard it would
+    // inherit the missing-row default of `true`.
+    expect(
+      requiresPaidSubscriptionForAgeTier("NOT_APPLICABLE", AGE_TIER_DEFAULTS)
+    ).toBe(false);
+    expect(requiresPaidSubscriptionForAgeTier("NOT_APPLICABLE", [])).toBe(false);
+  });
 });
 
 describe("policy pricing rules", () => {

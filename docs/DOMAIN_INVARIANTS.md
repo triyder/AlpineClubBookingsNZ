@@ -746,7 +746,19 @@ Age tiers remain separate because the same tier can be Full, Life, Associate,
 Family, School, or another
 configured type. Age-tier Xero groups and membership-type Xero groups may both
 exist; duplicate exact rules and multiple managed rules for the same scope are
-not valid. Committee assignment controls public committee/contact presentation
+not valid.
+Organisation-type members (the `ORG` access role or the legacy `SCHOOL` role)
+always carry the `NOT_APPLICABLE` age tier, and no other member may hold it —
+the server forces it on every org create/update, rejects it for people, and
+restores a DOB-derived tier when a member is reclassified away from
+Organisation. `NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no
+age range, is displayed as "N/A", and is excluded from every age-based
+automation — the season age-up cron, age-tier Xero contact-group sync (orgs
+are never added to a managed age group; a leftover membership is surfaced as
+a mismatch instead), and age-based subscription requirements. Booking guests
+are always people: `NOT_APPLICABLE` is not a bookable tier, and organisation
+accounts cannot be linked as booking guests.
+Committee assignment controls public committee/contact presentation
 only. Do not add committee positions to access roles or `Member.role`.
 `CommitteeRole` master records and `CommitteeAssignment` member links can be
 active/inactive independently of access role and seasonal membership type, and

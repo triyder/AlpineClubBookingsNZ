@@ -240,7 +240,10 @@ export async function checkAgeUpMembers(): Promise<{
     where: {
       active: true,
       canLogin: false,
-      ageTier: { not: "ADULT" },
+      // NOT_APPLICABLE is the organisation/school tier (#1440): those
+      // records have no age and must never be aged up, even if someone has
+      // entered a date of birth on one.
+      ageTier: { notIn: ["ADULT", "NOT_APPLICABLE"] },
       dateOfBirth: {
         not: null,
         lte: cutoffDate,

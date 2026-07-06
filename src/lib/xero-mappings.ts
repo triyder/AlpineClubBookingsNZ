@@ -159,6 +159,11 @@ export async function determineEntranceFeeCategory(
 
   if (member.ageTier === "YOUTH") return "YOUTH";
   if (member.ageTier === "CHILD" || member.ageTier === "INFANT") return "CHILD";
+  // NOT_APPLICABLE (organisations/schools, #1440) deliberately falls through
+  // to the ADULT path below: before the backfill these records carried the
+  // ADULT default, so this preserves the pre-existing fee behaviour instead
+  // of silently changing billing. Entrance fees are a person-onboarding
+  // concept and are not expected to run for organisations.
 
   // ADULT tier — check if they qualify for FAMILY rate
   const familyMemberships = await prisma.familyGroupMember.findMany({

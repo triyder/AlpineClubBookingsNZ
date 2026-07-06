@@ -634,7 +634,8 @@ describe("checkAgeUpMembers", () => {
       where: {
         active: true,
         canLogin: false,
-        ageTier: { not: "ADULT" },
+        // NOT_APPLICABLE (organisations/schools, #1440) must never age up.
+        ageTier: { notIn: ["ADULT", "NOT_APPLICABLE"] },
         dateOfBirth: {
           not: null,
           lte: expect.any(Date),

@@ -165,6 +165,7 @@ export function MemberFilterToolbar({
             <SelectItem value="CHILD">Child</SelectItem>
             <SelectItem value="YOUTH">Youth</SelectItem>
             <SelectItem value="ADULT">Adult</SelectItem>
+            <SelectItem value="NOT_APPLICABLE">N/A</SelectItem>
           </SelectContent>
         </Select>
         <Select

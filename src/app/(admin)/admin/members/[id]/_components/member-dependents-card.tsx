@@ -11,6 +11,7 @@ import {
   formatMemberDateNz,
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers"
+import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { MemberDetail } from "../_types"
 
 interface MemberDependentsCardProps {
@@ -77,7 +78,7 @@ export function MemberDependentsCard({
                     <Badge variant="secondary">{parentLinkTypeLabel(dependent.parentLinkType)}</Badge>
                   </TableCell>
                   <TableCell>
-                    {dependent.ageTier.charAt(0) + dependent.ageTier.slice(1).toLowerCase()}
+                    {formatAgeTierName(dependent.ageTier)}
                   </TableCell>
                   <TableCell>
                     <Badge

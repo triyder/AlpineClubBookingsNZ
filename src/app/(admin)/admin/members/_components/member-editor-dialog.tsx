@@ -485,7 +485,11 @@ export function MemberEditorDialog({
         dateOfBirth: form.dateOfBirth || null,
         role: form.role,
         accessRoles: form.accessRoles,
-        ageTier: form.ageTier,
+        // NOT_APPLICABLE is server-managed (#1440): organisations get it
+        // forced on every write, and a member reclassified away from
+        // Organisation needs the server to restore a DOB-derived tier — so
+        // it is never submitted.
+        ...(form.ageTier === "NOT_APPLICABLE" ? {} : { ageTier: form.ageTier }),
         financeAccessLevel: form.financeAccessLevel,
         active: form.active,
         canLogin: form.canLogin,
@@ -913,28 +917,40 @@ export function MemberEditorDialog({
                 }
                 onToggleRole={toggleAccessRole}
               />
-              <div className="space-y-2">
-                <Label>Age Tier</Label>
-                <Select
-                  value={form.ageTier}
-                  onValueChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      ageTier: value as MemberForm["ageTier"],
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="INFANT">Infant</SelectItem>
-                    <SelectItem value="CHILD">Child</SelectItem>
-                    <SelectItem value="YOUTH">Youth</SelectItem>
-                    <SelectItem value="ADULT">Adult</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {form.accessRoles.includes("ORG") || form.role === "SCHOOL" ? (
+                // Organisations/schools have no age (#1440): the server
+                // always stores NOT_APPLICABLE for them, so the picker is
+                // replaced with a fixed N/A readout.
+                <div className="space-y-2">
+                  <Label>Age Tier</Label>
+                  <p className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                    N/A — organisations don&apos;t have an age tier
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Age Tier</Label>
+                  <Select
+                    value={form.ageTier === "NOT_APPLICABLE" ? "" : form.ageTier}
+                    onValueChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        ageTier: value as MemberForm["ageTier"],
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="INFANT">Infant</SelectItem>
+                      <SelectItem value="CHILD">Child</SelectItem>
+                      <SelectItem value="YOUTH">Youth</SelectItem>
+                      <SelectItem value="ADULT">Adult</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             <MemberAddressFields

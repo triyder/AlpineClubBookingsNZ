@@ -6,6 +6,7 @@ import type { AgeTier } from "@prisma/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
+import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import { fetchJson, postJson } from "./api"
 import {
   healthBudgetToneClass,
@@ -439,12 +440,12 @@ function ContactGroupMismatchPanel({
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="text-sm font-medium text-blue-600 hover:underline">{mismatch.memberName}</a>
-                        <Badge variant="outline">{mismatch.ageTier}</Badge>
+                        <Badge variant="outline">{formatAgeTierName(mismatch.ageTier)}</Badge>
                         {mismatch.missingExpectedGroup ? <Badge className="bg-red-600">Missing accepted group</Badge> : null}
                         {mismatch.unexpectedManagedGroups.length > 0 ? <Badge className="bg-amber-500">{mismatch.unexpectedManagedGroups.length} extra managed group{mismatch.unexpectedManagedGroups.length === 1 ? "" : "s"}</Badge> : null}
                       </div>
                       <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
-                      <p className="text-xs text-muted-foreground">Accepted managed groups: {mismatch.acceptedGroups.map((group) => `${group.name ?? group.id}${group.isDefault ? " (default)" : ""}`).join(", ")}</p>
+                      <p className="text-xs text-muted-foreground">Accepted managed groups: {mismatch.acceptedGroups.length > 0 ? mismatch.acceptedGroups.map((group) => `${group.name ?? group.id}${group.isDefault ? " (default)" : ""}`).join(", ") : "None — N/A members don't belong in any managed age group"}</p>
                       <p className="text-xs text-muted-foreground">Actual cached groups: {mismatch.actualGroups.length > 0 ? mismatch.actualGroups.map((group) => group.name).join(", ") : "None"}</p>
                     </div>
                     <a href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">Open in Xero</a>

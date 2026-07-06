@@ -596,13 +596,19 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
-  it("keeps the committed migration tree covered by the blue/green safety ledger", () => {
-    // Regression guard for #1359: the real prisma/migrations tree + real ledger
-    // must pass the PR-time coverage gate (both backfilled rows present, and no
-    // new duplicate timestamp prefix beyond the grandfathered set).
-    const result = runMigrationSafetyCoverage();
-    expect(result.status, result.stderr).toBe(0);
-  });
+  it(
+    "keeps the committed migration tree covered by the blue/green safety ledger",
+    // Shells out over the full committed migration tree; under a loaded
+    // parallel suite run this regularly exceeds the default 5s.
+    { timeout: 20000 },
+    () => {
+      // Regression guard for #1359: the real prisma/migrations tree + real ledger
+      // must pass the PR-time coverage gate (both backfilled rows present, and no
+      // new duplicate timestamp prefix beyond the grandfathered set).
+      const result = runMigrationSafetyCoverage();
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
 
   it("fails ledger coverage when a hot-table migration at/after baseline is unledgered", () => {
     const fixture = createTempMigrationsTree(

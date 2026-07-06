@@ -97,6 +97,9 @@ enum AgeTier {
   CHILD
   YOUTH
   ADULT
+  // Organisations/schools have no age; excluded from age-based automations
+  // (age-up cron, age-tier Xero groups, subscription requirements). #1440
+  NOT_APPLICABLE
 }
 
 enum Gender {

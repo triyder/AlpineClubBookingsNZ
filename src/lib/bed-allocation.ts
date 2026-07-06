@@ -1,3 +1,4 @@
+import type { AgeTier } from "@prisma/client";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
@@ -5,7 +6,11 @@ import {
 } from "@/lib/date-only";
 
 export type BedAllocationSource = "AUTO" | "MANUAL";
-export type BedAllocationAgeTier = "INFANT" | "CHILD" | "YOUTH" | "ADULT";
+// Matches the DB enum so freshly-read guest rows type-check. Guests are
+// people, so NOT_APPLICABLE (the organisation tier, #1440) cannot enter
+// through validated inputs; if legacy data ever carries it, the guest is
+// simply grouped as a non-adult by isAdultAgeTier.
+export type BedAllocationAgeTier = AgeTier;
 
 export interface BedAllocationBed {
   id: string;

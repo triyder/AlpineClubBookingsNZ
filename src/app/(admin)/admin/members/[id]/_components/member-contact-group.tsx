@@ -80,6 +80,10 @@ export function MemberContactGroup({
   // privileged member's login email (self-service excepted).
   const emailLockedForActor =
     !actorIsFullAdmin && !isSelf && hasPrivilegedAccess(member);
+  // Mirror of the server-side org predicate (#1440): ORG access role, or the
+  // legacy SCHOOL role (whose resolved tokens omit ORG when login is off).
+  const isOrganisationMember =
+    (member.accessRoles ?? []).includes("ORG") || member.role === "SCHOOL";
 
   const { editing, form, saving, error, errorRef } = edit;
 
@@ -255,23 +259,35 @@ export function MemberContactGroup({
               Age tier is calculated automatically from date of birth.
             </p>
           </div>
-          <div className="space-y-2">
-            <Label>Age Tier</Label>
-            <Select
-              value={form.ageTier}
-              onValueChange={(v) => updateForm((f) => ({ ...f, ageTier: v }))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="INFANT">Infant</SelectItem>
-                <SelectItem value="CHILD">Child</SelectItem>
-                <SelectItem value="YOUTH">Youth</SelectItem>
-                <SelectItem value="ADULT">Adult</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {isOrganisationMember ? (
+            // Organisations/schools have no age (#1440): the server always
+            // stores NOT_APPLICABLE for them, so the picker is replaced with
+            // a fixed N/A readout.
+            <div className="space-y-2">
+              <Label>Age Tier</Label>
+              <p className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                N/A — organisations don&apos;t have an age tier
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>Age Tier</Label>
+              <Select
+                value={form.ageTier === "NOT_APPLICABLE" ? "" : form.ageTier}
+                onValueChange={(v) => updateForm((f) => ({ ...f, ageTier: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="INFANT">Infant</SelectItem>
+                  <SelectItem value="CHILD">Child</SelectItem>
+                  <SelectItem value="YOUTH">Youth</SelectItem>
+                  <SelectItem value="ADULT">Adult</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
         <div className="space-y-2">
           <Label htmlFor="contact-joinedDate">Joined Date</Label>
