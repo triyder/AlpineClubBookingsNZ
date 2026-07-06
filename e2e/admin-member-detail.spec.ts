@@ -59,9 +59,10 @@ test("groups start collapsed, edit inline, and persist expansion across members"
   await page.getByLabel("Phone number").fill("5550001");
   await page.getByRole("button", { name: "Save Changes" }).click();
   await expect(page.getByText("Member updated successfully")).toBeVisible();
-  // Back in display mode with the saved value.
+  // Back in display mode with the saved value (exact dd text; the collapsed-
+  // header preview also contains the phone, so a substring match is ambiguous).
   await expect(page.getByText("First Name", { exact: true })).toBeVisible();
-  await expect(page.getByText("5550001")).toBeVisible();
+  await expect(page.getByText("+64 27 5550001", { exact: true })).toBeVisible();
 
   // The expanded Contact group follows the admin to a different member.
   await openMemberDetail(
