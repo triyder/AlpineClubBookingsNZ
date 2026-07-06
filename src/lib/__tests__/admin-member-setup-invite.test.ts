@@ -65,6 +65,10 @@ describe("Admin Send Setup Invite API", () => {
       createdAt: new Date(),
     } as any);
     mockedDeleteTokens.mockResolvedValue({ count: 1 } as any);
+    // Reset the transport to a clean "delivers" default so a prior test's
+    // failure implementation cannot leak into the next test.
+    mockedSendEmail.mockReset();
+    mockedSendEmail.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -160,6 +164,82 @@ describe("Admin Send Setup Invite API", () => {
         },
       })
     );
+  });
+
+  it("does not rate-limit back-to-back bulk sends (no 10-minute cooldown)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    mockedFindMany.mockResolvedValue([
+      { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+      { id: "m2", email: "bob@test.com", firstName: "Bob", lastName: "Jones" },
+    ] as any);
+
+    const first = await POST(makeReq({ memberIds: ["m1", "m2"] }));
+    expect(first.status).toBe(200);
+    expect((await first.json()).sent).toBe(2);
+
+    // A second bulk send immediately after (same admin, fake clock frozen) must
+    // still proceed — the previous 10-minute-per-admin 429 cooldown is gone.
+    const second = await POST(makeReq({ memberIds: ["m1", "m2"] }));
+    expect(second.status).toBe(200);
+    const body = await second.json();
+    expect(body.sent).toBe(2);
+    expect(body.error).toBeUndefined();
+  });
+
+  it("returns honest per-member results including a failed email send", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    mockedFindMany.mockResolvedValue([
+      { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+      { id: "m2", email: "bob@test.com", firstName: "Bob", lastName: "Jones" },
+    ] as any);
+    // Bob's email delivery rejects; his token is still minted.
+    mockedSendEmail.mockImplementation(async (to: string) => {
+      if (to === "bob@test.com") throw new Error("SES rejected");
+    });
+
+    const res = await POST(makeReq({ memberIds: ["m1", "m2"] }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sent).toBe(1);
+    expect(body.failed).toBe(1);
+    expect(body.skipped).toBe(0);
+    expect(body.results).toHaveLength(2);
+
+    const alice = body.results.find((r: { memberId: string }) => r.memberId === "m1");
+    const bob = body.results.find((r: { memberId: string }) => r.memberId === "m2");
+    expect(alice).toMatchObject({ email: "alice@test.com", name: "Alice Smith", status: "sent" });
+    expect(bob).toMatchObject({ email: "bob@test.com", name: "Bob Jones", status: "failed" });
+    expect(bob.error).toBeTruthy();
+
+    // The token is still created for the failed member so the invite can be resent.
+    expect(mockedCreateToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports skipped ids for ineligible members in results payload", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    mockedFindMany.mockResolvedValue([
+      { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+    ] as any);
+
+    const res = await POST(makeReq({ memberIds: ["m1", "m2", "m3"] }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sent).toBe(1);
+    expect(body.skipped).toBe(2);
+    expect(body.skippedIds).toEqual(["m2", "m3"]);
+    expect(body.results).toHaveLength(1);
+  });
+
+  it("rejects more than 100 member ids with a 422", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    const memberIds = Array.from({ length: 101 }, (_, i) => `m${i}`);
+
+    const res = await POST(makeReq({ memberIds }));
+
+    expect(res.status).toBe(422);
+    expect(mockedFindMany).not.toHaveBeenCalled();
   });
 });
 
