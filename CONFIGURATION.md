@@ -591,6 +591,17 @@ content is not retained in email logs. Recovery codes are generated on
 enrollment and profile regeneration, shown once, hashed at rest, and consumed
 once.
 
+> **Operational note — rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned
+> event, not a casual credential refresh.** Because members' TOTP secrets and
+> recovery-code hashes are bound to key material derived from the secret,
+> rotating it **invalidates every member's enrolled authenticator and recovery
+> codes at once** — on their next sign-in each member is forced back through
+> two-factor enrollment. Schedule rotation as a maintenance action with advance
+> member communication and a support plan for anyone who cannot immediately
+> re-enroll (e.g. members who no longer have their authenticator device); never
+> rotate ad hoc. Short-lived email one-time codes are unaffected (re-issued per
+> attempt).
+
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for
 15 minutes. Accounts that still have `forcePasswordChange=true` must finish
