@@ -1,4 +1,4 @@
-{$DOMAIN}, www.{$DOMAIN} {
+{$DOMAIN} {
 	header {
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
@@ -28,6 +28,13 @@
 		reverse_proxy 172.26.3.200:8501
 	}
 	import /etc/caddy/deploy/tacbookings-active.caddy
+}
+
+# Canonicalize the www host onto the apex so a session established on one origin
+# is never orphaned on the other (the session cookie is host-only). Mirrors the
+# bookings./dashboard. redirects below; preserves the full path + query via {uri}.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
 }
 
 bookings.{$DOMAIN} {
