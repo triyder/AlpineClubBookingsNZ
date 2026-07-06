@@ -15,10 +15,14 @@ import {
  * from Xero (read-only toward Xero; batches of 50 metered via callXeroApi)
  * and rewrites their cache rows so the recompute sees current truth.
  *
- * It deliberately does NOT advance the shared Xero sync cursors: those are
- * delta-sync watermarks, and bumping them after a targeted fetch would make
- * the next full delta sync skip every other contact changed since the real
- * watermark. Panels display the returned `resyncedAt` instead.
+ * It deliberately does NOT advance the CONTACT delta-sync watermark: bumping
+ * it after a targeted fetch would make the next full delta sync skip every
+ * other contact changed since the real watermark. Panels display the
+ * returned `resyncedAt` instead. (One pre-existing side effect to know
+ * about: refreshXeroContactGroupMembershipCacheForContact dual-writes the
+ * shared CONTACT_GROUP_CACHE cursor timestamp per contact — see #1443; the
+ * authoritative full-refresh staleness signal is the separate
+ * CONTACT_GROUP_FULL_REFRESH cursor, which this never touches.)
  */
 
 export class XeroResyncUnavailableError extends Error {
