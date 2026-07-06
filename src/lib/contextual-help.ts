@@ -1353,8 +1353,9 @@ const adminHelpEntries: HelpEntry[] = [
       "Membership Types",
       "Membership Types define seasonal member categories, booking rate behavior, subscription behavior, and optional Xero contact-group rules.",
       [
-        "Create or edit types before assigning them to members or rolling seasons forward.",
-        "Preview roll-forward changes and exceptions before applying them.",
+        "Use the type list to scan status, policy behavior, allowed tiers, assignment counts, and order.",
+        "Create or edit a type in the editor before assigning it to members or rolling seasons forward.",
+        "Use the separate roll-forward section to preview changes and exceptions before applying them.",
         "Keep access roles separate from seasonal membership type policy.",
       ],
       [
