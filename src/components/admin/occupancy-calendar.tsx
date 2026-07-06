@@ -162,6 +162,7 @@ export function OccupancyCalendar({
     if (!occupancyByMonth[visibleMonthKey]) {
       return loadMonth(visibleMonthKey);
     }
+    setLoadError("");
     return undefined;
   }, [loadMonth, occupancyByMonth, visibleMonthKey]);
 

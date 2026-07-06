@@ -169,6 +169,25 @@ function stubFetchWithFirstJulyFailure() {
   return fetchMock as unknown as ReturnType<typeof vi.fn>;
 }
 
+function stubFetchWithAugustFailure() {
+  const fetchMock = vi.fn(async (input: string) => {
+    const url = new URL(input, "http://localhost");
+    const month = url.searchParams.get("month");
+    if (month === "2099-07") {
+      return {
+        ok: true,
+        json: async () => occupancyResponse,
+      };
+    }
+    return {
+      ok: false,
+      json: async () => ({}),
+    };
+  }) as unknown as typeof fetch;
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock as unknown as ReturnType<typeof vi.fn>;
+}
+
 function RangeHarness() {
   const [selection, setSelection] = useState({ startDate: "2099-07-01", endDate: "" });
   return (
@@ -283,6 +302,24 @@ describe("OccupancyCalendar", () => {
     });
 
     expect(await screen.findByRole("button", { name: /10 Jul.*1 guest/i }))
+      .toBeInTheDocument();
+  });
+
+  it("clears a stale error banner when returning to a cached loaded month", async () => {
+    stubFetchWithAugustFailure();
+    render(<RangeHarness />);
+
+    expect(await screen.findByRole("button", { name: /10 Jul.*1 guest/i }))
+      .toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    await screen.findByText("Occupancy could not be loaded.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Occupancy could not be loaded.")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: /10 Jul.*1 guest/i }))
       .toBeInTheDocument();
   });
 
