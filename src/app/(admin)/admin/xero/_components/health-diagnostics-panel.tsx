@@ -58,10 +58,12 @@ export function HealthAndDiagnosticsPanels({
   const [groupMismatches, setGroupMismatches] = useState<ContactGroupMismatchResponse | null>(null)
   const [groupError, setGroupError] = useState("")
   const [loadingGroupMismatches, setLoadingGroupMismatches] = useState(false)
+  const [resyncingGroupMismatches, setResyncingGroupMismatches] = useState(false)
 
   const [linkMismatches, setLinkMismatches] = useState<ContactLinkMismatchResponse | null>(null)
   const [linkError, setLinkError] = useState("")
   const [loadingLinkMismatches, setLoadingLinkMismatches] = useState(false)
+  const [resyncingLinkMismatches, setResyncingLinkMismatches] = useState(false)
   const [unlinkingMemberId, setUnlinkingMemberId] = useState<string | null>(null)
 
   const fetchHealth = useCallback(async () => {
@@ -109,6 +111,32 @@ export function HealthAndDiagnosticsPanels({
       setLinkError(err instanceof Error ? err.message : "Failed to load Xero contact link mismatches")
     } finally {
       setLoadingLinkMismatches(false)
+    }
+  }, [])
+
+  // Refresh = resync (#1441): re-fetch the flagged contacts from Xero, then
+  // recompute. Initial panel loads stay the cached GETs above.
+  const resyncGroupMismatches = useCallback(async () => {
+    setResyncingGroupMismatches(true)
+    setGroupError("")
+    try {
+      setGroupMismatches(await postJson<ContactGroupMismatchResponse>("/api/admin/xero/contact-group-mismatches", { limit: 200 }, "Failed to re-sync the flagged contacts from Xero"))
+    } catch (err) {
+      setGroupError(err instanceof Error ? err.message : "Failed to re-sync the flagged contacts from Xero")
+    } finally {
+      setResyncingGroupMismatches(false)
+    }
+  }, [])
+
+  const resyncLinkMismatches = useCallback(async () => {
+    setResyncingLinkMismatches(true)
+    setLinkError("")
+    try {
+      setLinkMismatches(await postJson<ContactLinkMismatchResponse>("/api/admin/xero/contact-link-mismatches", { limit: 200 }, "Failed to re-sync the flagged contacts from Xero"))
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Failed to re-sync the flagged contacts from Xero")
+    } finally {
+      setResyncingLinkMismatches(false)
     }
   }, [])
 
@@ -276,19 +304,21 @@ export function HealthAndDiagnosticsPanels({
         open={contactGroupMismatchesOpen}
         data={groupMismatches}
         loading={loadingGroupMismatches}
+        resyncing={resyncingGroupMismatches}
         error={groupError}
         currentXeroPath={currentXeroPath}
         onToggle={onToggle}
-        onRefresh={fetchGroupMismatches}
+        onRefresh={resyncGroupMismatches}
       />
       <ContactLinkMismatchPanel
         open={contactLinkMismatchesOpen}
         data={linkMismatches}
         loading={loadingLinkMismatches}
+        resyncing={resyncingLinkMismatches}
         error={linkError}
         currentXeroPath={currentXeroPath}
         onToggle={onToggle}
-        onRefresh={fetchLinkMismatches}
+        onRefresh={resyncLinkMismatches}
         unlinkingMemberId={unlinkingMemberId}
         onUnlink={unlinkContactMismatch}
       />
@@ -345,6 +375,7 @@ function ContactGroupMismatchPanel({
   open,
   data,
   loading,
+  resyncing,
   error,
   currentXeroPath,
   onToggle,
@@ -353,6 +384,7 @@ function ContactGroupMismatchPanel({
   open: boolean
   data: ContactGroupMismatchResponse | null
   loading: boolean
+  resyncing: boolean
   error: string
   currentXeroPath: string
   onToggle: ToggleSection
@@ -365,7 +397,7 @@ function ContactGroupMismatchPanel({
       description="Audit linked members against the managed Xero contact-group mapping configured in Age Group Settings."
       open={open}
       onToggle={(nextOpen) => onToggle("contactGroupMismatches", nextOpen)}
-      actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
+      actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || resyncing} title="Re-fetches the flagged contacts from Xero, then recomputes this audit.">{resyncing ? "Re-syncing from Xero..." : loading ? "Loading..." : "Refresh"}</Button>}
     >
       {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       {loading && !data ? (
@@ -384,6 +416,13 @@ function ContactGroupMismatchPanel({
               <p className="text-xs text-muted-foreground">
                 {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${new Date(data.lastRefreshedAt).toLocaleString("en-NZ")}.` : "The shared Xero contact-group cache has not been refreshed yet."}
               </p>
+              {data.resync ? (
+                <p className="text-xs text-green-700">
+                  {data.resync.requestedContacts === 0
+                    ? `Nothing was flagged to re-sync; audit recomputed at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}.`
+                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
+                </p>
+              ) : null}
             </div>
             <Link href="/admin/age-tier-settings" className="text-sm text-blue-600 hover:underline">Open Age Group Settings</Link>
           </div>
@@ -426,6 +465,7 @@ function ContactLinkMismatchPanel({
   open,
   data,
   loading,
+  resyncing,
   error,
   currentXeroPath,
   onToggle,
@@ -436,6 +476,7 @@ function ContactLinkMismatchPanel({
   open: boolean
   data: ContactLinkMismatchResponse | null
   loading: boolean
+  resyncing: boolean
   error: string
   currentXeroPath: string
   onToggle: ToggleSection
@@ -450,7 +491,7 @@ function ContactLinkMismatchPanel({
       description="Audit linked members whose local name differs from the cached Xero contact name."
       open={open}
       onToggle={(nextOpen) => onToggle("contactLinkMismatches", nextOpen)}
-      actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
+      actions={<Button variant="outline" size="sm" onClick={() => void onRefresh()} disabled={loading || resyncing} title="Re-fetches the flagged contacts from Xero, then recomputes this audit.">{resyncing ? "Re-syncing from Xero..." : loading ? "Loading..." : "Refresh"}</Button>}
     >
       {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       {loading && !data ? (
@@ -469,6 +510,13 @@ function ContactLinkMismatchPanel({
               <p className="text-xs text-muted-foreground">
                 {data.cacheReady && data.lastRefreshedAt ? `Contact cache last refreshed ${new Date(data.lastRefreshedAt).toLocaleString("en-NZ")}.` : "The shared Xero contact cache has not been refreshed yet."}
               </p>
+              {data.resync ? (
+                <p className="text-xs text-green-700">
+                  {data.resync.requestedContacts === 0
+                    ? `Nothing was flagged to re-sync; audit recomputed at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}.`
+                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${new Date(data.resync.resyncedAt).toLocaleTimeString("en-NZ")}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
+                </p>
+              ) : null}
             </div>
           </div>
           {!data.cacheReady ? (
