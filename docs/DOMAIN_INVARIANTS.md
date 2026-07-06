@@ -94,6 +94,31 @@ Future reviews and issues should cite this file when proposing changes.
   (re-runs skip it), so an intent enqueued post-commit would ride a crash
   window with no self-heal. The outbox enqueue is a pure local insert — the
   Xero call itself stays in the outbox worker, outside the transaction.
+- Cancelling a booking never rewrites captured-payment truth (#1473).
+  "Captured" is decided on LEDGER evidence — a payment transaction row in a
+  captured status (SUCCEEDED / (PARTIALLY_)REFUNDED), or, for STRIPE rows
+  with no ledger rows (pre-ledger data), the refund mirror (Stripe refunds
+  require a captured charge) — never on the aggregate mirror alone: the
+  inbound reconcile folds invoice-applied modification credit notes into
+  `refundedAmountCents`/`PARTIALLY_REFUNDED` on never-captured IB payments
+  (pure bookkeeping, zero cash), so the mirror lies in both directions. A
+  never-captured payment — including that folded shape — flips to FAILED at
+  cancel and its open invoice gets the finalPrice+changeFee invoice-clearing
+  credit note (the #1015 outstanding-balance rule; supplementary invoices
+  from unpaid price increases are a separate pre-existing gap). A captured
+  payment keeps its status and refund history, its captured Stripe intent is
+  not sent a cancel, and no clearing note is enqueued: finalPrice+changeFee
+  is not its open balance — normally the invoice is already settled
+  Xero-side, and in the failed-payment-record window a cancel-time clearing
+  note would close the invoice underneath the op retry stack's recording
+  repair and permanently poison it. Two consequences are deliberate and
+  owner-visible: the cancel issues no NEW refund for captured non-SUCCEEDED
+  payments (the paid path claims only SUCCEEDED — an open product decision on
+  #1473's Decision Record, and note the operator repair pass's
+  late-capture-after-cancellation action resolves it in practice by
+  auto-refunding the full retained remainder with no policy tiering), and
+  rows already flattened by the old defect are not backfilled (the repair
+  pass synthesizes captured state from the STRIPE mirror).
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357) — but a PAID invoice event alone proves
   nothing: Xero also reports PAID when OUR OWN clearing credit note is
@@ -103,10 +128,31 @@ Future reviews and issues should cite this file when proposing changes.
   to actual payment records), a payment that never settled (PENDING/FAILED),
   and no credit already minted by this pipeline (matched by its own credit
   descriptions — never by amount, which collides with unrelated
-  cancellation-flow rows). When it mints, the inbound reconcile creates the
-  member credit, retires the now-obsolete still-PENDING invoice-clearing
-  refund note, and enqueues the offsetting account-credit note — all in ONE
-  transaction — then alerts the admins exactly once. A PAID invoice event
+  cancellation-flow rows). Both credit-minting arms (already-cancelled and
+  late-capacity-failure) size the mint by the invoice's QUANTIFIED cash
+  (#1459), clamped per payment to the payment's own amount — `amountPaid`
+  plus overpayment/prepayment allocations (which accrue to `amountCredited`,
+  so they are additive), falling back to the invoice's non-DELETED payment
+  records only when `amountPaid` is unusable — never by the payment's face
+  amount alone: on a mixed invoice (part cash, remainder cleared by credit
+  allocation) the member is credited only the cash that actually arrived, and
+  the admin alert names both amounts so the operator can verify the
+  allocation source. Partially quantifiable evidence floors the mint at the
+  verified cash and the alert says the figures are unverified; only evidence
+  that quantifies NOTHING (degraded shapes only; the fresh getInvoice fetch
+  carries the amount fields) falls back to the full payment amount rather
+  than silently under-crediting. The clamp is per payment, not apportioned
+  across multiple payments matched to one invoice — a shape no app flow
+  produces (group settlements ride their own settlement path). When it mints,
+  the inbound reconcile creates the member credit and enqueues the offsetting
+  account-credit note — both sized at the minted amount — and retires the
+  now-obsolete still-PENDING invoice-clearing refund note, all in ONE
+  transaction — then alerts the admins exactly once. Cash arriving AFTER a
+  mint never credits automatically (the settled-payment and dedup gates hold);
+  when a later event's fully-verified cash exceeds the already-minted credit,
+  the reconcile alerts the admins with the delta instead of staying silent,
+  and cash-classified evidence that quantifies to zero on a never-settled
+  payment alerts as a payload anomaly rather than settling without a credit. A PAID invoice event
   never overwrites a (PARTIALLY_)REFUNDED payment or transaction status back
   to SUCCEEDED.
 - The same cash-evidence rule gates Internet Banking SETTLEMENT itself, not

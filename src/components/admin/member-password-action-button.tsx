@@ -2,21 +2,19 @@
 
 import { formatDistanceToNow } from "date-fns"
 import { Button } from "@/components/ui/button"
+import {
+  getMemberPasswordActionKind,
+  type MemberPasswordActionKind,
+  type MemberPasswordActionState,
+} from "@/lib/member-login-stage"
 
-export interface MemberPasswordActionState {
-  canLogin: boolean
-  hasCompletedAccountSetup: boolean
-  pendingInviteExpiresAt: string | Date | null
-}
-
-export type MemberPasswordActionKind = "invite" | "resend-invite" | "reset-password"
-
-export function getMemberPasswordActionKind(
-  member: MemberPasswordActionState
-): MemberPasswordActionKind | null {
-  if (!member.canLogin) return null
-  if (member.hasCompletedAccountSetup) return "reset-password"
-  return member.pendingInviteExpiresAt ? "resend-invite" : "invite"
+// The pure derivation now lives in a non-client lib module (src/lib/member-login-stage.ts)
+// so the members list Access column, the list filter, and this button all share
+// one source of truth. Re-exported here so existing imports keep working.
+export {
+  getMemberPasswordActionKind,
+  type MemberPasswordActionKind,
+  type MemberPasswordActionState,
 }
 
 export function getMemberPasswordActionLabel(member: MemberPasswordActionState) {

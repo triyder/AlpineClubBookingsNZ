@@ -20,6 +20,7 @@ export function useMembersQueryState() {
     role: searchParams.get("role") || "",
     financeAccess: searchParams.get("financeAccess") || "",
     lifecycleStatus: getInitialLifecycleStatus(searchParams),
+    membershipType: searchParams.get("membershipType") || "",
     ageTier: searchParams.get("ageTier") || "",
     familyGroup: searchParams.get("familyGroup") || "",
     inviteStatus: searchParams.get("inviteStatus") || "",

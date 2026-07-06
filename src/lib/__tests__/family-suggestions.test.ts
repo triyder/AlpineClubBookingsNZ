@@ -298,6 +298,35 @@ describe("suggestFamilyGroups", () => {
     expect(result.suggestions[0].signature).toBe("m1|m2|m3");
     expect(result.hiddenCount).toBe(1);
   });
+
+  it("lets a hidden shared-email pair resurface as a larger last-name suggestion", async () => {
+    mockedHiddenFindMany.mockResolvedValue([
+      { signature: buildFamilySuggestionSignature(["m1", "m2"]) },
+    ] as any);
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1", firstName: "Alice", lastName: "Smith", email: "family@test.com",
+        ageTier: "ADULT", canLogin: true, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m2", firstName: "Bob", lastName: "Smith", email: "family@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m3", firstName: "Chris", lastName: "Smith", email: "other@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+    ] as any);
+
+    const result = await suggestFamilyGroups();
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0].score).toBe(3);
+    expect(result.suggestions[0].signature).toBe("m1|m2|m3");
+  });
 });
 
 describe("hideFamilySuggestion", () => {

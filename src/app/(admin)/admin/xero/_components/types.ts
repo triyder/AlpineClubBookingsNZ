@@ -246,12 +246,22 @@ export interface ContactGroupMismatch {
   missingExpectedGroup: boolean
 }
 
+// Summary returned by the POST resync-from-Xero branch of the mismatch
+// endpoints (#1441).
+export interface ContactCacheResyncSummary {
+  requestedContacts: number
+  resyncedContacts: number
+  removedContacts: number
+  resyncedAt: string
+}
+
 export interface ContactGroupMismatchResponse {
   cacheReady: boolean
   lastRefreshedAt: string | null
   configuredMappings: ConfiguredAgeTierContactGroup[]
   count: number
   mismatches: ContactGroupMismatch[]
+  resync?: ContactCacheResyncSummary
 }
 
 export interface ContactLinkMismatch {
@@ -270,6 +280,7 @@ export interface ContactLinkMismatchResponse {
   lastRefreshedAt: string | null
   count: number
   mismatches: ContactLinkMismatch[]
+  resync?: ContactCacheResyncSummary
 }
 
 export interface XeroOperation {

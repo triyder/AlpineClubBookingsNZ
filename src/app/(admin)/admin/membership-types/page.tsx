@@ -322,6 +322,29 @@ function replaceOrAppendDraft(
   };
 }
 
+function mergeDraftsAfterMembershipTypeRefresh(
+  currentDrafts: Record<string, DraftMembershipType>,
+  previousTypes: readonly MembershipType[],
+  nextTypes: readonly MembershipType[],
+  availableAgeTiers: readonly AgeTier[],
+) {
+  const previousTypeById = new Map(previousTypes.map((type) => [type.id, type]));
+  return Object.fromEntries(
+    nextTypes.map((type) => {
+      const currentDraft = currentDrafts[type.id];
+      const previousType = previousTypeById.get(type.id);
+      if (
+        currentDraft &&
+        previousType &&
+        isDirty(previousType, currentDraft, availableAgeTiers)
+      ) {
+        return [type.id, currentDraft];
+      }
+      return [type.id, draftFromType(type)];
+    }),
+  );
+}
+
 interface MembershipTypeEditorDialogProps {
   target: EditorTarget | null;
   membershipType: MembershipType | null;
@@ -1287,9 +1310,12 @@ export default function AdminMembershipTypesPage() {
         );
       }
       setMembershipTypes(body.membershipTypes);
-      setDrafts(
-        Object.fromEntries(
-          body.membershipTypes.map((type) => [type.id, draftFromType(type)]),
+      setDrafts((current) =>
+        mergeDraftsAfterMembershipTypeRefresh(
+          current,
+          membershipTypes,
+          body.membershipTypes,
+          availableAgeTiers,
         ),
       );
       setSavedMessage("Membership type order saved.");

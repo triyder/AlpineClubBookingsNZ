@@ -49,6 +49,8 @@ const mocks = vi.hoisted(() => {
   markBookingCancellationRefundRecoverySucceeded: vi.fn(),
   recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
   txPaymentTransactionFindFirst: vi.fn(),
+  // #1473: the captured-ledger lookup in the not-SUCCEEDED cancel branch.
+  paymentTransactionFindFirst: vi.fn(),
   // #1406: spy on the payment-link revoke so the guard test can prove a
   // just-accepted booking's brand-new payment links are NEVER revoked.
   revokePaymentLinksForBooking: vi.fn(),
@@ -72,6 +74,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       update: mocks.paymentUpdate,
+    },
+    paymentTransaction: {
+      findFirst: mocks.paymentTransactionFindFirst,
     },
     promoRedemption: {
       findUnique: mocks.promoRedemptionFindUnique,
@@ -218,6 +223,8 @@ describe("cancelBooking credit refunds", () => {
     );
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
+    // #1473: default = no captured transaction rows on the ledger.
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
@@ -463,6 +470,241 @@ describe("cancelBooking credit refunds", () => {
     );
   });
 
+  // #1473: a (PARTIALLY_)REFUNDED payment captured real money. It reaches the
+  // "no successful payment" branch (only SUCCEEDED takes the paid path), but
+  // its aggregate status is money truth: the cancel must not flatten it to
+  // FAILED, must not try to cancel the captured Stripe intent, and must not
+  // queue an invoice-clearing credit note against a paid invoice.
+  it("preserves a PARTIALLY_REFUNDED payment's status and queues no clearing note on cancel (#1473)", async () => {
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_pr",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_pr",
+        bookingId: "booking_pr",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_pr",
+        xeroInvoiceId: "inv_pr",
+        additionalPaymentStatus: null,
+      },
+    });
+    // Ledger evidence: the capture's SUCCEEDED-then-refunded PRIMARY row.
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_pr" });
+
+    const result = await cancelBooking(
+      "booking_pr",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      data: expect.objectContaining({
+        success: true,
+        refundAmountCents: 0,
+        message: expect.stringContaining("refund history is unchanged"),
+      }),
+    });
+
+    // The booking is cancelled, but the payment row is untouched — no status
+    // write of any kind.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_pr" },
+      data: { status: "CANCELLED" },
+    });
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    // No clearing note against a paid invoice, and no Stripe cancel of a
+    // captured intent.
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+    expect(mocks.markPaymentIntentTransactionFailed).not.toHaveBeenCalled();
+  });
+
+  it("treats a pre-ledger STRIPE refund mirror as captured even when the status was already flattened (#1473)", async () => {
+    // Defense-in-depth for legacy mirror-only STRIPE rows (no transaction
+    // ledger): a Stripe refund requires a captured charge, so
+    // refundedAmountCents > 0 on a STRIPE payment is capture evidence even
+    // after the old defect flattened the status. (No live flow re-cancels a
+    // CANCELLED booking today; this arm exists so any future path over these
+    // rows cannot repeat the damage.)
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_legacy",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_legacy",
+        bookingId: "booking_legacy",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "FAILED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_legacy",
+        xeroInvoiceId: "inv_legacy",
+        additionalPaymentStatus: null,
+      },
+    });
+    // No ledger rows at all — the STRIPE mirror arm must carry it.
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+
+    const result = await cancelBooking(
+      "booking_legacy",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+  });
+
+  it("still flattens and clears a never-captured IB payment whose mirror was folded to PARTIALLY_REFUNDED (#1473)", async () => {
+    // The mirror lies: inbound reconciliation folds an invoice-applied
+    // modification credit note into refundedAmountCents/PARTIALLY_REFUNDED on
+    // an IB payment that never captured a cent (reduced-then-cancelled unpaid
+    // booking). With no captured ledger row, the cancel must treat it as
+    // never-captured: flatten to FAILED and clear the invoice's true
+    // outstanding (finalPrice, per #1015) — NOT strand the invoice open.
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_fold",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_fold",
+        bookingId: "booking_fold",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "INTERNET_BANKING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_fold",
+        additionalPaymentStatus: null,
+      },
+    });
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+
+    const result = await cancelBooking(
+      "booking_fold",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.paymentTransactionFindFirst).toHaveBeenCalledWith({
+      where: {
+        paymentId: "payment_fold",
+        status: { in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"] },
+      },
+      select: { id: true },
+    });
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment_fold" },
+      data: { status: "FAILED" },
+    });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "booking_fold",
+        refundAmountCents: 7000,
+      },
+      {
+        createdByMemberId: "member_1",
+      }
+    );
+  });
+
+  it("flips only the outstanding additional intent while preserving a captured primary's status (#1473)", async () => {
+    // Captured primary (ledger row) + an outstanding additional intent from a
+    // pending price increase: the additional flips FAILED and is cancelled at
+    // Stripe, but the aggregate status write is omitted.
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_addl",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 12000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_addl",
+        bookingId: "booking_addl",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_addl_primary",
+        additionalPaymentIntentId: "pi_addl_extra",
+        additionalPaymentStatus: "PENDING",
+        xeroInvoiceId: "inv_addl",
+      },
+    });
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_addl" });
+
+    const result = await cancelBooking(
+      "booking_addl",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment_addl" },
+      data: { additionalPaymentStatus: "FAILED" },
+    });
+    // Only the outstanding additional intent is cancelled at Stripe; the
+    // captured primary is left alone.
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_addl_extra");
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
   it("waits for Stripe cancellation before finalising an unpaid booking cancellation", async () => {
     let releaseCancellation: (() => void) | null = null;
 
@@ -507,7 +749,11 @@ describe("cancelBooking credit refunds", () => {
       "card"
     );
 
-    await Promise.resolve();
+    // Flush enough microtasks to reach the Stripe cancel (the branch now
+    // awaits the #1473 captured-ledger lookup first) without resolving it.
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     expect(releaseCancellation).not.toBeNull();
 

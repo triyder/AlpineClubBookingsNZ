@@ -115,7 +115,7 @@ export async function getAdminOccupancyMonth(input: {
   const bookingsByNight = new Map<string, OccupancyBookingSummary[]>();
 
   for (const booking of bookings) {
-    const summary: OccupancyBookingSummary = {
+    const bookingSummary: OccupancyBookingSummary = {
       id: booking.id,
       reference: bookingReference(booking.id),
       ownerName: ownerName(booking.member),
@@ -124,7 +124,7 @@ export async function getAdminOccupancyMonth(input: {
       guestCount: booking.guests.length,
       status: booking.status,
     };
-    bookingSummaries.set(booking.id, summary);
+    bookingSummaries.set(booking.id, bookingSummary);
 
     const rangeStart =
       booking.checkIn > input.startDate ? booking.checkIn : input.startDate;
@@ -135,8 +135,14 @@ export async function getAdminOccupancyMonth(input: {
 
       const nightKey = formatDateOnly(night);
       const existing = bookingsByNight.get(nightKey) ?? [];
-      if (!existing.some((item) => item.id === summary.id)) {
-        bookingsByNight.set(nightKey, [...existing, summary]);
+      if (!existing.some((item) => item.id === bookingSummary.id)) {
+        bookingsByNight.set(nightKey, [
+          ...existing,
+          {
+            ...bookingSummary,
+            guestCount: activeGuests.length,
+          },
+        ]);
       }
     }
   }

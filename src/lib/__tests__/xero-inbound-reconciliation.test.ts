@@ -940,10 +940,13 @@ describe("processStoredXeroInboundEvents", () => {
     );
   });
 
-  it("enqueues the offsetting Xero account-credit note inside the reconcile transaction when a late Internet Banking payment lands after capacity is gone", async () => {
+  function mockCapacityFailInboundEvent(
+    params: { amountPaid?: number; invoicePayments?: unknown[] } = {}
+  ) {
     // Capture the exact transaction client the reconcile passes to its
-    // callback so we can prove the outbox enqueue committed atomically with the
-    // local credit (same tx object), not via a post-commit fire-and-forget.
+    // callback so callers can prove the outbox enqueue committed atomically
+    // with the local credit (same tx object), not via post-commit
+    // fire-and-forget.
     const txRef: { current: unknown } = { current: null };
     mocks.transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => {
@@ -1094,7 +1097,10 @@ describe("processStoredXeroInboundEvents", () => {
               status: "PAID",
               fullyPaidOnDate: "2026-07-02",
               contact: { contactID: "contact_1" },
-              payments: [
+              ...(params.amountPaid !== undefined
+                ? { amountPaid: params.amountPaid }
+                : {}),
+              payments: params.invoicePayments ?? [
                 {
                   paymentID: "xpay_ib_cap",
                   amount: 123.45,
@@ -1112,6 +1118,12 @@ describe("processStoredXeroInboundEvents", () => {
       xero: { accountingApi },
       tenantId: "tenant_1",
     });
+
+    return txRef;
+  }
+
+  it("enqueues the offsetting Xero account-credit note inside the reconcile transaction when a late Internet Banking payment lands after capacity is gone", async () => {
+    const txRef = mockCapacityFailInboundEvent();
 
     await expect(processStoredXeroInboundEvents()).resolves.toEqual({
       found: 1,
@@ -1164,6 +1176,51 @@ describe("processStoredXeroInboundEvents", () => {
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
   });
 
+  it("clamps the late-capacity-failure credit to the invoice's cash on a mixed invoice (#1459)", async () => {
+    // The capacity-fail arm mints too: a live booking's invoice half-paid in
+    // cash and half written off must credit only the cash portion.
+    mockCapacityFailInboundEvent({ amountPaid: 61.72, invoicePayments: [] });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        memberId: "mem_cap",
+        amountCents: 6172,
+        sourceBookingId: "booking_ib_cap",
+      }),
+    });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localId: "pay_ib_cap",
+        requestPayload: expect.objectContaining({
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 6172,
+        }),
+      })
+    );
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CREDITED", amountCents: 6172 })
+    );
+    expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Alice",
+      expect.any(Date),
+      expect.any(Date),
+      6172,
+      "credit"
+    );
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.amountCents).toBe(6172);
+    expect(alertArgs.errorMessage).toContain("mixed invoice");
+  });
+
   // #1357 (F17): a member paying the stale open invoice of an already-cancelled
   // booking must not land silently — the money becomes an idempotent member
   // credit with its offsetting Xero account-credit note enqueued in the SAME
@@ -1172,10 +1229,12 @@ describe("processStoredXeroInboundEvents", () => {
 
   function mockAlreadyCancelledInboundEvent(params: {
     paymentStatus: string;
-    existingCredit: { id: string } | null;
+    existingCredit: { id: string; amountCents?: number } | null;
     // `null` omits the payments key entirely (degraded payload shape, #1435).
     invoicePayments?: unknown[] | null;
     amountPaid?: number;
+    invoiceOverpayments?: unknown[];
+    invoicePrepayments?: unknown[];
     xeroRefundCreditNoteId?: string | null;
   }) {
     const txRef: { current: unknown } = { current: null };
@@ -1308,6 +1367,12 @@ describe("processStoredXeroInboundEvents", () => {
               ...(params.amountPaid !== undefined
                 ? { amountPaid: params.amountPaid }
                 : {}),
+              ...(params.invoiceOverpayments
+                ? { overpayments: params.invoiceOverpayments }
+                : {}),
+              ...(params.invoicePrepayments
+                ? { prepayments: params.invoicePrepayments }
+                : {}),
               ...(params.invoicePayments === null
                 ? {}
                 : {
@@ -1364,7 +1429,8 @@ describe("processStoredXeroInboundEvents", () => {
           ],
         },
       },
-      select: { id: true },
+      // amountCents feeds the later-cash delta detection (#1459).
+      select: { id: true, amountCents: true },
     });
     // The now-obsolete invoice-clearing refund note was retired in the SAME
     // transaction (real cash arrived; the note would post a fictional refund).
@@ -1501,6 +1567,374 @@ describe("processStoredXeroInboundEvents", () => {
       expect(args.data.status).toBeUndefined();
     }
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+  });
+
+  // #1459: a mixed invoice — the member part-pays a cancelled booking's stale
+  // open invoice in cash while the remainder is cleared by credit allocation —
+  // reports PAID with amountPaid equal to ONLY the cash portion. The mint must
+  // track the cash that actually arrived, never the payment's face amount.
+  it("mints only the cash portion of a mixed cash-plus-allocation invoice (#1459)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 61.72,
+      invoicePayments: [],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // The credit, its offsetting Xero account-credit note, the member email,
+    // and the booking event all carry the CASH portion — one consistent
+    // amount everywhere.
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        memberId: "mem_cancelled",
+        amountCents: 6172,
+        type: "CANCELLATION_REFUND",
+        sourceBookingId: "booking_ib_cancelled",
+      }),
+    });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localId: "pay_ib_cancelled",
+        requestPayload: expect.objectContaining({
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 6172,
+        }),
+      })
+    );
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CREDITED",
+        amountCents: 6172,
+        reason: expect.stringContaining("cash portion"),
+      })
+    );
+    expect(sendBookingCancelledEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Alice",
+      expect.any(Date),
+      expect.any(Date),
+      6172,
+      "credit"
+    );
+    // The admin alert names both amounts so the operator can verify the
+    // allocation source (routine clearing-note echo vs. write-off vs. an
+    // applied member credit note).
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 6172,
+        errorMessage: expect.stringContaining("mixed invoice"),
+      })
+    );
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).toContain("$61.72");
+    expect(alertArgs.errorMessage).toContain("$123.45");
+    // Remainder cash never auto-credits — the alert says so up front.
+    expect(alertArgs.errorMessage).toContain("NOT credit automatically");
+    // Exactly one alert, and the clearing-note retirement still runs on the
+    // partial-mint path (the invoice is settled; executing the pending note
+    // would book a fictional cash refund).
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    expect(txOperationUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        localId: "pay_ib_cancelled",
+        status: "PENDING",
+        correlationKey: {
+          startsWith: "payment:pay_ib_cancelled:refund-credit-note:",
+        },
+      }),
+      data: { status: "CANCELLED" },
+    });
+    // The partial mint is visible in the reconcile result that lands in the
+    // inbound audit metadata.
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "xero.invoice.reconciled",
+        metadata: expect.objectContaining({
+          internetBankingPaymentSync: expect.objectContaining({
+            creditedInternetBankingBookings: 1,
+            partialCashCreditedInternetBankingBookings: 1,
+          }),
+        }),
+      }),
+    });
+  });
+
+  it("mints the full amount when amountPaid exactly covers the payment (#1459)", async () => {
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 123.45,
+      invoicePayments: [],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 12345 }),
+    });
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).not.toContain("mixed invoice");
+    expect(alertArgs.errorMessage).not.toContain("could not be fully verified");
+  });
+
+  it("stays silent on a mixed-invoice replay whose cash matches the minted credit (#1459)", async () => {
+    // The state a partial mint leaves behind: payment settled, pipeline
+    // credit for the cash portion, same mixed payload replayed.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "SUCCEEDED",
+      existingCredit: { id: "credit_existing", amountCents: 6172 },
+      amountPaid: 61.72,
+      invoicePayments: [],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(sendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
+  });
+
+  it("alerts with the delta when verified later cash exceeds the minted credit (#1459)", async () => {
+    // After a partial mint the operator fixes the wrong allocation and the
+    // member banks the remainder: the next PAID event carries MORE verified
+    // cash than was credited. The gates stop a second mint (deliberate), so
+    // the reconcile must say so instead of staying silent.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "SUCCEEDED",
+      existingCredit: { id: "credit_existing", amountCents: 6172 },
+      amountPaid: 123.45,
+      invoicePayments: [],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.amountCents).toBe(6173);
+    expect(alertArgs.errorMessage).toContain("$61.73");
+    expect(alertArgs.errorMessage).toContain("$123.45");
+    expect(alertArgs.errorMessage).toContain("$61.72");
+    expect(alertArgs.errorMessage).toContain("never credits automatically");
+  });
+
+  it("floors the mint at verified cash when an allocation component is unreadable (#1459)", async () => {
+    // A usable amountPaid plus a number-less overpayment stub: the verified
+    // floor mints (never the full-amount fallback, which could over-credit),
+    // and the alert flags the figures as unverified.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 61.72,
+      invoicePayments: [],
+      invoiceOverpayments: [{ overpaymentID: "xover_degraded" }],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 6172 }),
+    });
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).toContain("mixed invoice");
+    expect(alertArgs.errorMessage).toContain("could not be fully verified");
+  });
+
+  it("sizes the mint from a prepayment total when appliedAmount is absent, flagged unverified (#1459)", async () => {
+    // The total is an upper bound (the prepayment may be partly applied
+    // elsewhere) — still clamped, and the alert marks the figure unverified.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 0,
+      invoicePayments: [],
+      invoicePrepayments: [{ prepaymentID: "xpre_1", total: 61.72 }],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 6172 }),
+    });
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).toContain("mixed invoice");
+    expect(alertArgs.errorMessage).toContain("could not be fully verified");
+  });
+
+  it("alerts instead of settling silently when cash-classified evidence quantifies to zero (#1459)", async () => {
+    // Classifier and quantifier disagree: an overpayment entry with an
+    // explicit zero allocation passes the boolean cash gate but proves no
+    // money. The payment settles (gate semantics unchanged) with no credit —
+    // that state must never be silent.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 0,
+      invoicePayments: [],
+      invoiceOverpayments: [{ overpaymentID: "xover_zero", appliedAmount: 0 }],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).not.toHaveBeenCalled();
+    const accountCreditEnqueues = mocks.startXeroSyncOperation.mock.calls.filter(
+      ([input]) => input?.requestPayload?.queueType === "ACCOUNT_CREDIT_NOTE"
+    );
+    expect(accountCreditEnqueues).toHaveLength(0);
+    expect(sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledTimes(1);
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).toContain("quantifies to zero");
+  });
+
+  it("clamps the mint to the payment amount when the invoice cash exceeds it (#1459)", async () => {
+    // A combined or over-collected invoice can carry more cash than this
+    // payment's share; the mint never exceeds the payment's own amount.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 999.99,
+      invoicePayments: [],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 12345 }),
+    });
+    // Full-amount mint: the standard alert, not the mixed-invoice one.
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 12345,
+        errorMessage: expect.stringContaining("already-cancelled booking"),
+      })
+    );
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).not.toContain("mixed invoice");
+  });
+
+  it("sizes the mint from overpayment allocations (#1459)", async () => {
+    // Operator-reconciled overpayment cash: amountPaid stays 0 (allocations
+    // accrue to amountCredited) but the applied overpayment is real member
+    // money — it both passes the cash gate (#1435) and sizes the mint.
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      amountPaid: 0,
+      invoicePayments: [],
+      invoiceOverpayments: [
+        { overpaymentID: "xover_cancelled", appliedAmount: 61.72, total: 200.0 },
+      ],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 6172 }),
+    });
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestPayload: expect.objectContaining({
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 6172,
+        }),
+      })
+    );
+    expect(sendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 6172,
+        errorMessage: expect.stringContaining("mixed invoice"),
+      })
+    );
+  });
+
+  it("falls back to the full payment amount when cash evidence is positive but unquantifiable (#1459)", async () => {
+    // Degraded payload: a non-DELETED payment record with no usable amount
+    // proves cash arrived but not how much. Under-crediting silently is worse
+    // than the pre-#1459 behavior, so the mint falls back to the payment's
+    // full amount (the fresh getInvoice fetch always carries the amount
+    // fields, so this only guards degraded shapes).
+    mockAlreadyCancelledInboundEvent({
+      paymentStatus: "PENDING",
+      existingCredit: null,
+      invoicePayments: [
+        { paymentID: "xpay_no_amount", status: "AUTHORISED" },
+      ],
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ amountCents: 12345 }),
+    });
+    const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
+    expect(alertArgs.errorMessage).not.toContain("mixed invoice");
+    // The fallback is flagged: the operator is told the figures were not
+    // verifiable from the payload.
+    expect(alertArgs.errorMessage).toContain("could not be fully verified");
   });
 
   // A paid-then-cancelled booking's replayed event is old, already-settled

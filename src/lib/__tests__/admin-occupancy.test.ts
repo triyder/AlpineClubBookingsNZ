@@ -123,6 +123,18 @@ describe("GET /api/admin/occupancy", () => {
     expect(body.nights.find((night: { date: string }) => night.date === "2026-07-11").guestCount).toBe(2);
     expect(body.nights.find((night: { date: string }) => night.date === "2026-07-31").guestCount).toBe(1);
     expect(body.nights.find((night: { date: string }) => night.date === "2026-07-01").guestCount).toBe(0);
+    expect(
+      body.nights
+        .find((night: { date: string }) => night.date === "2026-07-10")
+        .bookings.find((item: { id: string }) => item.id === "booking-paid")
+        .guestCount,
+    ).toBe(1);
+    expect(
+      body.nights
+        .find((night: { date: string }) => night.date === "2026-07-11")
+        .bookings.find((item: { id: string }) => item.id === "booking-paid")
+        .guestCount,
+    ).toBe(2);
   });
 
   it("honours explicit BookingGuestNight rows when present", async () => {

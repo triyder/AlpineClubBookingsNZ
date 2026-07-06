@@ -116,25 +116,27 @@ export async function suggestFamilyGroups(): Promise<{
       (a, b) => b[1] - a[1]
     )[0][0];
 
-    suggestions.push(
-      withSignature({
-        suggestedName: `${commonLastName} Family`,
-        reason: `${members.length} members share email ${email}`,
-        score: 10,
-        members: members.map((m) => ({
-          id: m.id,
-          firstName: m.firstName,
-          lastName: m.lastName,
-          email: m.email,
-          ageTier: m.ageTier,
-          canLogin: m.canLogin,
-          xeroContactId: m.xeroContactId,
-        })),
-      })
-    );
+    const suggestion = withSignature({
+      suggestedName: `${commonLastName} Family`,
+      reason: `${members.length} members share email ${email}`,
+      score: 10,
+      members: members.map((m) => ({
+        id: m.id,
+        firstName: m.firstName,
+        lastName: m.lastName,
+        email: m.email,
+        ageTier: m.ageTier,
+        canLogin: m.canLogin,
+        xeroContactId: m.xeroContactId,
+      })),
+    });
 
-    for (const m of members) {
-      assignedMemberIds.add(m.id);
+    if (!hiddenSignatures.has(suggestion.signature)) {
+      suggestions.push(suggestion);
+
+      for (const m of members) {
+        assignedMemberIds.add(m.id);
+      }
     }
   }
 

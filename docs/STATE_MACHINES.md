@@ -400,6 +400,14 @@ PENDING/PROCESSING -> FAILED
 SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED
 ```
 
+Booking cancellation honors these transitions (#1473): only a never-captured
+payment flips to FAILED at cancel, decided on transaction-ledger capture
+evidence — the aggregate mirror alone can lie, because inbound reconciliation
+folds modification credit notes into `refundedAmountCents` /
+`PARTIALLY_REFUNDED` on never-captured Internet Banking payments (see
+`docs/DOMAIN_INVARIANTS.md`). Genuinely captured payments survive the cancel
+unchanged — there is no transition out of the refunded states.
+
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.
 

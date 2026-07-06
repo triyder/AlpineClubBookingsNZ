@@ -161,6 +161,32 @@ describe("AdminMembershipTypesPage", () => {
     expect(screen.getByText("Unsaved changes")).not.toBeNull();
   });
 
+  it("keeps editor dirty state after another type is reordered", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Updated description" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Associate up" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/membership-types/reorder",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
+
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Updated description",
+    );
+    expect(screen.getByText("Unsaved changes")).not.toBeNull();
+  });
+
   it(
     "validates required tiers and required Xero rule groups in the editor",
     async () => {

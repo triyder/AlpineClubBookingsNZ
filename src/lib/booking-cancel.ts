@@ -549,27 +549,63 @@ async function performBookingCancellation(
 
   // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without successful payment
   if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
+    // #1473: a payment that CAPTURED money lands in this branch too (only
+    // SUCCEEDED takes the paid path), and its aggregate status is money truth
+    // that must survive the cancel — only never-captured payments flip to
+    // FAILED. Captured is decided on LEDGER evidence, never on the aggregate
+    // mirror alone: the inbound reconcile folds invoice-applied modification
+    // credit notes into refundedAmountCents/PARTIALLY_REFUNDED on
+    // never-captured IB payments (pure bookkeeping, zero cash), so the mirror
+    // lies in both directions. A captured-status transaction row is the
+    // truth; for STRIPE rows without ledger rows (pre-ledger data) the refund
+    // mirror IS trustworthy — Stripe refunds require a captured charge, and
+    // the invoice-side fold cannot reach an uncaptured Stripe booking (its
+    // Xero invoice is only issued at/after capture).
+    const capturedTransaction = booking.payment
+      ? await prisma.paymentTransaction.findFirst({
+          where: {
+            paymentId: booking.payment.id,
+            status: {
+              in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+            },
+          },
+          select: { id: true },
+        })
+      : null;
+    const paymentCaptured = Boolean(
+      capturedTransaction ||
+        (booking.payment &&
+          booking.payment.source === "STRIPE" &&
+          (booking.payment.status === "REFUNDED" ||
+            booking.payment.status === "PARTIALLY_REFUNDED" ||
+            booking.payment.refundedAmountCents > 0))
+    );
+
     if (booking.payment) {
       await cancelOutstandingPaymentIntents({
         primaryPaymentIntentId: booking.payment.stripePaymentIntentId,
         additionalPaymentIntentId: booking.payment.additionalPaymentIntentId,
-        cancelPrimary: true,
+        // A captured primary intent is not cancellable; skip the Stripe call
+        // instead of relying on the downstream captured-status guards.
+        cancelPrimary: !paymentCaptured,
         cancelAdditional: hasOutstandingAdditionalPaymentIntent(booking.payment),
       });
     }
 
     const paymentUpdateData: {
-      status: "FAILED";
+      status?: "FAILED";
       additionalPaymentStatus?: string;
-    } = {
-      status: "FAILED",
-    };
+    } = {};
+
+    if (!paymentCaptured) {
+      paymentUpdateData.status = "FAILED";
+    }
 
     if (hasOutstandingAdditionalPaymentIntent(booking.payment)) {
       paymentUpdateData.additionalPaymentStatus = "FAILED";
     }
 
-    if (booking.payment) {
+    if (booking.payment && Object.keys(paymentUpdateData).length > 0) {
       await prisma.$transaction([
         prisma.payment.update({
           where: { id: booking.payment.id },
@@ -602,9 +638,18 @@ async function performBookingCancellation(
     // `Math.max` only ever picked that stale term in exactly that leak window;
     // for price increases (billed via a separate supplementary invoice) and
     // for unchanged bookings finalPrice already equals the true outstanding.
-    const xeroClearingAmountCents = booking.payment?.xeroInvoiceId
-      ? booking.finalPriceCents + booking.payment.changeFeeCents
-      : 0;
+    // #1473: that reasoning only holds for a NEVER-captured payment. For
+    // captured money, finalPrice+changeFee is not the invoice's open balance:
+    // normally the invoice is settled Xero-side, and in the one window where
+    // it is not (the capture's Xero payment-record op failed and is retrying)
+    // a clearing note would close the invoice underneath that retry and
+    // permanently poison it — recording the payment then fails against a
+    // zeroed invoice. Enqueue nothing; the op retry stack owns the recording,
+    // and the operator repair pass owns anything else.
+    const xeroClearingAmountCents =
+      booking.payment?.xeroInvoiceId && !paymentCaptured
+        ? booking.finalPriceCents + booking.payment.changeFeeCents
+        : 0;
 
     if (booking.payment?.id && xeroClearingAmountCents > 0) {
       try {
@@ -643,13 +688,15 @@ async function performBookingCancellation(
       booking,
       bookingId,
       sessionUserId,
-      details:
-        xeroClearingAmountCents > 0
+      details: paymentCaptured
+        ? "Confirmed booking cancelled; previously captured payment keeps its refund history (status preserved, no Xero clearing note queued)"
+        : xeroClearingAmountCents > 0
           ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
       metadata: {
-        paymentTaken: false,
+        paymentTaken: paymentCaptured,
+        capturedPaymentStatusPreserved: paymentCaptured,
         xeroClearingAmountCents,
         queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
       },
@@ -659,7 +706,9 @@ async function performBookingCancellation(
       bookingId,
       type: BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
-      reason: "Cancelled before payment was captured. Nothing was charged.",
+      reason: paymentCaptured
+        ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
+        : "Cancelled before payment was captured. Nothing was charged.",
     });
 
     sendBookingCancelledEmail(
@@ -681,8 +730,9 @@ async function performBookingCancellation(
         refundAmountCents: 0,
         refundPercentage: 0,
         refundMethod: "card",
-        message:
-          xeroClearingAmountCents > 0
+        message: paymentCaptured
+          ? "Booking cancelled. The payment's existing refund history is unchanged; no additional refund was issued."
+          : xeroClearingAmountCents > 0
             ? "Booking cancelled. Any outstanding Xero invoice balance is being cleared."
             : "Booking cancelled. No refund applicable.",
       },
