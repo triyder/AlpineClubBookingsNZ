@@ -731,6 +731,7 @@ export default async function BookingDetailPage({
           )}
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
+          features={modules}
         />
       )}
 
