@@ -28,6 +28,7 @@ import {
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
   type PricingResult,
+  isBookingFullyPaidForGuestNameEdits,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
@@ -202,9 +203,20 @@ export async function modifyBookingBatch({
       input,
       // Quoted bookings rename placeholder students even after payment.
       allowWhenFullyPaid: quotePriced,
+      // Identity-only edits on a fully-paid booking may fix a spelling typo on a
+      // free-text non-member guest (#1386); a swap to a different person is
+      // still rejected. Never loosen structural edits — hence identity-only.
+      allowTypoFixWhenFullyPaid: requestIsIdentityOnly,
     });
     const identityOnlyModification =
       guestNameUpdates.length > 0 && !requestedStructuralChange;
+    // A fully-paid, non-quoted booking whose name edit cleared the typo guard
+    // (#1386): flag it so the audit row is queryable and the price-preserving
+    // path is provably taken (it never reprices or rechecks capacity).
+    const paidNameTypoFix =
+      identityOnlyModification &&
+      !quotePriced &&
+      isBookingFullyPaidForGuestNameEdits(booking);
 
     // Identity-only modifications are price-preserving by construction
     // (#1099): the stored totals, per-guest prices, and night rows are echoed
@@ -338,7 +350,15 @@ export async function modifyBookingBatch({
       data: {
         bookingId,
         memberId: actor.id,
-        modificationType: identityOnlyModification ? "GUEST_UPDATE" : "BATCH_MODIFY",
+        // GUEST_TYPO_FIX discriminates a post-payment spelling correction
+        // (#1386) from an ordinary pre-payment name update, so the abuse-
+        // sensitive path is queryable. (modificationType is a free-text String,
+        // not a Prisma enum — no schema change.)
+        modificationType: paidNameTypoFix
+          ? "GUEST_TYPO_FIX"
+          : identityOnlyModification
+            ? "GUEST_UPDATE"
+            : "BATCH_MODIFY",
         previousData: {
           checkIn: new Date(booking.checkIn).toISOString().split("T")[0],
           checkOut: new Date(booking.checkOut).toISOString().split("T")[0],
@@ -379,6 +399,8 @@ export async function modifyBookingBatch({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          // Post-payment identity-preserving spelling correction (#1386).
+          ...(paidNameTypoFix ? { paidNameTypoFix: true } : {}),
         },
         priceDiffCents,
         changeFeeCents,

@@ -39,6 +39,7 @@ function makeBooking(
     hasNonMembers: true,
     nonMemberHoldUntil: null,
     canEditNonMemberGuestNames: false,
+    canFixNonMemberGuestNameTypos: false,
     editPolicy: {
       mode: null,
       today: "2026-07-05",

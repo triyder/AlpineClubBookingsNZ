@@ -303,6 +303,9 @@ export async function POST(
       input: { guestUpdates, removeGuestIds },
       // Quoted bookings rename placeholder students even after payment.
       allowWhenFullyPaid: quotePriced,
+      // Preview mirrors the server gate (#1386): identity-only typo fixes on a
+      // fully-paid booking are allowed; swaps are rejected the same way.
+      allowTypoFixWhenFullyPaid: requestIsIdentityOnly,
     });
   } catch (error) {
     if (error instanceof ApiError) {

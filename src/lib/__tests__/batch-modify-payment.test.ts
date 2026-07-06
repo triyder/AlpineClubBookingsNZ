@@ -1046,7 +1046,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
   });
 
-  it("rejects non-member guest name changes after the booking is fully paid", async () => {
+  it("rejects swapping in a different person after the booking is fully paid (#1386)", async () => {
+    // "Old Guest" -> "New Guest" is a swap (full-name edit distance 3), not a
+    // spelling correction, so the paid-name lock still rejects it.
     const booking = makeBooking({
       hasNonMembers: true,
       guests: [
@@ -1089,9 +1091,249 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("spelling corrections"),
+    });
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+  });
+
+  it("allows an identity-preserving typo fix after the booking is fully paid (#1386)", async () => {
+    // "Jhon" -> "John" is a single-transposition spelling fix on a free-text
+    // non-member guest: allowed after payment, price-preserving, audited.
+    const booking = makeBooking({
+      hasNonMembers: true,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Jhon",
+          lastName: "Doe",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 5000,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [
+          {
+            guestId: "g1",
+            firstName: "John",
+            lastName: "Doe",
+          },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "g1" },
+        data: expect.objectContaining({
+          firstName: "John",
+          lastName: "Doe",
+          // Price-preserving: the stored per-guest price is echoed back.
+          priceCents: 5000,
+        }),
+      })
+    );
+    // Identity-only path is taken: no pricing engine, no capacity recheck.
+    expect(tx.season.findMany).not.toHaveBeenCalled();
+    expect(mockCheckCapacity).not.toHaveBeenCalled();
+    // The booking total is untouched.
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalPriceCents: 5000,
+          finalPriceCents: 5000,
+        }),
+      })
+    );
+    // Audited with the post-payment discriminator and zero price delta.
+    expect(tx.bookingModification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          modificationType: "GUEST_TYPO_FIX",
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+          previousData: expect.objectContaining({
+            updatedGuests: [
+              { guestId: "g1", firstName: "Jhon", lastName: "Doe" },
+            ],
+          }),
+          newData: expect.objectContaining({
+            paidNameTypoFix: true,
+            updatedGuests: [
+              { guestId: "g1", firstName: "John", lastName: "Doe" },
+            ],
+          }),
+        }),
+      })
+    );
+  });
+
+  it("rejects a paid typo fix combined with a structural change (#1386)", async () => {
+    // A structural change (here a promo code) makes the request no longer
+    // identity-only, so the typo exemption does not apply and the hard lock
+    // rejects the name edit with the original message.
+    const booking = makeBooking({
+      hasNonMembers: true,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Jhon",
+          lastName: "Doe",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 5000,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [{ guestId: "g1", firstName: "John", lastName: "Doe" }],
+        promoCode: "FREE100",
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
       error: expect.stringContaining("fully paid"),
     });
     expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+  });
+
+  it("still rejects renaming a member-linked guest on a fully paid booking (#1386)", async () => {
+    // Member-linked guests are never renamed on a booking, typo or not — the
+    // #1386 exemption is only for free-text non-member guests.
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          priceCents: 5000,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        // "Alise" -> "Alice" would be a typo fix for a free-text guest, but a
+        // member-linked guest is blocked outright.
+        guestUpdates: [{ guestId: "g1", firstName: "Alise", lastName: "Member" }],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Member guest names cannot be edited"),
+    });
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects the whole request atomically when one of two paid name edits is a swap (#1386)", async () => {
+    // A valid typo (g1: Jhon -> John) bundled with a swap (g2: Old Guest ->
+    // New Guest) must fail the entire request; neither guest may be renamed.
+    const booking = makeBooking({
+      hasNonMembers: true,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Jhon",
+          lastName: "Doe",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+        {
+          id: "g2",
+          bookingId: "bk1",
+          firstName: "Old",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 2500,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [
+          { guestId: "g1", firstName: "John", lastName: "Doe" },
+          { guestId: "g2", firstName: "New", lastName: "Guest" },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("spelling corrections"),
+    });
+    // Atomic reject: neither the valid typo nor the swap is applied.
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
   });
 
   it("marks a payment-pending booking paid when a batch edit promo reduces the total to zero", async () => {

@@ -55,6 +55,7 @@ export interface BookingEditorData {
   hasNonMembers: boolean;
   nonMemberHoldUntil: string | null;
   canEditNonMemberGuestNames: boolean;
+  canFixNonMemberGuestNameTypos: boolean;
   editPolicy: EditPolicyInfo;
 }
 
@@ -91,6 +92,7 @@ export function BookingEditor({
           promoAdjustmentCents: booking.promoAdjustmentCents,
           promo: booking.promo,
           canEditNonMemberGuestNames: booking.canEditNonMemberGuestNames,
+          canFixNonMemberGuestNameTypos: booking.canFixNonMemberGuestNameTypos,
           editPolicy: booking.editPolicy,
         }}
         onDone={() => setEditing(false)}

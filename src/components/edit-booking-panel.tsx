@@ -72,6 +72,9 @@ interface BookingData {
   promoAdjustmentCents: number;
   promo: PromoInfo | null;
   canEditNonMemberGuestNames: boolean;
+  // Fully paid: only an identity-preserving spelling correction is allowed on a
+  // free-text non-member guest (#1386). The server enforces the similarity guard.
+  canFixNonMemberGuestNameTypos: boolean;
   editPolicy: {
     mode: "future" | "in-progress" | null;
     today: string;
@@ -376,9 +379,11 @@ export function EditBookingPanel({
         range.stayEnd !== (guest.stayEnd ?? booking.checkOut)
       );
     });
+  const nonMemberGuestNamesEditable =
+    booking.canEditNonMemberGuestNames || booking.canFixNonMemberGuestNameTypos;
   const guestNameUpdates = useMemo(
     () =>
-      booking.canEditNonMemberGuestNames
+      nonMemberGuestNamesEditable
         ? booking.guests
             .filter((guest) => !guest.isMember && !removedGuestIds.has(guest.id))
             .map((guest) => {
@@ -403,7 +408,7 @@ export function EditBookingPanel({
             }))
         : [],
     [
-      booking.canEditNonMemberGuestNames,
+      nonMemberGuestNamesEditable,
       booking.guests,
       guestNameEdits,
       removedGuestIds,
@@ -964,7 +969,13 @@ export function EditBookingPanel({
           {booking.guests.map((guest) => {
             const isRemoved = removedGuestIds.has(guest.id);
             const canEditGuestName =
-              booking.canEditNonMemberGuestNames && !guest.isMember && !isRemoved;
+              nonMemberGuestNamesEditable && !guest.isMember && !isRemoved;
+            // Fully paid: the field is open only for a spelling correction; a
+            // change of who the booking is for must go through the office (#1386).
+            const showTypoOnlyHint =
+              canEditGuestName &&
+              !booking.canEditNonMemberGuestNames &&
+              booking.canFixNonMemberGuestNameTypos;
             const nameEdit = getGuestNameEdit(guest);
             return (
               <div
@@ -1000,6 +1011,12 @@ export function EditBookingPanel({
                           }
                         />
                       </div>
+                      {showTypoOnlyHint ? (
+                        <p className="col-span-2 text-xs text-gray-500">
+                          Only spelling corrections are allowed after payment.
+                          To change who this booking is for, contact the office.
+                        </p>
+                      ) : null}
                     </div>
                   ) : (
                     <p className="font-medium">

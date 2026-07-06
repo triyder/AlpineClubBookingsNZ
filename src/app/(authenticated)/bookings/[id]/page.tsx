@@ -384,6 +384,11 @@ export default async function BookingDetailPage({
           !bedAllocationLocked;
   const canEditNonMemberGuestNames =
     canModify && !isBookingFullyPaidForGuestNameEdits(booking);
+  // Once fully paid, the paid-name lock permits ONLY an identity-preserving
+  // spelling correction on a free-text non-member guest (#1386). The similarity
+  // guard is enforced server-side; this flag only opens the field with a hint.
+  const canFixNonMemberGuestNameTypos =
+    canModify && isBookingFullyPaidForGuestNameEdits(booking);
   const cancellationSettlement = booking.payment
     ? getCancellationSettlementBreakdown(
         booking.payment.refundedAmountCents,
@@ -474,6 +479,7 @@ export default async function BookingDetailPage({
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
     canEditNonMemberGuestNames,
+    canFixNonMemberGuestNameTypos,
     editPolicy: {
       mode: editPolicy.mode,
       today: editPolicy.today.toISOString().slice(0, 10),

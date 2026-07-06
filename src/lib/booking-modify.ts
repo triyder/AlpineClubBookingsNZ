@@ -29,6 +29,7 @@ export {
   calculateModifiedPricing,
   loadActiveSeasonRates,
   lockedNightPricesForGuest,
+  PAID_NAME_TYPO_ONLY_MESSAGE,
   prepareGuestPlan,
   resolveGuestNameUpdates,
   type GuestPlan,
