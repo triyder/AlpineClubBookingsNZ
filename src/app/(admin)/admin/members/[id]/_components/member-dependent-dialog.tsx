@@ -113,7 +113,7 @@ export function MemberDependentDialog({
           </DialogDescription>
         </DialogHeader>
         {error && (
-          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm whitespace-pre-line">
             {error}
           </div>
         )}

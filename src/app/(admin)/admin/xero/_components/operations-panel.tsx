@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
+import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
 import { fetchJson, postJson } from "./api"
 import {
   failureStateBadgeClass,
@@ -392,7 +393,7 @@ export function OperationsPanel({
   )
 }
 
-function OperationItem({
+export function OperationItem({
   operation,
   retrying,
   markingNonReplayable,
@@ -411,6 +412,13 @@ function OperationItem({
 }) {
   const resolved = Boolean(operation.manuallyResolvedAt)
   const isFailedOrPartial = operation.status === "FAILED" || operation.status === "PARTIAL"
+  const [showRaw, setShowRaw] = useState(false)
+  const summary = summarizeXeroOperation({
+    entityType: operation.entityType,
+    operationType: operation.operationType,
+    requestPayload: operation.requestPayload,
+    responsePayload: operation.responsePayload,
+  })
   return (
     <div className="space-y-2 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -481,19 +489,52 @@ function OperationItem({
           ) : null}
         </div>
       )}
-      <details className="rounded-md bg-slate-50 p-2">
-        <summary className="cursor-pointer text-xs font-medium text-slate-700">View request / response payloads</summary>
-        <div className="mt-2 grid gap-3 lg:grid-cols-2">
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
-            <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(operation.requestPayload)}</pre>
+      {summary ? (
+        <div className="rounded-md bg-slate-50 p-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-slate-700">{summary.title}</p>
+            <button
+              type="button"
+              onClick={() => setShowRaw((value) => !value)}
+              className="text-xs font-medium text-blue-600 hover:underline"
+              aria-expanded={showRaw}
+            >
+              {showRaw ? "Hide raw JSON" : "Show raw JSON"}
+            </button>
           </div>
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
-            <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(operation.responsePayload)}</pre>
-          </div>
+          {summary.facts.length > 0 ? (
+            <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+              {summary.facts.map((fact, index) => (
+                <div key={`${fact.label}-${index}`} className="flex gap-1">
+                  <dt className="shrink-0 text-slate-500">{fact.label}:</dt>
+                  <dd className="min-w-0 break-words font-medium text-slate-800">{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          {showRaw ? <RawPayloads operation={operation} className="mt-3" /> : null}
         </div>
-      </details>
+      ) : (
+        <details className="rounded-md bg-slate-50 p-2">
+          <summary className="cursor-pointer text-xs font-medium text-slate-700">View request / response payloads</summary>
+          <RawPayloads operation={operation} className="mt-2" />
+        </details>
+      )}
+    </div>
+  )
+}
+
+function RawPayloads({ operation, className }: { operation: XeroOperation; className?: string }) {
+  return (
+    <div className={`grid gap-3 lg:grid-cols-2${className ? ` ${className}` : ""}`}>
+      <div>
+        <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
+        <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(operation.requestPayload)}</pre>
+      </div>
+      <div>
+        <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
+        <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">{formatJson(operation.responsePayload)}</pre>
+      </div>
     </div>
   )
 }

@@ -370,6 +370,43 @@ describe("Admin member detail grouped layout", () => {
     expect(await screen.findByText("First Name")).toBeTruthy();
   });
 
+  it("surfaces server field validation errors on an inline contact save", async () => {
+    await renderPage();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Contact & Personal/ })
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    // The next fetch is the PUT save; make it fail with per-field zod errors
+    // so the hook has to flatten `details` into human-readable lines.
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        ok: false,
+        status: 422,
+        json: async () => ({
+          error: "Validation failed",
+          details: {
+            dateOfBirth: ["Invalid date format"],
+            email: ["Invalid email address"],
+          },
+        }),
+      })
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    // Both fields surface with friendly labels instead of "Validation failed".
+    expect(
+      await screen.findByText(/Date of birth: Invalid date format/)
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Email: Invalid email address/)
+    ).toBeTruthy();
+    // The edit form stays open so the admin can fix the fields.
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeTruthy();
+  });
+
   it("expands and unlocks Contact & Personal for the ?edit=true deep link", async () => {
     searchParamsValue = new URLSearchParams("edit=true");
 

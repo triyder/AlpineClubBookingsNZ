@@ -451,6 +451,54 @@ describe("admin member access-role UI", () => {
     expect(roleCheckbox("User")).toBeChecked();
     expect(roleCheckbox("Treasurer")).not.toBeChecked();
   });
+
+  it("surfaces server field validation errors when creating a member", async () => {
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input);
+      const method = (init as RequestInit | undefined)?.method;
+      if (url === "/api/admin/members" && method === "POST") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: "Validation failed",
+              details: {
+                email: ["Invalid email address"],
+                dateOfBirth: ["Invalid date format"],
+              },
+            }),
+            { status: 422, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+
+    render(
+      <MemberEditorDialog
+        open
+        xeroConnected={false}
+        onOpenChange={vi.fn()}
+        onSaved={vi.fn()}
+        onSuccess={vi.fn()}
+        onWarning={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Member" }));
+
+    // Field-level messages surface with friendly labels, one line per field.
+    expect(
+      await screen.findByText(/Email: Invalid email address/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Date of birth: Invalid date format/),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("scoped-admin gated access-role picker (#1038)", () => {

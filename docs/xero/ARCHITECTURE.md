@@ -363,6 +363,21 @@ refunds missing credit notes (flagged when the refunded amount still exceeds the
 cents already covered by active refund credit notes, so multi-note refunds are
 handled), and per-record activity shows the ledger for one booking/payment/member.
 
+Expanding an operation in the admin Xero operations panel shows a plain-English
+summary by default instead of raw JSON (#1448). `summarizeXeroOperation`
+(`src/lib/xero-operation-summaries.ts`, a framework-agnostic pure module the
+client panel imports) keys on `(entityType, operationType)` plus payload-shape
+sniffing: it reads `requestPayload.queueType` when it is still present
+(PENDING / failed-before-dispatch rows) and otherwise recognises the persisted
+Xero request/response shapes (invoice, credit note, allocation, managed
+contact-group sync). It builds facts from data already run through the
+object-level `redactSensitiveJson`, so a summary can never surface a value the
+redacted raw view would mask, and money is formatted only through the shared
+`formatCents` helper (integer cents; Xero decimal dollars are converted to cents
+first). Unknown or unmapped shapes return `null`, and the panel falls back to
+the redacted raw request/response JSON exactly as before. A per-row **Show raw
+JSON** toggle reveals the same redacted `<pre>` blocks for any mapped row.
+
 ### Historical rounding-drift audit (#1318, read-only)
 
 Issue #1163 was a 1–2 cent Xero invoice drift: the pre-#1231 line builder grouped

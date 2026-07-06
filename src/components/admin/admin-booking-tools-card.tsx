@@ -6,6 +6,8 @@ import type { BookingProviderMismatch } from "@/lib/booking-provider-mismatches"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { formatDateOnly } from "@/lib/date-only";
+import { isFeatureHrefVisible } from "@/config/feature-routes";
+import type { FeatureFlags } from "@/config/schema";
 
 /**
  * One visually distinct cluster for everything only admins can do on the
@@ -25,6 +27,7 @@ export function AdminBookingToolsCard({
   hasSavedPaymentMethod,
   finalPriceCents,
   providerMismatches = [],
+  features,
 }: {
   bookingId: string;
   memberId: string;
@@ -38,6 +41,7 @@ export function AdminBookingToolsCard({
   hasSavedPaymentMethod: boolean;
   finalPriceCents: number;
   providerMismatches?: BookingProviderMismatch[];
+  features: FeatureFlags;
 }) {
   const returnTo = `/bookings/${bookingId}`;
   const bedAllocationParams = new URLSearchParams({
@@ -45,6 +49,10 @@ export function AdminBookingToolsCard({
     to: formatDateOnly(checkOut),
     bookingId,
   });
+  const bedAllocationHref = buildHrefWithReturnTo(
+    `/admin/bed-allocation?${bedAllocationParams.toString()}`,
+    returnTo,
+  );
 
   return (
     <>
@@ -85,15 +93,14 @@ export function AdminBookingToolsCard({
             >
               Member: {memberName}
             </Link>
-            <Link
-              className="text-slate-700 underline hover:text-slate-900"
-              href={buildHrefWithReturnTo(
-                `/admin/bed-allocation?${bedAllocationParams.toString()}`,
-                returnTo,
-              )}
-            >
-              Bed allocation
-            </Link>
+            {isFeatureHrefVisible(bedAllocationHref, features) ? (
+              <Link
+                className="text-slate-700 underline hover:text-slate-900"
+                href={bedAllocationHref}
+              >
+                Bed allocation
+              </Link>
+            ) : null}
             <Link
               className="text-slate-700 underline hover:text-slate-900"
               href={buildXeroRecordActivityUrl(
