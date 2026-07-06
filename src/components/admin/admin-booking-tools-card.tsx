@@ -23,6 +23,7 @@ export function AdminBookingToolsCard({
   paymentId,
   showConfirmPendingGuests,
   hasSavedPaymentMethod,
+  finalPriceCents,
   providerMismatches = [],
 }: {
   bookingId: string;
@@ -35,6 +36,7 @@ export function AdminBookingToolsCard({
   paymentId: string | null;
   showConfirmPendingGuests: boolean;
   hasSavedPaymentMethod: boolean;
+  finalPriceCents: number;
   providerMismatches?: BookingProviderMismatch[];
 }) {
   const returnTo = `/bookings/${bookingId}`;
@@ -117,6 +119,7 @@ export function AdminBookingToolsCard({
         <ConfirmPendingGuestsButton
           bookingId={bookingId}
           hasSavedPaymentMethod={hasSavedPaymentMethod}
+          finalPriceCents={finalPriceCents}
         />
       )}
     </>

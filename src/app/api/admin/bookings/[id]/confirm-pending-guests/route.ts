@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -7,12 +8,26 @@ import { chargePaymentMethod } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import {
+  checkCapacityForGuestRanges,
+  type NightAvailability,
+} from "@/lib/capacity";
+import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { createStructuredAuditLog, getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
+
+const confirmPendingGuestsSchema = z.object({
+  allowOverbook: z.boolean().optional(),
+});
+
+function getOverbookedNightDates(nightDetails: NightAvailability[]): string[] {
+  return nightDetails
+    .filter((night) => night.availableBeds < 0)
+    .map((night) => night.date.toISOString().slice(0, 10));
+}
 
 /**
  * Admin override: "Confirm pending guests now".
@@ -34,11 +49,19 @@ export async function POST(
   const session = guard.session;
   const { id: bookingId } = await params;
 
+  const body = await request.json().catch(() => ({}));
+  const parsedBody = confirmPendingGuestsSchema.safeParse(body);
+  const allowOverbook = parsedBody.success
+    ? parsedBody.data.allowOverbook ?? false
+    : false;
+
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
       member: true,
-      guests: true,
+      // Per-night sets (issue #713) so the capacity re-check counts
+      // non-contiguous stays on the nights they actually occupy.
+      guests: { include: { nights: true } },
       payment: true,
       promoRedemption: { include: { promoCode: true } },
     },
@@ -111,18 +134,54 @@ export async function POST(
   };
 
   try {
-    // Zero-dollar booking: confirm without Stripe.
+    // Zero-dollar booking: confirm without Stripe. Because a generic
+    // non-member-hold PENDING booking does NOT hold capacity (#737), the beds
+    // may already be taken by the time an admin confirms it. Re-check capacity
+    // under the same advisory lock the cron/force-confirm paths use and only
+    // flip PENDING -> PAID (a capacity-holding status) inside that lock.
     if (booking.finalPriceCents === 0) {
-      const claimed = await prisma.booking.updateMany({
-        where: { id: bookingId, status: BookingStatus.PENDING },
-        data: { status: BookingStatus.PAID, nonMemberHoldUntil: null },
+      const zeroResult = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+        const { available, nightDetails } = await checkCapacityForGuestRanges(
+          booking.checkIn,
+          booking.checkOut,
+          booking.guests,
+          bookingId,
+          tx
+        );
+
+        if (!available && !allowOverbook) {
+          return {
+            error: "CAPACITY_EXCEEDED" as const,
+            overbookDates: getOverbookedNightDates(nightDetails),
+            status: 409,
+          };
+        }
+
+        const claimed = await tx.booking.updateMany({
+          where: { id: bookingId, status: BookingStatus.PENDING },
+          data: { status: BookingStatus.PAID, nonMemberHoldUntil: null },
+        });
+        if (claimed.count === 0) {
+          return { error: "Booking is no longer pending" as const, status: 409 };
+        }
+
+        return { ok: true as const };
       });
-      if (claimed.count === 0) {
+
+      if ("error" in zeroResult) {
         return NextResponse.json(
-          { error: "Booking is no longer pending" },
-          { status: 409 }
+          {
+            error: zeroResult.error,
+            ...("overbookDates" in zeroResult
+              ? { overbookDates: zeroResult.overbookDates }
+              : {}),
+          },
+          { status: zeroResult.status }
         );
       }
+
       await reconcileBedAllocationsForBooking({ bookingId, previousRange });
       await prisma.payment.upsert({
         where: { bookingId },
@@ -170,7 +229,44 @@ export async function POST(
       });
     }
 
-    // Charge the saved payment method (same path the cron uses).
+    // Pre-charge capacity re-check under the advisory lock. A generic
+    // non-member-hold PENDING booking does not hold capacity (#737), so beds
+    // may already be gone; charging a saved card into a full lodge would force
+    // a refund. Take the lock, re-check, and RELEASE it before touching Stripe
+    // — never hold a DB lock across a payment-provider network call.
+    //
+    // Residual (documented): a small window remains between releasing this lock
+    // and the PAID promotion inside markBookingPaymentSucceeded where another
+    // booking could claim the beds. Closing it fully would require holding
+    // capacity state across the Stripe charge (a larger, Fable-tier redesign);
+    // this pre-check removes the main oversell hole.
+    const chargePreCheck = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const { available, nightDetails } = await checkCapacityForGuestRanges(
+        booking.checkIn,
+        booking.checkOut,
+        booking.guests,
+        bookingId,
+        tx
+      );
+      return {
+        available,
+        overbookDates: getOverbookedNightDates(nightDetails),
+      };
+    });
+
+    if (!chargePreCheck.available && !allowOverbook) {
+      return NextResponse.json(
+        {
+          error: "CAPACITY_EXCEEDED",
+          overbookDates: chargePreCheck.overbookDates,
+        },
+        { status: 409 }
+      );
+    }
+
+    // Charge the saved payment method (same path the cron uses) — OUTSIDE the
+    // advisory lock released above.
     const paymentIntent = await chargePaymentMethod({
       amountCents: booking.finalPriceCents,
       customerId: booking.payment!.stripeCustomerId!,
