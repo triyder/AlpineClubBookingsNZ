@@ -16,6 +16,53 @@ function isPaidXeroInvoice(invoice: Invoice): boolean {
   return status === "PAID" || Boolean(invoice.fullyPaidOnDate);
 }
 
+type XeroInvoiceCashEvidence = "cash" | "none" | "indeterminate";
+
+// A PAID invoice event alone is not cash (#1357/#1435): Xero also reports
+// PAID when a credit note is ALLOCATED against the invoice — allocations
+// accrue to amountCredited, never amountPaid, and the app's own
+// invoice-clearing notes produce exactly that zero-cash PAID event on every
+// ordinary unpaid-IB cancellation.
+//
+// Evidence order:
+//  1. Overpayment/prepayment allocations count as cash: they are real member
+//     money sitting on the Xero contact that an operator deliberately applied
+//     (a standard bank-rec flow for transfers with mangled references). Xero
+//     books them under amountCredited, but the app itself only ever produces
+//     CREDIT-NOTE allocations, so these can never be the clearing-note echo
+//     this gate exists to stop.
+//  2. `amountPaid` is authoritative when present as a finite number — an
+//     explicit 0 means Xero says no cash arrived, and the payments fallback
+//     must NOT override it (stale entries could linger there).
+//  3. The invoice's actual payment records are the fallback, ignoring
+//     DELETED (reversed) payments.
+//  4. A payload carrying none of these fields is "indeterminate" — the fresh
+//     getInvoice fetch behind the only caller always carries the cash
+//     fields, so this arm only guards degraded payload shapes.
+function classifyXeroInvoiceCashEvidence(
+  invoice: Invoice
+): XeroInvoiceCashEvidence {
+  if (
+    (invoice.overpayments?.length ?? 0) > 0 ||
+    (invoice.prepayments?.length ?? 0) > 0
+  ) {
+    return "cash";
+  }
+  if (
+    typeof invoice.amountPaid === "number" &&
+    Number.isFinite(invoice.amountPaid)
+  ) {
+    return Math.round(invoice.amountPaid * 100) > 0 ? "cash" : "none";
+  }
+  if (Array.isArray(invoice.payments)) {
+    const cashPayments = invoice.payments.filter(
+      (payment) => String(payment.status ?? "").toUpperCase() !== "DELETED"
+    );
+    return cashPayments.length > 0 ? "cash" : "none";
+  }
+  return "indeterminate";
+}
+
 export async function syncInternetBankingPaymentsForPaidInvoice(
   invoice: Invoice,
   linkedPaymentIds: string[]
@@ -28,6 +75,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     paidInternetBankingBookings: 0,
     creditedInternetBankingBookings: 0,
     skippedAlreadyPaidBookings: 0,
+    skippedNoCashEvidencePayments: 0,
   };
 
   if (!invoiceId || !isPaidXeroInvoice(invoice)) {
@@ -48,11 +96,119 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         ]
       : []),
   ];
+  const paymentFilter = {
+    source: PaymentSource.INTERNET_BANKING,
+    OR: paymentWhere,
+  };
+
+  // #1435: settlement itself is cash-gated, not just credit minting (#1357).
+  // Without positive cash evidence the loop settles NOTHING — no
+  // PaymentTransaction/Payment SUCCEEDED flip, no booking PAID flip, no
+  // member credit, no emails.
+  const cashEvidence = classifyXeroInvoiceCashEvidence(invoice);
+  const invoiceHasCashPayment = cashEvidence === "cash";
+  if (!invoiceHasCashPayment) {
+    // The app's own clearing-note echo (every ordinary unpaid-IB
+    // cancellation) lands here, so this arm stays slim: no booking-graph
+    // joins beyond what the admin alert below needs.
+    const matchedPayments = await prisma.payment.findMany({
+      where: paymentFilter,
+      select: {
+        id: true,
+        amountCents: true,
+        booking: {
+          select: {
+            status: true,
+            checkIn: true,
+            checkOut: true,
+            member: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
+    result.matchedInternetBankingPayments = matchedPayments.length;
+    if (matchedPayments.length === 0) {
+      return result;
+    }
+
+    if (cashEvidence === "indeterminate") {
+      // A payload carrying neither amountPaid nor payments proves nothing
+      // either way. Throwing (rather than settling blind or skipping
+      // terminally) hands the event to the inbound FAILED-retry machinery,
+      // which re-fetches the invoice fresh on every sweep: a transient
+      // degradation self-heals, and a persistent one surfaces as a loud,
+      // operator-replayable FAILED event instead of a booking that silently
+      // never settles (#1435 owner decision).
+      logger.warn(
+        { invoiceId, invoiceNumber, matchedPayments: matchedPayments.length },
+        "Xero PAID invoice payload carried neither amountPaid nor payments; refusing to settle Internet Banking payments without cash evidence"
+      );
+      throw new Error(
+        `Xero PAID invoice ${invoiceId} carried neither amountPaid nor payments; refusing to settle ${matchedPayments.length} Internet Banking payment(s) without cash evidence (#1435)`
+      );
+    }
+
+    // Zero-cash PAID (credit-note allocation). Settle nothing — but keep the
+    // linkage the pre-gate loop provided: stamp MISSING invoice identifiers
+    // (never status) on the matched payments and their PRIMARY transactions,
+    // so a later real-cash event for this invoice still matches them
+    // (#1357's stale-invoice flow depends on that match). This also covers
+    // the multi-payment case syncLinkedPaymentInvoiceMetadata deliberately
+    // leaves alone (it only stamps a canonical single match).
+    const matchedPaymentIds = matchedPayments.map((payment) => payment.id);
+    await prisma.paymentTransaction.updateMany({
+      where: {
+        paymentId: { in: matchedPaymentIds },
+        source: PaymentSource.INTERNET_BANKING,
+        kind: PaymentTransactionKind.PRIMARY,
+        xeroInvoiceId: null,
+      },
+      data: { xeroInvoiceId: invoiceId, xeroInvoiceNumber: invoiceNumber },
+    });
+    await prisma.payment.updateMany({
+      where: { id: { in: matchedPaymentIds }, xeroInvoiceId: null },
+      data: { xeroInvoiceId: invoiceId, xeroInvoiceNumber: invoiceNumber },
+    });
+
+    result.skippedNoCashEvidencePayments = matchedPayments.length;
+    logger.info(
+      { invoiceId, invoiceNumber, matchedPayments: matchedPayments.length },
+      "Xero invoice reports PAID without cash payments (credit-note allocation); Internet Banking settlement skipped"
+    );
+
+    // An allocation-cleared invoice for a LIVE booking means an operator
+    // cleared it Xero-side (e.g. wrote it off with a credit note) while the
+    // booking still awaits payment in the app — under the default
+    // non-holding config nothing will ever settle or expire that booking,
+    // so tell the admins instead of parking it silently. The routine
+    // clearing-note echo never fires this: its booking is already CANCELLED.
+    for (const payment of matchedPayments) {
+      if (
+        payment.booking.status === BookingStatus.CANCELLED ||
+        payment.booking.status === BookingStatus.PAID
+      ) {
+        continue;
+      }
+      await sendAdminPaymentFailureAlert({
+        memberName: `${payment.booking.member.firstName} ${payment.booking.member.lastName}`,
+        checkIn: payment.booking.checkIn,
+        checkOut: payment.booking.checkOut,
+        amountCents: payment.amountCents,
+        errorMessage:
+          "This booking's Xero invoice reports PAID via credit-note allocation, not a cash payment, so the app did not settle it and the booking still awaits payment. If the invoice was written off in Xero, cancel the booking in the app; if the member actually paid, record the cash payment against the invoice in Xero.",
+        paymentIntentId: invoiceId,
+      }).catch((err) =>
+        logger.error(
+          { err, paymentId: payment.id, invoiceId },
+          "Failed to alert admins about an allocation-cleared invoice on a live booking"
+        )
+      );
+    }
+    return result;
+  }
+
   const payments = await prisma.payment.findMany({
-    where: {
-      source: PaymentSource.INTERNET_BANKING,
-      OR: paymentWhere,
-    },
+    where: paymentFilter,
     include: {
       booking: {
         include: {
@@ -171,21 +327,17 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // note is allocated (zero cash). Minting therefore requires ALL of:
         //  1. positive CASH evidence on the invoice (amountPaid, falling back
         //     to actual payment records) — an allocation-cleared invoice has
-        //     credit applied, not cash, and must mint nothing;
+        //     credit applied, not cash, and must mint nothing. Since #1435
+        //     the loop entry enforces this for every arm; the re-assert here
+        //     is belt-and-braces for MINTING only (if the outer gate is ever
+        //     reshaped, the settlement flips in the other arms are pinned by
+        //     the #1435 regression tests, not by this condition);
         //  2. a payment that never settled (PENDING/FAILED) — a
         //     paid-then-cancelled booking's replayed event is old money that
         //     the cancellation flow already settled under its own policy;
         //  3. no credit already minted by THIS pipeline (matched by its own
         //     descriptions — never by amount, which collides with unrelated
         //     cancellation-flow rows and misses policy-tiered ones).
-        const invoiceCashPaidCents =
-          typeof invoice.amountPaid === "number"
-            ? Math.round(invoice.amountPaid * 100)
-            : null;
-        const invoiceHasCashPayment =
-          invoiceCashPaidCents !== null
-            ? invoiceCashPaidCents > 0
-            : (invoice.payments?.length ?? 0) > 0;
         const paymentNeverSettled =
           fresh.status === PaymentStatus.PENDING ||
           fresh.status === PaymentStatus.FAILED;
@@ -546,6 +698,7 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
     matchedGroupSettlements: 0,
     settledGroupSettlements: 0,
     settledChildBookings: 0,
+    skippedNoCashEvidenceSettlements: 0,
   };
 
   if (!invoiceId || !isPaidXeroInvoice(invoice)) {
@@ -566,6 +719,33 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
 
   result.matchedGroupSettlements = 1;
   if (settlement.status === PaymentStatus.SUCCEEDED) {
+    return result;
+  }
+
+  // #1435: the combined group invoice is subject to the same rule as the
+  // per-payment loop above — a PAID event produced by credit-note allocation
+  // (e.g. an operator writing the invoice off in Xero) carries zero cash and
+  // must not flip a whole group of child bookings to PAID. The settlement
+  // stays PENDING for the group-settlement reaper's normal expiry handling.
+  const cashEvidence = classifyXeroInvoiceCashEvidence(invoice);
+  if (cashEvidence !== "cash") {
+    if (cashEvidence === "indeterminate") {
+      // Same durable-deferral rule as the per-payment loop: hand the event
+      // to the inbound FAILED-retry machinery rather than settling blind or
+      // skipping terminally.
+      logger.warn(
+        { invoiceId, settlementId: settlement.id },
+        "Xero PAID group settlement invoice payload carried neither amountPaid nor payments; refusing to settle without cash evidence"
+      );
+      throw new Error(
+        `Xero PAID invoice ${invoiceId} carried neither amountPaid nor payments; refusing to settle group settlement ${settlement.id} without cash evidence (#1435)`
+      );
+    }
+    result.skippedNoCashEvidenceSettlements = 1;
+    logger.info(
+      { invoiceId, settlementId: settlement.id },
+      "Xero group settlement invoice reports PAID without cash payments (credit-note allocation); settlement skipped"
+    );
     return result;
   }
 
