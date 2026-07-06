@@ -838,11 +838,30 @@ export async function respondToBookingRequestQuote(input: {
     );
   }
 
-  // Re-arming a just-converted request back to PRICED here is safe: approve is
-  // idempotent on convertedBookingId (#1232), so a concurrent double-accept
-  // returns the existing booking instead of creating a second one.
-  await prisma.bookingRequest.update({
-    where: { id: quote.bookingRequestId },
+  // Re-arm the request to PRICED so approve can convert it. This is a
+  // status-guarded `updateMany`, NOT a plain `update`, to close the
+  // decline-wins-first resurrection race (#1423): an admin decline (or a
+  // requester quote-cancel) may have finalised this request to DECLINED/CANCELLED
+  // and released its capacity hold AFTER this accept passed the SENT-token check.
+  // A plain overwrite to PRICED would resurrect that finalised request — approve
+  // would see a null convertedBookingId, so its #1232 idempotency replay would
+  // NOT fire and it would mint a brand-new PENDING booking + Payment + PaymentLink
+  // off a declined request (money/capacity correctness bug). We therefore refuse
+  // to re-arm only when the request is already DECLINED/CANCELLED.
+  //
+  // We deliberately use `notIn [DECLINED, CANCELLED]` rather than
+  // `status = QUOTE_SENT`: a request already CONVERTED/APPROVED (the #1232
+  // double-accept case) must STILL re-arm to PRICED so approve's idempotency
+  // replay (booking-request.ts ~900-919 — reads the still-set convertedBookingId
+  // and returns the existing booking) keeps returning the one real booking. Only
+  // a decline/cancel finalisation blocks the re-arm.
+  const rearmed = await prisma.bookingRequest.updateMany({
+    where: {
+      id: quote.bookingRequestId,
+      status: {
+        notIn: [BookingRequestStatus.DECLINED, BookingRequestStatus.CANCELLED],
+      },
+    },
     data: {
       status: BookingRequestStatus.PRICED,
       priceCents: option.totalCents,
@@ -855,6 +874,12 @@ export async function respondToBookingRequestQuote(input: {
       responseMessageAt: message ? respondedAt : null,
     },
   });
+  if (rearmed.count === 0) {
+    throw new BookingRequestQuoteError(
+      "This quote can no longer be accepted — the booking request has been declined or cancelled.",
+      409
+    );
+  }
 
   const conversion =
     quote.bookingRequest.type === BookingRequestType.SCHOOL

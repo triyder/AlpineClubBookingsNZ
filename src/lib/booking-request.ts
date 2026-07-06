@@ -58,6 +58,22 @@ const BOOKING_REQUEST_RETENTION_DAYS = 90;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Booking-request statuses an admin may decline (#1423). Matches the panel's
+ * LINKING_EDITOR_STATUSES (the six "editor/queue" states the Decline button is
+ * shown for) — every one can carry a live AWAITING_REVIEW capacity hold, which
+ * the claim-first hold-release below (#1365) frees. Terminal/converted states
+ * (APPROVED/CONVERTED/DECLINED/CANCELLED) and NEW are intentionally excluded.
+ */
+export const DECLINABLE_BOOKING_REQUEST_STATUSES = [
+  BookingRequestStatus.VERIFIED,
+  BookingRequestStatus.PRICED,
+  BookingRequestStatus.QUOTED,
+  BookingRequestStatus.QUOTE_SENT,
+  BookingRequestStatus.QUERY_PENDING,
+  BookingRequestStatus.MODIFICATION_REQUESTED,
+] as const;
+
 export const bookingRequestGuestSchema = z.object({
   firstName: nameField(),
   lastName: nameField(),
@@ -470,7 +486,12 @@ export async function priceBookingRequest(input: {
   return prisma.bookingRequest.findUnique({ where: { id: input.requestId } });
 }
 
-/** Decline a verified or priced request and email the requester. */
+/**
+ * Decline a held/editor booking request (any of
+ * DECLINABLE_BOOKING_REQUEST_STATUSES — VERIFIED, PRICED, QUOTED, QUOTE_SENT,
+ * QUERY_PENDING, MODIFICATION_REQUESTED), release any live capacity hold, and
+ * email the requester (#1423 broadened this from VERIFIED/PRICED only).
+ */
 export async function declineBookingRequest(input: {
   requestId: string;
   adminMemberId: string;
@@ -489,9 +510,7 @@ export async function declineBookingRequest(input: {
   const claimed = await prisma.bookingRequest.updateMany({
     where: {
       id: input.requestId,
-      status: {
-        in: [BookingRequestStatus.VERIFIED, BookingRequestStatus.PRICED],
-      },
+      status: { in: [...DECLINABLE_BOOKING_REQUEST_STATUSES] },
     },
     data: {
       status: BookingRequestStatus.DECLINED,
@@ -503,7 +522,7 @@ export async function declineBookingRequest(input: {
 
   if (claimed.count === 0) {
     throw new BookingRequestError(
-      "Only verified or priced booking requests can be declined",
+      "This booking request can no longer be declined (it may already be approved, converted, cancelled, or declined).",
       409
     );
   }
@@ -537,19 +556,28 @@ export async function declineBookingRequest(input: {
   });
 
   // #1365 (F18): a declined request that still holds capacity — a held
-  // AWAITING_REVIEW booking (a SCHOOL manual hold via `holdBookingRequestSlots`)
-  // pointed to by `heldBookingId` — must have that hold released, otherwise the
-  // beds stay sterilised forever after the decline. This runs CLAIM-FIRST:
-  // strictly AFTER the status-guarded flip above actually claimed the request
-  // (count > 0). A wrong-state decline therefore 409s WITHOUT ever touching the
-  // hold — in particular a generic QUOTE_SENT held request (auto-hold-on-send,
-  // #1280) is NOT in the VERIFIED/PRICED set this route declines, so its hold is
-  // left intact for the quote-decline / quote-expiry / "Release hold" paths and
-  // never destroyed by a failed decline. The declinable states (VERIFIED/PRICED)
-  // have NO sent quote, so there is no requester quote-accept to race: once the
-  // request is claimed DECLINED its held booking cannot be converted to a live
-  // PENDING booking, so `cancelBooking` here can only ever act on a genuine
-  // AWAITING_REVIEW hold (never clobber a just-accepted booking). Releasing
+  // AWAITING_REVIEW booking (a SCHOOL manual hold or the auto-hold-on-send,
+  // #1280, pointed to by `heldBookingId`) — must have that hold released,
+  // otherwise the beds stay sterilised forever after the decline. This runs
+  // CLAIM-FIRST: strictly AFTER the status-guarded flip above actually claimed
+  // the request (count > 0). A wrong-state decline therefore 409s WITHOUT ever
+  // touching the hold.
+  //
+  // #1423: decline now covers all six held/editor states
+  // (DECLINABLE_BOOKING_REQUEST_STATUSES), including QUOTE_SENT which DOES carry
+  // a live SENT quote a requester could still accept. That reintroduces a
+  // decline-vs-accept race, closed on BOTH sides:
+  //   * accept-wins-first — the requester accept converts the held booking to a
+  //     live PENDING booking before this decline runs; `requireRequestHold: true`
+  //     (below, #1406) makes `cancelBooking` refuse (409, no side effect) rather
+  //     than clobber it, so decline never destroys a paid booking.
+  //   * decline-wins-first — this decline claims DECLINED and releases the hold
+  //     first; the concurrent accept's status-guarded re-arm
+  //     (booking-request-quotes.ts, notIn [DECLINED, CANCELLED]) then refuses to
+  //     resurrect the finalised request, so no new booking is ever created.
+  // Because the hold-release runs only after the request is claimed DECLINED,
+  // `cancelBooking` here can only ever act on a still-held AWAITING_REVIEW
+  // booking, never a booking a winning accept already converted. Releasing
   // reuses the shared `cancelBooking` path (mirroring the admin "Release hold"
   // route): it cancels the held booking, reconciles/frees the beds, detaches
   // `heldBookingId`, and audits. It self-locks on advisory key 1 and runs its
@@ -573,20 +601,22 @@ export async function declineBookingRequest(input: {
           // requester's "booking cancelled" email. The detach/reconcile/audit in
           // the shared cancel path still run.
           suppressCustomerNotification: true,
-          // #1406: defense-in-depth. Today's declinable states (VERIFIED/PRICED)
-          // carry no sent quote, so their AWAITING_REVIEW hold can never be
-          // converted to a live PENDING booking by a requester accept. Pass the
-          // opt-in guard anyway so the shared cancel path refuses (409, no side
-          // effect) rather than clobbering a PENDING booking — a prerequisite
-          // for broadening decline to QUOTE_SENT (#1423).
+          // #1406/#1423: a QUOTE_SENT request carries a live SENT quote whose
+          // AWAITING_REVIEW hold a concurrent requester accept could convert to a
+          // live PENDING booking. This opt-in guard makes the shared cancel path
+          // refuse (409, no side effect) rather than clobber that PENDING booking
+          // if the accept won the race — the accept-wins-first half of the
+          // decline-vs-accept race for the broadened declinable set (#1423).
           requireRequestHold: true,
         }
       );
-      // Defensive: a concurrent cancel of the SAME held booking (a
-      // double-submitted decline, or a simultaneous admin "Release hold") won
-      // cancelBooking's single-flight (#1160/#1311). The hold is being/has been
-      // released either way, so forward the 409. (Unreachable via a quote-accept
-      // for VERIFIED/PRICED — those carry no sent quote.)
+      // Defensive: a 409 here means the held booking is no longer a releasable
+      // AWAITING_REVIEW hold. Either a concurrent cancel of the SAME held booking
+      // (a double-submitted decline, or a simultaneous admin "Release hold") won
+      // cancelBooking's single-flight (#1160/#1311), or — for a QUOTE_SENT
+      // request (#1423) — a requester accept already converted the hold to a live
+      // PENDING booking and `requireRequestHold` refused to clobber it. Either
+      // way this decline must NOT destroy that booking, so forward the 409.
       if (result.status === 409) {
         throw new BookingRequestError(result.error, 409);
       }

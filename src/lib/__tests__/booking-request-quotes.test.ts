@@ -696,6 +696,11 @@ describe("public quote response", () => {
       priceCents: 2500,
       paymentLinkExpiresAt: new Date(),
     });
+    // #1423: the re-arm to PRICED is a status-guarded updateMany; a live
+    // (non-finalised) request claims it.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+      count: 1,
+    } as never);
 
     const result = await respondToBookingRequestQuote({
       token,
@@ -704,8 +709,17 @@ describe("public quote response", () => {
     });
 
     expect(result).toMatchObject({ outcome: "accepted", bookingId: "booking-1" });
-    expect(prisma.bookingRequest.update).toHaveBeenCalledWith(
+    expect(prisma.bookingRequest.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({
+          id: "req-1",
+          status: {
+            notIn: [
+              BookingRequestStatus.DECLINED,
+              BookingRequestStatus.CANCELLED,
+            ],
+          },
+        }),
         data: expect.objectContaining({
           status: BookingRequestStatus.PRICED,
           acceptedQuoteId: "quote-1",
@@ -724,6 +738,109 @@ describe("public quote response", () => {
         }),
       })
     );
+  });
+
+  it("refuses to resurrect a request an admin already declined/cancelled (#1423)", async () => {
+    // Decline-wins-first race: the admin decline finalised the request to
+    // DECLINED/CANCELLED and released its hold AFTER this accept passed the
+    // SENT-token check. The status-guarded re-arm (notIn [DECLINED, CANCELLED])
+    // must claim NOTHING (count 0) → 409, and NEVER call approve/convert, so no
+    // new booking + Payment + PaymentLink is minted off a declined request.
+    const token = "f".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      createdByMemberId: "admin-1",
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 2500,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      bookingRequest: baseRequest({ status: BookingRequestStatus.DECLINED }),
+    } as never);
+    // The guard finds the request already finalised → nothing to re-arm.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+      count: 0,
+    } as never);
+
+    await expect(
+      respondToBookingRequestQuote({ token, action: "ACCEPT", optionId: "STANDARD" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // No conversion, no booking, no quote flip to ACCEPTED.
+    expect(mockApproveBookingRequest).not.toHaveBeenCalled();
+    expect(mocks.mockApproveSchoolBookingRequest).not.toHaveBeenCalled();
+    expect(prisma.booking.create).not.toHaveBeenCalled();
+    expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: BookingRequestQuoteStatus.ACCEPTED,
+        }),
+      })
+    );
+  });
+
+  it("re-arms an already-CONVERTED request so approve's #1232 replay returns the existing booking (#1423)", async () => {
+    // Double-accept idempotency (#1232): a CONVERTED request passes the
+    // notIn [DECLINED, CANCELLED] guard (count 1), so approve runs and its
+    // convertedBookingId replay returns the ONE existing booking rather than
+    // minting a second one. The guard must not break this pre-existing behaviour.
+    const token = "g".repeat(64);
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      createdByMemberId: "admin-1",
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 2500,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      bookingRequest: baseRequest({ status: BookingRequestStatus.CONVERTED }),
+    } as never);
+    // CONVERTED is NOT in [DECLINED, CANCELLED], so the guard claims it.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+      count: 1,
+    } as never);
+    // approve replays the existing booking (real approve does this off
+    // convertedBookingId under the advisory lock).
+    mockApproveBookingRequest.mockResolvedValue({
+      type: "approved",
+      bookingId: "existing-booking-1",
+      memberId: "member-1",
+      priceCents: 2500,
+      paymentLinkExpiresAt: new Date(),
+    });
+
+    const result = await respondToBookingRequestQuote({
+      token,
+      action: "ACCEPT",
+      optionId: "STANDARD",
+    });
+
+    expect(result).toMatchObject({
+      outcome: "accepted",
+      bookingId: "existing-booking-1",
+    });
+    expect(mockApproveBookingRequest).toHaveBeenCalledWith({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
   });
 
   it("rejects an expired token with a distinct 410 status", async () => {
@@ -783,6 +900,11 @@ describe("public quote response", () => {
       type: "capacityExceeded",
       fullNights: ["2026-08-01", "2026-08-02"],
     });
+    // #1423: the initial re-arm to PRICED claims (the request is still live);
+    // the capacity loss then reverts it to QUOTE_SENT via a plain update.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({
+      count: 1,
+    } as never);
 
     await expect(
       respondToBookingRequestQuote({ token, action: "ACCEPT", optionId: "STANDARD" })

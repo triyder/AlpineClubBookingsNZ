@@ -327,7 +327,22 @@ re-mapping. Releasing a hold (and declining a held request) refuses with HTTP
 409 rather than cancelling if the requester accepted the quote concurrently —
 i.e. the held booking has already left `AWAITING_REVIEW` (`cancelBooking`'s
 `requireRequestHold` guard, #1406) — so a just-accepted booking is never
-cancelled and its payment links never revoked out from under the requester. Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
+cancelled and its payment links never revoked out from under the requester.
+
+An admin decline releases the capacity hold from ANY held/editor state, not just
+`VERIFIED`/`PRICED` (#1423): a decline is valid from all six states the admin
+panel shows the Decline button for — `VERIFIED`, `PRICED`, `QUOTED`,
+`QUOTE_SENT`, `QUERY_PENDING`, `MODIFICATION_REQUESTED`
+(`DECLINABLE_BOOKING_REQUEST_STATUSES`) — and each can carry a live
+`AWAITING_REVIEW` hold that the decline frees (claim-first: the `DECLINED` flip
+lands before any hold release, so a wrong-state decline `409`s and never touches
+the hold). A requester quote-accept can never resurrect a finalised request: the
+accept's re-arm to `PRICED` is status-guarded (`status notIn [DECLINED,
+CANCELLED]`), so once an admin decline (or a requester cancel) has finalised the
+request and released its hold, a late accept `409`s and creates no new booking,
+Payment, or PaymentLink. The guard still permits a re-arm from
+`CONVERTED`/`APPROVED`, preserving approve's `convertedBookingId` idempotency
+(#1232 double-accept returns the one existing booking). Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
 if a previously mapped contact is no longer a valid non-login contact by the time
 the requester accepts (login enabled, archived, deactivated, role changed), the
 accept still succeeds — a fresh non-login contact is substituted and an
