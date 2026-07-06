@@ -69,6 +69,13 @@ export interface OccupiedBedNight {
    * does not classify occupants can never trigger a displacement.
    */
   holdsCapacity?: boolean;
+  /**
+   * When set, this allocation was explicitly APPROVED by an admin (the #776
+   * bed-lock). An approved allocation is NEVER displaced (issue #1387) — moving
+   * or unallocating it would silently undo an admin lock with no human step —
+   * so it is treated like a capacity-holding occupant even when provisional.
+   */
+  approvedAt?: Date | string | null;
 }
 
 export type BedAllocationDisplacementType = "MOVE" | "UNALLOCATE";
@@ -567,7 +574,64 @@ interface OccupantInfo {
   bookingId: string;
   bookingGuestId: string;
   roomId: string;
+  stayDate: string;
+  ageTier?: BedAllocationAgeTier | null;
   holdsCapacity: boolean;
+  /** Admin-approved (#776 lock): never displaced (issue #1387). */
+  isApproved: boolean;
+}
+
+/** Rooms in which `bookingId` has an adult on `stayDate`, from current occupancy. */
+function bookingAdultRoomsFromOccupants(
+  occupantByKey: Map<string, OccupantInfo>,
+  bookingId: string,
+  stayDate: string,
+): Set<string> {
+  const rooms = new Set<string>();
+  for (const occupant of occupantByKey.values()) {
+    if (
+      occupant.bookingId === bookingId &&
+      occupant.stayDate === stayDate &&
+      isAdultAgeTier(occupant.ageTier)
+    ) {
+      rooms.add(occupant.roomId);
+    }
+  }
+  return rooms;
+}
+
+/**
+ * Would displacing this ADULT provisional occupant strand a same-booking minor
+ * that shares its room on `stayDate`? True when a same-booking minor remains in
+ * the room and no OTHER same-booking adult would be left to supervise it. Such
+ * an occupant is left in place (issue #1387) — displacement must never create an
+ * unsupervised-minor room for the DISPLACED booking, mirroring the invariant the
+ * normal split path enforces for the booking being placed.
+ */
+function displacingAdultStrandsSameBookingMinor(
+  occupantByKey: Map<string, OccupantInfo>,
+  occupant: OccupantInfo,
+  targetKey: string,
+  stayDate: string,
+): boolean {
+  let sameRoomMinor = false;
+  let otherSameRoomAdult = false;
+  for (const [key, other] of occupantByKey) {
+    if (key === targetKey) continue;
+    if (
+      other.bookingId !== occupant.bookingId ||
+      other.roomId !== occupant.roomId ||
+      other.stayDate !== stayDate
+    ) {
+      continue;
+    }
+    if (isAdultAgeTier(other.ageTier)) {
+      otherSameRoomAdult = true;
+    } else {
+      sameRoomMinor = true;
+    }
+  }
+  return sameRoomMinor && !otherSameRoomAdult;
 }
 
 /**
@@ -601,9 +665,11 @@ function adultRoomsForBookingNight(
 }
 
 /**
- * The first bed in `allowedRooms` on `stayDate` occupied by a PROVISIONAL
- * (non-capacity-holding) booking, in room/bed sort order. Capacity-holding
- * occupants are skipped — they are never displaced (issue #1387).
+ * The first bed in `allowedRooms` on `stayDate` occupied by a DISPLACEABLE
+ * provisional booking, in room/bed sort order (issue #1387). Skipped occupants:
+ *   - capacity-holding (Held) occupants — never displaced;
+ *   - admin-APPROVED allocations (#776 lock) — never displaced;
+ *   - an ADULT whose displacement would strand a same-booking minor.
  */
 function findDisplaceableProvisionalBed(
   allowedRooms: SortedRoomWithBeds[],
@@ -612,10 +678,23 @@ function findDisplaceableProvisionalBed(
 ): { bed: BedAllocationBed; occupant: OccupantInfo } | null {
   for (const room of allowedRooms) {
     for (const bed of room.beds) {
-      const occupant = occupantByKey.get(occupiedKey(bed.id, stayDate));
-      if (occupant && !occupant.holdsCapacity) {
-        return { bed, occupant };
+      const key = occupiedKey(bed.id, stayDate);
+      const occupant = occupantByKey.get(key);
+      if (!occupant || occupant.holdsCapacity || occupant.isApproved) {
+        continue;
       }
+      if (
+        isAdultAgeTier(occupant.ageTier) &&
+        displacingAdultStrandsSameBookingMinor(
+          occupantByKey,
+          occupant,
+          key,
+          stayDate,
+        )
+      ) {
+        continue;
+      }
+      return { bed, occupant };
     }
   }
 
@@ -624,15 +703,17 @@ function findDisplaceableProvisionalBed(
 
 /**
  * A genuinely-free bed on `stayDate` to relocate a displaced provisional
- * occupant to, preferring a bed in its current room so a provisional minor
- * keeps its adult context. Returns null when the night is otherwise full
- * (forcing an UNALLOCATE instead of a MOVE). Issue #1387.
+ * occupant to, preferring a bed in its current room. When `restrictRoomIds` is
+ * given (relocating a provisional MINOR), only beds in those rooms qualify, so
+ * the minor keeps a same-booking adult in its room. Returns null when no valid
+ * free bed exists (forcing an UNALLOCATE instead of a MOVE). Issue #1387.
  */
 function findFreeRelocationBed(
   activeRooms: SortedRoomWithBeds[],
   stayDate: string,
   occupied: Set<string>,
   preferRoomId: string,
+  restrictRoomIds?: Set<string>,
 ): BedAllocationBed | null {
   const orderedRooms = [...activeRooms].sort((a, b) => {
     const aPref = a.id === preferRoomId ? 0 : 1;
@@ -641,6 +722,9 @@ function findFreeRelocationBed(
   });
 
   for (const room of orderedRooms) {
+    if (restrictRoomIds && !restrictRoomIds.has(room.id)) {
+      continue;
+    }
     for (const bed of room.beds) {
       if (!occupied.has(occupiedKey(bed.id, stayDate))) {
         return bed;
@@ -759,11 +843,22 @@ function tryDisplaceProvisionalForHeldGuest(context: DisplacementContext): boole
   const { bed: targetBed, occupant } = candidate;
   const targetKey = occupiedKey(targetBed.id, stayDate);
   const fromRoomId = bedRoomIds.get(targetBed.id) ?? occupant.roomId;
+  // A provisional MINOR may only be relocated into a room that still has an
+  // adult of ITS OWN booking that night; otherwise a MOVE would strand it, so
+  // it falls back to UNALLOCATE (removing a minor strands no one). Issue #1387.
+  const relocationRooms = isAdultAgeTier(occupant.ageTier)
+    ? undefined
+    : bookingAdultRoomsFromOccupants(
+        occupantByKey,
+        occupant.bookingId,
+        stayDate,
+      );
   const freeBed = findFreeRelocationBed(
     activeRooms,
     stayDate,
     occupied,
     fromRoomId,
+    relocationRooms,
   );
 
   if (freeBed) {
@@ -845,7 +940,10 @@ export function buildFirstFitBedAllocationPlan({
           bookingGuestId: night.bookingGuestId,
           roomId:
             night.roomId ?? bedRoomIds.get(night.bedId) ?? "",
+          stayDate: normalizeStayDate(night.stayDate),
+          ageTier: night.ageTier ?? null,
           holdsCapacity: night.holdsCapacity === true,
+          isApproved: Boolean(night.approvedAt),
         },
       );
     }
@@ -926,10 +1024,18 @@ export function buildFirstFitBedAllocationPlan({
       // (or unallocates it) to claim a bed. Never runs for provisional bookings,
       // and never displaces a capacity-holding occupant.
       if (prioritizeCapacityHolding && booking.holdsCapacity) {
-        const stillUnallocated = unallocatedGuests.filter(
-          (guest) =>
-            !allocatedGuestNights.has(guestNightKey(guest.id, stayDate)),
-        );
+        // Adults-first (issue #1387): displace-in the held booking's adults
+        // before its minors so a minor whose only adult also needs displacing
+        // still finds a same-booking adult room (via `adultRoomsForBookingNight`,
+        // which sees this run's adult allocations). Stable within each tier.
+        const stillUnallocated = unallocatedGuests
+          .filter(
+            (guest) =>
+              !allocatedGuestNights.has(guestNightKey(guest.id, stayDate)),
+          )
+          .sort(
+            (a, b) => Number(isAdultGuest(b)) - Number(isAdultGuest(a)),
+          );
         for (const guest of stillUnallocated) {
           tryDisplaceProvisionalForHeldGuest({
             booking,

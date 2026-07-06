@@ -288,6 +288,8 @@ async function autoAllocateMissingBedNights({
         bookingGuestId: true,
         roomId: true,
         stayDate: true,
+        // #1387: an admin-approved allocation (#776 lock) is never displaced.
+        approvedAt: true,
         // #1387: classify each occupied bed-night Held vs Provisional so the
         // planner never displaces a capacity-holding occupant.
         booking: {
@@ -384,6 +386,7 @@ async function autoAllocateMissingBedNights({
       roomId: allocation.roomId,
       stayDate: allocation.stayDate,
       ageTier: allocation.bookingGuest.ageTier,
+      approvedAt: allocation.approvedAt,
       holdsCapacity: allocation.booking
         ? bookingHoldsCapacity({
             status: allocation.booking.status,
@@ -399,32 +402,7 @@ async function autoAllocateMissingBedNights({
     return 0;
   }
 
-  // Apply displacements BEFORE creating the new capacity-holding allocations so
-  // the freed beds are available and no transient @@unique([bedId, stayDate])
-  // conflict occurs (issue #1387). A MOVE relocates the provisional row; an
-  // UNALLOCATE deletes it (its guest-night returns to the awaiting queue).
-  const displacements = plan.displacements ?? [];
-  for (const displacement of displacements) {
-    const where = {
-      bookingGuestId_stayDate: {
-        bookingGuestId: displacement.bookingGuestId,
-        stayDate: new Date(`${displacement.stayDate}T00:00:00.000Z`),
-      },
-    };
-    if (displacement.type === "MOVE" && displacement.toBedId && displacement.toRoomId) {
-      await db.bedAllocation.update({
-        where,
-        data: {
-          bedId: displacement.toBedId,
-          roomId: displacement.toRoomId,
-        },
-      });
-    } else {
-      await db.bedAllocation.delete({ where });
-    }
-  }
-
-  const created = await db.bedAllocation.createMany({
+  const createManyArgs = {
     data: plan.allocations.map((allocation) => ({
       bookingId: allocation.bookingId,
       bookingGuestId: allocation.bookingGuestId,
@@ -434,11 +412,61 @@ async function autoAllocateMissingBedNights({
       source: allocation.source,
     })),
     skipDuplicates: true,
-  });
+  };
+
+  const displacements = plan.displacements ?? [];
+
+  // Common case (no displacement): a plain createMany, unchanged.
+  if (displacements.length === 0) {
+    const created = await db.bedAllocation.createMany(createManyArgs);
+    return created.count;
+  }
+
+  // Apply the provisional MOVEs/UNALLOCATEs BEFORE creating the new capacity-
+  // holding allocations, so the freed beds are available and no transient
+  // @@unique([bedId, stayDate]) conflict occurs (issue #1387). updateMany/
+  // deleteMany (not update/delete) make a row that was concurrently pruned an
+  // idempotent no-op (count 0) rather than a P2025 crash.
+  const applyPlan = async (client: BedAllocationLifecycleDb) => {
+    for (const displacement of displacements) {
+      const where = {
+        bookingGuestId: displacement.bookingGuestId,
+        stayDate: new Date(`${displacement.stayDate}T00:00:00.000Z`),
+      };
+      if (
+        displacement.type === "MOVE" &&
+        displacement.toBedId &&
+        displacement.toRoomId
+      ) {
+        await client.bedAllocation.updateMany({
+          where,
+          data: { bedId: displacement.toBedId, roomId: displacement.toRoomId },
+        });
+      } else {
+        await client.bedAllocation.deleteMany({ where });
+      }
+    }
+    return client.bedAllocation.createMany(createManyArgs);
+  };
+
+  // Apply atomically: a failed createMany after an UNALLOCATE must never
+  // permanently drop the provisional row. If the caller already runs us inside
+  // a transaction (db is a TransactionClient with no `$transaction`), apply
+  // inline on that client; otherwise open our own transaction.
+  const transactionalDb = db as typeof prisma;
+  const canOpenTransaction = typeof transactionalDb.$transaction === "function";
+
+  let created: { count: number };
+  if (canOpenTransaction) {
+    created = await transactionalDb.$transaction((tx) => applyPlan(tx));
+  } else {
+    created = await applyPlan(db);
+  }
 
   // Audit trail: record each displacement on the displaced PROVISIONAL booking
-  // once the plan has been applied. Swallow failures so a booking reconcile is
-  // never undone purely because its audit write failed (issue #1387).
+  // AFTER the plan is applied (post-commit when we own the transaction) so an
+  // audit-write failure can never roll back a committed displacement, and every
+  // committed displacement always attempts its audit. Best-effort (swallowed).
   for (const displacement of displacements) {
     await recordBedDisplacementAudit(db, displacement);
   }
