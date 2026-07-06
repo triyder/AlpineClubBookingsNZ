@@ -110,13 +110,16 @@ describe("admin bed allocation", () => {
   it("keeps bed allocation routes feature gated", () => {
     const featureRoutes = readRepoFile("src/config/feature-routes.ts");
     const sidebar = readRepoFile("src/components/admin-sidebar.tsx");
+    const bookingsSetupHub = readRepoFile(
+      "src/app/(admin)/admin/bookings-setup/page.tsx"
+    );
 
     expect(featureRoutes).toContain('flag: "bedAllocation"');
     expect(featureRoutes).toContain('"/admin/bed-allocation"');
     expect(featureRoutes).toContain('"/admin/rooms-beds"');
     expect(featureRoutes).toContain('"/api/admin/bed-allocation"');
     expect(sidebar).toContain('href: "/admin/bed-allocation"');
-    expect(sidebar).toContain('href: "/admin/rooms-beds"');
+    expect(bookingsSetupHub).toContain('href: "/admin/rooms-beds"');
   });
 
   it("blocks deactivating a bed with future allocations", async () => {

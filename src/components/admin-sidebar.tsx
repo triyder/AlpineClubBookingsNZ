@@ -38,18 +38,12 @@ import {
   UserX,
   BedDouble,
   Hammer,
-  FilePenLine,
-  PanelBottom,
   Palette,
-  Images,
   UserPlus,
   Plug,
   ChevronRight,
-  Lock,
   Landmark,
-  MessageSquareText,
   BadgeCheck,
-  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -222,7 +216,6 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
       { href: "/admin/roster", label: "Roster", icon: ClipboardList },
-      { href: "/admin/chores", label: "Chores", icon: CheckSquare },
       { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
       { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       {
@@ -262,14 +255,30 @@ const navSections: NavSection[] = [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
       {
-        href: "/admin/subscription-lockout",
-        label: "Subscription Lockout",
-        icon: Lock,
+        href: "/admin/membership-setup",
+        label: "Membership & Members",
+        icon: BadgeCheck,
       },
       {
-        href: "/admin/membership-types",
-        label: "Membership Types",
-        icon: BadgeCheck,
+        href: "/admin/appearance",
+        label: "Site Appearance & Content",
+        icon: Palette,
+      },
+      {
+        href: "/admin/bookings-setup",
+        label: "Bookings Setup",
+        icon: BedDouble,
+      },
+      { href: "/admin/integrations", label: "Integrations", icon: Plug },
+      {
+        href: "/admin/notifications",
+        label: "Notifications & Email",
+        icon: Bell,
+      },
+      {
+        href: "/admin/chores",
+        label: "Chores",
+        icon: CheckSquare,
       },
       {
         href: "/admin/access-roles",
@@ -277,34 +286,7 @@ const navSections: NavSection[] = [
         icon: Shield,
         fullAdminOnly: true,
       },
-      { href: "/admin/site-style", label: "Site Style", icon: Palette },
-      { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
-      { href: "/admin/site-banners", label: "Site Banners", icon: Megaphone },
-      {
-        href: "/admin/site-content",
-        label: "Site Content",
-        icon: PanelBottom,
-      },
-      {
-        href: "/admin/mountain-conditions",
-        label: "Mountain Conditions",
-        icon: Mountain,
-      },
-      { href: "/admin/image-manager", label: "Image Manager", icon: Images },
-      { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
-      { href: "/admin/member-fields", label: "Member Fields", icon: Sliders },
-      {
-        href: "/admin/notifications",
-        label: "Notifications & Email",
-        icon: Bell,
-      },
-      {
-        href: "/admin/booking-messages",
-        label: "Booking Messages",
-        icon: MessageSquareText,
-      },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
-      { href: "/admin/xero/setup", label: "Xero Setup", icon: Plug },
     ],
   },
 ];

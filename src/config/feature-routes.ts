@@ -43,6 +43,7 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   {
     flag: "xeroIntegration",
     prefixes: [
+      "/admin/integrations",
       "/admin/xero",
       "/admin/internet-banking",
       "/api/admin/xero",

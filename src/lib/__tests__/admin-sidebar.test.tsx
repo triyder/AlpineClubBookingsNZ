@@ -103,19 +103,35 @@ describe("AdminSidebar", () => {
     );
   });
 
-  it("shows membership type settings in setup and configuration", () => {
-    const section = getVisibleAdminNavSections(allOn).find(
+  it("groups setup and configuration around the setup hubs", () => {
+    const section = getVisibleAdminNavSections(allOn, undefined, true).find(
       (item) => item.label === "Setup & Configuration",
     );
 
-    expect(section?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          href: "/admin/membership-types",
-          label: "Membership Types",
-        }),
-      ]),
-    );
+    expect(section?.items.map((item) => item.label)).toEqual([
+      "Setup",
+      "Modules",
+      "Membership & Members",
+      "Site Appearance & Content",
+      "Bookings Setup",
+      "Integrations",
+      "Notifications & Email",
+      "Chores",
+      "Access Roles",
+      "Committee",
+    ]);
+  });
+
+  it("moves Chores out of Lodge Operations and removes standalone Booking Messages", () => {
+    const sections = getVisibleAdminNavSections(allOn);
+    const lodge = sections.find((item) => item.label === "Lodge Operations");
+    const setup = sections.find((item) => item.label === "Setup & Configuration");
+
+    expect(lodge?.items.map((item) => item.label)).not.toContain("Chores");
+    expect(setup?.items.map((item) => item.label)).toContain("Chores");
+    expect(
+      sections.flatMap((section) => section.items.map((item) => item.label)),
+    ).not.toContain("Booking Messages");
   });
 
   it("keeps pending family group requests visible while Members is collapsed", async () => {

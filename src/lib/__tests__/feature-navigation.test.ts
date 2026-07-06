@@ -84,12 +84,27 @@ describe("feature-aware navigation", () => {
     expect(items).not.toContain("Waitlist");
     expect(items).not.toContain("Roster");
     expect(items).not.toContain("Chores");
-    expect(items).not.toContain("Xero");
+    expect(items).not.toContain("Integrations");
     expect(items).toContain("Bookings");
     expect(items).toContain("Booking Requests");
     expect(items).toContain("Stuck States");
     expect(items).not.toContain("Change Requests");
     expect(items).toContain("Modules");
+  });
+
+  it("keeps feature-gated setup entries behind the same route visibility rules", () => {
+    const items = getVisibleAdminNavSections({
+      ...allOn,
+      chores: false,
+      skifieldConditions: false,
+      xeroIntegration: false,
+    })
+      .find((section) => section.label === "Setup & Configuration")
+      ?.items.map((item) => item.label);
+
+    expect(items).toContain("Site Appearance & Content");
+    expect(items).not.toContain("Chores");
+    expect(items).not.toContain("Integrations");
   });
 
   it("links booking request navigation to the combined request page", () => {
