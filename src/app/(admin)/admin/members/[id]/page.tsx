@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
 import {
+  formatMemberAccountPreview,
   formatMemberAuditLogSummary as formatMemberAuditLogSummaryHelper,
+  formatMemberCommitteePreview,
+  formatMemberContactPreview,
+  formatMemberFamilyPreview,
+  formatMemberFinancePreview,
+  formatMemberHistoryPreview,
+  formatMemberLifecyclePreview,
+  formatMemberMembershipPreview,
   getAuditActorDisplayName as getAuditActorDisplayNameHelper,
   getMemberDetailBackLabel,
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
@@ -16,16 +24,22 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { Accordion } from "@/components/ui/accordion";
+import { subscriptionStatusLabel } from "@/lib/status-colors";
 import { MemberDetailHeader } from "./_components/member-detail-header";
-import { MemberStatsCards } from "./_components/member-stats-cards";
-import { MemberInfoCard } from "./_components/member-info-card";
+import { MemberGroupCard } from "./_components/member-group-card";
+import { MemberSummaryStrip } from "./_components/member-summary-strip";
+import { MemberContactGroup } from "./_components/member-contact-group";
+import { MemberAccountAccessGroup } from "./_components/member-account-access-group";
+import { MemberXeroContactSummary } from "./_components/member-xero-contact-summary";
+import { MemberSubscriptionHistoryTable } from "./_components/member-subscription-history-table";
+import { MemberHistoryGroup } from "./_components/member-history-group";
 import { MemberDeletionCard } from "./_components/member-deletion-card";
 import { MemberLifecycleCard } from "./_components/member-lifecycle-card";
 import { MemberParentLinksCard } from "./_components/member-parent-links-card";
 import { MemberPromoCodesCard } from "./_components/member-promo-codes-card";
 import { MemberDependentsCard } from "./_components/member-dependents-card";
 import { MemberCreditCard } from "./_components/member-credit-card";
-import { MemberHistoryAccordion } from "./_components/member-history-accordion";
 import { MemberSeasonalMembershipCard } from "./_components/member-seasonal-membership-card";
 import { MemberCommitteeAssignmentsCard } from "./_components/member-committee-assignments-card";
 import { MemberEditDialog } from "./_components/member-edit-dialog";
@@ -304,8 +318,11 @@ export default function MemberDetailPage({
     onDeleted: () => router.push(backHref),
   });
 
-  const { openSections, onValueChange: onSectionsChange } =
-    useCollapsibleMemberSections();
+  const {
+    openSections,
+    onValueChange: onSectionsChange,
+    openSection,
+  } = useCollapsibleMemberSections();
 
   const isAdultMember = member?.ageTier === "ADULT";
   const memberIsArchived = Boolean(member?.archivedAt);
@@ -348,6 +365,22 @@ export default function MemberDetailPage({
   useEffect(() => {
     fetchMember();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The refund-requests page deep-links to /admin/members/[id]#account-credit;
+  // the anchor now lives inside the collapsed Finance group, so open it and
+  // scroll once the member has loaded (after the accordion expand animation).
+  const handledAccountCreditHash = useRef(false);
+  useEffect(() => {
+    if (loading || !member || handledAccountCreditHash.current) return;
+    if (window.location.hash !== "#account-credit") return;
+    handledAccountCreditHash.current = true;
+    openSection("finance");
+    window.setTimeout(() => {
+      document
+        .getElementById("account-credit")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 250);
+  }, [loading, member, openSection]);
 
   const isSelf = session?.user?.id === id;
   const actorIsFullAdmin = isFullAdmin({
@@ -411,6 +444,57 @@ export default function MemberDetailPage({
     !openCancellationRequest,
   );
 
+  const currentSeasonAssignment =
+    (member.seasonalMembershipAssignments ?? []).find(
+      (assignment) => assignment.seasonYear === member.currentSeasonYear,
+    ) ?? null;
+  const currentSeasonSubscription =
+    (member.subscriptions ?? []).find(
+      (subscription) => subscription.seasonYear === member.currentSeasonYear,
+    ) ?? null;
+  const embeddedCardClassName = "rounded-none border-0 shadow-none";
+  const groupPreviews = {
+    contact: formatMemberContactPreview(member),
+    account: formatMemberAccountPreview({
+      canLogin: member.canLogin,
+      accessRoleCount: (member.accessRoles ?? []).length,
+      active: member.active,
+    }),
+    family: formatMemberFamilyPreview({
+      parentCount: member.parentLinks?.length ?? 0,
+      dependentCount: member.dependents?.length ?? 0,
+      familyGroupCount: member.familyGroups?.length ?? 0,
+    }),
+    membership: formatMemberMembershipPreview({
+      currentSeasonYear: member.currentSeasonYear,
+      currentSeasonTypeName:
+        currentSeasonAssignment?.membershipType.name ?? null,
+      currentSeasonSubscriptionLabel: currentSeasonSubscription
+        ? subscriptionStatusLabel(currentSeasonSubscription.status)
+        : null,
+    }),
+    finance: formatMemberFinancePreview({
+      creditBalanceCents: creditLoading ? null : creditBalance,
+      promoCodeCount: member.promoCodes?.length ?? 0,
+      xeroLinked: Boolean(member.xeroContactId),
+    }),
+    committee: formatMemberCommitteePreview({
+      assignmentCount: (member.committeeAssignments ?? []).filter(
+        (assignment) => assignment.isActive,
+      ).length,
+    }),
+    history: formatMemberHistoryPreview({
+      totalBookings: member.stats.totalBookings,
+      lastStay: member.stats.lastStay,
+    }),
+    lifecycle: formatMemberLifecyclePreview({
+      active: member.active,
+      cancelledAt: member.cancelledAt,
+      archivedAt: member.archivedAt,
+      hasPendingDeleteRequest: Boolean(pendingDeleteRequest),
+    }),
+  };
+
   return (
     <div className="space-y-6">
       <MemberDetailHeader
@@ -454,123 +538,230 @@ export default function MemberDetailPage({
           </div>
         )}
 
-      <MemberStatsCards member={member} />
-
-      <MemberInfoCard
+      <MemberSummaryStrip
         member={member}
-        onEditFamilyGroup={setFamilyGroupEditorId}
+        membershipLabel={currentSeasonAssignment?.membershipType.name ?? "None"}
+        creditBalance={creditBalance}
+        creditLoading={creditLoading}
       />
 
-      <MemberSeasonalMembershipCard
-        member={member}
-        onSaved={async () => {
-          setLoading(true);
-          await fetchMember();
-        }}
-      />
-
-      <MemberCommitteeAssignmentsCard
-        member={member}
-        onSaved={async () => {
-          setLoading(true);
-          await fetchMember();
-        }}
-      />
-
-      <MemberParentLinksCard
-        member={member}
-        memberIsArchived={memberIsArchived}
-        currentMemberPath={currentMemberPath}
-        unlinkingDependentId={unlinkingDependentId}
-        onOpenParentLinkDialog={openParentLinkDialog}
-        onUnlinkParent={handleUnlinkDependent}
-      />
-
-      <MemberPromoCodesCard promoCodes={member.promoCodes} />
-
-      <MemberDependentsCard
-        member={member}
-        isAdultMember={isAdultMember}
-        memberIsArchived={memberIsArchived}
-        currentMemberPath={currentMemberPath}
-        unlinkingDependentId={unlinkingDependentId}
-        onOpenDependentDialog={openDependentDialog}
-        onUnlinkDependent={handleUnlinkDependent}
-      />
-
-      <MemberHistoryAccordion
-        memberId={id}
-        subscriptions={member.subscriptions}
-        bookings={member.bookings}
-        openSections={openSections}
+      <Accordion
+        type="multiple"
+        value={openSections}
         onValueChange={onSectionsChange}
-        creditCard={
-          <MemberCreditCard
-            creditBalance={creditBalance}
-            creditHistory={creditHistory}
-            creditLoading={creditLoading}
-            creditError={creditError}
-            pendingAdjustmentRequests={pendingAdjustmentRequests}
-            reviewingAdjustmentId={reviewingAdjustmentId}
-            showAdjustmentForm={showAdjustmentForm}
-            adjustmentError={adjustmentError}
-            adjustmentAmount={adjustmentAmount}
-            adjustmentDescription={adjustmentDescription}
-            adjustmentSaving={adjustmentSaving}
-            onToggleAdjustmentForm={toggleAdjustmentForm}
-            onChangeAdjustmentAmount={setAdjustmentAmount}
-            onChangeAdjustmentDescription={setAdjustmentDescription}
-            onSubmitAdjustment={handleAdjustmentSubmit}
-            onReviewAdjustment={handleReviewAdjustmentRequest}
+        className="space-y-6"
+      >
+        <MemberGroupCard
+          id="contact"
+          title="Contact & Personal"
+          preview={groupPreviews.contact}
+        >
+          <MemberContactGroup member={member} />
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="account"
+          title="Account & Access"
+          preview={groupPreviews.account}
+        >
+          <MemberAccountAccessGroup member={member} />
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="family"
+          title="Family"
+          preview={groupPreviews.family}
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <div className="px-6 pb-6 text-sm">
+              <p className="text-slate-500">Family Groups</p>
+              <div className="mt-1 font-medium">
+                {member.familyGroups && member.familyGroups.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {member.familyGroups.map((fg) => (
+                      <Button
+                        key={fg.id}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800"
+                        onClick={() => setFamilyGroupEditorId(fg.id)}
+                      >
+                        {fg.name || "Unnamed"}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-500">None</span>
+                )}
+              </div>
+            </div>
+            <MemberParentLinksCard
+              className={embeddedCardClassName}
+              member={member}
+              memberIsArchived={memberIsArchived}
+              currentMemberPath={currentMemberPath}
+              unlinkingDependentId={unlinkingDependentId}
+              onOpenParentLinkDialog={openParentLinkDialog}
+              onUnlinkParent={handleUnlinkDependent}
+            />
+            <MemberDependentsCard
+              className={embeddedCardClassName}
+              member={member}
+              isAdultMember={isAdultMember}
+              memberIsArchived={memberIsArchived}
+              currentMemberPath={currentMemberPath}
+              unlinkingDependentId={unlinkingDependentId}
+              onOpenDependentDialog={openDependentDialog}
+              onUnlinkDependent={handleUnlinkDependent}
+            />
+          </div>
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="membership"
+          title="Membership"
+          preview={groupPreviews.membership}
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <MemberSeasonalMembershipCard
+              className={embeddedCardClassName}
+              member={member}
+              onSaved={async () => {
+                setLoading(true);
+                await fetchMember();
+              }}
+            />
+            <div className="p-6">
+              <h3 className="mb-3 text-sm font-medium">
+                Subscription History
+              </h3>
+              <MemberSubscriptionHistoryTable
+                subscriptions={member.subscriptions}
+              />
+            </div>
+          </div>
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="finance"
+          title="Finance"
+          preview={groupPreviews.finance}
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <MemberCreditCard
+              className={`${embeddedCardClassName} scroll-mt-20`}
+              creditBalance={creditBalance}
+              creditHistory={creditHistory}
+              creditLoading={creditLoading}
+              creditError={creditError}
+              pendingAdjustmentRequests={pendingAdjustmentRequests}
+              reviewingAdjustmentId={reviewingAdjustmentId}
+              showAdjustmentForm={showAdjustmentForm}
+              adjustmentError={adjustmentError}
+              adjustmentAmount={adjustmentAmount}
+              adjustmentDescription={adjustmentDescription}
+              adjustmentSaving={adjustmentSaving}
+              onToggleAdjustmentForm={toggleAdjustmentForm}
+              onChangeAdjustmentAmount={setAdjustmentAmount}
+              onChangeAdjustmentDescription={setAdjustmentDescription}
+              onSubmitAdjustment={handleAdjustmentSubmit}
+              onReviewAdjustment={handleReviewAdjustmentRequest}
+            />
+            <MemberPromoCodesCard
+              className={embeddedCardClassName}
+              promoCodes={member.promoCodes}
+            />
+            <div className="p-6">
+              <MemberXeroContactSummary member={member} />
+            </div>
+          </div>
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="committee"
+          title="Committee"
+          preview={groupPreviews.committee}
+          contentClassName="px-0 pb-0"
+        >
+          <MemberCommitteeAssignmentsCard
+            className={embeddedCardClassName}
+            member={member}
+            onSaved={async () => {
+              setLoading(true);
+              await fetchMember();
+            }}
           />
-        }
-      />
+        </MemberGroupCard>
 
-      <MemberLifecycleCard
-        member={member}
-        pendingArchiveRequest={pendingArchiveRequest}
-        reviewedArchiveRequests={reviewedArchiveRequests}
-        isArchiveRequester={isArchiveRequester}
-        canRequestArchive={canRequestArchive}
-        canRequestCancellation={canRequestCancellation}
-        openCancellationRequest={openCancellationRequest}
-        archiveError={archiveError}
-        archiveReason={archiveReason}
-        archiveReviewNotes={archiveReviewNotes}
-        archiveActionLoading={archiveActionLoading}
-        cancellationError={cancellationError}
-        cancellationReason={cancellationReason}
-        cancellationSubmitting={cancellationSubmitting}
-        onChangeArchiveReason={setArchiveReason}
-        onChangeArchiveReviewNote={(requestId, value) =>
-          setArchiveReviewNotes((current) => ({
-            ...current,
-            [requestId]: value,
-          }))
-        }
-        onChangeCancellationReason={setCancellationReason}
-        onSubmitArchive={handleSubmitArchiveRequest}
-        onSubmitCancellation={handleSubmitCancellationRequest}
-        onReviewArchive={handleReviewArchiveRequest}
-      />
+        <MemberGroupCard
+          id="history"
+          title="History & Activity"
+          preview={groupPreviews.history}
+        >
+          <MemberHistoryGroup memberId={id} bookings={member.bookings} />
+        </MemberGroupCard>
 
-      <MemberDeletionCard
-        deleteEligibility={member.deleteEligibility}
-        deleteRequests={deleteRequests}
-        pendingDeleteRequest={pendingDeleteRequest}
-        approvalBlockerCount={approvalBlockers.length}
-        canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
-        onOpenRequestDialog={() => {
-          setDeleteDialogOpen(true);
-          setDeleteReason("");
-          setDeleteError("");
-        }}
-        onOpenReviewDialog={(request, action) => {
-          setDeleteReviewDialog({ request, action });
-          setDeleteReviewNote("");
-          setDeleteReviewError("");
-        }}
-      />
+        <MemberGroupCard
+          id="lifecycle"
+          title="Lifecycle & Deletion"
+          preview={groupPreviews.lifecycle}
+          className="border-red-200"
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <MemberLifecycleCard
+              className={embeddedCardClassName}
+              member={member}
+              pendingArchiveRequest={pendingArchiveRequest}
+              reviewedArchiveRequests={reviewedArchiveRequests}
+              isArchiveRequester={isArchiveRequester}
+              canRequestArchive={canRequestArchive}
+              canRequestCancellation={canRequestCancellation}
+              openCancellationRequest={openCancellationRequest}
+              archiveError={archiveError}
+              archiveReason={archiveReason}
+              archiveReviewNotes={archiveReviewNotes}
+              archiveActionLoading={archiveActionLoading}
+              cancellationError={cancellationError}
+              cancellationReason={cancellationReason}
+              cancellationSubmitting={cancellationSubmitting}
+              onChangeArchiveReason={setArchiveReason}
+              onChangeArchiveReviewNote={(requestId, value) =>
+                setArchiveReviewNotes((current) => ({
+                  ...current,
+                  [requestId]: value,
+                }))
+              }
+              onChangeCancellationReason={setCancellationReason}
+              onSubmitArchive={handleSubmitArchiveRequest}
+              onSubmitCancellation={handleSubmitCancellationRequest}
+              onReviewArchive={handleReviewArchiveRequest}
+            />
+            <MemberDeletionCard
+              className={embeddedCardClassName}
+              deleteEligibility={member.deleteEligibility}
+              deleteRequests={deleteRequests}
+              pendingDeleteRequest={pendingDeleteRequest}
+              approvalBlockerCount={approvalBlockers.length}
+              canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
+              onOpenRequestDialog={() => {
+                setDeleteDialogOpen(true);
+                setDeleteReason("");
+                setDeleteError("");
+              }}
+              onOpenReviewDialog={(request, action) => {
+                setDeleteReviewDialog({ request, action });
+                setDeleteReviewNote("");
+                setDeleteReviewError("");
+              }}
+            />
+          </div>
+        </MemberGroupCard>
+      </Accordion>
 
       <FamilyGroupEditorDialog
         groupId={familyGroupEditorId}

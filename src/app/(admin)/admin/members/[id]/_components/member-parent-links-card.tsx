@@ -16,6 +16,7 @@ interface MemberParentLinksCardProps {
   unlinkingDependentId: string | null
   onOpenParentLinkDialog: () => void
   onUnlinkParent: (parentId: string, dependentId: string, dependentName: string) => void
+  className?: string
 }
 
 export function MemberParentLinksCard({
@@ -25,12 +26,13 @@ export function MemberParentLinksCard({
   unlinkingDependentId,
   onOpenParentLinkDialog,
   onUnlinkParent,
+  className,
 }: MemberParentLinksCardProps) {
   const router = useRouter()
   const parentLinkCount = member.parentLinks?.length ?? 0
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base font-medium">Parent Links</CardTitle>
         {memberIsArchived ? (

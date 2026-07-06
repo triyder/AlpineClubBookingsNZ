@@ -33,6 +33,7 @@ interface MemberCreditCardProps {
   onChangeAdjustmentDescription: (value: string) => void
   onSubmitAdjustment: () => void
   onReviewAdjustment: (requestId: string, decision: "APPROVE" | "REJECT") => void
+  className?: string
 }
 
 export function MemberCreditCard({
@@ -52,12 +53,13 @@ export function MemberCreditCard({
   onChangeAdjustmentDescription,
   onSubmitAdjustment,
   onReviewAdjustment,
+  className,
 }: MemberCreditCardProps) {
   const { data: session } = useSession()
   const currentAdminId = session?.user?.id
 
   return (
-    <Card id="account-credit">
+    <Card id="account-credit" className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-base font-medium">Account Credit</CardTitle>
         <div className="flex items-center gap-3">

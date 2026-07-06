@@ -34,6 +34,7 @@ interface MemberLifecycleCardProps {
   onSubmitArchive: () => void
   onSubmitCancellation: () => void
   onReviewArchive: (requestId: string, action: "approve" | "reject") => void
+  className?: string
 }
 
 export function MemberLifecycleCard({
@@ -57,9 +58,10 @@ export function MemberLifecycleCard({
   onSubmitArchive,
   onSubmitCancellation,
   onReviewArchive,
+  className,
 }: MemberLifecycleCardProps) {
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base font-medium">
           <Archive className="h-4 w-4 text-slate-500" />

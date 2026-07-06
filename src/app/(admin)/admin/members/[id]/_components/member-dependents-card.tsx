@@ -21,6 +21,7 @@ interface MemberDependentsCardProps {
   unlinkingDependentId: string | null
   onOpenDependentDialog: () => void
   onUnlinkDependent: (parentId: string, dependentId: string, dependentName: string) => void
+  className?: string
 }
 
 export function MemberDependentsCard({
@@ -31,11 +32,12 @@ export function MemberDependentsCard({
   unlinkingDependentId,
   onOpenDependentDialog,
   onUnlinkDependent,
+  className,
 }: MemberDependentsCardProps) {
   const router = useRouter()
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base font-medium">Dependents</CardTitle>
         {isAdultMember && !memberIsArchived && (

@@ -86,6 +86,7 @@ interface SeasonalMembershipPreview {
 interface MemberSeasonalMembershipCardProps {
   member: MemberDetail;
   onSaved: () => Promise<void>;
+  className?: string;
 }
 
 const bookingBehaviorLabels: Record<BookingBehavior, string> = {
@@ -165,6 +166,7 @@ function BookingSummaryBlock({
 export function MemberSeasonalMembershipCard({
   member,
   onSaved,
+  className,
 }: MemberSeasonalMembershipCardProps) {
   const [membershipTypes, setMembershipTypes] = useState<
     MembershipTypeSummary[]
@@ -353,7 +355,7 @@ export function MemberSeasonalMembershipCard({
   }
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle className="text-base font-medium">
           Seasonal Membership
