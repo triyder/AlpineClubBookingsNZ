@@ -272,6 +272,14 @@ quote") is unchanged — only an admin lowering the nightly capacity can reclaim
 unpaid hold. Paying the hold moves it to a fully capacity-holding status and ends
 this exposure.
 
+School approval re-checks per-night capacity for the FINAL guest list on both
+branches — fresh-create and held-reuse (excluding the held booking's own
+guests) — under the global booking advisory lock, before anything flips to a
+capacity-holding status (#1352). A hold reserves only the originally held
+guest count, so an admin child-count override at approval can never confirm
+more beds than actually remain on any night; the admin sees the same
+capacityExceeded outcome as the fresh path.
+
 A booking converted from (or held for) a public/school booking request keeps
 its officer-negotiated price, flat-split across guest rows; the quote's
 per-tier rates are not persisted on the booking. Before a school group
