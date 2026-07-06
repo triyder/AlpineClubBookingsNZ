@@ -411,6 +411,93 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  // #1356: a supplementary invoice legitimately parked in WAITING_PAYMENT is
+  // not "missing" — re-queueing it would mint a duplicate operation whose
+  // default recordPayment books money before any capture exists.
+  it("treats a WAITING_PAYMENT supplementary op as blocking, not missing (#1356)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_waiting",
+          bookingId: "booking_1",
+          modificationType: "DATE_CHANGE",
+          priceDiffCents: -500,
+          changeFeeCents: 1000,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      operations: [
+        makeOperation({
+          id: "op_waiting",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "BookingModification",
+          localId: "mod_waiting",
+          status: "WAITING_PAYMENT",
+          xeroObjectType: null,
+          xeroObjectId: null,
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "MISSING_SUPPLEMENTARY_INVOICE"
+    );
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
+      "BLOCKED_BY_XERO_OPERATION"
+    );
+    expect(bookingReport.actions.map((action) => action.type)).not.toContain(
+      "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+  });
+
+  // #1356 (F16): the repair pass verifies supplementary invoices against the
+  // modification NET, so the invoice it queues must carry the signed price
+  // reduction — a clamped component would immediately fail its own
+  // amount-evidence check.
+  it("queues mixed-sign supplementary invoices with the signed price reduction (#1356)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_mixed",
+          bookingId: "booking_1",
+          modificationType: "DATE_CHANGE",
+          priceDiffCents: -500,
+          changeFeeCents: 1000,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
+      "MISSING_SUPPLEMENTARY_INVOICE"
+    );
+    const queueAction = bookingReport.actions.find(
+      (action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+    expect(queueAction?.payload).toMatchObject({
+      bookingModificationId: "mod_mixed",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+    });
+  });
+
   it("flags supplementary invoice amount evidence mismatches for manual review", async () => {
     const booking = makeBooking({
       modifications: [

@@ -1,8 +1,13 @@
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import {
+  readQueuedOutboxPayload,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
+import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
@@ -812,11 +817,27 @@ export async function retryXeroSyncOperation(
     }
 
     if (operation.localModel === "BookingModification") {
+      // Replay the enqueued payload's amounts when they survive (#1356,
+      // following the #1354 queued-payload-first rule): the Xero idempotency
+      // key embeds the amounts, so replaying the stored values keeps the key
+      // identical to the original attempt and Xero dedups instead of creating
+      // a second invoice. Only rebuild from the (signed) modification record
+      // when the payload was overwritten by a prior execution.
+      const queuedPayload = readQueuedOutboxPayload(operation.requestPayload);
       const modification = await getBookingModificationRetryData(operation.localId!);
+      const amounts =
+        queuedPayload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE
+          ? queuedPayload
+          : modification;
+      if (amounts.priceDiffCents + amounts.changeFeeCents <= 0) {
+        throw new XeroOperationRetryError(
+          "Booking modification no longer has a billable Xero delta; a reduction settles via a modification credit note."
+        );
+      }
       await xero.createXeroSupplementaryInvoice({
         bookingId: modification.bookingId,
-        priceDiffCents: Math.max(modification.priceDiffCents, 0),
-        changeFeeCents: modification.changeFeeCents,
+        priceDiffCents: amounts.priceDiffCents,
+        changeFeeCents: amounts.changeFeeCents,
         bookingModificationId: operation.localId!,
         createdByMemberId,
         repairExistingLink: true,
@@ -884,9 +905,62 @@ export async function retryXeroSyncOperation(
 
     if (operation.localModel === "BookingModification") {
       const modification = await getBookingModificationRetryData(operation.localId!);
-      const refundAmountCents = Math.abs(modification.priceDiffCents);
+      // Replay the enqueued (policy-limited) refund amount when it survives
+      // (#1356, #1354 queued-payload-first): the classifier caps the credit at
+      // the cancellation-policy settlement, which the modification row does
+      // not record, and the amount is embedded in the Xero idempotency key —
+      // rebuilding a different amount both over-credits and breaks dedup. The
+      // executor-overwritten payload preserves refundAmountCents too, so only
+      // fully-legacy rows fall back to the record; that fallback is the NET of
+      // the signed components (a mixed-sign edit only returns the net —
+      // |priceDiff| alone would over-credit by the fee), mirroring the primary
+      // classifier's abs(net) fallback when no settlement amount is available.
+      const queuedPayload = readQueuedOutboxPayload(operation.requestPayload);
+      const storedRefundAmountCents =
+        queuedPayload?.queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
+        queuedPayload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
+          ? queuedPayload.refundAmountCents
+          : readNumber(asRecord(operation.requestPayload)?.refundAmountCents);
+      const netAmountCents = getModificationNetAmountCents(modification);
+      const refundAmountCents =
+        storedRefundAmountCents ??
+        (netAmountCents < 0 ? Math.abs(netAmountCents) : 0);
       if (refundAmountCents <= 0) {
         throw new XeroOperationRetryError("Booking modification no longer has a refundable Xero delta.");
+      }
+
+      // An account-credit settlement must be rebuilt as an UNAPPLIED credit
+      // note, never applied against the invoice — the member already holds
+      // the matching spendable credit locally. Discriminate via the queued
+      // payload, falling back to the enqueue-time queueType column when a
+      // prior execution overwrote the payload (#1354 decision 2).
+      const isAccountCredit =
+        queuedPayload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE ||
+        (!queuedPayload &&
+          operation.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE);
+      if (isAccountCredit) {
+        const paymentId =
+          queuedPayload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
+            ? queuedPayload.paymentId
+            : (
+                await prisma.booking.findUnique({
+                  where: { id: modification.bookingId },
+                  select: { payment: { select: { id: true } } },
+                })
+              )?.payment?.id;
+        if (!paymentId) {
+          throw new XeroOperationRetryError(
+            "No payment exists to anchor the modification account-credit note retry."
+          );
+        }
+
+        await xero.createUnappliedXeroCreditNoteForModification({
+          paymentId,
+          refundAmountCents,
+          bookingModificationId: operation.localId!,
+          createdByMemberId,
+        });
+        return { message: "Retried Xero modification account-credit note creation." };
       }
 
       await xero.createXeroCreditNoteForModification({

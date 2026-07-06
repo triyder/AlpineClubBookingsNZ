@@ -29,7 +29,11 @@ export function getCancellationCreditAmountCents(booking: BookingRepairRecord) {
   );
 }
 
-export function getModificationNetAmountCents(modification: BookingModificationRecord) {
+// Pick<> keeps this callable from the retry stack's slim modification select
+// (#1356) — one shared definition of a modification's signed net.
+export function getModificationNetAmountCents(
+  modification: Pick<BookingModificationRecord, "priceDiffCents" | "changeFeeCents">
+) {
   return modification.priceDiffCents + modification.changeFeeCents;
 }
 

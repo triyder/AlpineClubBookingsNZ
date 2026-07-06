@@ -412,6 +412,33 @@ method, and no ordering of edit/cancel operations may produce a different
 total payout (refunds plus credits) than another ordering reaching the same
 final state.
 
+A net-positive booking edit that mixes a price reduction with a larger
+late-change fee bills Xero the SIGNED components on one supplementary invoice
+(#1356): a negative price-adjustment line beside the positive fee line, so the
+invoice total and the payment recorded against the Stripe clearing account
+both equal the net the member was actually charged — the same net the
+additional Stripe PaymentIntent captured. The negative line posts to the
+`hutFeeRefunds` account mapping, like every other give-back (a club that
+prefers a single ledger line maps `hutFeeRefunds` to the same code as
+`hutFeesIncome`); positive lines stay on `hutFeesIncome`. Clamping the negative component
+would over-record income and Stripe-bank receipts by the dropped reduction
+and break bank reconciliation. A supplementary invoice exists only for a
+positive net; a mixed-sign edit whose net is zero or negative settles through
+the modification credit-note paths, and both the outbox enqueue and the
+executor refuse (skip, replay-safely) rather than gross-bill the fee. The
+booking-vs-Xero repair pass applies the same rule: it verifies supplementary
+invoices against the modification net and queues missing ones with the signed
+components. The manual retry stack replays the operation's STORED amounts
+first (the #1354 queued-payload-first rule): the Xero idempotency key embeds
+the amounts, so replaying the enqueued values keeps the retry deduplicable
+against the original attempt, preserves a policy-limited credit-note
+settlement the modification row does not record, and lets the enqueue-time
+`queueType` distinguish an unapplied account-credit note from an
+invoice-applied one. Only fully-legacy rows fall back to the signed
+modification record — a rebuilt supplementary invoice keeps its reduction and
+a rebuilt credit note refunds the absolute net, never the absolute price
+component alone (which would over-credit by the fee).
+
 A cancellation's card-refund debt must be durable before any external call
 (#1349): the claim transaction that flips the booking to `CANCELLED` also
 writes the payment-recovery operation, carrying the per-transaction refund

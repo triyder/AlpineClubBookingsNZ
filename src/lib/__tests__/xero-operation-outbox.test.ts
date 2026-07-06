@@ -449,6 +449,59 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
     );
   });
 
+  // #1356 (F16): mixed-sign components stay signed through the queue so the
+  // executor can bill the exact net; a net that is not positive never becomes
+  // a supplementary invoice (it belongs to the credit-note paths).
+  it("queues mixed-sign components signed when the net is positive (#1356)", async () => {
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId: "booking_1",
+          priceDiffCents: -500,
+          changeFeeCents: 1000,
+          bookingModificationId: "mod_mixed",
+        },
+        {
+          createdByMemberId: "admin_1",
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_supplementary_1",
+      message: "Xero supplementary invoice queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "booking-mod:mod_mixed:supplementary-invoice:-500:1000:v1",
+        requestPayload: expect.objectContaining({
+          priceDiffCents: -500,
+          changeFeeCents: 1000,
+        }),
+      })
+    );
+  });
+
+  it("skips mixed-sign modifications whose net is not positive (#1356)", async () => {
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId: "booking_1",
+          priceDiffCents: -1500,
+          changeFeeCents: 1000,
+          bookingModificationId: "mod_negative_net",
+        },
+        {
+          createdByMemberId: "admin_1",
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "No supplementary invoice is required for this modification.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
   it("can hold supplementary invoices until additional Stripe payment succeeds", async () => {
     await expect(
       enqueueXeroSupplementaryInvoiceOperation(

@@ -738,7 +738,11 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     bookingModificationId,
   } = params;
 
-  if (priceDiffCents <= 0 && changeFeeCents <= 0) {
+  // Net-based guard (#1356): the components are signed, and a supplementary
+  // invoice exists only to bill a positive net. A mixed-sign edit whose net is
+  // not positive settles via the credit-note paths; queueing it here would
+  // gross-bill the fee while dropping the larger reduction.
+  if (priceDiffCents + changeFeeCents <= 0) {
     return {
       queueOperationId: null,
       message: "No supplementary invoice is required for this modification.",

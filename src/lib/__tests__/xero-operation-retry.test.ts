@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueMember: vi.fn(),
   updatePayment: vi.fn(),
   findUniqueBookingModification: vi.fn(),
+  findUniqueBooking: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
   buildXeroContactUpdatePayload: vi.fn(),
   shouldRepairXeroContactNameOrder: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   createXeroPaymentForInvoice: vi.fn(),
   createXeroCreditNote: vi.fn(),
   createUnappliedXeroCreditNote: vi.fn(),
+  createUnappliedXeroCreditNoteForModification: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
   createXeroRefundPaymentForInvoice: vi.fn(),
   allocateCreditNoteToInvoice: vi.fn(),
@@ -40,6 +42,9 @@ vi.mock("@/lib/prisma", () => ({
     bookingModification: {
       findUnique: mocks.findUniqueBookingModification,
     },
+    booking: {
+      findUnique: mocks.findUniqueBooking,
+    },
   },
 }));
 
@@ -58,6 +63,8 @@ vi.mock("@/lib/xero", () => ({
   createXeroPaymentForInvoice: mocks.createXeroPaymentForInvoice,
   createXeroCreditNote: mocks.createXeroCreditNote,
   createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
+  createUnappliedXeroCreditNoteForModification:
+    mocks.createUnappliedXeroCreditNoteForModification,
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
   createXeroRefundPaymentForInvoice: mocks.createXeroRefundPaymentForInvoice,
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
@@ -647,6 +654,91 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  // #1356: a surviving queued payload wins over the modification record — the
+  // Xero idempotency key embeds the amounts, so replaying the stored values
+  // keeps the retry deduplicable against the original attempt (a pre-#1356
+  // clamped operation must NOT re-bill under a fresh signed key).
+  it("replays the STORED payload amounts over the record for key stability (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_legacy",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 0,
+          changeFeeCents: 1000,
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priceDiffCents: 0,
+        changeFeeCents: 1000,
+      })
+    );
+  });
+
+  it("refuses to rebuild a supplementary invoice whose signed net is not billable (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_net_negative",
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -1500,
+      changeFeeCents: 1000,
+    });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).rejects.toThrow("no longer has a billable Xero delta");
+    expect(mocks.createXeroSupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
+  // #1356 (F16): the rebuilt supplementary invoice must keep the SIGNED price
+  // reduction so its lines sum to the net, matching the primary queue path.
+  it("replays mixed-sign supplementary invoices with the signed reduction (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_mixed",
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith({
+      bookingId: "book_123",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+      bookingModificationId: "mod_mixed",
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
   it("replays modification credit note creation with contact relink enabled", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
@@ -675,6 +767,187 @@ describe("retryXeroSyncOperation", () => {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
+  });
+
+  // #1356: the enqueued policy-limited refund amount wins over any rebuild —
+  // the modification row does not record the settlement cap, and the amount
+  // is embedded in the Xero idempotency key.
+  it("replays the STORED policy-limited credit-note amount over the record (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_policy",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "book_123",
+          refundAmountCents: 2500,
+          bookingModificationId: "mod_policy",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -10000,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 2500 })
+    );
+  });
+
+  it("recovers the stored amount from an executor-overwritten credit-note payload (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_overwritten",
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ quantity: 1, unitAmount: 25 }] }],
+          invoiceId: "inv_orig",
+          refundAmountCents: 2500,
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -10000,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 2500 })
+    );
+  });
+
+  // #1356: an account-credit settlement rebuilds as an UNAPPLIED credit note —
+  // the member already holds the matching spendable credit locally, so an
+  // invoice-applied note would double-count the reduction.
+  it("replays account-credit modification ops as unapplied credit notes (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_account",
+        requestPayload: {
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          bookingId: "book_123",
+          paymentId: "pay_123",
+          refundAmountCents: 3750,
+          bookingModificationId: "mod_account",
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -5000,
+      changeFeeCents: 0,
+    });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Retried Xero modification account-credit note creation.",
+    });
+
+    expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith({
+      paymentId: "pay_123",
+      refundAmountCents: 3750,
+      bookingModificationId: "mod_account",
+      createdByMemberId: "admin_1",
+    });
+    expect(mocks.createXeroCreditNoteForModification).not.toHaveBeenCalled();
+  });
+
+  it("discriminates account-credit ops via the queueType column when the payload was overwritten (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_account_overwritten",
+        queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+        requestPayload: {
+          creditNotes: [{ lineItems: [{ quantity: 1, unitAmount: 37.5 }] }],
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -3750,
+      changeFeeCents: 0,
+    });
+    mocks.findUniqueBooking.mockResolvedValue({
+      payment: { id: "pay_123" },
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createUnappliedXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_123",
+        refundAmountCents: 3750,
+      })
+    );
+    expect(mocks.createXeroCreditNoteForModification).not.toHaveBeenCalled();
+  });
+
+  // #1356 (F16): the rebuilt modification credit note refunds the NET of the
+  // signed components — |priceDiff| alone would over-credit by the fee on a
+  // mixed-sign reduction-plus-fee edit.
+  it("replays mixed-sign modification credit notes for the net, not |priceDiff| (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_mixed_net",
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -1000,
+      changeFeeCents: 500,
+    });
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      bookingId: "book_123",
+      refundAmountCents: 500,
+      bookingModificationId: "mod_mixed_net",
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
+  it("refuses to rebuild a modification credit note when the signed net is not a reduction (#1356)", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_net_positive",
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+    });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).rejects.toThrow("no longer has a refundable Xero delta");
+    expect(mocks.createXeroCreditNoteForModification).not.toHaveBeenCalled();
   });
 
   it("repairs partial booking invoice payment recording", async () => {

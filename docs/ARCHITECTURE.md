@@ -248,10 +248,13 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 In-progress member self-service edits are limited to future unused nights from
 NZ tomorrow onward. NZ today and earlier are locked for admin review through
 booking change requests. Positive booking-edit deltas use supplementary Xero
-invoices after additional Stripe payment succeeds, while negative deltas use a
-settlement choice: Stripe refund work where applicable or an idempotent
-source-linked member account credit. Both avoid unsafe financial mutation of a
-paid, part-paid, credited, or locked original invoice.
+invoices after additional Stripe payment succeeds — carrying signed component
+lines (a mixed-sign reduction-plus-fee edit includes its negative price
+adjustment) so the invoice and recorded payment equal the net actually charged
+(#1356) — while negative deltas use a settlement choice: Stripe refund work
+where applicable or an idempotent source-linked member account credit. Both
+avoid unsafe financial mutation of a paid, part-paid, credited, or locked
+original invoice.
 
 Money values are integer cents. Booking dates are New Zealand date-only lodge
 nights rather than timestamps.

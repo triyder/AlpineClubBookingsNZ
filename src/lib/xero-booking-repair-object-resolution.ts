@@ -129,11 +129,18 @@ export function getBlockingOperation(
   entityType: string,
   operationType: string
 ): BlockingOperationMatch | null {
+  // WAITING_PAYMENT blocks like PENDING/RUNNING (#1356): a supplementary
+  // invoice legitimately parked on its additional Stripe payment must not be
+  // classified as "missing" — re-queueing it would mint a second operation
+  // (under a different correlation key when the amounts differ) whose default
+  // recordPayment books money before any capture exists.
   const relevant = operations.filter(
     (operation) =>
       operation.entityType === entityType &&
       operation.operationType === operationType &&
-      ["FAILED", "PARTIAL", "PENDING", "RUNNING"].includes(operation.status)
+      ["FAILED", "PARTIAL", "PENDING", "RUNNING", "WAITING_PAYMENT"].includes(
+        operation.status
+      )
   );
 
   if (relevant.length === 0) {

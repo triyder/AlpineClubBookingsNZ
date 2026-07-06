@@ -213,7 +213,8 @@ Xero booking-edit settlement classifier — in
 `src/lib/__tests__/xero-settlement.property.test.ts`. They enforce the
 `docs/DOMAIN_INVARIANTS.md` "Money" rules as universally-quantified properties
 (integer cents, refund + retained = paid, deterministic repricing, no negative
-money).
+charge or refund totals — booking-edit components stay signed and sum to the
+net, #1356).
 
 This repository uses a current Next.js version. Before changing framework APIs,
 read the relevant versioned guide in `node_modules/next/dist/docs/`.

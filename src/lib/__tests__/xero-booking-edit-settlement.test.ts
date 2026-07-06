@@ -66,6 +66,31 @@ describe("classifyXeroBookingEditSettlement", () => {
     expect(decision.primaryInvoiceUpdateAction.type).toBe("none");
   });
 
+  // #1356 (F16): a price reduction combined with a larger late-change fee must
+  // keep the SIGNED reduction on the supplementary invoice so the components
+  // sum to the net the member actually pays (Stripe captures the net).
+  it("passes mixed-sign components through signed so they sum to the net charge", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+      datesChanged: true,
+      requiresAdditionalStripePayment: true,
+      additionalPaymentIntentId: "pi_mixed",
+    });
+
+    expect(decision.xeroNetAmountCents).toBe(500);
+    expect(decision.financialAction).toEqual({
+      type: "supplementary-invoice",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+      recordPayment: true,
+      waitForPaymentIntentId: "pi_mixed",
+      reason: expect.stringContaining("after the additional Stripe payment succeeds"),
+    });
+  });
+
   it("uses modification credit notes for negative deltas", () => {
     const decision = classifyXeroBookingEditSettlement({
       hasIssuedXeroInvoice: true,
@@ -207,6 +232,37 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       }),
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
+  });
+
+  it("queues a mixed-sign supplementary invoice with the signed price reduction (#1356)", async () => {
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "booking_mixed",
+      bookingModificationId: "mod_mixed",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -500,
+      changeFeeCents: 1000,
+      datesChanged: true,
+      requiresAdditionalStripePayment: true,
+      additionalPaymentIntentId: "pi_mixed",
+    });
+
+    expect(decision.financialAction.type).toBe("supplementary-invoice");
+    expect(mocks.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_mixed",
+        priceDiffCents: -500,
+        changeFeeCents: 1000,
+        bookingModificationId: "mod_mixed",
+      }),
+      expect.objectContaining({
+        paymentIntentId: "pi_mixed",
+        waitForConfirmedAdditionalPayment: true,
+        recordPayment: true,
+      }),
+    );
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("queues a modification credit note for a negative delta on a paid booking", async () => {

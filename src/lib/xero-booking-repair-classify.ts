@@ -363,7 +363,10 @@ export function classifyBookingContext(
             payload: {
               bookingId: booking.id,
               bookingModificationId: modification.id,
-              priceDiffCents: Math.max(modification.priceDiffCents, 0),
+              // Signed (#1356): the queued invoice must carry the mixed-sign
+              // components so its total matches the expectedAmountCents (net)
+              // this same pass verifies against.
+              priceDiffCents: modification.priceDiffCents,
               changeFeeCents: modification.changeFeeCents,
             },
           });
@@ -379,6 +382,30 @@ export function classifyBookingContext(
               changeFeeCents: modification.changeFeeCents,
             },
             actionKeys: [action.key],
+          });
+        } else {
+          // #1356: a live-but-not-retryable operation (WAITING_PAYMENT parked
+          // on its additional Stripe payment, or pending/running/unsupported)
+          // must surface as blocked — silently emitting nothing here used to
+          // let the modification look healthy, and classifying it as missing
+          // would queue a duplicate that records payment before any capture.
+          const summary =
+            blockingOperation.operation.status === "WAITING_PAYMENT"
+              ? "A Xero supplementary invoice operation is already queued and waiting for its additional Stripe payment."
+              : isStuckOperation(blockingOperation.operation)
+                ? "A pending or running Xero supplementary invoice operation looks stuck."
+                : "A Xero supplementary invoice operation is already pending or running.";
+          addFinding(findings, {
+            code: "BLOCKED_BY_XERO_OPERATION",
+            severity: "warning",
+            summary,
+            safeToAutoApply: false,
+            details: {
+              modificationId: modification.id,
+              operationId: blockingOperation.operation.id,
+              operationStatus: blockingOperation.operation.status,
+            },
+            actionKeys: [],
           });
         }
       } else {
