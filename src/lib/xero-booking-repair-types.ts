@@ -119,6 +119,10 @@ export interface BookingXeroRepairRunSummary {
   actionStatuses: Record<string, number>;
   manualReviewBookings: string[];
   xeroConnectionAvailable: boolean;
+  // #1491: --apply-action keys that matched no planned action this run (typo,
+  // or the key's embedded amount went stale) — the operator must know the
+  // refund they asked for did NOT execute.
+  unmatchedForcedActionKeys: string[];
 }
 
 export interface BookingXeroRepairRunReport {
@@ -222,6 +226,25 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       createdAt: true,
     },
   },
+  // #1491: paid-path cancels freeze their policy decision (tier, retained
+  // amount, method) in the CANCELLED event's snapshot — the one artifact
+  // every tier writes, including 0%-tier retentions. Unpaid-branch cancels
+  // write CANCELLED events WITHOUT a snapshot, so snapshot presence is the
+  // policy-decision discriminator.
+  events: {
+    where: {
+      type: "CANCELLED",
+    },
+    orderBy: {
+      occurredAt: "asc",
+    },
+    select: {
+      id: true,
+      type: true,
+      snapshot: true,
+      occurredAt: true,
+    },
+  },
 });
 
 export type BookingRepairRecord = Prisma.BookingGetPayload<{
@@ -303,6 +326,19 @@ export interface XeroAmountEvidence {
   operationId?: string;
 }
 
+// #1491: the cancel's durable card-path refund decision, frozen inside the
+// cancellation claim transaction (payment-recovery.ts). Its presence — like a
+// cancellation credit for the credit path — proves the cancel RECORDED a
+// refund decision, so any remaining captured value is the deliberate
+// policy-retained penalty, not a late capture.
+export interface BookingCancellationRefundRecoveryRecord {
+  id: string;
+  bookingId: string;
+  status: string;
+  amountCents: number;
+  createdAt: Date;
+}
+
 export interface BookingClassificationContext {
   booking: BookingRepairRecord;
   paymentLinks: XeroObjectLinkRecord[];
@@ -311,6 +347,7 @@ export interface BookingClassificationContext {
   paymentOperations: XeroOperationRecord[];
   bookingOperations: XeroOperationRecord[];
   modificationOperationsById: Map<string, XeroOperationRecord[]>;
+  cancellationRefundRecoveryOperations: BookingCancellationRefundRecoveryRecord[];
 }
 
 export interface MutableFinding {

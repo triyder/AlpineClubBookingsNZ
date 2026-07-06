@@ -370,13 +370,20 @@ async function applyQueuedAction(
 export async function applyActionsForPass(
   bookings: BookingXeroRepairBookingSummary[],
   deps: RepairDependencies,
-  xeroConnectionAvailable: boolean
+  xeroConnectionAvailable: boolean,
+  // #1491: exact keys an operator explicitly confirmed for execution even
+  // though they are not safeToAutoApply (from the dry-run report).
+  forcedActionKeys?: Set<string>
 ) {
   let hasStateChanges = false;
 
   for (const booking of bookings) {
     for (const action of booking.actions) {
-      if (!action.safeToAutoApply || action.status !== "planned") {
+      const operatorForced = forcedActionKeys?.has(action.key) ?? false;
+      if (
+        (!action.safeToAutoApply && !operatorForced) ||
+        action.status !== "planned"
+      ) {
         continue;
       }
 

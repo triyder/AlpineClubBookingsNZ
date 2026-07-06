@@ -10,7 +10,7 @@ import {
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
-import { BookingEventType } from "@prisma/client";
+import { BookingEventType, type Prisma } from "@prisma/client";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
@@ -547,39 +547,28 @@ async function performBookingCancellation(
     };
   }
 
-  // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without successful payment
-  if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
-    // #1473: a payment that CAPTURED money lands in this branch too (only
-    // SUCCEEDED takes the paid path), and its aggregate status is money truth
-    // that must survive the cancel — only never-captured payments flip to
-    // FAILED. Captured is decided on LEDGER evidence, never on the aggregate
-    // mirror alone: the inbound reconcile folds invoice-applied modification
-    // credit notes into refundedAmountCents/PARTIALLY_REFUNDED on
-    // never-captured IB payments (pure bookkeeping, zero cash), so the mirror
-    // lies in both directions. A captured-status transaction row is the
-    // truth; for STRIPE rows without ledger rows (pre-ledger data) the refund
-    // mirror IS trustworthy — Stripe refunds require a captured charge, and
-    // the invoice-side fold cannot reach an uncaptured Stripe booking (its
-    // Xero invoice is only issued at/after capture).
-    const capturedTransaction = booking.payment
-      ? await prisma.paymentTransaction.findFirst({
-          where: {
-            paymentId: booking.payment.id,
-            status: {
-              in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
-            },
-          },
-          select: { id: true },
-        })
-      : null;
-    const paymentCaptured = Boolean(
-      capturedTransaction ||
-        (booking.payment &&
-          booking.payment.source === "STRIPE" &&
-          (booking.payment.status === "REFUNDED" ||
-            booking.payment.status === "PARTIALLY_REFUNDED" ||
-            booking.payment.refundedAmountCents > 0))
-    );
+  // #1491 (owner decision, Option 1): a genuinely CAPTURED
+  // PARTIALLY_REFUNDED payment takes the paid path below — the member gets
+  // the cancellation-policy tier of the REMAINING captured value
+  // (paidAmountCents already nets out refundedAmountCents). Eligibility is
+  // ledger-only (see the helper), so the folded-mirror never-captured IB
+  // population and mirror-only legacy rows stay out of the refund path.
+  const paidRefundPathEligible = await paymentEligibleForPaidCancelPath(
+    booking.payment
+  );
+
+  // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without a payment the
+  // paid refund path can claim: never-captured payments (including the
+  // folded-mirror shape) and fully-REFUNDED ones (#1473).
+  if (!paidRefundPathEligible) {
+    // #1473: a payment that CAPTURED money can land in this branch too
+    // (fully REFUNDED, or a flattened legacy mirror), and its aggregate
+    // status is money truth that must survive the cancel — only
+    // never-captured payments flip to FAILED. See paymentHasCaptureEvidence
+    // for why the ledger decides, never the aggregate mirror alone.
+    const paymentCaptured = booking.payment
+      ? await paymentHasCaptureEvidence(booking.payment)
+      : false;
 
     if (booking.payment) {
       await cancelOutstandingPaymentIntents({
@@ -739,6 +728,19 @@ async function performBookingCancellation(
     };
   }
 
+  // #1491 (review): a captured Internet Banking payment has no Stripe intent
+  // to refund — "card" would plan zero Stripe slices yet still record a
+  // REFUNDED event, email "refund processed", and book a Xero cash-refund
+  // credit note for money that never moved. Bank-transfer money always
+  // refunds as account credit, so the method is coerced BEFORE the tier is
+  // computed (credit and card tiers can differ) and everything downstream —
+  // policy math, branches, events, emails, audit — sees one consistent
+  // method. The cancel-preview surface returns both methods' figures, so
+  // preview parity holds.
+  if (booking.payment?.source === "INTERNET_BANKING") {
+    refundMethod = "credit";
+  }
+
   // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
   //
   // Phase 1 (tx1) is a DB-only critical section under the global booking
@@ -772,12 +774,67 @@ async function performBookingCancellation(
     if (
       !fresh ||
       !CANCELLABLE_BOOKING_STATUSES.includes(fresh.status) ||
-      !fresh.payment ||
-      fresh.payment.status !== "SUCCEEDED"
+      !fresh.payment
     ) {
       return { claimed: false as const };
     }
+    // #1491: the same paid-path eligibility as the outer gate, re-derived
+    // under the lock (the outer read is stale by definition here). A
+    // genuinely captured PARTIALLY_REFUNDED payment claims; the folded-mirror
+    // never-captured shape never reaches this transaction (outer gate), and
+    // if racing writes degrade the payment between the reads, refusing the
+    // claim (409) is the safe outcome.
+    const freshPaidPathEligible = await paymentEligibleForPaidCancelPath(
+      fresh.payment,
+      tx
+    );
+    if (!freshPaidPathEligible) {
+      return { claimed: false as const };
+    }
     const payment = fresh.payment;
+
+    // #1491 (review): materialize any folded (mirror-only) refund into the
+    // capture ledger BEFORE executing new refunds. The inbound reconcile
+    // folds invoice-applied modification credit notes into the payment
+    // mirror's refundedAmountCents without touching transaction rows; the
+    // refund writers below end by recomputing the mirror from the ledger sum
+    // (reconcilePaymentAggregates), which would silently erase that folded
+    // history — and the allocation planners would treat the folded money as
+    // still refundable. Attributing the fold to the captured rows (oldest
+    // first, capped at each row's headroom) keeps mirror and ledger telling
+    // the same story and tightens the planners' caps.
+    if (payment.status === "PARTIALLY_REFUNDED") {
+      const capturedRows = await tx.paymentTransaction.findMany({
+        where: {
+          paymentId: payment.id,
+          status: {
+            in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+          },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, amountCents: true, refundedAmountCents: true },
+      });
+      const ledgerRefundedCents = capturedRows.reduce(
+        (sum, row) => sum + row.refundedAmountCents,
+        0
+      );
+      let foldedCents = payment.refundedAmountCents - ledgerRefundedCents;
+      for (const row of capturedRows) {
+        if (foldedCents <= 0) {
+          break;
+        }
+        const headroomCents = row.amountCents - row.refundedAmountCents;
+        if (headroomCents <= 0) {
+          continue;
+        }
+        const bumpCents = Math.min(headroomCents, foldedCents);
+        await tx.paymentTransaction.update({
+          where: { id: row.id },
+          data: { refundedAmountCents: row.refundedAmountCents + bumpCents },
+        });
+        foldedCents -= bumpCents;
+      }
+    }
 
     // Freeze the refund plan from the LOCKED read. Change fees (from prior
     // booking modifications) are non-refundable per FEE-03. The refundable
@@ -1419,6 +1476,75 @@ async function recordCancellationEvent(params: {
       changeFeeCents: params.changeFeeCents,
     },
   });
+}
+
+// #1491: paid-cancel-path eligibility, shared with the cancel-preview route
+// so the preview can never contradict the executed money outcome. A
+// PARTIALLY_REFUNDED payment is eligible only on LEDGER evidence (a captured
+// transaction row) — never the mirror fallback below — because the paid
+// path's refund executors allocate against ledger rows: a mirror-only legacy
+// payment would claim and then throw (credit method) or plan zero slices
+// (card method). Mirror-only rows stay in the preserve branch (#1473).
+export async function paymentEligibleForPaidCancelPath(
+  payment: { id: string; status: string } | null | undefined,
+  db: Prisma.TransactionClient | typeof prisma = prisma
+) {
+  if (!payment) {
+    return false;
+  }
+  if (payment.status === "SUCCEEDED") {
+    return true;
+  }
+  if (payment.status !== "PARTIALLY_REFUNDED") {
+    return false;
+  }
+  const capturedTransaction = await db.paymentTransaction.findFirst({
+    where: {
+      paymentId: payment.id,
+      status: {
+        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(capturedTransaction);
+}
+
+// #1473/#1491: capture evidence for cancel-time decisions. Ledger truth
+// first — any transaction row that holds/held money — because the aggregate
+// mirror lies in both directions: the inbound reconcile folds invoice-applied
+// modification credit notes into refundedAmountCents/PARTIALLY_REFUNDED on
+// never-captured IB payments (pure bookkeeping, zero cash), and the pre-#1473
+// cancel flow used to flatten captured statuses to FAILED. For STRIPE rows
+// with no ledger rows (pre-ledger data) the refund mirror IS trustworthy:
+// Stripe refunds require a captured charge, and the invoice-side fold cannot
+// reach an uncaptured Stripe booking (its Xero invoice is only issued
+// at/after capture).
+async function paymentHasCaptureEvidence(
+  payment: {
+    id: string;
+    source: string;
+    status: string;
+    refundedAmountCents: number;
+  },
+  db: Prisma.TransactionClient | typeof prisma = prisma
+) {
+  const capturedTransaction = await db.paymentTransaction.findFirst({
+    where: {
+      paymentId: payment.id,
+      status: {
+        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(
+    capturedTransaction ||
+      (payment.source === "STRIPE" &&
+        (payment.status === "REFUNDED" ||
+          payment.status === "PARTIALLY_REFUNDED" ||
+          payment.refundedAmountCents > 0))
+  );
 }
 
 function hasOutstandingAdditionalPaymentIntent(

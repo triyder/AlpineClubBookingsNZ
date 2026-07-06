@@ -335,9 +335,8 @@ export async function enqueueRefundRequestRefundRecovery({
   });
 }
 
-export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) {
-  return `booking_cancel_refund_recovery_${bookingId}`;
-}
+import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
+export { buildBookingCancellationRefundIdempotencyKey };
 
 /**
  * Durable recovery for a booking cancellation whose inline Stripe card refund

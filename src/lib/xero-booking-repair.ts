@@ -54,10 +54,18 @@ async function runSinglePass(
 export async function runBookingXeroRepair(options?: {
   scope?: BookingXeroRepairScope;
   apply?: boolean;
+  /**
+   * #1491: exact action keys (from a prior dry-run report) an operator has
+   * confirmed and wants executed even though they are not safeToAutoApply —
+   * e.g. a verified genuine late capture's AUTO_REFUND_LATE_CAPTURED_PAYMENT.
+   * Only honored in apply mode.
+   */
+  applyActionKeys?: string[];
   dependencies?: Partial<RepairDependencies>;
 }): Promise<BookingXeroRepairRunReport> {
   const scope = options?.scope ?? { all: true };
   const apply = options?.apply ?? false;
+  const forcedActionKeys = new Set(apply ? options?.applyActionKeys ?? [] : []);
   const deps = getDependencies(options?.dependencies);
   const startedAt = new Date();
   const xeroConnectionAvailable = await deps.isXeroConnected().catch(() => false);
@@ -74,7 +82,11 @@ export async function runBookingXeroRepair(options?: {
     }
 
     const hasPlannedActions = passReport.bookings.some((booking) =>
-      booking.actions.some((action) => action.safeToAutoApply && action.status === "planned")
+      booking.actions.some(
+        (action) =>
+          (action.safeToAutoApply || forcedActionKeys.has(action.key)) &&
+          action.status === "planned"
+      )
     );
     if (!hasPlannedActions) {
       break;
@@ -83,7 +95,8 @@ export async function runBookingXeroRepair(options?: {
     const hasStateChanges = await applyActionsForPass(
       passReport.bookings,
       deps,
-      xeroConnectionAvailable
+      xeroConnectionAvailable,
+      forcedActionKeys
     );
     if (!hasStateChanges) {
       break;
@@ -107,6 +120,9 @@ export async function runBookingXeroRepair(options?: {
     ),
     actionsByType: createCountMap(allActions.map((action) => action.type)),
     actionStatuses: createCountMap(allActions.map((action) => action.status)),
+    unmatchedForcedActionKeys: [...forcedActionKeys].filter(
+      (key) => !allActions.some((action) => action.key === key)
+    ),
     manualReviewBookings: finalBookingsWithFindings
       .filter((booking) =>
         booking.findings.some((finding) => finding.severity === "manual_review")
@@ -175,7 +191,13 @@ export function formatBookingXeroRepairHumanSummary(
         lines.push(`  ${finding.code}: ${finding.summary}`);
       }
       for (const action of booking.actions) {
-        lines.push(`  action ${action.type}: ${action.status}${action.resultMessage ? ` - ${action.resultMessage}` : ""}`);
+        // #1491: non-auto planned actions print their exact key so an
+        // operator can hand-apply them with --apply --apply-action <key>.
+        const keyHint =
+          !action.safeToAutoApply && action.status === "planned"
+            ? ` [--apply-action ${action.key}]`
+            : "";
+        lines.push(`  action ${action.type}: ${action.status}${action.resultMessage ? ` - ${action.resultMessage}` : ""}${keyHint}`);
       }
     }
   }

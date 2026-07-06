@@ -1169,40 +1169,65 @@ export function classifyBookingContext(
     payment &&
     outstandingCapturedRefundAmountCents > 0
   ) {
-    const lateCaptureTransactions = capturedPaymentTransactions.filter(
-      (transaction) => transaction.amountCents > transaction.refundedAmountCents
-    );
-    const refundAmountCents = outstandingCapturedRefundAmountCents;
-    const action = addAction(actionMap, {
-      key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
-      bookingId: booking.id,
-      type: "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
-      description:
-        "Automatically refund the late Stripe capture for a cancelled booking and queue the matching Xero refund note if needed.",
-      safeToAutoApply: true,
-      payload: {
+    // #1491 (owner decision): a cancel that RECORDED a refund decision
+    // deliberately retained the remainder as the cancellation-policy
+    // penalty. Correct books ⇒ no finding (the #1427 account-credit-settled
+    // precedent: never nag forever on correct books). The decision artifacts,
+    // any of: the CANCELLED event's policy snapshot (written by every
+    // paid-path cancel, including 0%-tier retentions; unpaid-branch cancels
+    // carry no snapshot), a cancellation credit (credit path), or a LIVE
+    // booking-cancel refund recovery operation (card path, frozen inside the
+    // claim transaction — a terminally FAILED op is a decision whose money
+    // never moved, so it does NOT suppress the finding; the recovery
+    // exhaustion alert and this finding both stay loud). Without such a
+    // record the state cannot be distinguished from a genuine late capture,
+    // so the finding stays but is NEVER auto-applied — an operator confirms
+    // which it is before any refund moves. Known residual: a genuine late
+    // capture on a booking that ALSO had a paid-path cancel is masked by
+    // that cancel's artifact; the #1350 durable intent-cancellation recovery
+    // and the webhook superseded-intent hook own that population.
+    const cancellationRefundDecisionRecorded =
+      (booking.events ?? []).some((event) => event.snapshot !== null) ||
+      getCancellationCreditAmountCents(booking) > 0 ||
+      context.cancellationRefundRecoveryOperations.some(
+        (operation) => operation.status !== "FAILED"
+      );
+    if (!cancellationRefundDecisionRecorded) {
+      const lateCaptureTransactions = capturedPaymentTransactions.filter(
+        (transaction) => transaction.amountCents > transaction.refundedAmountCents
+      );
+      const refundAmountCents = outstandingCapturedRefundAmountCents;
+      const action = addAction(actionMap, {
+        key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
         bookingId: booking.id,
-        paymentId: payment.id,
-        refundAmountCents,
-        invoiceId: primaryInvoice?.objectId ?? null,
-      },
-    });
-    addFinding(findings, {
-      code: "LATE_CAPTURE_AFTER_CANCELLATION",
-      severity: "critical",
-      summary:
-        "Stripe captured payment after the booking had already been cancelled.",
-      safeToAutoApply: true,
-      details: {
-        paymentId: payment.id,
-        paymentIntentIds: lateCaptureTransactions.map(
-          (transaction) => transaction.stripePaymentIntentId
-        ),
-        refundAmountCents,
-        invoiceId: primaryInvoice?.objectId ?? null,
-      },
-      actionKeys: [action.key],
-    });
+        type: "AUTO_REFUND_LATE_CAPTURED_PAYMENT",
+        description:
+          "Refund the remaining captured Stripe amount on a cancelled booking with no recorded cancellation-refund decision. Verify first whether this is a genuine late capture (refund it) or a deliberate 0%-tier policy retention (leave it) — never auto-applied (#1491).",
+        safeToAutoApply: false,
+        payload: {
+          bookingId: booking.id,
+          paymentId: payment.id,
+          refundAmountCents,
+          invoiceId: primaryInvoice?.objectId ?? null,
+        },
+      });
+      addFinding(findings, {
+        code: "LATE_CAPTURE_AFTER_CANCELLATION",
+        severity: "critical",
+        summary:
+          "Captured value remains on a cancelled booking with no recorded cancellation-refund decision (late capture or 0%-tier retention).",
+        safeToAutoApply: false,
+        details: {
+          paymentId: payment.id,
+          paymentIntentIds: lateCaptureTransactions.map(
+            (transaction) => transaction.stripePaymentIntentId
+          ),
+          refundAmountCents,
+          invoiceId: primaryInvoice?.objectId ?? null,
+        },
+        actionKeys: [action.key],
+      });
+    }
   }
 
   if (booking.status === "CANCELLED" && payment) {

@@ -9,6 +9,10 @@ function printUsage() {
   npx tsx scripts/xero-booking-repair.ts --booking <bookingId> --dry-run
   npx tsx scripts/xero-booking-repair.ts --apply
   npx tsx scripts/xero-booking-repair.ts --from <YYYY-MM-DD> --to <YYYY-MM-DD> --apply
+  npx tsx scripts/xero-booking-repair.ts --apply --apply-action <actionKey>
+
+--apply-action executes ONE not-safeToAutoApply action you have verified from
+a prior dry-run report (repeatable; exact action key match; requires --apply).
 `);
 }
 
@@ -33,9 +37,11 @@ function parseArgs(argv: string[]) {
     from?: Date;
     to?: Date;
     all: boolean;
+    applyActionKeys: string[];
   } = {
     apply: false,
     all: false,
+    applyActionKeys: [],
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -48,6 +54,16 @@ function parseArgs(argv: string[]) {
 
     if (arg === "--apply") {
       options.apply = true;
+      continue;
+    }
+
+    if (arg === "--apply-action") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error("--apply-action requires an action key value.");
+      }
+      options.applyActionKeys.push(value);
+      index += 1;
       continue;
     }
 
@@ -107,8 +123,13 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.applyActionKeys.length > 0 && !args.apply) {
+    throw new Error("--apply-action requires --apply.");
+  }
+
   const report = await runBookingXeroRepair({
     apply: args.apply,
+    applyActionKeys: args.applyActionKeys,
     scope: {
       bookingId: args.bookingId,
       from: args.from,
@@ -118,6 +139,12 @@ async function main() {
   });
 
   console.log(formatBookingXeroRepairHumanSummary(report));
+
+  if (report.summary.unmatchedForcedActionKeys.length > 0) {
+    console.warn(
+      `WARNING: --apply-action key(s) matched no planned action (typo or stale amount) — nothing was executed for: ${report.summary.unmatchedForcedActionKeys.join(", ")}`
+    );
+  }
   console.log("");
   console.log("---BEGIN XERO BOOKING REPAIR JSON---");
   console.log(JSON.stringify(report, null, 2));

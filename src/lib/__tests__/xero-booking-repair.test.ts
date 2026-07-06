@@ -148,6 +148,7 @@ function createDependencies(state: {
   bookings: any[];
   links?: any[];
   operations?: any[];
+  cancellationRefundRecoveryOperations?: any[];
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
@@ -276,6 +277,11 @@ function createDependencies(state: {
       },
       xeroSyncOperation: {
         findMany: vi.fn().mockResolvedValue(operations),
+      },
+      // #1491: booking-cancel card-path refund decisions (matched by exact
+      // booking_cancel_refund_recovery_<id> keys in the loader).
+      paymentRecoveryOperation: {
+        findMany: vi.fn().mockResolvedValue(state.cancellationRefundRecoveryOperations ?? []),
       },
       payment: {
         update: vi.fn().mockImplementation(async ({ where, data }: any) => {
@@ -2064,6 +2070,260 @@ describe("runBookingXeroRepair", () => {
       paymentId: "payment_1",
       refundAmountCents: 10000,
     });
+    // #1491: with no recorded cancellation-refund decision, the finding
+    // surfaces but the refund is NEVER auto-applied — an operator confirms
+    // late capture vs a deliberate 0%-tier policy retention first.
+    expect(lateCaptureAction?.safeToAutoApply).toBe(false);
+    const lateCaptureFinding = bookingReport.findings.find(
+      (finding) => finding.code === "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+    expect(lateCaptureFinding?.safeToAutoApply).toBe(false);
+  });
+
+  it("raises no late-capture finding when the cancel recorded a credit-path refund decision (#1491)", async () => {
+    // Tiered credit-method cancel: 50% of the captured value went back as a
+    // cancellation credit; the remainder is the deliberate policy penalty.
+    const base = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            source: "STRIPE",
+            stripePaymentIntentId: "pi_primary_captured",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    const booking = {
+      ...base,
+      creditsFromCancellation: [
+        {
+          id: "credit_cancel",
+          amountCents: 5000,
+          type: "CANCELLATION_REFUND",
+          description: `Cancellation refund for booking ${base.id.slice(0, 8)}`,
+          xeroCreditNoteId: null,
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    };
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+    expect(
+      bookingReport.actions.some(
+        (action) => action.type === "AUTO_REFUND_LATE_CAPTURED_PAYMENT"
+      )
+    ).toBe(false);
+  });
+
+  it("raises no late-capture finding when the cancel recorded a card-path refund recovery operation (#1491)", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 5000,
+        status: "PARTIALLY_REFUNDED",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            source: "STRIPE",
+            stripePaymentIntentId: "pi_primary_captured",
+            amountCents: 10000,
+            refundedAmountCents: 5000,
+            status: "PARTIALLY_REFUNDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-03T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      cancellationRefundRecoveryOperations: [
+        {
+          id: "recovery_cancel",
+          bookingId: booking.id,
+          status: "SUCCEEDED",
+          amountCents: 5000,
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+    // The loader queries by the EXACT booking-cancel idempotency key, so
+    // modification/refund-request recovery ops can never alias in as evidence.
+    expect(deps.prisma.paymentRecoveryOperation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          idempotencyKey: {
+            in: [`booking_cancel_refund_recovery_${booking.id}`],
+          },
+        },
+      })
+    );
+  });
+
+  it("keeps the late-capture finding when the only recovery operation is terminally FAILED (#1491)", async () => {
+    // A FAILED (retry-exhausted) recovery op is a decision whose money never
+    // moved — it must NOT suppress the finding.
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            source: "STRIPE",
+            stripePaymentIntentId: "pi_primary_captured",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      cancellationRefundRecoveryOperations: [
+        {
+          id: "recovery_failed",
+          bookingId: booking.id,
+          status: "FAILED",
+          amountCents: 10000,
+          createdAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    const finding = bookingReport.findings.find(
+      (item) => item.code === "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+    expect(finding).toBeDefined();
+    expect(finding?.safeToAutoApply).toBe(false);
+  });
+
+  it("raises no late-capture finding when the CANCELLED event carries a policy snapshot (#1491)", async () => {
+    // The one artifact every paid-path cancel writes — including 0%-tier
+    // retentions, which mint no credit and enqueue no recovery op.
+    const booking = {
+      ...makeBooking({
+        status: "CANCELLED",
+        payment: {
+          ...makeBooking().payment,
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+          transactions: [
+            {
+              id: "txn_primary",
+              paymentId: "payment_1",
+              kind: "PRIMARY",
+              source: "STRIPE",
+              stripePaymentIntentId: "pi_primary_captured",
+              amountCents: 10000,
+              refundedAmountCents: 0,
+              status: "SUCCEEDED",
+              paymentMethodId: "pm_123",
+              reason: null,
+              createdAt: new Date("2026-05-01T00:00:00Z"),
+              updatedAt: new Date("2026-05-01T00:00:00Z"),
+            },
+          ],
+        },
+      }),
+      events: [
+        {
+          id: "evt_cancelled",
+          type: "CANCELLED",
+          snapshot: {
+            policySummary: "Cancelled 2 day(s) before check-in: no refund was due.",
+            refundPercentage: 0,
+            settledAmountCents: 0,
+            retainedAmountCents: 10000,
+          },
+          occurredAt: new Date("2026-05-03T00:00:00Z"),
+        },
+      ],
+    };
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+  });
+
+  it("reports --apply-action keys that matched no planned action (#1491)", async () => {
+    const booking = makeBooking();
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      applyActionKeys: ["late-capture-refund:booking_1:payment_1:99999"],
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(report.summary.unmatchedForcedActionKeys).toEqual([
+      "late-capture-refund:booking_1:payment_1:99999",
+    ]);
   });
 
   it("marks only the outstanding cancelled transaction failed during apply mode", async () => {
@@ -2174,8 +2434,21 @@ describe("runBookingXeroRepair", () => {
     });
     const deps = createDependencies({ bookings: [booking] });
 
+    // #1491: the late-capture refund is never auto-applied — a plain --apply
+    // run must leave the money untouched...
+    const untouchedReport = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+    expect(deps.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(untouchedReport.summary.bookingsWithFindings).toBe(1);
+
+    // ...and executes only when the operator confirms the EXACT action key
+    // from the dry-run report (--apply-action).
     const report = await runBookingXeroRepair({
       apply: true,
+      applyActionKeys: ["late-capture-refund:booking_1:payment_1:13000"],
       dependencies: deps,
       scope: { all: true },
     });

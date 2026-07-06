@@ -194,6 +194,19 @@ also manual-review (not auto-queued) when the payment captured money and no
 stored evidence records the policy-limited settlement — the report tells you
 to size the credit note (or confirm the note's total) by hand from the
 cancellation-policy history before acting; `--apply` will not touch these.
+Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
+it now fires only when a cancelled booking retains captured value with NO
+recorded cancellation-refund decision (no cancellation credit, no
+booking-cancel refund recovery operation), which is either a genuine late
+capture or a deliberate 0%-tier policy retention. After verifying it is a
+genuine late capture, execute exactly that refund with
+`--apply --apply-action <actionKey>` (the key is printed next to the planned
+action in the human summary and in the JSON report; combine with
+`--booking <id>` to keep the rest of the apply run scoped, and note the run
+warns about forced keys that matched nothing); if it is a deliberate
+retention, leave it. Tiered cancels that
+deliberately retained a policy penalty produce no finding at all — their
+books are correct.
 
 ## Quarterly Backup Restore Drill
 

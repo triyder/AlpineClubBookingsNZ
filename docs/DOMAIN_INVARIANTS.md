@@ -105,20 +105,42 @@ Future reviews and issues should cite this file when proposing changes.
   never-captured payment — including that folded shape — flips to FAILED at
   cancel and its open invoice gets the finalPrice+changeFee invoice-clearing
   credit note (the #1015 outstanding-balance rule; supplementary invoices
-  from unpaid price increases are a separate pre-existing gap). A captured
-  payment keeps its status and refund history, its captured Stripe intent is
-  not sent a cancel, and no clearing note is enqueued: finalPrice+changeFee
-  is not its open balance — normally the invoice is already settled
-  Xero-side, and in the failed-payment-record window a cancel-time clearing
-  note would close the invoice underneath the op retry stack's recording
-  repair and permanently poison it. Two consequences are deliberate and
-  owner-visible: the cancel issues no NEW refund for captured non-SUCCEEDED
-  payments (the paid path claims only SUCCEEDED — an open product decision on
-  #1473's Decision Record, and note the operator repair pass's
-  late-capture-after-cancellation action resolves it in practice by
-  auto-refunding the full retained remainder with no policy tiering), and
-  rows already flattened by the old defect are not backfilled (the repair
-  pass synthesizes captured state from the STRIPE mirror).
+  from unpaid price increases are a separate pre-existing gap). A genuinely
+  captured PARTIALLY_REFUNDED payment takes the PAID cancellation path
+  (#1491, owner decision): the member receives the cancellation-policy tier
+  of the REMAINING captured value (`refundableBase = min(amountCents −
+  refundedAmountCents, finalPrice + changeFee) − changeFee`; change fees stay
+  non-refundable per FEE-03), with the same claim-first single-flight,
+  frozen card-refund plan, and credit-path ledger writes as a SUCCEEDED
+  cancel. Paid-path eligibility is LEDGER-ONLY (a captured transaction row —
+  `paymentEligibleForPaidCancelPath`, shared with the cancel-preview route so
+  preview and cancel can never disagree): mirror-only legacy rows stay in the
+  preserve branch because the refund executors allocate against ledger rows.
+  Two paid-path rules keep money truth intact: a captured INTERNET_BANKING
+  payment's refund method is coerced to "credit" before the tier is computed
+  (there is no Stripe intent to refund — "card" would claim a processed
+  refund and book a Xero cash-refund note with no money moved), and any
+  folded (mirror-only) refund is materialized into the capture ledger inside
+  the claim transaction before new refunds execute, so the aggregate
+  reconcile cannot erase the folded history and the allocation planners see
+  the true remaining headroom. A captured payment that stays out of the paid
+  path (fully REFUNDED, or a flattened legacy mirror) keeps its status and
+  refund history, its captured Stripe intent is not sent a cancel, and no
+  clearing note is enqueued: finalPrice+changeFee is not its open balance —
+  normally the invoice is already settled Xero-side, and in the
+  failed-payment-record window a cancel-time clearing note would close the
+  invoice underneath the op retry stack's recording repair and permanently
+  poison it. The repair pass's late-capture finding fires only when a
+  cancelled booking retains captured value with NO recorded
+  cancellation-refund decision — no CANCELLED-event policy snapshot (written
+  by every paid-path cancel, including 0%-tier retentions), no cancellation
+  credit, and no LIVE booking-cancel refund recovery operation (a terminally
+  FAILED op is a decision whose money never moved and does not suppress the
+  finding) — and is never auto-applied: an operator distinguishes a genuine
+  late capture from a deliberate retention, then executes it with
+  `--apply --apply-action <key>` (#1491). Rows already flattened by the old
+  defect are not backfilled (the repair pass synthesizes captured state from
+  the STRIPE mirror).
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357) — but a PAID invoice event alone proves
   nothing: Xero also reports PAID when OUR OWN clearing credit note is

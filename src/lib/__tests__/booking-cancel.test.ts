@@ -49,6 +49,9 @@ const mocks = vi.hoisted(() => {
   markBookingCancellationRefundRecoverySucceeded: vi.fn(),
   recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
   txPaymentTransactionFindFirst: vi.fn(),
+  // #1491: the fold-materialization reads/writes inside the claim tx.
+  txPaymentTransactionFindMany: vi.fn(),
+  txPaymentTransactionUpdate: vi.fn(),
   // #1473: the captured-ledger lookup in the not-SUCCEEDED cancel branch.
   paymentTransactionFindFirst: vi.fn(),
   // #1406: spy on the payment-link revoke so the guard test can prove a
@@ -213,6 +216,8 @@ describe("cancelBooking credit refunds", () => {
             },
             paymentTransaction: {
               findFirst: mocks.txPaymentTransactionFindFirst,
+              findMany: mocks.txPaymentTransactionFindMany,
+              update: mocks.txPaymentTransactionUpdate,
             },
           };
           mocks.lastTx = mockTx;
@@ -225,6 +230,9 @@ describe("cancelBooking credit refunds", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     // #1473: default = no captured transaction rows on the ledger.
     mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+    // #1491: fold materialization defaults — no captured rows to attribute to.
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
+    mocks.txPaymentTransactionUpdate.mockResolvedValue({});
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
@@ -475,14 +483,17 @@ describe("cancelBooking credit refunds", () => {
   // its aggregate status is money truth: the cancel must not flatten it to
   // FAILED, must not try to cancel the captured Stripe intent, and must not
   // queue an invoice-clearing credit note against a paid invoice.
-  it("preserves a PARTIALLY_REFUNDED payment's status and queues no clearing note on cancel (#1473)", async () => {
-    mocks.bookingFindUnique.mockResolvedValueOnce({
+  // #1491 (owner decision, Option 1): a genuinely captured PARTIALLY_REFUNDED
+  // payment no longer parks in the preserve branch — it takes the paid path
+  // and the member gets the policy tier of the REMAINING captured value.
+  it("routes a captured PARTIALLY_REFUNDED payment through the tiered paid path — credit method (#1491)", async () => {
+    const bookingPr = {
       id: "booking_pr",
       memberId: "member_1",
-      status: "CONFIRMED",
-      finalPriceCents: 7000,
-      checkIn: new Date("2026-07-10"),
-      checkOut: new Date("2026-07-12"),
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
       member: {
         id: "member_1",
         email: "member@example.com",
@@ -498,15 +509,250 @@ describe("cancelBooking credit refunds", () => {
         changeFeeCents: 0,
         creditAppliedCents: 0,
         stripePaymentIntentId: "pi_pr",
-        xeroInvoiceId: "inv_pr",
+        additionalPaymentIntentId: null,
         additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_pr",
       },
-    });
-    // Ledger evidence: the capture's SUCCEEDED-then-refunded PRIMARY row.
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingPr);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingPr);
+    // Capture evidence on the outer gate (and the under-lock re-check rides
+    // the tx client's default truthy findFirst).
     mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_pr" });
+    mocks.calculateRefundAmount.mockReturnValue({
+      refundAmountCents: 3500,
+      refundPercentage: 50,
+    });
 
     const result = await cancelBooking(
       "booking_pr",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "credit"
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      data: expect.objectContaining({
+        refundAmountCents: 3500,
+        refundPercentage: 50,
+      }),
+    });
+    // The tier was computed off the REMAINING captured value (10000 − 3000).
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      7000,
+      30,
+      expect.anything(),
+      "credit"
+    );
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_pr", amountCents: 3500 })
+    );
+    expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      "member_1",
+      3500,
+      "booking_pr",
+      undefined,
+      expect.anything()
+    );
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_pr" },
+      data: { status: "CANCELLED" },
+    });
+    // No FAILED flattening and no unpaid-branch clearing note.
+    for (const [args] of mocks.paymentUpdate.mock.calls) {
+      expect(args.data.status).toBeUndefined();
+    }
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("routes a captured PARTIALLY_REFUNDED payment through the tiered paid path — card method with frozen recovery plan (#1491)", async () => {
+    const bookingPr = {
+      id: "booking_prc",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_prc",
+        bookingId: "booking_prc",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 500,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_prc",
+        additionalPaymentIntentId: null,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_prc",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingPr);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingPr);
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_prc" });
+    mocks.calculateRefundAmount.mockReturnValue({
+      refundAmountCents: 3250,
+      refundPercentage: 50,
+    });
+
+    const result = await cancelBooking(
+      "booking_prc",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    // Change fee stays non-refundable (FEE-03): base =
+    // min(10000 − 3000, 10000 + 500) − 500 = 6500.
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      6500,
+      30,
+      expect.anything(),
+      "card"
+    );
+    // The card plan is frozen in tx1 as the durable refund decision (#1349) —
+    // this is also the artifact the repair pass reads as "policy retained".
+    expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_prc", amountCents: 3250 })
+    );
+    expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_prc",
+        paymentId: "payment_prc",
+        amountCents: 3250,
+      })
+    );
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("coerces a captured IB PARTIALLY_REFUNDED cancel to the credit method and materializes the folded refund into the ledger (#1491)", async () => {
+    // Captured bank-transfer payment whose modification refund was FOLDED into
+    // the mirror only (ledger row still shows refunded 0). A "card" cancel
+    // must (a) route on the ledger row alone (no STRIPE mirror arm), (b)
+    // coerce to the credit method BEFORE the tier is computed, and (c) seed
+    // the fold into the ledger so the post-refund aggregate reconcile cannot
+    // erase it.
+    const bookingIb = {
+      id: "booking_ibpr",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_ibpr",
+        bookingId: "booking_ibpr",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "INTERNET_BANKING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: null,
+        additionalPaymentIntentId: null,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_ibpr",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingIb);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingIb);
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_ibpr" });
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([
+      {
+        id: "ptx_ibpr",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+      },
+    ]);
+    mocks.calculateRefundAmount.mockReturnValue({
+      refundAmountCents: 3500,
+      refundPercentage: 50,
+    });
+
+    const result = await cancelBooking(
+      "booking_ibpr",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    // Coercion proven: the tier was computed for the CREDIT method.
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      7000,
+      30,
+      expect.anything(),
+      "credit"
+    );
+    // The folded 3000 was attributed to the captured ledger row in tx1.
+    expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith({
+      where: { id: "ptx_ibpr" },
+      data: { refundedAmountCents: 3000 },
+    });
+    // Credit path executed; no Stripe planning, no phantom card refund.
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_ibpr", amountCents: 3500 })
+    );
+    expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      "member_1",
+      3500,
+      "booking_ibpr",
+      undefined,
+      expect.anything()
+    );
+    expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
+  });
+
+  it("keeps a fully REFUNDED payment in the preserve branch — no writes, no clearing note (#1473/#1491)", async () => {
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_fr",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_fr",
+        bookingId: "booking_fr",
+        amountCents: 10000,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_fr",
+        xeroInvoiceId: "inv_fr",
+        additionalPaymentStatus: null,
+      },
+    });
+    // Ledger evidence: the capture's refunded PRIMARY row.
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_fr" });
+
+    const result = await cancelBooking(
+      "booking_fr",
       "member_1",
       "MEMBER",
       "127.0.0.1",
@@ -525,11 +771,11 @@ describe("cancelBooking credit refunds", () => {
     // The booking is cancelled, but the payment row is untouched — no status
     // write of any kind.
     expect(mocks.bookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking_pr" },
+      where: { id: "booking_fr" },
       data: { status: "CANCELLED" },
     });
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
-    // No clearing note against a paid invoice, and no Stripe cancel of a
+    // No clearing note against a settled invoice, and no Stripe cancel of a
     // captured intent.
     expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
@@ -653,9 +899,11 @@ describe("cancelBooking credit refunds", () => {
   });
 
   it("flips only the outstanding additional intent while preserving a captured primary's status (#1473)", async () => {
-    // Captured primary (ledger row) + an outstanding additional intent from a
-    // pending price increase: the additional flips FAILED and is cancelled at
-    // Stripe, but the aggregate status write is omitted.
+    // Fully REFUNDED captured primary (ledger row) + an outstanding additional
+    // intent from a pending price increase: the additional flips FAILED and is
+    // cancelled at Stripe, but the aggregate status write is omitted. (A
+    // PARTIALLY_REFUNDED captured payment now takes the paid path instead —
+    // #1491.)
     mocks.bookingFindUnique.mockResolvedValueOnce({
       id: "booking_addl",
       memberId: "member_1",
@@ -672,8 +920,8 @@ describe("cancelBooking credit refunds", () => {
         id: "payment_addl",
         bookingId: "booking_addl",
         amountCents: 10000,
-        refundedAmountCents: 3000,
-        status: "PARTIALLY_REFUNDED",
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
         source: "STRIPE",
         changeFeeCents: 0,
         creditAppliedCents: 0,
