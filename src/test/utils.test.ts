@@ -14,8 +14,9 @@ describe("formatCents", () => {
     expect(formatCents(0)).toBe("$0.00");
   });
 
-  it("formats large amounts", () => {
-    expect(formatCents(100000)).toBe("$1000.00");
+  it("formats large amounts with thousands separators", () => {
+    expect(formatCents(100000)).toBe("$1,000.00");
+    expect(formatCents(44667484)).toBe("$446,674.84");
   });
 
   it("formats single cent", () => {

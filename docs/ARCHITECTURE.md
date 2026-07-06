@@ -462,6 +462,10 @@ assignments forward from one season to another idempotently, skipping existing
 target-season assignments and reporting missing or inactive-type exceptions.
 The Admin > Members list shows the current seasonal Membership Type beside the
 Access column so operators can scan access and membership policy separately.
+When Xero is connected, the Xero contact-group badges and filters on that page
+are served from a local cache; a "Refresh Xero Groups" action repopulates it and
+a contextual hint next to the button reports when the cache was last refreshed
+(or prompts the operator to populate it when it has never been refreshed).
 Booking pricing and booking gates resolve the member's effective seasonal type
 for the booking season:
 `MEMBER_RATE` uses normal member rates, `NON_MEMBER_RATE` uses non-member

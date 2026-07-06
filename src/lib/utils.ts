@@ -7,15 +7,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCents(cents: number): string {
-  if (APP_CURRENCY === "NZD" && APP_LOCALE === "en-NZ") {
-    return `$${(cents / 100).toFixed(2)}`;
-  }
+const centsFormatter = new Intl.NumberFormat(APP_LOCALE, {
+  style: "currency",
+  currency: APP_CURRENCY,
+});
 
-  return new Intl.NumberFormat(APP_LOCALE, {
-    style: "currency",
-    currency: APP_CURRENCY,
-  }).format(cents / 100);
+export function formatCents(cents: number): string {
+  return centsFormatter.format(cents / 100);
 }
 
 /**

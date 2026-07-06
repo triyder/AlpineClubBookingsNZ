@@ -7,6 +7,7 @@ const {
   mockBuildFinanceRatioMatrix,
   mockBuildFinanceFinancialYearsPanelItems,
   mockBuildFinanceRevenueReconciliation,
+  mockBuildFinanceSyncHealth,
   mockGetFinanceBookingMetrics,
   mockGetFinanceSyncDiagnosticsStatus,
   mockListFinanceSnapshots,
@@ -19,6 +20,7 @@ const {
   mockBuildFinanceRatioMatrix: vi.fn(),
   mockBuildFinanceFinancialYearsPanelItems: vi.fn(),
   mockBuildFinanceRevenueReconciliation: vi.fn(),
+  mockBuildFinanceSyncHealth: vi.fn(),
   mockGetFinanceBookingMetrics: vi.fn(),
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
   mockListFinanceSnapshots: vi.fn(),
@@ -37,6 +39,10 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/finance-sync-diagnostics", () => ({
   getFinanceSyncDiagnosticsStatus: mockGetFinanceSyncDiagnosticsStatus,
+}));
+
+vi.mock("@/lib/finance-sync-health", () => ({
+  buildFinanceSyncHealth: mockBuildFinanceSyncHealth,
 }));
 
 vi.mock("@/lib/finance-booking-metrics", () => ({
@@ -69,7 +75,7 @@ vi.mock("@/lib/finance-sync-storage", () => ({
   listFinanceSnapshots: mockListFinanceSnapshots,
 }));
 
-vi.mock("@/lib/finance-cash-report-page", () => ({
+vi.mock("@/lib/finance-cash-snapshot", () => ({
   parseCashSnapshot: mockParseCashSnapshot,
 }));
 
@@ -388,6 +394,45 @@ describe("finance dashboard page model", () => {
         },
       ],
     });
+    mockBuildFinanceSyncHealth.mockResolvedValue({
+      overallTone: "amber",
+      overallLabel: "Needs attention",
+      warnings: ["Pending operations: 2."],
+      sections: [
+        {
+          id: "daily-sync",
+          title: "Daily Xero sync",
+          description: "The scheduled pull.",
+          tone: "green",
+          signals: [
+            {
+              id: "latest-sync-run",
+              label: "Latest sync run",
+              value: "Succeeded 2h ago",
+              tone: "green",
+              href: "/admin/xero",
+              linkLabel: "Open Xero admin",
+            },
+          ],
+        },
+        {
+          id: "xero-operations",
+          title: "Xero operations",
+          description: "Outbound writes.",
+          tone: "amber",
+          signals: [
+            {
+              id: "pending-operations",
+              label: "Pending operations",
+              value: "2",
+              detail: "Queued writes.",
+              tone: "amber",
+              href: "/admin/xero",
+            },
+          ],
+        },
+      ],
+    });
     mockListFinanceSnapshots.mockResolvedValue([{ id: "snapshot-1" }]);
     mockParseCashSnapshot.mockReturnValue({
       totalBalanceCents: 150_000,
@@ -411,6 +456,7 @@ describe("finance dashboard page model", () => {
     "working-capital",
     "cash",
     "balance-sheet",
+    "sync-health",
   ])("builds the %s dashboard from stored/modelled data", async (view) => {
     const model = await buildFinanceDashboardPageModel({
       member: financeManager(),
@@ -426,6 +472,43 @@ describe("finance dashboard page model", () => {
     }
     expect(model.exportSections[0].title).toBe("Dashboard selection");
     expect(model.sourceNotes.length).toBeGreaterThan(0);
+  });
+
+  it("maps sync-health sections onto status panels with tones, links, and warnings", async () => {
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "sync-health" },
+    });
+
+    expect(model.cards[0]).toMatchObject({
+      title: "Sync confidence",
+      value: "Needs attention",
+    });
+
+    const opsPanel = model.statusPanels.find(
+      (panel) => panel.title === "Xero operations"
+    );
+    expect(opsPanel).toMatchObject({
+      badgeLabel: "Attention",
+      badgeTone: "warning",
+    });
+    expect(opsPanel?.items[0]).toMatchObject({
+      label: "Pending operations",
+      value: "2",
+      emphasis: true,
+      href: "/admin/xero",
+    });
+
+    const syncPanel = model.statusPanels.find(
+      (panel) => panel.title === "Daily Xero sync"
+    );
+    expect(syncPanel).toMatchObject({ badgeLabel: "OK", badgeTone: "success" });
+    expect(syncPanel?.items[0]).toMatchObject({ emphasis: false });
+
+    expect(model.warnings).toContain("Pending operations: 2.");
+    expect(
+      model.exportSections.some((section) => section.title === "Sync health signals")
+    ).toBe(true);
   });
 
   it("appends the financial-years committee panel to revenue and costs views", async () => {

@@ -25,7 +25,7 @@ import {
   Legend,
 } from "recharts";
 import type { RevenueGranularity } from "@/lib/admin-reports";
-import { formatCents } from "@/lib/utils";
+import { formatDollarsDisplay } from "@/lib/finance-format";
 import { bookingStatusLabel } from "@/lib/status-colors";
 
 const PIE_COLORS = ["#3b82f6", "#ef4444"];
@@ -89,13 +89,13 @@ export function RevenueBarChart({
         />
         <YAxis
           tick={{ fontSize: 12 }}
-          tickFormatter={(value) => `$${(value / 100).toFixed(0)}`}
+          tickFormatter={(value) => formatDollarsDisplay(Number(value))}
         />
         <Tooltip
           labelFormatter={(_value, payload) =>
             payload?.[0]?.payload?.tooltipLabel ?? ""
           }
-          formatter={(value) => [formatCents(Number(value)), "Revenue"]}
+          formatter={(value) => [formatDollarsDisplay(Number(value)), "Revenue"]}
         />
         <Bar dataKey="revenueCents" fill="#22c55e" radius={[4, 4, 0, 0]} />
       </BarChart>

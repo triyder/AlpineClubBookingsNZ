@@ -100,6 +100,7 @@ export {
 } from "./xero-contact-cache";
 
 export {
+  getXeroContactGroupCacheLastRefreshedAt,
   getXeroContactGroupMemberships,
   getXeroContactGroups,
   getXeroContactIdsForGroup,

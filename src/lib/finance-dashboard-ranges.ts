@@ -17,6 +17,7 @@ export const FINANCE_DASHBOARD_VIEWS = [
   "working-capital",
   "cash",
   "balance-sheet",
+  "sync-health",
 ] as const;
 
 export type FinanceDashboardView = (typeof FINANCE_DASHBOARD_VIEWS)[number];
@@ -69,6 +70,7 @@ export const FINANCE_DASHBOARD_VIEW_LABELS: Record<
   "working-capital": "Working Capital",
   cash: "Cash",
   "balance-sheet": "Balance Sheet",
+  "sync-health": "Xero Sync",
 };
 
 export const FINANCE_DASHBOARD_RANGE_LABELS: Record<
@@ -164,6 +166,7 @@ export interface FinanceDashboardSelection {
   /** Ratios-view explorer selection, for shareable links. */
   ratioNumeratorId: string | null;
   ratioDenominatorId: string | null;
+  ratioRangeKey: string | null;
   warnings: string[];
 }
 
@@ -555,6 +558,7 @@ export function resolveFinanceDashboardSelection(input: {
     expenseLine: readParam(input.searchParams, "expenseLine") ?? null,
     ratioNumeratorId: readParam(input.searchParams, "ratioNumerator") ?? null,
     ratioDenominatorId: readParam(input.searchParams, "ratioDenominator") ?? null,
+    ratioRangeKey: readParam(input.searchParams, "ratioRange") ?? null,
     warnings,
   };
 }

@@ -67,7 +67,8 @@ The default dashboard state is:
 
 The dashboard renders visual summaries only: KPI cards, trend charts (one
 point per month, with the comparison period overlaid as a second series), mix
-charts, reconciliation/status panels, compact source notes, warnings, and
+charts, reconciliation/status panels, compact source notes (the Xero-derived
+views link to Xero's report centre for day-level drill-down), warnings, and
 PDF/CSV exports for the active selection. Dashboard displays show whole
 dollars with thousands separators; exact cents appear only where tie-out
 matters (the reconciliation panel and CSV/PDF export rows). It does not render
@@ -87,10 +88,24 @@ share of hut-fee income for this FY, last FY, and the FY before. The server
 ships the full category-month matrix (`finance-ratio-insights.ts` /
 client-safe helpers in `finance-ratio-shared.ts`), so switching pairings or
 ranges recomputes instantly in the browser; the selection syncs to
-`ratioNumerator`/`ratioDenominator` query params for shareable links.
+`ratioNumerator`/`ratioDenominator`/`ratioRange` query params for shareable
+links.
 Divide-by-zero renders as "—". The revenue and costs views carry a compact
 "Financial years" panel (this FY YTD vs the two prior FYs per group) that
 links conceptually to the same data.
+
+The **Xero Sync** view (`view=sync-health`) is the treasurer's
+sync-confidence page: one traffic light aggregating the health signals the
+platform already tracks — latest daily sync run, revenue reconciliation,
+Xero operation outbox (failed/pending writes, bookings missing invoices,
+refunds missing credit notes), and monthly fact freshness (latest sync time
+and newest finalised month per statement kind). Red means a sync failed in
+the last 24 hours, outbox operations have failed, or reconciliation does not
+tie; amber covers pending operations, staleness over 36 hours, a finished
+month still provisional-only, or an unavailable signal; green otherwise.
+Signals link to the Xero admin console or the setup mappings panel. The view
+is aggregation-only (`finance-sync-health.ts`) — it adds no sync logic and
+never calls Xero live — and has no range/compare selectors.
 
 ## Data Model
 

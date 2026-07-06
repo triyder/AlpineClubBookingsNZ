@@ -107,6 +107,9 @@ function toneVariant(tone: FinanceDashboardPageModel["syncStatus"]["tone"]) {
 export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  // Ratios picks its range client-side; sync health has no time window.
+  const hideRangeControls =
+    model.selection.view === "ratios" || model.selection.view === "sync-health";
 
   async function downloadPdf() {
     if (!reportRef.current) return;
@@ -205,7 +208,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                 ))}
               </select>
             </div>
-            {model.selection.view !== "ratios" ? (
+            {!hideRangeControls ? (
               <>
                 <div className="space-y-1.5">
                   <Label htmlFor="finance-range">Range</Label>
@@ -263,7 +266,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
               </Button>
             </div>
 
-            {model.selection.view !== "ratios" ? (
+            {!hideRangeControls ? (
               <>
                 <div className="space-y-1.5">
                   <Label htmlFor="finance-from">From month</Label>
@@ -397,6 +400,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
             matrix={model.ratios.matrix}
             initialNumeratorId={model.ratios.initialNumeratorId}
             initialDenominatorId={model.ratios.initialDenominatorId}
+            initialRangeKey={model.ratios.initialRangeKey}
           />
         ) : null}
 
@@ -488,6 +492,14 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                             {item.detail}
                           </p>
                         ) : null}
+                        {item.href ? (
+                          <a
+                            href={item.href}
+                            className="text-xs text-blue-600 hover:underline"
+                          >
+                            {item.linkLabel ?? "Open"}
+                          </a>
+                        ) : null}
                       </div>
                       <p className="font-semibold text-slate-900">
                         {item.value}
@@ -516,6 +528,16 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                 <p className="text-sm leading-6 text-slate-600">
                   {note.description}
                 </p>
+                {note.href ? (
+                  <a
+                    href={note.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    {note.linkLabel ?? "Open in Xero"}
+                  </a>
+                ) : null}
               </div>
             ))}
           </div>

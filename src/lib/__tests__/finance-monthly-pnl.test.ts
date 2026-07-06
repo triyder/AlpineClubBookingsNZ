@@ -274,4 +274,40 @@ describe("buildFinanceMonthlyPnlSummary", () => {
       )
     ).toBe(true);
   });
+
+  it("trusts the stored provisional flag when the sync stalled in an earlier month", async () => {
+    // Sync last ran mid-May: May's facts are still flagged provisional even
+    // though the calendar has moved on to June.
+    mockListMonthlyFacts.mockImplementation(
+      async (input: { fromMonth: string }) =>
+        input.fromMonth === PRIMARY.fromMonth
+          ? [
+              fact({ month: "2026-04", accountCode: "200", accountName: "Hut Fees", accountClass: "REVENUE", amountCents: 120_000 }),
+              fact({
+                month: "2026-05",
+                accountCode: "200",
+                accountName: "Hut Fees",
+                accountClass: "REVENUE",
+                amountCents: 80_000,
+                isProvisional: true,
+              }),
+            ]
+          : []
+    );
+
+    const summary = await buildFinanceMonthlyPnlSummary({
+      kind: "REVENUE",
+      primary: PRIMARY,
+      comparison: null,
+      currentMonth: "2026-06",
+    });
+
+    const may = summary.trend.find((point) => point.monthKey === "2026-05");
+    expect(may?.isProvisional).toBe(true);
+    const provisionalWarning = summary.warnings.find((warning) =>
+      warning.includes("month-to-date")
+    );
+    expect(provisionalWarning).toContain("May 2026");
+    expect(provisionalWarning).not.toContain("Jun 2026");
+  });
 });

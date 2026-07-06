@@ -33,6 +33,7 @@ interface RatioExplorerProps {
   matrix: FinanceRatioMatrix;
   initialNumeratorId?: string | null;
   initialDenominatorId?: string | null;
+  initialRangeKey?: string | null;
 }
 
 interface RangeChip {
@@ -112,6 +113,7 @@ export function RatioExplorer({
   matrix,
   initialNumeratorId,
   initialDenominatorId,
+  initialRangeKey,
 }: RatioExplorerProps) {
   const chips = useMemo(() => buildRangeChips(matrix), [matrix]);
   const seriesById = useMemo(
@@ -129,7 +131,11 @@ export function RatioExplorer({
       ? initialDenominatorId
       : defaultSeriesId(matrix.series, "REVENUE", "hut", "total-income")
   );
-  const [rangeKey, setRangeKey] = useState(chips[0]?.key ?? "this-fy");
+  const [rangeKey, setRangeKey] = useState(() =>
+    initialRangeKey && chips.some((chip) => chip.key === initialRangeKey)
+      ? initialRangeKey
+      : (chips[0]?.key ?? "this-fy")
+  );
 
   const numerator = seriesById.get(numeratorId) ?? matrix.series[0];
   const denominator = seriesById.get(denominatorId) ?? matrix.series[0];

@@ -26,6 +26,7 @@ import { MemberImportDialog } from "./_components/member-import-dialog"
 import { MemberPagination } from "./_components/member-pagination"
 import { MemberPasswordActionDialog } from "./_components/member-password-action-dialog"
 import { MemberTable } from "./_components/member-table"
+import { XeroGroupsRefreshHint } from "./_components/xero-groups-refresh-hint"
 import { useMembersQueryState } from "./_hooks/use-members-query-state"
 import { useXeroContactGroups } from "./_hooks/use-xero-contact-groups"
 import type { BulkAction, ImportResult, Member, PasswordActionTarget } from "./_types"
@@ -120,6 +121,7 @@ export default function MembersPage() {
     xeroContactGroupsList,
     refreshingXeroGroups,
     refreshXeroGroups,
+    lastRefreshedAt: xeroGroupsLastRefreshedAt,
   } = useXeroContactGroups({
     onError: setError,
     onSuccess: showSuccess,
@@ -251,42 +253,47 @@ export default function MembersPage() {
             {debouncedSearch ? ` matching "${debouncedSearch}"` : " total"}
           </p>
         </div>
-        <div className="flex gap-2">
-          {xeroConnected && (
+        <div className="flex flex-col items-start gap-1.5">
+          <div className="flex gap-2">
+            {xeroConnected && (
+              <ViewOnlyActionButton
+                canEdit={canEditMembership}
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshXeroGroups}
+                disabled={refreshingXeroGroups}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-1 ${refreshingXeroGroups ? "animate-spin" : ""}`}
+                />
+                {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
+              </ViewOnlyActionButton>
+            )}
+            <a href={exportUrl}>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-1" />
+                Export CSV
+              </Button>
+            </a>
             <ViewOnlyActionButton
               canEdit={canEditMembership}
               variant="outline"
               size="sm"
-              onClick={handleRefreshXeroGroups}
-              disabled={refreshingXeroGroups}
+              onClick={() => setImportDialogOpen(true)}
             >
-              <RefreshCw
-                className={`h-4 w-4 mr-1 ${refreshingXeroGroups ? "animate-spin" : ""}`}
-              />
-              {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
+              <Upload className="h-4 w-4 mr-1" />
+              Import CSV
             </ViewOnlyActionButton>
+            <ViewOnlyActionButton
+              canEdit={canEditMembership}
+              onClick={() => setCreateDialogOpen(true)}
+            >
+              Add Member
+            </ViewOnlyActionButton>
+          </div>
+          {xeroConnected && (
+            <XeroGroupsRefreshHint lastRefreshedAt={xeroGroupsLastRefreshedAt} />
           )}
-          <a href={exportUrl}>
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-1" />
-              Export CSV
-            </Button>
-          </a>
-          <ViewOnlyActionButton
-            canEdit={canEditMembership}
-            variant="outline"
-            size="sm"
-            onClick={() => setImportDialogOpen(true)}
-          >
-            <Upload className="h-4 w-4 mr-1" />
-            Import CSV
-          </ViewOnlyActionButton>
-          <ViewOnlyActionButton
-            canEdit={canEditMembership}
-            onClick={() => setCreateDialogOpen(true)}
-          >
-            Add Member
-          </ViewOnlyActionButton>
         </div>
       </div>
 
@@ -310,13 +317,6 @@ export default function MembersPage() {
           </button>
         </div>
       )}
-      {xeroConnected && !xeroFeatures.liveMemberGroupLookups && (
-        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-          Xero group filters are disabled by default. Use Refresh Xero Groups to populate
-          the cached Xero badges shown in this page.
-        </div>
-      )}
-
       <MemberFilterToolbar
         search={search}
         filters={filters}

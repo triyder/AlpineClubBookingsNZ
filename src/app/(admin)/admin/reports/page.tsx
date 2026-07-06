@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import type { RevenueGranularity } from "@/lib/admin-reports";
 import { getRevenueGranularityLabel } from "@/lib/admin-reports";
-import { formatCents } from "@/lib/utils";
+import { formatDollarsDisplay } from "@/lib/finance-format";
 import { bookingStatusLabel } from "@/lib/status-colors";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
@@ -375,7 +375,7 @@ export default function ReportsPage() {
               />
               <StatCard
                 title="Total Revenue"
-                value={formatCents(data.summary.totalRevenueCents)}
+                value={formatDollarsDisplay(data.summary.totalRevenueCents)}
                 subtitle="Excludes cancelled and bumped bookings"
                 icon={DollarSign}
               />
