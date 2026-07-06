@@ -11,7 +11,6 @@ import type {
   ParentLinkSummary,
 } from "@/lib/admin-member-detail-helpers";
 import type { MemberAddressValues } from "@/lib/member-address";
-import type { AppAccessRole } from "@/lib/access-roles";
 import type { AppRole } from "@/lib/member-roles";
 
 export interface MemberDeleteEligibilityBlocker {
@@ -268,44 +267,6 @@ export interface MemberDetail {
   postalRegion: string | null;
   postalPostalCode: string | null;
   postalCountry: string | null;
-}
-
-export interface EditForm {
-  title: Title | "";
-  firstName: string;
-  lastName: string;
-  gender: Gender | "";
-  email: string;
-  phoneCountryCode: string;
-  phoneAreaCode: string;
-  phoneNumber: string;
-  dateOfBirth: string;
-  joinedDate: string;
-  lifeMemberDate: string;
-  occupation: string;
-  comments: string;
-  role: AppRole;
-  // Role tokens: enum values or AccessRoleDefinition ids.
-  accessRoles: string[];
-  ageTier: string;
-  financeAccessLevel: FinanceAccessLevel;
-  active: boolean;
-  canLogin: boolean;
-  forcePasswordChange: boolean;
-  requiresInduction: boolean;
-  inheritEmailFromId: string | null;
-  streetAddressLine1: string;
-  streetAddressLine2: string;
-  streetCity: string;
-  streetRegion: string;
-  streetPostalCode: string;
-  streetCountry: string;
-  postalAddressLine1: string;
-  postalAddressLine2: string;
-  postalCity: string;
-  postalRegion: string;
-  postalPostalCode: string;
-  postalCountry: string;
 }
 
 export interface DependentForm extends MemberAddressValues {

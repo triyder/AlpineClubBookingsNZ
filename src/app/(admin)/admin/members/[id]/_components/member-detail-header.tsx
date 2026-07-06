@@ -14,7 +14,6 @@ import {
   ExternalLink,
   Link2,
   MoreHorizontal,
-  Pencil,
   Plus,
 } from "lucide-react";
 import { accessRoleLabelForToken } from "@/lib/access-role-definitions";
@@ -36,7 +35,6 @@ interface MemberDetailHeaderProps {
   onOpenLinkXero: () => void;
   onOpenCreateXero: () => void;
   onUnlinkXero: () => void;
-  onOpenEditDialog: () => void;
 }
 
 export function MemberDetailHeader({
@@ -53,7 +51,6 @@ export function MemberDetailHeader({
   onOpenLinkXero,
   onOpenCreateXero,
   onUnlinkXero,
-  onOpenEditDialog,
 }: MemberDetailHeaderProps) {
   const roleOptions = useAccessRoleOptions();
   const router = useRouter();
@@ -207,10 +204,6 @@ export function MemberDetailHeader({
                 </DropdownMenu>
               </>
             ))}
-          <Button size="sm" onClick={onOpenEditDialog}>
-            <Pencil className="h-4 w-4 mr-1" />
-            Edit Member
-          </Button>
         </div>
       </div>
     </div>
