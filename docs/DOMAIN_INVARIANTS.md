@@ -109,6 +109,20 @@ Future reviews and issues should cite this file when proposing changes.
   transaction — then alerts the admins exactly once. A PAID invoice event
   never overwrites a (PARTIALLY_)REFUNDED payment or transaction status back
   to SUCCEEDED.
+- The same cash-evidence rule gates Internet Banking SETTLEMENT itself, not
+  just credit minting (#1435): the inbound per-payment settlement loop runs
+  only when the PAID invoice carries positive cash evidence (`amountPaid`,
+  falling back to actual payment records). An allocation-cleared invoice
+  settles nothing anywhere in the loop — no PaymentTransaction or Payment
+  SUCCEEDED flip, no booking PAID flip, no member credit. Mixed cash+credit
+  invoices settle (amountPaid is the cash portion; allocations accrue to
+  amountCredited). A payload carrying NEITHER field skips settlement with a
+  warning and a result counter rather than settling on no evidence
+  (owner-approved default): the reconcile always re-fetches the invoice, so
+  a wrongly-skipped real payment self-heals on the next reconcile, while a
+  wrong SUCCEEDED/PAID flip (confirmation email, capacity claim) does not.
+  Invoice-identifier backfill is unaffected — it belongs to
+  `syncLinkedPaymentInvoiceMetadata`, which runs before the settlement loop.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
 - External provider side effects require clear retry and idempotency behavior.

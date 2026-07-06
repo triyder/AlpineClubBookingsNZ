@@ -16,6 +16,29 @@ function isPaidXeroInvoice(invoice: Invoice): boolean {
   return status === "PAID" || Boolean(invoice.fullyPaidOnDate);
 }
 
+type XeroInvoiceCashEvidence = "cash" | "none" | "indeterminate";
+
+// A PAID invoice event alone is not cash (#1357/#1435): Xero also reports
+// PAID when a credit note is ALLOCATED against the invoice — allocations
+// accrue to amountCredited, never amountPaid, and the app's own
+// invoice-clearing notes produce exactly that zero-cash PAID event on every
+// ordinary unpaid-IB cancellation. `amountPaid` is authoritative when
+// present; the invoice's actual cash payment records are the fallback. A
+// payload carrying neither field is "indeterminate" — the fresh getInvoice
+// fetch behind the only caller always carries both, so that arm only guards
+// degraded payload shapes.
+function classifyXeroInvoiceCashEvidence(
+  invoice: Invoice
+): XeroInvoiceCashEvidence {
+  if (typeof invoice.amountPaid === "number") {
+    return Math.round(invoice.amountPaid * 100) > 0 ? "cash" : "none";
+  }
+  if (Array.isArray(invoice.payments)) {
+    return invoice.payments.length > 0 ? "cash" : "none";
+  }
+  return "indeterminate";
+}
+
 export async function syncInternetBankingPaymentsForPaidInvoice(
   invoice: Invoice,
   linkedPaymentIds: string[]
@@ -28,6 +51,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     paidInternetBankingBookings: 0,
     creditedInternetBankingBookings: 0,
     skippedAlreadyPaidBookings: 0,
+    skippedNoCashEvidencePayments: 0,
+    skippedIndeterminateCashEvidencePayments: 0,
   };
 
   if (!invoiceId || !isPaidXeroInvoice(invoice)) {
@@ -69,6 +94,37 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
   });
 
   result.matchedInternetBankingPayments = payments.length;
+
+  // #1435: settlement itself is cash-gated, not just credit minting (#1357).
+  // Without positive cash evidence the loop settles NOTHING — no
+  // PaymentTransaction/Payment SUCCEEDED flip, no booking PAID flip, no
+  // member credit. Invoice-identifier backfill is not lost by returning
+  // early: syncLinkedPaymentInvoiceMetadata owns it and already ran.
+  const cashEvidence = classifyXeroInvoiceCashEvidence(invoice);
+  const invoiceHasCashPayment = cashEvidence === "cash";
+  if (!invoiceHasCashPayment) {
+    if (payments.length > 0) {
+      if (cashEvidence === "indeterminate") {
+        // Owner-approved default (#1435): skip, log, count. A skipped real
+        // payment self-heals on any later reconcile of the invoice (the
+        // caller always re-fetches a fresh payload), while a SUCCEEDED/PAID
+        // flip minted from a payload that proves nothing is the exact defect
+        // this gate exists to close.
+        result.skippedIndeterminateCashEvidencePayments = payments.length;
+        logger.warn(
+          { invoiceId, invoiceNumber, matchedPayments: payments.length },
+          "Xero PAID invoice payload carried neither amountPaid nor payments; Internet Banking settlement skipped pending cash evidence"
+        );
+      } else {
+        result.skippedNoCashEvidencePayments = payments.length;
+        logger.info(
+          { invoiceId, invoiceNumber, matchedPayments: payments.length },
+          "Xero invoice reports PAID without cash payments (credit-note allocation); Internet Banking settlement skipped"
+        );
+      }
+    }
+    return result;
+  }
 
   for (const payment of payments) {
     const outcome = await prisma.$transaction(async (tx) => {
@@ -171,21 +227,16 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // note is allocated (zero cash). Minting therefore requires ALL of:
         //  1. positive CASH evidence on the invoice (amountPaid, falling back
         //     to actual payment records) — an allocation-cleared invoice has
-        //     credit applied, not cash, and must mint nothing;
+        //     credit applied, not cash, and must mint nothing. Since #1435
+        //     the loop entry enforces this for every arm;
+        //     `invoiceHasCashPayment` is re-asserted here so the minting
+        //     invariant survives any future reshaping of the outer gate;
         //  2. a payment that never settled (PENDING/FAILED) — a
         //     paid-then-cancelled booking's replayed event is old money that
         //     the cancellation flow already settled under its own policy;
         //  3. no credit already minted by THIS pipeline (matched by its own
         //     descriptions — never by amount, which collides with unrelated
         //     cancellation-flow rows and misses policy-tiered ones).
-        const invoiceCashPaidCents =
-          typeof invoice.amountPaid === "number"
-            ? Math.round(invoice.amountPaid * 100)
-            : null;
-        const invoiceHasCashPayment =
-          invoiceCashPaidCents !== null
-            ? invoiceCashPaidCents > 0
-            : (invoice.payments?.length ?? 0) > 0;
         const paymentNeverSettled =
           fresh.status === PaymentStatus.PENDING ||
           fresh.status === PaymentStatus.FAILED;
