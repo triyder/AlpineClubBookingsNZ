@@ -262,7 +262,8 @@ Admin > Setup includes lodge-wide settings stored in the singleton
 ## Hut Leaders
 
 A hut-leader assignment (`/admin/hut-leaders`) is a date-ranged roster record
-that issues a one-time lodge PIN for the assigned member — it is not a role or
+that issues a dedicated lodge kiosk PIN for the assigned member (the plaintext
+PIN is shown only once, when it is issued or reset) — it is not a role or
 access-role capability. Assignment is admin-controlled; completing a Hut Leader
 Induction only sets `Member.hutLeaderEligible` and never creates or dates an
 assignment.
