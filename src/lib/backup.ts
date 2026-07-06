@@ -4,7 +4,7 @@
  *
  * Environment variables:
  *   BACKUP_ENABLED=true           - Enable/disable backups
- *   BACKUP_S3_BUCKET              - S3 bucket name (optional, uploads to the tacbookings_s3backup/ prefix)
+ *   BACKUP_S3_BUCKET              - S3 bucket name (required for durable healthy backups; uploads to the tacbookings_s3backup/ prefix)
  *   BACKUP_S3_REGION              - AWS region for S3 (defaults to ap-southeast-2)
  *   BACKUP_S3_ACCESS_KEY_ID       - AWS access key for S3 uploads
  *   BACKUP_S3_SECRET_ACCESS_KEY   - AWS secret key for S3 uploads
@@ -59,7 +59,10 @@ export interface BackupResult {
   reason?: string;
   sizeBytes?: number;
   minSizeBytes?: number;
-  healthSignal?: "backup-empty" | "backup-suspiciously-small";
+  healthSignal?:
+    | "backup-empty"
+    | "backup-suspiciously-small"
+    | "backup-not-durable";
 }
 
 export interface BackupCronOutcome {
@@ -241,6 +244,18 @@ export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome 
       minSizeBytes: MIN_BACKUP_SIZE_BYTES,
       s3: result.uploadedToS3,
     };
+
+    if (!result.uploadedToS3) {
+      return {
+        status: "FAILURE",
+        error:
+          "Backup completed only to local /tmp storage; configure BACKUP_S3_BUCKET for durable backups",
+        resultSummary: {
+          ...resultSummary,
+          healthSignal: "backup-not-durable",
+        },
+      };
+    }
 
     if (result.s3Key) {
       resultSummary.s3Key = result.s3Key;

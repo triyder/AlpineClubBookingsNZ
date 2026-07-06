@@ -1368,14 +1368,25 @@ export function PublicBookingRequestsPanel({
                         >
                           Send quote
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleHoldSlots(request)}
-                          disabled={isActioning || Boolean(request.heldBookingId)}
-                        >
-                          {request.heldBookingId ? "Slots held" : "Hold slots"}
-                        </Button>
+                        {/*
+                          #1385: the manual Hold slots entry is SCHOOL-only.
+                          Sending a quote auto-holds the beds across the whole
+                          quote lifecycle (#1280), so a separate manual hold is
+                          redundant on the generic quote flow. SCHOOL requests can
+                          be approved DIRECTLY (without a sent quote) and school
+                          approval reuses the held booking (#1352), so the manual
+                          hold remains meaningful there.
+                        */}
+                        {request.type === "SCHOOL" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleHoldSlots(request)}
+                            disabled={isActioning || Boolean(request.heldBookingId)}
+                          >
+                            {request.heldBookingId ? "Slots held" : "Hold slots"}
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           variant="outline"
@@ -1398,14 +1409,26 @@ export function PublicBookingRequestsPanel({
                           Decline
                         </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Hold slots reserves the beds before a quote is sent
-                        (sending a quote auto-holds them, so use Hold slots to
-                        reserve capacity while you price or set the contact). An
-                        accepted-but-unpaid booking can still be bumped by the
-                        confirm-pending job if the lodge capacity for these nights
-                        is later lowered below what is booked.
-                      </p>
+                      {request.type === "SCHOOL" ? (
+                        <p className="text-xs text-muted-foreground">
+                          Hold slots reserves the beds for this school request
+                          before it is approved or quoted — approving a school
+                          reuses the held booking (#1352), and sending a quote
+                          auto-holds too, so use Hold slots to reserve capacity
+                          while you set group numbers or the contact. An
+                          accepted-but-unpaid booking can still be bumped by the
+                          confirm-pending job if the lodge capacity for these
+                          nights is later lowered below what is booked.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Sending a quote auto-holds the beds for this request, so
+                          there is no separate hold step. An accepted-but-unpaid
+                          booking can still be bumped by the confirm-pending job if
+                          the lodge capacity for these nights is later lowered
+                          below what is booked.
+                        </p>
+                      )}
                       {request.status === "VERIFIED" ? (
                         <p className="text-xs text-muted-foreground">
                           {request.type === "SCHOOL"

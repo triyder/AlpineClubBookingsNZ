@@ -193,11 +193,18 @@ PENDING booking and keeps holding, see the booking-status section above) and is
 released on cancel, expiry, or a capacity-reduction bump (see the #1317 note in
 the booking-status section above).
 
-Auto-hold-on-send does not retire the manual **Hold slots** admin action — it is
-deliberately kept (owner-ratified, #1317). Holding slots is still valid *before*
-a quote is sent (e.g. reserve the beds while pricing, or while confirming the
-booking contact), so it is a pre-quote manual hold rather than a redundant one;
-sending the quote then reuses that hold idempotently. The hold scope covers every
+As of #1385 the manual **Hold slots** admin UI entry is hidden on the generic
+(non-SCHOOL) quote flow: auto-hold-on-send (#1280) reserves the beds across the
+whole quote lifecycle, so a separate manual hold there is redundant and confusing.
+This **supersedes** the earlier #1317 stance that the manual hold was deliberately
+kept for all flows — that "kept for all flows" position now applies to SCHOOL only.
+The manual Hold slots button is retained ONLY for SCHOOL requests, where it stays
+meaningful: a school can be approved DIRECTLY without a sent quote and school
+approval reuses the held booking (#1352), so the admin may need to reserve
+capacity before that direct approval. The hold action itself (the
+`/api/admin/booking-requests/[id]/hold` route and `holdBookingRequestSlots`) is
+unchanged and stays type-agnostic — only the UI entry point is gated, and sending
+a quote still reuses any existing hold idempotently. The hold scope covers every
 request-converted PENDING booking, including requests approved DIRECTLY without a
 quote — intended.
 
@@ -236,8 +243,9 @@ request that has no outstanding SENT quote, once the latest response window
 "please change X" / "I have a question" bounce would hold a bed indefinitely.
 This release only fires when the held booking was itself placed on or before
 that deadline: a hold that post-dates the lapsed window — e.g. an admin manually
-re-held the request via "Hold slots" after its original quote window had passed —
-is kept, so the next cron tick never undoes the deliberate re-hold (#1296).
+re-held a SCHOOL request via "Hold slots" (now a school-only UI action, #1385)
+after its original quote window had passed — is kept, so the next cron tick never
+undoes the deliberate re-hold (#1296).
 
 Because an admin can cancel a held booking directly (every sent quote leaves one,
 tagged "Held" on the bed board), `heldBookingId` is detached wherever such a hold

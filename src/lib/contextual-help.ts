@@ -157,7 +157,7 @@ const adminHelpEntries: HelpEntry[] = [
       "Booking Requests",
       "This page manages public or internal booking requests before they become normal bookings.",
       [
-        "Open each request, check the requested dates and guest counts, then price, quote, hold, approve, decline, or ask for changes.",
+        "Open each request, check the requested dates and guest counts, then price, quote, approve, decline, or ask for changes. Sending a quote auto-holds the beds, so a manual Hold slots step only shows for school requests.",
         "Use status tabs to separate new requests from quoted, queried, and completed requests.",
         "Check capacity and payment expectations before sending a quote or approval.",
       ],
@@ -175,7 +175,7 @@ const adminHelpEntries: HelpEntry[] = [
         {
           name: "Hold",
           description:
-            "Temporarily reserves capacity while the request is being assessed or quoted.",
+            "Manually reserves capacity for a school request before it is approved or quoted. Sending a quote auto-holds the beds on other requests, so the manual Hold slots button only appears for school requests.",
         },
       ],
       [

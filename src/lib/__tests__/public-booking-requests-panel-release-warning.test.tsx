@@ -126,3 +126,60 @@ describe("PublicBookingRequestsPanel release-hold warning (#1255 RR-1)", () => {
     expect(screen.queryByTestId("contact-picker")).toBeNull();
   });
 });
+
+// The manual "Hold slots" entry is SCHOOL-only as of #1385: the generic quote
+// flow auto-holds the beds on quote send (#1280), so the manual hold is redundant
+// there and hidden. SCHOOL requests keep it (school approval reuses the held
+// booking, #1352). An actionable request in a LINKING_EDITOR status with no hold
+// yet renders the full action-button row, so this is where the gate is visible.
+describe("PublicBookingRequestsPanel manual Hold slots visibility (#1385)", () => {
+  const actionableBase = {
+    ...heldRequest,
+    status: "VERIFIED",
+    heldBookingId: null,
+  };
+
+  function mockFetch(request: unknown) {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [request] }),
+    }) as unknown as typeof fetch;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not render the manual Hold slots button on a generic request", async () => {
+    mockFetch({
+      ...actionableBase,
+      id: "req-general",
+      type: "GENERAL",
+      schoolName: null,
+    });
+
+    render(<PublicBookingRequestsPanel />);
+
+    // The action row still renders (e.g. Send quote), so the absence of the hold
+    // button is the gate, not an unrendered block.
+    await screen.findByRole("button", { name: "Send quote" });
+    expect(screen.queryByRole("button", { name: "Hold slots" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Slots held" })).toBeNull();
+  });
+
+  it("renders the manual Hold slots button on a SCHOOL request", async () => {
+    mockFetch({
+      ...actionableBase,
+      id: "req-school",
+      type: "SCHOOL",
+      schoolName: "Test School",
+    });
+
+    render(<PublicBookingRequestsPanel />);
+
+    const holdButton = await screen.findByRole("button", { name: "Hold slots" });
+    expect(holdButton).toBeTruthy();
+    // Still wired: enabled while no hold exists (onClick -> handleHoldSlots).
+    expect((holdButton as HTMLButtonElement).disabled).toBe(false);
+  });
+});

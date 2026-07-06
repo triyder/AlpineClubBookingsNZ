@@ -668,6 +668,31 @@ export async function approveSchoolBookingRequest(input: {
           };
         }
 
+        // F6 (#1352): re-check per-night capacity for the NEW guest list
+        // before the swap, excluding the held booking's own guests — the hold
+        // reserved only the ORIGINAL N spots, and a guestOverride can approve
+        // M > N children whose extra beds may already be taken on some
+        // nights. Runs under the same advisory lock as every other capacity
+        // writer, mirroring the fresh-create branch below; the sentinel
+        // aborts the transaction, so the APPROVED status-claim rolls back and
+        // the admin sees the same capacityExceeded outcome with the full
+        // nights listed. (This makes the docstring's "capacity re-checked
+        // against the new list" promise true on this branch.)
+        const heldCapacity = await checkCapacityForGuestRanges(
+          request.checkIn,
+          request.checkOut,
+          guests.map(() => ({
+            stayStart: request.checkIn,
+            stayEnd: request.checkOut,
+          })),
+          held.id,
+          tx
+        );
+        if (!heldCapacity.available) {
+          capacityFullNights = getCapacityFullNights(heldCapacity.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
+        }
+
         // Preserve the held booking's beds across the guest swap (issue #1254):
         // update guest rows in place rather than deleteMany+recreate, so an
         // admin's pre-assigned beds (and #713 night sets) survive. CONFIRMED

@@ -239,6 +239,15 @@ The app can run scheduled PostgreSQL dumps to S3-compatible storage when
 - `BACKUP_CRON_SCHEDULE`
 - optional `BACKUP_RESTORE_VALIDATION_URL`
 
+Do not treat local backup files as durable. The production Docker service runs
+with `read_only: true` and mounts `/tmp` as tmpfs, so `/tmp/tacbookings-backups`
+is RAM-backed and is wiped whenever the app container is recreated, including
+routine blue/green deploys. If `BACKUP_ENABLED=true` but `BACKUP_S3_BUCKET` is
+not configured, the job no longer reports healthy: the dump is marked
+`backup-not-durable`, the cron run records `FAILURE`, and the Sentry monitor
+check-in is sent as an error. A healthy scheduled backup requires S3 upload and
+readback verification.
+
 Operators should also keep provider-level snapshots or equivalent independent
 backups. Test restore procedures before relying on backups.
 

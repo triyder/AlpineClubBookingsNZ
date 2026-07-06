@@ -72,14 +72,26 @@ test("member switches a card booking to Internet Banking with Xero absent", asyn
   // defaults off → no bed held, per #737). No soft-refresh race, no reload
   // crutch in the spec (#1148 / #1371 F28) — asserted against the reloaded DOM.
   await expect(switchButton).toHaveCount(0, { timeout: 30_000 });
-  await expect(page.getByText("Internet Banking Payment")).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(page.getByText(/Reference:/)).toBeVisible();
+  // #1400: the reload transition can leave a second, persistently HIDDEN
+  // post-switch copy of the page content in the DOM (observed in CI: the
+  // strict getByText resolved to 2 elements for the full 30s window, one
+  // hidden — while the switch-button count above was already 0, so the extra
+  // copy is post-switch). Until the duplicate mount is root-caused, assert on
+  // a VISIBLE instance explicitly so a hidden artefact cannot strict-violate
+  // the member-visible outcome these assertions exist to pin.
   await expect(
-    page.getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
-      exact: true,
-    }),
+    page.getByText("Internet Banking Payment").locator("visible=true").first(),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByText(/Reference:/).locator("visible=true").first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
+        exact: true,
+      })
+      .locator("visible=true")
+      .first(),
   ).toBeVisible();
   await page.close();
 });
