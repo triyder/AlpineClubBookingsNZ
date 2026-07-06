@@ -164,6 +164,7 @@ export interface FinanceDashboardSelection {
   /** Ratios-view explorer selection, for shareable links. */
   ratioNumeratorId: string | null;
   ratioDenominatorId: string | null;
+  ratioRangeKey: string | null;
   warnings: string[];
 }
 
@@ -555,6 +556,7 @@ export function resolveFinanceDashboardSelection(input: {
     expenseLine: readParam(input.searchParams, "expenseLine") ?? null,
     ratioNumeratorId: readParam(input.searchParams, "ratioNumerator") ?? null,
     ratioDenominatorId: readParam(input.searchParams, "ratioDenominator") ?? null,
+    ratioRangeKey: readParam(input.searchParams, "ratioRange") ?? null,
     warnings,
   };
 }

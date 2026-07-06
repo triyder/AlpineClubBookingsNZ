@@ -39,6 +39,16 @@ export function buildXeroCreditNoteUrl(
   );
 }
 
+/**
+ * Xero's report centre ("Accounting → Reports" in the web app). Specific
+ * report runs (Profit and Loss, Balance Sheet) need a per-organisation report
+ * GUID or the org short code, neither of which we store, so dashboard "open
+ * in Xero" links land on the hub — both reports are one click away.
+ */
+export function buildXeroReportsUrl(options?: XeroUrlOptions): string {
+  return buildXeroUrl("/app/reports", options);
+}
+
 export function buildXeroObjectUrl(
   objectType: string,
   objectId: string,

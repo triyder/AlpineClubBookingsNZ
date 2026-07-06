@@ -69,7 +69,7 @@ vi.mock("@/lib/finance-sync-storage", () => ({
   listFinanceSnapshots: mockListFinanceSnapshots,
 }));
 
-vi.mock("@/lib/finance-cash-report-page", () => ({
+vi.mock("@/lib/finance-cash-snapshot", () => ({
   parseCashSnapshot: mockParseCashSnapshot,
 }));
 

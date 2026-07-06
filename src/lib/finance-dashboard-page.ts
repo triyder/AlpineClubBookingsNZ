@@ -4,7 +4,7 @@ import {
   getFinanceBookingMetrics,
   type FinanceBookingMetricsResult,
 } from "@/lib/finance-booking-metrics";
-import { parseCashSnapshot } from "@/lib/finance-cash-report-page";
+import { parseCashSnapshot } from "@/lib/finance-cash-snapshot";
 import {
   FINANCE_DASHBOARD_COMPARE_LABELS,
   FINANCE_DASHBOARD_FORWARD_LABELS,
@@ -40,6 +40,7 @@ import type { FinanceMappedPnlCategorySummary } from "@/lib/finance-report-mappi
 import { buildFinanceRevenueReconciliation } from "@/lib/finance-revenue-reconciliation";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
+import { buildXeroReportsUrl } from "@/lib/xero-links";
 import type { FinanceAccessMember } from "@/lib/finance-auth";
 import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
@@ -125,6 +126,7 @@ export interface FinanceDashboardRatioExplorerModel {
   matrix: FinanceRatioMatrix;
   initialNumeratorId: string | null;
   initialDenominatorId: string | null;
+  initialRangeKey: string | null;
 }
 
 export interface FinanceDashboardPageModel {
@@ -149,7 +151,12 @@ export interface FinanceDashboardPageModel {
   mix: FinanceDashboardMix | null;
   statusPanels: FinanceDashboardStatusPanel[];
   costFilters: FinanceDashboardCostFilters | null;
-  sourceNotes: Array<{ label: string; description: string }>;
+  sourceNotes: Array<{
+    label: string;
+    description: string;
+    href?: string;
+    linkLabel?: string;
+  }>;
   exportSections: FinanceDashboardExportSection[];
 }
 
@@ -734,6 +741,8 @@ async function buildMappedPnlDashboard(input: {
         label: "Xero monthly facts",
         description:
           "Revenue and costs come from stored monthly Xero account balances (one amount per account and month). Opening the dashboard does not call Xero live; drill into Xero for day-level detail.",
+        href: buildXeroReportsUrl(),
+        linkLabel: "Open Xero reports",
       },
       {
         label: "Mappings",
@@ -792,6 +801,7 @@ async function buildRatiosDashboard(
       matrix,
       initialNumeratorId: selection.ratioNumeratorId,
       initialDenominatorId: selection.ratioDenominatorId,
+      initialRangeKey: selection.ratioRangeKey,
     },
     cards: [],
     trends: [],
@@ -1275,7 +1285,9 @@ async function buildBalanceOrWorkingCapitalDashboard(input: {
       {
         label: "Balance-sheet source",
         description:
-          "Balance sheet and working-capital figures come from stored monthly Xero account balances (month-end positions per account).",
+          "Balance sheet and working-capital figures come from stored monthly Xero account balances (month-end positions per account). Drill into Xero for day-level detail.",
+        href: buildXeroReportsUrl(),
+        linkLabel: "Open Xero reports",
       },
     ],
     exportSections: [

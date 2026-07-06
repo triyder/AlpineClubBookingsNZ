@@ -67,7 +67,8 @@ The default dashboard state is:
 
 The dashboard renders visual summaries only: KPI cards, trend charts (one
 point per month, with the comparison period overlaid as a second series), mix
-charts, reconciliation/status panels, compact source notes, warnings, and
+charts, reconciliation/status panels, compact source notes (the Xero-derived
+views link to Xero's report centre for day-level drill-down), warnings, and
 PDF/CSV exports for the active selection. Dashboard displays show whole
 dollars with thousands separators; exact cents appear only where tie-out
 matters (the reconciliation panel and CSV/PDF export rows). It does not render
@@ -87,7 +88,8 @@ share of hut-fee income for this FY, last FY, and the FY before. The server
 ships the full category-month matrix (`finance-ratio-insights.ts` /
 client-safe helpers in `finance-ratio-shared.ts`), so switching pairings or
 ranges recomputes instantly in the browser; the selection syncs to
-`ratioNumerator`/`ratioDenominator` query params for shareable links.
+`ratioNumerator`/`ratioDenominator`/`ratioRange` query params for shareable
+links.
 Divide-by-zero renders as "—". The revenue and costs views carry a compact
 "Financial years" panel (this FY YTD vs the two prior FYs per group) that
 links conceptually to the same data.

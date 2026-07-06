@@ -346,6 +346,11 @@ export async function buildFinanceMonthlyPnlSummary(
   const comparisonMonths = input.comparison
     ? financeDashboardWindowMonths(input.comparison)
     : [];
+  // The stored flag is authoritative: if the sync stalls mid-month, last
+  // month's facts stay flagged provisional even once the calendar moves on.
+  const provisionalMonths = new Set(
+    facts.filter((record) => record.isProvisional).map((record) => record.month)
+  );
   const trend: FinanceMonthlyPnlTrendPoint[] = primaryMonths.map(
     (monthKey, index) => {
       const comparisonMonth = comparisonMonths[index] ?? null;
@@ -363,13 +368,14 @@ export async function buildFinanceMonthlyPnlSummary(
               0
             )
           : null,
-        isProvisional: monthKey >= input.currentMonth,
+        isProvisional:
+          provisionalMonths.has(monthKey) || monthKey >= input.currentMonth,
       };
     }
   );
 
   const monthsWithData = new Set(facts.map((record) => record.month)).size;
-  const includesProvisionalMonth = facts.some((record) => record.isProvisional);
+  const includesProvisionalMonth = provisionalMonths.size > 0;
 
   const warnings: string[] = [];
   if (facts.length === 0) {
@@ -387,9 +393,13 @@ export async function buildFinanceMonthlyPnlSummary(
     );
   }
   if (includesProvisionalMonth) {
-    const provisionalLabel = financeDashboardTrendMonthLabel(input.currentMonth);
+    const provisionalLabels = Array.from(provisionalMonths)
+      .sort()
+      .map((monthKey) => financeDashboardTrendMonthLabel(monthKey));
     warnings.push(
-      `${provisionalLabel} is still in progress; its figures are month-to-date.`
+      `${provisionalLabels.join(", ")} ${
+        provisionalLabels.length === 1 ? "is" : "are"
+      } still in progress; the figures are month-to-date.`
     );
   }
 

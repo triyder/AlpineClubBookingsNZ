@@ -26,6 +26,7 @@ import {
   UserX,
   Trash2,
 } from "lucide-react";
+import { formatDollarsDisplay } from "@/lib/finance-format";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -368,7 +369,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">
-                {formatCents(stats.revenueThisMonth)}
+                {formatDollarsDisplay(stats.revenueThisMonth)}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 From succeeded payments

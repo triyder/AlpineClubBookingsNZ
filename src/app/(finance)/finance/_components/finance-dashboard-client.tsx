@@ -397,6 +397,7 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
             matrix={model.ratios.matrix}
             initialNumeratorId={model.ratios.initialNumeratorId}
             initialDenominatorId={model.ratios.initialDenominatorId}
+            initialRangeKey={model.ratios.initialRangeKey}
           />
         ) : null}
 
@@ -516,6 +517,16 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                 <p className="text-sm leading-6 text-slate-600">
                   {note.description}
                 </p>
+                {note.href ? (
+                  <a
+                    href={note.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    {note.linkLabel ?? "Open in Xero"}
+                  </a>
+                ) : null}
               </div>
             ))}
           </div>
