@@ -440,7 +440,14 @@ inductions created from approved applications should explicitly assign the
 application nominators as signers while preserving the application nominator
 fallback for historical records. Completing a Hut Leader Induction sets
 `Member.hutLeaderEligible`; it does not create or date a `HutLeaderAssignment`,
-which remains an admin-controlled roster/coverage record.
+which remains an admin-controlled roster/coverage record and issues a dedicated
+lodge kiosk PIN (its plaintext is shown only once, at issue or reset).
+Assignment additionally requires the member to hold the standard
+`USER` access role: a member whose only roles are custom definition-backed rows
+(`role = null`) cannot be assigned as a hut leader, and the booking-derived
+picker only surfaces adult `USER` members with an operational booking
+overlapping the assignment range (see CONFIGURATION.md → "Hut Leaders" for the
+promo-code/book-on-behalf workaround that rosters a booking-less custodian).
 
 Hard delete must remain limited to records that pass the eligibility checks for
 no durable booking, financial, family, Xero, or membership-history blockers.
