@@ -1302,6 +1302,49 @@ describe("payment recovery worker", () => {
       expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
     });
 
+    // #1358 (F29): a booking cancelled after the modification has no increase
+    // left to collect — the cancel flow tore down its additional intents, so
+    // recovery must complete without minting a live intent or re-arming the
+    // waiting supplementary Xero operation.
+    it("completes without creating anything when the booking is CANCELLED (#1358)", async () => {
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue({
+        id: "payment-1",
+        stripeCustomerId: "cus_123",
+        stripePaymentIntentId: "pi_original",
+        transactions: [
+          {
+            id: "txn-1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_original",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+            createdAt: new Date("2026-05-01T00:00:00.000Z"),
+          },
+        ],
+        booking: {
+          id: "booking-1",
+          memberId: "m1",
+          status: "CANCELLED",
+          member: {
+            id: "m1",
+            email: "alice@test.com",
+            firstName: "Alice",
+            lastName: "Smith",
+          },
+        },
+      });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockQueueSupersededAdditionalIntentCancellations).not.toHaveBeenCalled();
+      expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+    });
+
     it("enqueues exactly one recovery row per booking modification", async () => {
       const { enqueueAdditionalPaymentIntentRecovery } = await import(
         "@/lib/payment-recovery"

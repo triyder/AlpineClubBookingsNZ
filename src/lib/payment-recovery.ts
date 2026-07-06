@@ -1,4 +1,5 @@
 import {
+  BookingStatus,
   PaymentSource,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
@@ -1139,6 +1140,22 @@ async function processCreateAdditionalPaymentIntentOperation(
       transaction.createdAt > operation.createdAt,
   );
   if (newerAdditionalTransaction || operation.amountCents <= 0) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
+  // A booking cancelled after the modification has no increase left to
+  // collect (#1358): the cancel flow already tore down its additional
+  // intents, so minting a live intent here would resurrect a collectable the
+  // cancel retired and re-arm the WAITING_PAYMENT supplementary Xero
+  // operation for money that must never be captured. Complete without
+  // creating anything — the parked Xero op is retired by the
+  // stale-WAITING_PAYMENT reaper.
+  if (payment.booking.status === BookingStatus.CANCELLED) {
+    logger.info(
+      { operationId: operation.id, bookingId: operation.bookingId },
+      "Skipping additional intent recovery for cancelled booking",
+    );
     await completePaymentRecoveryOperation(operation.id);
     return;
   }

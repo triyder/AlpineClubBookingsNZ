@@ -170,6 +170,20 @@ Booking changes must not orphan or desynchronize:
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
 
+A modification price increase whose Stripe intent creation fails transiently is
+never lost silently (#1358, F29): every additional-intent flow routes through
+the shared helper whose failure path enqueues a durable
+`CREATE_ADDITIONAL_PAYMENT_INTENT` recovery operation keyed one-per-modification
+with the same modification-scoped Stripe idempotency key, so the replay collects
+exactly once; exhausted retries alert the admins with the member, booking, and
+amount, and stalled or exhausted queues surface through the recovery health
+checks. The recovery processor is execution-time honest about lifecycle: a
+booking CANCELLED after the modification completes the operation WITHOUT
+minting an intent — cancellation already tore down its additional intents, and
+recovery must never resurrect a retired collectable or re-arm the parked
+supplementary Xero operation for money that must not be captured (the
+stale-WAITING_PAYMENT reaper retires that op).
+
 Per-guest stay ranges must sit inside the parent booking's checkIn/checkOut
 envelope. A guest stay range outside the current envelope is not rejected —
 it auto-expands the booking's dates (issue #713). The database enforces the
