@@ -753,8 +753,35 @@ async function main() {
   // -------------------------------------------------------------------------
   // Scoped access-role personas: one bundled role each (plus baseline USER) so
   // the admin-permission matrix (src/lib/admin-permissions.ts) governs access.
+  // Each gets a complete, self-confirmed profile: admin-UI specs drive real
+  // pages as these personas, and an unconfirmed profile pops the blocking
+  // "Confirm member details" modal over every page (it broke the
+  // admin-member-detail spec's clicks; alice deliberately keeps that gate).
+  const roleProfileConfirmedAt = new Date();
   for (const [role, persona] of Object.entries(ROLE_PERSONAS)) {
-    const scoped = await makeMember(persona.email.split("@")[0], persona.firstName, persona.lastName);
+    const scoped = await makeMember(persona.email.split("@")[0], persona.firstName, persona.lastName, {
+      dateOfBirth: d("1984-03-03"),
+      phoneCountryCode: "64",
+      phoneAreaCode: "21",
+      phoneNumber: "5550100",
+      streetAddressLine1: "2 Ridgeline Terrace",
+      streetCity: "Alpine Village",
+      streetRegion: "Waikato",
+      streetPostalCode: "3420",
+      streetCountry: "New Zealand",
+      postalAddressLine1: "2 Ridgeline Terrace",
+      postalCity: "Alpine Village",
+      postalRegion: "Waikato",
+      postalPostalCode: "3420",
+      postalCountry: "New Zealand",
+      profileCompletedAt: roleProfileConfirmedAt,
+      detailsConfirmedAt: roleProfileConfirmedAt,
+      onboardingConfirmedAt: roleProfileConfirmedAt,
+    });
+    await prisma.member.update({
+      where: { id: scoped.id },
+      data: { detailsConfirmedByMemberId: scoped.id },
+    });
     await ensureMemberAccessRoles(prisma, {
       memberId: scoped.id,
       roles: [role],
