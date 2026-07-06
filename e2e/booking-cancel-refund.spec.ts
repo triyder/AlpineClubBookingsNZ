@@ -79,13 +79,18 @@ test("member cancels a paid booking for account credit and the money outcome is 
   // assertions). The booking is now CANCELLED — proven by the Cancellation
   // Outcome card, which only renders for a CANCELLED booking — with the
   // account-credit settlement row, and the cancel affordance is gone.
+  // /bookings/[id] streams behind loading.tsx, so a reload can leave a
+  // persistent HIDDEN duplicate of the page content in the DOM (root-caused in
+  // #1400, PR #1462); scope every post-reload assertion to <main> — the final
+  // visible render — or strict-mode locators trip on the hidden copy.
   await memberPage.reload();
-  await expect(memberPage.getByText("Cancellation Outcome")).toBeVisible();
+  const main = memberPage.getByRole("main");
+  await expect(main.getByText("Cancellation Outcome")).toBeVisible();
   await expect(
-    memberPage.getByText("Held as account credit:"),
+    main.getByText("Held as account credit:"),
   ).toBeVisible();
   await expect(
-    memberPage.getByRole("button", { name: "Cancel Booking" }),
+    main.getByRole("button", { name: "Cancel Booking" }),
   ).toHaveCount(0);
 
   await memberPage.close();

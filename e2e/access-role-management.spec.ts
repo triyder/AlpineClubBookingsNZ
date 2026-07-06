@@ -103,6 +103,13 @@ test("a full admin creates, edits, assigns a custom access role and sees the eff
     .getByRole("button", { name: "Edit", exact: true })
     .click();
 
+  // Since #1439 the Access Roles picker sits behind the User Type select:
+  // Wanda derives as a plain "User", so the picker (and the custom role's
+  // checkbox) only appears once the type is switched to Admin. "Also a club
+  // member" defaults on, so her USER token is kept alongside the new role.
+  await accessGroup.getByRole("combobox").click();
+  await page.getByRole("option", { name: "Admin", exact: true }).click();
+
   // Tick the new role's checkbox — scoped through its wrapping <label> (whose
   // text carries the unique role label) so the Radix checkbox resolves robustly.
   const roleCheckbox = accessGroup
