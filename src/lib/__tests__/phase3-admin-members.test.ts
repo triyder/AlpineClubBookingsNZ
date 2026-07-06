@@ -432,6 +432,70 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([{ ageTier: "INFANT" }]));
     });
 
+    it("filters by membership type id via the current-season assignment (#1445)", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest("http://localhost/api/admin/members?membershipType=mt-full")
+      );
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          {
+            seasonalMembershipAssignments: {
+              some: { seasonYear: 2026, membershipTypeId: "mt-full" },
+            },
+          },
+        ])
+      );
+    });
+
+    it("filters unassigned members (no current-season assignment) (#1445)", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest("http://localhost/api/admin/members?membershipType=UNASSIGNED")
+      );
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          {
+            seasonalMembershipAssignments: {
+              none: { seasonYear: 2026 },
+            },
+          },
+        ])
+      );
+    });
+
+    it("combines the membership type filter with another filter via AND (#1445)", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest(
+          "http://localhost/api/admin/members?membershipType=mt-life&lifecycleStatus=active"
+        )
+      );
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          {
+            seasonalMembershipAssignments: {
+              some: { seasonYear: 2026, membershipTypeId: "mt-life" },
+            },
+          },
+          { active: true },
+          { cancelledAt: null },
+        ])
+      );
+    });
+
     it("filters to eligible email inheritance sources and excludes the current member", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);

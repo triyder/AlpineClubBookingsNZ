@@ -24,7 +24,7 @@ import {
 import { deriveUserType, USER_TYPE_LABELS } from "@/lib/access-roles"
 import { memberName } from "@/lib/member-serialization"
 import type { Member } from "../_types"
-import { subscriptionStatusConfig } from "../_utils"
+import { formatTypeTierLabel, subscriptionStatusConfig } from "../_utils"
 
 interface MemberTableProps {
   members: Member[]
@@ -160,10 +160,18 @@ export function MemberTable({
                 onToggleSort={onToggleSort}
               />
             ))}
-            <TableHead>Membership Type</TableHead>
+            {/*
+              Combined "Type – Tier" column (#1445): the current-season
+              membership type followed by the age tier (e.g. "Full – Adult").
+              The column leads with Type, but sorts by `ageTier` — the type
+              comes from a filtered to-many relation (the current-season
+              SeasonalMembershipAssignment) that Prisma cannot cleanly orderBy,
+              whereas ageTier is a real, whitelisted sortable Member column. The
+              separate Membership Type and Age Tier filters remain distinct.
+            */}
             <SortableHeader
               column="ageTier"
-              label="Age Tier"
+              label="Type – Tier"
               sortBy={sortBy}
               sortDir={sortDir}
               onToggleSort={onToggleSort}
@@ -261,23 +269,12 @@ export function MemberTable({
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  {member.currentMembershipType ? (
-                    <Badge
-                      variant={
-                        member.currentMembershipType.isActive
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {member.currentMembershipType.name}
-                    </Badge>
-                  ) : (
-                    <span className="text-xs text-slate-400">-</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm text-slate-600">
-                    {member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}
+                  {/* Display-only combination; data stays separate (#1445). */}
+                  <span className="text-sm text-slate-600 whitespace-nowrap">
+                    {formatTypeTierLabel(
+                      member.currentMembershipType?.name,
+                      member.ageTier,
+                    )}
                   </span>
                 </TableCell>
                 <TableCell>

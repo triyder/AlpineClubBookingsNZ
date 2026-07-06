@@ -114,6 +114,7 @@ export interface Filters {
   role: string;
   financeAccess: string;
   lifecycleStatus: string;
+  membershipType: string;
   ageTier: string;
   familyGroup: string;
   inviteStatus: string;

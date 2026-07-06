@@ -16,6 +16,7 @@ import {
 } from "@/lib/xero";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
+import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
@@ -182,6 +183,7 @@ export const adminMembersQuerySchema = z
     active: optionalSearchParam,
     ageTier: optionalSearchParam,
     ageTierIn: optionalSearchParam,
+    membershipType: optionalSearchParam,
     xeroLinked: optionalSearchParam,
     inviteStatus: optionalSearchParam,
     subscription: optionalSearchParam,
@@ -248,6 +250,7 @@ export async function listAdminMembers(
     active: activeFilter,
     ageTier: ageTierFilter,
     ageTierIn: ageTierInFilter,
+    membershipType: membershipTypeFilter,
     xeroLinked: xeroLinkedFilter,
     inviteStatus: inviteStatusFilter,
     subscription: subscriptionFilter,
@@ -458,6 +461,28 @@ export async function listAdminMembers(
     if (ageTierIn && ageTierIn.length > 0) {
       andConditions.push({ ageTier: { in: ageTierIn } });
     }
+  }
+
+  // Filter: membership type (current-season SeasonalMembershipAssignment). The
+  // "UNASSIGNED" sentinel matches members with no current-season assignment;
+  // any other value is a MembershipType id. This mirrors how
+  // currentMembershipType is resolved below (the current-season assignment), so
+  // the filter and the displayed Type–Tier column always agree.
+  if (membershipTypeFilter === UNASSIGNED_MEMBERSHIP_TYPE_VALUE) {
+    andConditions.push({
+      seasonalMembershipAssignments: {
+        none: { seasonYear: currentSeasonYear },
+      },
+    });
+  } else if (membershipTypeFilter) {
+    andConditions.push({
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: currentSeasonYear,
+          membershipTypeId: membershipTypeFilter,
+        },
+      },
+    });
   }
 
   // Filter: xeroLinked

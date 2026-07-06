@@ -12,6 +12,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
+import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options"
+import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter"
 import { NON_MEMBER_ROLE_VALUES, ROLE_LABELS } from "@/lib/member-roles"
 import {
   LOGIN_STAGE_FILTER_VALUES,
@@ -43,17 +45,30 @@ export function MemberFilterToolbar({
   onClearFilters,
 }: MemberFilterToolbarProps) {
   const roleOptions = useAccessRoleOptions()
-  // The `role` filter param is shared by the Access Role and Member Type
-  // selects (backend reads a single `role` param); the two categories are
-  // mutually exclusive, so each select shows its neutral "All" state when the
-  // active value belongs to the other dimension.
-  const roleFilterIsMemberType = (
+  const membershipTypeOptions = useMembershipTypeOptions()
+  // The `role` filter param is shared by the Access Role and Non-Member
+  // Category selects (backend reads a single `role` param); the two categories
+  // are mutually exclusive, so each select shows its neutral "All" state when
+  // the active value belongs to the other dimension. The separate Membership
+  // Type select below writes its own `membershipType` param (DB membership
+  // types) so Role and MembershipType are no longer conflated (#1445).
+  const roleFilterIsNonMemberCategory = (
     NON_MEMBER_ROLE_VALUES as readonly string[]
   ).includes(filters.role)
-  const getFilterDisplayValue = (key: string, value: string) =>
-    key === "xeroContactGroup"
-      ? xeroContactGroupsList.find((group) => group.id === value)?.name ?? value
-      : filterValueLabels[key as keyof Filters]?.[value] ?? value
+  const getFilterDisplayValue = (key: string, value: string) => {
+    if (key === "xeroContactGroup") {
+      return (
+        xeroContactGroupsList.find((group) => group.id === value)?.name ?? value
+      )
+    }
+    if (key === "membershipType") {
+      if (value === UNASSIGNED_MEMBERSHIP_TYPE_VALUE) return "Unassigned"
+      return (
+        membershipTypeOptions.find((type) => type.id === value)?.name ?? value
+      )
+    }
+    return filterValueLabels[key as keyof Filters]?.[value] ?? value
+  }
 
   return (
     <>
@@ -67,7 +82,7 @@ export function MemberFilterToolbar({
           />
         </div>
         <Select
-          value={roleFilterIsMemberType ? "all" : filters.role || "all"}
+          value={roleFilterIsNonMemberCategory ? "all" : filters.role || "all"}
           onValueChange={(value) => onSetFilter("role", value === "all" ? "" : value)}
         >
           <SelectTrigger className="w-[160px]" aria-label="Filter by access role">
@@ -83,17 +98,38 @@ export function MemberFilterToolbar({
           </SelectContent>
         </Select>
         <Select
-          value={roleFilterIsMemberType ? filters.role : "all"}
+          value={roleFilterIsNonMemberCategory ? filters.role : "all"}
           onValueChange={(value) => onSetFilter("role", value === "all" ? "" : value)}
         >
-          <SelectTrigger className="w-[150px]" aria-label="Filter by member type">
-            <SelectValue placeholder="Member Type" />
+          <SelectTrigger className="w-[175px]" aria-label="Filter by non-member category">
+            <SelectValue placeholder="Non-Member Category" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Member Types</SelectItem>
+            <SelectItem value="all">All Non-Member Categories</SelectItem>
             {NON_MEMBER_ROLE_VALUES.map((role) => (
               <SelectItem key={role} value={role}>
                 {ROLE_LABELS[role]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={filters.membershipType || "all"}
+          onValueChange={(value) =>
+            onSetFilter("membershipType", value === "all" ? "" : value)
+          }
+        >
+          <SelectTrigger className="w-[175px]" aria-label="Filter by membership type">
+            <SelectValue placeholder="Membership Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Membership Types</SelectItem>
+            <SelectItem value={UNASSIGNED_MEMBERSHIP_TYPE_VALUE}>
+              Unassigned
+            </SelectItem>
+            {membershipTypeOptions.map((type) => (
+              <SelectItem key={type.id} value={type.id}>
+                {type.name}
               </SelectItem>
             ))}
           </SelectContent>

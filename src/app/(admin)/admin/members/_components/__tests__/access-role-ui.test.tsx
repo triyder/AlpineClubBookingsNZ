@@ -374,7 +374,9 @@ describe("admin member access-role UI", () => {
       />,
     );
 
-    expect(screen.getByText("All Member Types")).toBeInTheDocument();
+    // The old Role-based control is now labelled "Non-Member Category" (#1445);
+    // its behaviour and Non-Member/School options are unchanged.
+    expect(screen.getByText("All Non-Member Categories")).toBeInTheDocument();
     expect(
       screen.getByRole("option", { name: "Non-Member" }),
     ).toBeInTheDocument();
