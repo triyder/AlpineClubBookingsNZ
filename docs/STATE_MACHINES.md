@@ -194,19 +194,28 @@ beds/guest-nights before the send is finalized, so a quote is never emailed for
 dates it cannot reserve: if the lodge is full the send fails with `409` and no
 quote is marked SENT. The hold spans accept (the held row becomes the converted
 PENDING booking and keeps holding, see the booking-status section above) and is
-released on cancel, expiry, a capacity-reduction bump (see the #1317 note in
-the booking-status section above), or an admin **declining** the request. Decline
-now releases the hold via the shared cancel path (#1365): when the declined
-request still points at an `AWAITING_REVIEW` held booking it cancels that
-booking, reconciles away its beds, and detaches `heldBookingId` before flipping
-the request to `DECLINED`, so the freed capacity returns to pre-hold values (the
-requester's cancellation email is suppressed — it is an admin decision, not a
-requester cancellation). Releasing before the flip keeps a concurrent
-quote-accept safe: if the requester accepts at the same moment the held booking
-is no longer `AWAITING_REVIEW` (or the cancel path returns a `409`), the decline
-aborts and the request stays `VERIFIED`/`PRICED`, so it can never end up
-`DECLINED` while owning a live accepted booking. The same release covers SCHOOL
-requests (no type branch).
+released on cancel, expiry, or a capacity-reduction bump (see the #1317 note in
+the booking-status section above).
+
+Decline and the hold (#1365): the admin **decline** route only declines a
+request in `VERIFIED`/`PRICED` (its status-guarded flip claims exactly those
+states). A *generic* held request is `QUOTE_SENT` (auto-hold-on-send), which is
+NOT in that set, so decline 409s and leaves it untouched — a generic quote's
+hold is released instead by the requester declining the quote, quote-expiry, or
+the admin **Release hold** button. What decline *does* release is a hold on a
+`VERIFIED`/`PRICED` request — in practice a SCHOOL **manual** hold
+(`holdBookingRequestSlots`). It runs **claim-first**: the DECLINED flip happens
+FIRST, so a wrong-state (e.g. `QUOTE_SENT`) decline never touches the held
+booking; only AFTER the request is actually claimed does it release the hold via
+the shared cancel path — cancelling the `AWAITING_REVIEW` held booking,
+reconciling away its beds, and detaching `heldBookingId`, with the requester's
+cancellation email suppressed (an admin decision, not a requester cancellation).
+A held pointer that is stale or no longer a live `AWAITING_REVIEW` hold is simply
+detached. Because `VERIFIED`/`PRICED` requests carry no *sent quote*, there is no
+requester quote-accept to race: once the request is claimed `DECLINED` its held
+booking cannot be converted to a live `PENDING` booking, so the cancel can never
+clobber a just-accepted booking. SCHOOL requests use the same function (no type
+branch).
 
 As of #1385 the manual **Hold slots** admin UI entry is hidden on the generic
 (non-SCHOOL) quote flow: auto-hold-on-send (#1280) reserves the beds across the
