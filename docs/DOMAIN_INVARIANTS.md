@@ -164,11 +164,18 @@ Future reviews and issues should cite this file when proposing changes.
   **reconstructs it verbatim and never recomputes** — a >24h re-drive can land
   in a different cancellation tier, so recomputing the mirror amount would be
   unsafe. The plan is written before the Stripe refund and before the
-  settlement flips, so the refund fires at most once across re-drives. (Resume
-  completes the local booking/capacity/refund-mirror cleanup only; it does not
-  re-enqueue a Xero refund credit note for a child that crashed after its
-  cancel committed but before its credit note was queued — pre-existing
-  books-drift of the #1233 reconcile class.)
+  settlement flips, so the refund fires at most once across re-drives.
+- The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
+  Each child's Xero refund credit-note outbox row (integer cents) is enqueued
+  **inside the same transaction** as that child's cancel + `refundedAmountCents`
+  mirror — the enqueue is a DB outbox insert, not a provider call, so it may
+  join the tx. A crash can therefore never leave a `CANCELLED` child with its
+  refund mirror written but no credit-note operation queued: either both commit
+  or neither does (the reaper then re-drives the still-`ACTIVE` child). This
+  closes the window for **every** payment source, including Internet-Banking
+  children the #1354 daily reconcile self-heal cannot recover because they carry
+  no per-child `xeroInvoiceId`; that daily self-heal remains a Stripe-only
+  backstop. Only the outbox worker *kick* stays best-effort and post-commit.
 - A failed settlement refund must stay durably owed (#1351): the frozen plan
   is never nulled, a payment-recovery operation persisted before the inline
   Stripe call retries the refund under the same

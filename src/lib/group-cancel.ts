@@ -51,9 +51,15 @@
  * already-CANCELLED plan children whose mirror is still zero — ACTIVE
  * children stay owned by the reaper resume path), and enqueues their Xero
  * credit notes. Admins are alerted only when the recovery retries exhaust.
- * A resume/replay does NOT heal a pre-existing Xero drift for a child whose
- * booking committed CANCELLED with its mirror written but whose credit-note
- * enqueue crashed (books-drift of the #1233 reconcile class, out of scope).
+ *
+ * Credit-note durability (F21 #3, #1257/#1377): the inline per-child refund
+ * credit-note enqueue is a DB outbox insert, so it now commits INSIDE the same
+ * transaction as the child cancel + refund mirror (store: tx). A crash can no
+ * longer strand a CANCELLED child with its mirror written but no credit-note
+ * operation queued — the drift is closed for every source, including
+ * Internet-Banking children the #1354 daily reconcile self-heal cannot recover
+ * (they carry no per-child xeroInvoiceId). A resume/replay never re-derives
+ * money; it only completes an interrupted cleanup.
  */
 import {
   BookingEventType,
@@ -397,8 +403,11 @@ export async function settleGroupBookingOnOrganiserCancel(
 
   for (const child of children) {
     const refundForChild = refundByChildId.get(child.id) ?? 0;
+    // Captured from inside the per-child tx so the best-effort outbox worker
+    // kick can run POST-commit (the enqueue itself is now durable — below).
+    let queuedCreditNoteOperationId: string | null = null;
     try {
-      await prisma.$transaction(async (tx) => {
+      queuedCreditNoteOperationId = await prisma.$transaction(async (tx) => {
         await tx.booking.update({
           where: { id: child.id },
           data: { status: BookingStatus.CANCELLED },
@@ -429,7 +438,26 @@ export async function settleGroupBookingOnOrganiserCancel(
                   : PaymentStatus.PARTIALLY_REFUNDED,
             },
           });
+          // Xero refund credit note per paid child, allocated against that
+          // child's own settlement invoice so the books balance per joiner.
+          // Enqueued INSIDE this tx (store: tx) so the outbox row commits
+          // atomically with the child cancel + refund mirror (#1257/#1377):
+          // the enqueue is a DB outbox insert, not a Xero HTTP call, so it
+          // may join the transaction safely. This closes the crash window
+          // between the child-cancel commit and a post-commit enqueue — a
+          // window that permanently stranded non-Stripe (Internet-Banking)
+          // children, which carry no per-child xeroInvoiceId for the #1354
+          // daily reconcile self-heal to recover. If the enqueue fails, the
+          // whole child cancel rolls back and the reaper re-drives it while it
+          // is still ACTIVE, rather than leaving drift behind.
+          const queued = await enqueueXeroRefundCreditNoteOperation(
+            child.payment.id,
+            refundForChild,
+            { createdByMemberId: sessionUserId, store: tx }
+          );
+          return queued.queueOperationId;
         }
+        return null;
       });
     } catch (err) {
       logger.error(
@@ -439,30 +467,17 @@ export async function settleGroupBookingOnOrganiserCancel(
       continue;
     }
 
-    // Xero refund credit note per paid child, allocated against that child's own
-    // settlement invoice so the books balance per joiner.
-    if (refundForChild > 0 && child.payment) {
-      try {
-        const queued = await enqueueXeroRefundCreditNoteOperation(
-          child.payment.id,
-          refundForChild,
-          { createdByMemberId: sessionUserId }
-        );
-        if (queued.queueOperationId && (await isXeroConnected())) {
-          void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch(
-            (xeroErr) =>
-              logger.error(
-                { err: xeroErr, bookingId: child.id },
-                "Failed to kick Xero refund credit note worker after organiser cancel"
-              )
-          );
-        }
-      } catch (xeroErr) {
-        logger.error(
-          { err: xeroErr, bookingId: child.id, groupBookingId: group.id },
-          "Failed to queue Xero refund credit note for cancelled group joiner"
-        );
-      }
+    // Best-effort outbox worker kick, kept POST-commit (the outbox cron drains
+    // the row regardless). Never inside the tx: that would put a Xero provider
+    // HTTP call in the transaction.
+    if (queuedCreditNoteOperationId && (await isXeroConnected())) {
+      void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch(
+        (xeroErr) =>
+          logger.error(
+            { err: xeroErr, bookingId: child.id },
+            "Failed to kick Xero refund credit note worker after organiser cancel"
+          )
+      );
     }
 
     logAudit({

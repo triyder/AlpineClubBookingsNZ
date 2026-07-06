@@ -86,7 +86,12 @@ idempotent because the first run persists the per-child refund plan
 reconstructs that plan verbatim (never recomputes — a >24h re-drive can land in
 a different cancellation tier) and applies the per-child `refundedAmountCents`
 mirror, and the `SUCCEEDED` guard plus the Stripe idempotency key fire the
-refund at most once.
+refund at most once. Each child's Xero refund credit-note outbox row is enqueued
+**inside the same transaction** as that child's cancel + refund mirror
+(#1257/#1377), so a crash can never leave a `CANCELLED` child with its mirror
+written but no credit-note operation queued — durable for every source,
+including Internet-Banking children the #1354 self-heal cannot recover. Only the
+outbox worker kick stays best-effort and post-commit.
 
 A transient Stripe failure during that settlement refund no longer abandons it
 (#1351, owner-decided durable auto-retry). A recovery operation is persisted

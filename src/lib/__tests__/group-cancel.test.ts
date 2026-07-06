@@ -3,6 +3,7 @@ import {
   BookingStatus,
   GroupBookingPaymentMode,
   GroupBookingStatus,
+  PaymentSource,
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
@@ -273,6 +274,7 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(2);
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
       createdByMemberId: ORGANISER,
+      store: txClient,
     });
     // Each child's payment marked refunded and booking cancelled.
     expect(mocks.paymentUpdate).toHaveBeenCalledWith({
@@ -400,9 +402,109 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
       createdByMemberId: ORGANISER,
+      store: txClient,
     });
     // Both children cancelled and beds released.
     expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("#1257/#1377: enqueues the per-child credit note INSIDE the child-cancel tx (store: tx), not post-commit", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "child-1",
+        status: BookingStatus.PAID,
+        finalPriceCents: 4500,
+        payment: {
+          id: "pay-1",
+          amountCents: 4500,
+          refundedAmountCents: 0,
+          status: PaymentStatus.SUCCEEDED,
+          source: PaymentSource.STRIPE,
+        },
+      }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // The enqueue joined the SAME transaction client the booking cancel + refund
+    // mirror ran on, so the outbox row commits atomically with the child cancel:
+    // no crash window between the commit and a post-commit enqueue.
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
+      createdByMemberId: ORGANISER,
+      store: txClient,
+    });
+    const [, , opts] = mocks.enqueueXeroRefund.mock.calls[0];
+    expect(opts.store).toBe(txClient);
+  });
+
+  it("#1257/#1377: enqueues atomically for an Internet-Banking child (no per-child Xero invoice) — the residual this closes", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: {
+        id: "settle-1",
+        status: PaymentStatus.SUCCEEDED,
+        amountCents: 4500,
+        stripePaymentIntentId: "pi_settle_1",
+      },
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      child({
+        id: "ib-child",
+        status: BookingStatus.PAID,
+        finalPriceCents: 4500,
+        payment: {
+          id: "pay-ib",
+          amountCents: 4500,
+          refundedAmountCents: 0,
+          status: PaymentStatus.SUCCEEDED,
+          source: PaymentSource.INTERNET_BANKING,
+        },
+      }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    // Internet-Banking children carry no per-child xeroInvoiceId, so the #1354
+    // daily reconcile self-heal cannot recover a dropped credit note for them.
+    // The atomic enqueue removes the crash window for them too.
+    expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-ib", 4500, {
+      createdByMemberId: ORGANISER,
+      store: txClient,
+    });
+    const [, , opts] = mocks.enqueueXeroRefund.mock.calls[0];
+    expect(opts.store).toBe(txClient);
+  });
+
+  it("enqueues no credit note for a child owed nothing (refundForChild > 0 gating preserved)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: null,
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.PAYMENT_PENDING }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4");
+
+    expect(mocks.enqueueXeroRefund).not.toHaveBeenCalled();
+    // The child is still cancelled and its bed released.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "child-1" },
+      data: { status: BookingStatus.CANCELLED },
+    });
   });
 });
 
@@ -486,6 +588,7 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
     });
     expect(mocks.enqueueXeroRefund).toHaveBeenCalledWith("pay-1", 4500, {
       createdByMemberId: ORGANISER,
+      store: txClient,
     });
     expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
       where: { id: GROUP_ID },
