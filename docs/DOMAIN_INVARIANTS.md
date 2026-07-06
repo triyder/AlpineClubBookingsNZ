@@ -414,9 +414,11 @@ un-decline the request. The guards still permit a re-arm from
 (#1232 double-accept returns the one existing booking). Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
 if a previously mapped contact is no longer a valid non-login contact by the time
 the requester accepts (login enabled, archived, deactivated, role changed), the
-accept still succeeds — a fresh non-login contact is substituted and an
-admin-attention audit row (`booking_request.owner_substituted`) is recorded so
-the substituted Xero contact can be reconciled. When the Xero module is off, the
+accept still succeeds — a fresh non-login contact is substituted and both a
+durable admin-attention audit row (`booking_request.owner_substituted`) and an
+active `admin-owner-substitution` admin email alert (gated by the
+`adminXeroSyncError` preference, F20 residual #2 / #1377) are raised post-commit
+so the substituted Xero contact can be reconciled. When the Xero module is off, the
 manual-invoice admin notification names the resolved booking owner (the mapped
 contact when mapped), not the raw request school/contact.
 Headcount or tier changes still go through the admin re-quote flow, and

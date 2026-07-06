@@ -1,5 +1,6 @@
 import {
   adminMinorsReviewRequiredTemplate,
+  adminOwnerSubstitutionTemplate,
   adminNewBookingTemplate,
   adminPendingDeadlineTemplate,
   adminBookingBumpedTemplate,
@@ -72,6 +73,46 @@ export async function sendAdminMinorsOnlyReviewAlert(data: {
       reviewReason: data.reviewReason,
     },
     preferenceKey: "adminBookingReviewRequired",
+  });
+}
+
+// F20 / #1377: Admin alert - a held booking-request owner failed re-validation
+// at conversion, so a fresh non-login contact was minted and the invoice will
+// bill THAT contact instead of the intended owner. Routed to the Xero-sync-error
+// audience (finance/Xero admins) because the remedy is a Xero contact
+// reconciliation, reusing the existing `adminXeroSyncError` preference key so a
+// rare event needs no new NotificationPreference column.
+export async function sendAdminOwnerSubstitutionAlert(data: {
+  requestId: string;
+  bookingId: string;
+  intendedMemberId: string;
+  intendedMemberName?: string | null;
+  substituteMemberId: string;
+  substituteMemberName?: string | null;
+  reason: string;
+  requesterName: string;
+  requesterEmail: string;
+  checkIn: Date;
+  checkOut: Date;
+}) {
+  await sendToAdmins({
+    subject: `Owner substitution — reconcile Xero contact for booking request ${data.requestId}`,
+    html: adminOwnerSubstitutionTemplate(data),
+    templateName: "admin-owner-substitution",
+    templateData: {
+      requestId: data.requestId,
+      bookingId: data.bookingId,
+      intendedMemberId: data.intendedMemberId,
+      intendedMemberName: data.intendedMemberName ?? "",
+      substituteMemberId: data.substituteMemberId,
+      substituteMemberName: data.substituteMemberName ?? "",
+      reason: data.reason,
+      requesterName: data.requesterName,
+      memberEmail: data.requesterEmail,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+    },
+    preferenceKey: "adminXeroSyncError",
   });
 }
 

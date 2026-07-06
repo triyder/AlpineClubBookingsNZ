@@ -1749,6 +1749,39 @@ Triggers and frequency:
 - The booking keeps its PAID status but is blocked from lodge check-in until an admin clears the review; sent once to opted-in admins per event. Not sent when the booking already carried a pending review or still has an adult.
 - Gated by its own "Booking review required" (`adminBookingReviewRequired`) admin notification preference (#1422), separate from routine new-booking alerts, so muting new-booking mail does not silence this review alert.
 
+### admin-owner-substitution
+
+Subject:
+
+```text
+Owner substitution — reconcile Xero contact for booking request {{requestId}}
+```
+
+Body:
+
+```text
+Owner Substitution — Xero Reconciliation Required
+
+An owner substitution occurred while converting booking request {{requestId}} into booking {{bookingId}}. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.
+
+Action required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.
+
+Intended owner (should be billed): {{intendedMemberName}} ({{intendedMemberId}})
+Substituted contact (currently billed): {{substituteMemberName}} ({{substituteMemberId}})
+Reason: {{reason}}
+Requester: {{requesterName}} ({{memberEmail}})
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Review Bookings: {{BASE_URL}}/admin/bookings
+```
+
+Triggers and frequency:
+
+- A held booking-request owner was no longer a valid non-login contact by the time the requester accepted (login enabled, archived, deactivated, role changed), so the accept substituted a fresh non-login contact to avoid failing the requester (issue #1255 residual-risk decision 1). Sent once per conversion that substitutes.
+- Fires post-commit alongside the durable `booking_request.owner_substituted` audit row (F20 residual #2 / #1377); a failed send never fails the conversion.
+- Gated by the "Xero sync errors" (`adminXeroSyncError`) admin notification preference, because the remedy is a Xero contact reconciliation (repoint the invoice's contact to the intended organisation) so the finance/Xero admin audience is the right recipient set.
+
 ### admin-new-booking
 
 Subject variants:

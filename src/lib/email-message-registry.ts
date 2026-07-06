@@ -25,6 +25,7 @@ export interface EmailTemplateDefinition {
 const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-membership-application-pending",
   "admin-minors-review",
+  "admin-owner-substitution",
   "admin-new-booking",
   "admin-payment-failure",
   "admin-pending-deadline",
@@ -220,6 +221,11 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary:
       "Paid booking edited into a minors-only (no-adult) composition",
     frequency: "Once when a guest removal or batch edit newly trips the flag",
+  },
+  "admin-owner-substitution": {
+    triggerSummary:
+      "Held booking-request owner failed re-validation at conversion; a fresh contact was substituted and the invoice will bill it instead of the intended owner",
+    frequency: "Once per conversion where the held owner is no longer mappable",
   },
   "membership-cancellation-submitted": {
     triggerSummary: "Membership cancellation request submitted",
@@ -466,6 +472,8 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "guestName",
   "holdUntil",
   "hoursRemaining",
+  "intendedMemberId",
+  "intendedMemberName",
   "inviteeName",
   "inviterName",
   "issueCategoryCount",
@@ -520,6 +528,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "remainingCredit",
   "recipientName",
   "profileUrl",
+  "requestId",
   "requestType",
   "requestedSummary",
   "requestedAmount",
@@ -535,6 +544,8 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "stalePendingMinutes",
   "startDate",
   "status",
+  "substituteMemberId",
+  "substituteMemberName",
   "subtotal",
   "targetAgeTier",
   "targetAgeTierLabel",

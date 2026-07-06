@@ -56,6 +56,10 @@ vi.mock("@/lib/email", () => ({
   sendAdminBookingRequestPendingEmail: vi.fn().mockResolvedValue(undefined),
   sendBookingRequestApprovedEmail: vi.fn().mockResolvedValue(undefined),
   sendBookingRequestDeclinedEmail: vi.fn().mockResolvedValue(undefined),
+  // #1377: approve now fires an owner-substitution admin alert on the substitute
+  // path. The real function is undefined under a partial mock, so stub it here or
+  // the approve path calls undefined → the conversion throws (see #1417).
+  sendAdminOwnerSubstitutionAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -102,6 +106,7 @@ import {
   sendAdminBookingRequestPendingEmail,
   sendBookingRequestApprovedEmail,
   sendBookingRequestDeclinedEmail,
+  sendAdminOwnerSubstitutionAlert,
 } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -138,6 +143,7 @@ const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
 const mockedSendAdminPending = vi.mocked(sendAdminBookingRequestPendingEmail);
 const mockedSendApproved = vi.mocked(sendBookingRequestApprovedEmail);
 const mockedSendDeclined = vi.mocked(sendBookingRequestDeclinedEmail);
+const mockedSendOwnerSubstitution = vi.mocked(sendAdminOwnerSubstitutionAlert);
 const mockedLogAudit = vi.mocked(logAudit);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
 const mockedBookingFindUnique = vi.mocked(prisma.booking.findUnique);
@@ -1293,6 +1299,8 @@ describe("approveBookingRequest", () => {
     expect(mockedLogAudit).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking_request.owner_substituted" })
     );
+    // No substitution → no owner-substitution admin alert (#1377).
+    expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
   });
 
   it("substitutes a fresh contact when the held owner is no longer valid at conversion, and the accept still succeeds (#1255 decision 1)", async () => {
@@ -1356,6 +1364,17 @@ describe("approveBookingRequest", () => {
           invalidMemberId: "held-invalid",
           substituteMemberId: "fresh-owner",
         }),
+      })
+    );
+    // #1377: an active admin email alert also fires post-commit (fire-and-forget,
+    // outside the tx) so the finance/Xero admin reconciles the invoice's contact.
+    expect(mockedSendOwnerSubstitution).toHaveBeenCalledTimes(1);
+    expect(mockedSendOwnerSubstitution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req-1",
+        bookingId: "held-1",
+        intendedMemberId: "held-invalid",
+        substituteMemberId: "fresh-owner",
       })
     );
   });

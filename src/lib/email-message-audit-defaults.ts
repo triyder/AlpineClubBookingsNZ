@@ -206,6 +206,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Review required: booking has only under-18 guests ({{memberName}})",
     "defaultBody": "Booking Review Required\n\nA paid booking was edited and now has only under-18 guests. It is blocked from lodge check-in until an admin reviews it.\n\n{{reviewReason}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
   },
+  "admin-owner-substitution": {
+    "defaultSubject": "Owner substitution — reconcile Xero contact for booking request {{requestId}}",
+    "defaultBody": "Owner Substitution — Xero Reconciliation Required\n\nAn owner substitution occurred while converting booking request {{requestId}} into booking {{bookingId}}. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.\n\nAction required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.\n\nIntended owner (should be billed): {{intendedMemberName}} ({{intendedMemberId}})\nSubstituted contact (currently billed): {{substituteMemberName}} ({{substituteMemberId}})\nReason: {{reason}}\nRequester: {{requesterName}} ({{memberEmail}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
+  },
   "admin-new-booking": {
     "defaultSubject": "New Booking: {{memberName}} ({{status}})",
     "defaultBody": "New Booking Created\n\nA new booking has been created.\n\n{{reviewReason}} [only when reviewReason exists]\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{total}}\nStatus: {{status}}\n\nView Bookings: {{BASE_URL}}/admin/bookings"

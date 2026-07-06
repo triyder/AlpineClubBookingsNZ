@@ -38,6 +38,7 @@ import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
 import {
   sendAdminBookingRequestPendingEmail,
+  sendAdminOwnerSubstitutionAlert,
   sendBookingRequestApprovedEmail,
   sendBookingRequestDeclinedEmail,
   sendBookingRequestVerificationEmail,
@@ -1289,17 +1290,20 @@ export async function approveBookingRequest(input: {
     // The held owner failed re-validation and a fresh contact was substituted
     // (issue #1255 residual-risk decision 1). Surface it for admin follow-up:
     // the booking (and any Xero invoice) now bill the fresh contact rather than
-    // the intended mapped organisation, so an admin may need to reconcile the
-    // Xero contact. A durable audit row (queryable in the admin audit log) is the
-    // attention channel; see the PR body for why this is not an email alert.
+    // the intended mapped organisation, so an admin must reconcile the Xero
+    // contact. Two attention channels run post-commit (outside the tx/advisory
+    // lock): a durable audit row (queryable in the admin audit log) AND an active
+    // admin email alert (F20 residual #2 / #1377) routed to the Xero-sync-error
+    // audience so finance/Xero admins are told to repoint the invoice's contact.
     if (conversion.ownerSubstitution) {
+      const ownerSubstitution = conversion.ownerSubstitution;
       logger.warn(
         {
           bookingRequestId: request.id,
           bookingId: conversion.bookingId,
-          invalidMemberId: conversion.ownerSubstitution.invalidMemberId,
-          substituteMemberId: conversion.ownerSubstitution.substituteMemberId,
-          reason: conversion.ownerSubstitution.reason,
+          invalidMemberId: ownerSubstitution.invalidMemberId,
+          substituteMemberId: ownerSubstitution.substituteMemberId,
+          reason: ownerSubstitution.reason,
         },
         "Held booking owner was invalid at conversion; substituted a fresh non-login contact"
       );
@@ -1318,11 +1322,64 @@ export async function approveBookingRequest(input: {
         metadata: {
           bookingId: conversion.bookingId,
           requestId: request.id,
-          invalidMemberId: conversion.ownerSubstitution.invalidMemberId,
-          substituteMemberId: conversion.ownerSubstitution.substituteMemberId,
-          reason: conversion.ownerSubstitution.reason,
+          invalidMemberId: ownerSubstitution.invalidMemberId,
+          substituteMemberId: ownerSubstitution.substituteMemberId,
+          reason: ownerSubstitution.reason,
         },
       });
+
+      // Fire-and-forget admin email alert. A failed alert must NOT fail the
+      // conversion (the booking is already committed), so it mirrors the
+      // approved-email try/catch above. Names are a best-effort readability
+      // lookup outside the tx; ids are the source of truth if a name is missing.
+      try {
+        const [intendedMember, substituteMember] = await Promise.all([
+          prisma.member
+            .findUnique({
+              where: { id: ownerSubstitution.invalidMemberId },
+              select: { firstName: true, lastName: true },
+            })
+            .catch(() => null),
+          prisma.member
+            .findUnique({
+              where: { id: ownerSubstitution.substituteMemberId },
+              select: { firstName: true, lastName: true },
+            })
+            .catch(() => null),
+        ]);
+        const fullName = (
+          member: { firstName?: string | null; lastName?: string | null } | null
+        ): string | null => {
+          const name = [member?.firstName, member?.lastName]
+            .filter((part): part is string => Boolean(part && part.trim()))
+            .join(" ")
+            .trim();
+          return name.length > 0 ? name : null;
+        };
+        await sendAdminOwnerSubstitutionAlert({
+          requestId: request.id,
+          bookingId: conversion.bookingId,
+          intendedMemberId: ownerSubstitution.invalidMemberId,
+          intendedMemberName: fullName(intendedMember),
+          substituteMemberId: ownerSubstitution.substituteMemberId,
+          substituteMemberName: fullName(substituteMember),
+          reason: ownerSubstitution.reason,
+          requesterName:
+            `${request.contactFirstName} ${request.contactLastName}`.trim(),
+          requesterEmail: request.contactEmail,
+          checkIn: request.checkIn,
+          checkOut: request.checkOut,
+        });
+      } catch (err) {
+        logger.error(
+          {
+            err,
+            bookingRequestId: request.id,
+            bookingId: conversion.bookingId,
+          },
+          "Failed to send owner-substitution admin alert"
+        );
+      }
     }
   } else {
     // Observability-only note that a duplicate accept was absorbed (#1232).
