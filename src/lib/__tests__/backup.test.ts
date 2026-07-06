@@ -106,6 +106,28 @@ describe("backup", () => {
     });
   });
 
+  it("downgrades S3-less local backups to a not-durable FAILURE", () => {
+    expect(
+      buildBackupCronOutcome({
+        success: true,
+        filename: "backup.sql.gz",
+        sizeBytes: 1024,
+        uploadedToS3: false,
+      })
+    ).toEqual({
+      status: "FAILURE",
+      error:
+        "Backup completed only to local /tmp storage; configure BACKUP_S3_BUCKET for durable backups",
+      resultSummary: {
+        filename: "backup.sql.gz",
+        sizeBytes: 1024,
+        minSizeBytes: 128,
+        s3: false,
+        healthSignal: "backup-not-durable",
+      },
+    });
+  });
+
   it("classifies a skipped backup as SKIPPED", () => {
     expect(
       buildBackupCronOutcome({

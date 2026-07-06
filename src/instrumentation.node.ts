@@ -515,8 +515,17 @@ export async function register() {
           await recordCronRun("backup", startedAt, "SKIPPED", outcome.resultSummary);
           Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "ok" });
         } else {
-          logger.error({ job: "backup", error: outcome.error }, "Database backup failed");
-          await recordCronRun("backup", startedAt, "FAILURE", undefined, outcome.error);
+          logger.error(
+            { job: "backup", error: outcome.error, ...outcome.resultSummary },
+            "Database backup failed"
+          );
+          await recordCronRun(
+            "backup",
+            startedAt,
+            "FAILURE",
+            outcome.resultSummary,
+            outcome.error
+          );
           Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "error" });
         }
       } catch (err) {
