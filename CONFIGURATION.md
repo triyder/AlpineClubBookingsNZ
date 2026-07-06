@@ -259,6 +259,32 @@ Admin > Setup includes lodge-wide settings stored in the singleton
   dashboard, the hut-leader assignment API, and the queue-driven Needs
   Attention sidebar item.
 
+## Hut Leaders
+
+A hut-leader assignment (`/admin/hut-leaders`) is a date-ranged roster record
+that issues a dedicated lodge kiosk PIN for the assigned member (the plaintext
+PIN is shown only once, when it is issued or reset) — it is not a role or
+access-role capability. Assignment is admin-controlled; completing a Hut Leader
+Induction only sets `Member.hutLeaderEligible` and never creates or dates an
+assignment.
+
+The New Assignment picker is **booking-derived**. It lists only adult members
+who both hold the standard member (`USER`) access role and have an operational
+booking overlapping the selected date range, so a season-long custodian who has
+no booking never appears — and the create API rejects any member who lacks the
+`USER` role.
+
+To roster a custodian who has no booking of their own (the ratified workaround):
+
+1. On Promo Codes, create a 100%-off code covering the custodian's stay.
+2. On Book on Behalf, book the custodian's lodge nights and apply the free code
+   so the stay costs nothing.
+3. Confirm the custodian's account still has the standard member (`USER`) role
+   ticked — a member whose only roles are custom (definition-backed) roles
+   cannot be assigned as hut leader.
+4. Return to `/admin/hut-leaders`, choose the matching dates, and assign the
+   custodian as normal; they now appear in the picker and receive a lodge PIN.
+
 ## Required Local Setup Variables
 
 These are enough for a local database-backed app with external services left in
