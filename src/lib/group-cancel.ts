@@ -448,8 +448,12 @@ export async function settleGroupBookingOnOrganiserCancel(
           // window that permanently stranded non-Stripe (Internet-Banking)
           // children, which carry no per-child xeroInvoiceId for the #1354
           // daily reconcile self-heal to recover. If the enqueue fails, the
-          // whole child cancel rolls back and the reaper re-drives it while it
-          // is still ACTIVE, rather than leaving drift behind.
+          // whole child-cancel tx rolls back so no CANCELLED child is ever left
+          // with a written refund mirror but no queued credit-note op (the
+          // invariant this closes). On a genuine crash the reaper re-drives the
+          // still-ACTIVE child; a caught-but-survived error follows the same
+          // pre-existing best-effort `continue` below (the reaper only re-drives
+          // not-yet-CANCELLED groups) — this fix adds no new reachable drift.
           const queued = await enqueueXeroRefundCreditNoteOperation(
             child.payment.id,
             refundForChild,
