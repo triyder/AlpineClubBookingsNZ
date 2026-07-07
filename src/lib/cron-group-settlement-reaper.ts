@@ -66,7 +66,7 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 
-export const GROUP_SETTLEMENT_REAP_HOURS =
+const GROUP_SETTLEMENT_REAP_HOURS =
   Number(process.env.GROUP_SETTLEMENT_REAP_HOURS) || 48;
 
 /**
@@ -75,7 +75,7 @@ export const GROUP_SETTLEMENT_REAP_HOURS =
  * settleGroupBookingOnOrganiserCancel, so `updatedAt < now - grace` cleanly
  * excludes a cleanup that has only just started (default 15 minutes).
  */
-export const GROUP_CANCEL_RESUME_GRACE_MINUTES =
+const GROUP_CANCEL_RESUME_GRACE_MINUTES =
   Number(process.env.GROUP_CANCEL_RESUME_GRACE_MINUTES) || 15;
 
 /** Floor so an arrival-day settlement is not reaped while mid-payment. */

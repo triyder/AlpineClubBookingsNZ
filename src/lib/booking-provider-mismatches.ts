@@ -15,7 +15,7 @@ import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
  * calls.
  */
 
-export type BookingProviderMismatchId =
+type BookingProviderMismatchId =
   | "xero-invoice-pending"
   | "xero-credit-note-pending"
   | "waitlist-offer-email-failed";

@@ -14,7 +14,7 @@ export const BOOKING_MESSAGE_KEYS = [
 
 export type BookingMessageKey = (typeof BOOKING_MESSAGE_KEYS)[number];
 
-export const BOOKING_MESSAGE_TOKENS = [
+const BOOKING_MESSAGE_TOKENS = [
   "bookerFirstName",
   "bookerFullName",
   "checkIn",
@@ -39,7 +39,7 @@ export const BOOKING_MESSAGE_TOKENS = [
   "SUPPORT_EMAIL",
 ] as const;
 
-export type BookingMessageToken = (typeof BOOKING_MESSAGE_TOKENS)[number];
+type BookingMessageToken = (typeof BOOKING_MESSAGE_TOKENS)[number];
 
 export type BookingMessageMergeData = Partial<Record<BookingMessageToken, string | number | null | undefined>>;
 

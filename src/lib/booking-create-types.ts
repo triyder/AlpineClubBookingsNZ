@@ -28,7 +28,7 @@ export interface BookingGuestInput {
   nights?: ReadonlyArray<GuestNightInput> | null;
 }
 
-export interface BaseInput {
+interface BaseInput {
   effectiveMemberId: string;
   isOnBehalf: boolean;
   sessionUserId: string;

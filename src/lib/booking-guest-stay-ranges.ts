@@ -50,7 +50,7 @@ const nightKeySetCache = new WeakMap<object, Set<string>>();
  * The set of date-only keys a guest explicitly stays, or null when the guest
  * has no explicit night set (caller should fall back to the envelope).
  */
-export function getGuestNightKeySet(
+function getGuestNightKeySet(
   guest: GuestStayRange
 ): Set<string> | null {
   const nights = guest.nights;
@@ -104,7 +104,7 @@ export function isGuestActiveOnNight(
   return stayStartKey <= nightKey && nightKey < stayEndKey;
 }
 
-export function isGuestVisibleOnLodgeDate(
+function isGuestVisibleOnLodgeDate(
   guest: GuestStayRange,
   date: Date,
   booking: BookingStayRange,

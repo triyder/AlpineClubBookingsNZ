@@ -5,14 +5,14 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 
-export type BedAllocationSource = "AUTO" | "MANUAL";
+type BedAllocationSource = "AUTO" | "MANUAL";
 // Matches the DB enum so freshly-read guest rows type-check. Guests are
 // people, so NOT_APPLICABLE (the organisation tier, #1440) cannot enter
 // through validated inputs; if legacy data ever carries it, the guest is
 // simply grouped as a non-adult by isAdultAgeTier.
 export type BedAllocationAgeTier = AgeTier;
 
-export interface BedAllocationBed {
+interface BedAllocationBed {
   id: string;
   roomId: string;
   name: string;
@@ -28,7 +28,7 @@ export interface BedAllocationRoom {
   beds: BedAllocationBed[];
 }
 
-export interface BedAllocationGuest {
+interface BedAllocationGuest {
   id: string;
   bookingId: string;
   stayStart: Date;
@@ -58,7 +58,7 @@ export interface BedAllocationBooking {
   holdsCapacity?: boolean;
 }
 
-export interface OccupiedBedNight {
+interface OccupiedBedNight {
   bedId: string;
   stayDate: string | Date;
   bookingId?: string | null;
@@ -83,7 +83,7 @@ export interface OccupiedBedNight {
   approvedAt?: Date | string | null;
 }
 
-export type BedAllocationDisplacementType = "MOVE" | "UNALLOCATE";
+type BedAllocationDisplacementType = "MOVE" | "UNALLOCATE";
 
 /**
  * A provisional bed-night that auto-allocation displaced so a capacity-holding

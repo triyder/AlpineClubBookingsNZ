@@ -3,14 +3,14 @@ import { formatCents } from "@/lib/utils";
 
 export type BookingHistoryTone = "default" | "success" | "warning" | "danger";
 
-export interface BookingHistoryAuditLog {
+interface BookingHistoryAuditLog {
   id: string;
   action: string;
   details: string | null;
   createdAt: Date;
 }
 
-export interface BookingHistoryPayment {
+interface BookingHistoryPayment {
   status: string;
   amountCents: number;
   refundedAmountCents: number;
@@ -20,7 +20,7 @@ export interface BookingHistoryPayment {
   updatedAt: Date;
 }
 
-export interface BookingHistoryModification {
+interface BookingHistoryModification {
   id: string;
   modificationType: string;
   previousData: unknown;
@@ -30,7 +30,7 @@ export interface BookingHistoryModification {
   createdAt: Date;
 }
 
-export interface BookingHistoryRefundRequest {
+interface BookingHistoryRefundRequest {
   id: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
   reason: string;

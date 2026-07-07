@@ -43,13 +43,13 @@ function isAdmin(role: string) {
   return role === "ADMIN";
 }
 
-export function isFutureEditStatusAllowed(status: string, role: string): boolean {
+function isFutureEditStatusAllowed(status: string, role: string): boolean {
   return isAdmin(role)
     ? ADMIN_FUTURE_EDIT_STATUSES.has(status)
     : MEMBER_FUTURE_EDIT_STATUSES.has(status);
 }
 
-export function isInProgressEditStatusAllowed(status: string): boolean {
+function isInProgressEditStatusAllowed(status: string): boolean {
   return IN_PROGRESS_EDIT_STATUSES.has(status);
 }
 

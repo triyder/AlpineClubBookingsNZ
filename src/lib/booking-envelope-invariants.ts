@@ -42,7 +42,7 @@ export async function assertBookingEnvelopeInvariants(
  * these messages (which appear verbatim in every wrapper layer) are the
  * reliable signal alongside the constraint names.
  */
-export const BOOKING_ENVELOPE_TRIGGER_MESSAGES = [
+const BOOKING_ENVELOPE_TRIGGER_MESSAGES = [
   "BookingGuest stay range must be within parent Booking date range",
   "Booking date range must contain all BookingGuest stay ranges",
 ] as const;
