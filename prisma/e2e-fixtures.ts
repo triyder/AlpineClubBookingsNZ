@@ -179,3 +179,63 @@ export const NOMINATION_TOKEN_TWO = "b2".repeat(32); // nominator = Nadia
 // Applicant used by the light public-submit assertion (distinct email so it
 // never collides with the seeded application or an existing login).
 export const PUBLIC_APPLICANT_EMAIL = demoEmail("penny.public");
+
+// --- Multi-lodge fixtures (e2e/multi-lodge/*, gated on E2E_MULTI_LODGE) ----
+// A SECOND active lodge ("lodge B") plus the rooms, season, kiosk binding, and
+// bookings the advisory multi-lodge Playwright project asserts on. Seeded ONLY
+// by e2e/setup/seed-second-lodge.ts when E2E_MULTI_LODGE=1, run AFTER the base
+// seed (so lodge A's seasons exist to mirror). The default single-lodge suite
+// never runs that script, so it never sees a second lodge and its behaviour is
+// byte-identical. Windows sit in Winter 2026 (base seed: 2026-06-01..09-30) in
+// August, where lodge A has no seeded booking, so per-lodge availability
+// assertions read a clean lodge A.
+export const SECOND_LODGE = {
+  id: "e2e-lodge-b",
+  name: "Second Lodge (E2E)",
+  slug: "second-lodge-e2e",
+} as const;
+
+// Lodge B's active bed count. Deliberately different from lodge A's config
+// total so a cross-lodge capacity-summation bug would be obvious, and small so
+// the capacity-isolation window's numbers are easy to assert.
+export const SECOND_LODGE_BED_COUNT = 8;
+
+// Roster-isolation fixture (scenario c): one CONFIRMED arrival at EACH lodge on
+// the same night. A kiosk bound to lodge B must see lodge B's guest and never
+// lodge A's. Distinct guest names so the assertion is unambiguous.
+export const ROSTER_ISOLATION_WINDOW = {
+  checkIn: "2026-08-10",
+  checkOut: "2026-08-12",
+};
+export const ROSTER_GUEST_LODGE_A = {
+  firstName: "Alpharoster",
+  lastName: "Lodgea",
+} as const;
+export const ROSTER_GUEST_LODGE_B = {
+  firstName: "Bravoroster",
+  lastName: "Lodgeb",
+} as const;
+
+// Capacity-isolation fixture (scenario b): a PAID (capacity-holding, #737)
+// booking at lodge B. Lodge B's availability drops by its guest count on these
+// nights while lodge A stays at zero occupancy for the same window — proving no
+// cross-lodge summation.
+export const CAPACITY_ISOLATION_WINDOW = {
+  checkIn: "2026-08-17",
+  checkOut: "2026-08-19",
+  nights: ["2026-08-17", "2026-08-18"],
+};
+export const CAPACITY_ISOLATION_GUEST_COUNT = 3;
+
+// Cross-lodge waitlist offer (scenario d, ADR-004): Wanda (WAITLISTER) holds a
+// WAITLIST_OFFERED entry that stays at lodge A, but whose active offer is for
+// lodge B. Lodge B has capacity on the window, so accepting create-and-cancels
+// into a fresh lodge-B booking. The offered price is computed at seed time from
+// lodge B's own rates (quoteWaitlistEntryAtLodge) so the confirm-time re-quote
+// matches and never trips OFFER_PRICE_CHANGED.
+export const CROSS_LODGE_OFFER_BOOKING_ID = "e2e-cross-lodge-offer";
+export const CROSS_LODGE_OFFER_WINDOW = {
+  checkIn: "2026-08-24",
+  checkOut: "2026-08-26",
+  nights: ["2026-08-24", "2026-08-25"],
+};

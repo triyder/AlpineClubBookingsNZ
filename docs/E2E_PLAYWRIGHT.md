@@ -99,6 +99,40 @@ failures land in `test-results/`.
 The suite is serial (one worker) on purpose: specs assert on lodge capacity
 and share seeded personas, so they must not interleave.
 
+## Multi-lodge advisory project (issue #1568)
+
+A small, **advisory** (non-blocking) `multi-lodge` Playwright project covers the
+cross-lodge behaviours the default single-lodge suite cannot exercise: the
+`/book` lodge-selection step and per-lodge availability isolation, a
+capacity-holding booking at lodge B not consuming lodge A's capacity, a kiosk
+bound to lodge B never seeing lodge A's roster, and the cross-lodge waitlist
+offer → confirm happy path.
+
+It is opt-in and gated on `E2E_MULTI_LODGE=1`, so the default suite is entirely
+unaffected:
+
+- **Seed:** with `E2E_MULTI_LODGE=1`, the prepare step runs
+  `e2e/setup/seed-second-lodge.ts` after the base seed to provision a second
+  active lodge ("Second Lodge (E2E)") with its own rooms/beds and Winter/Summer
+  seasons (mirroring lodge A's rates), bind the demo LODGE kiosk persona to it,
+  seed the roster/capacity/cross-lodge-offer fixtures, and enable the
+  `multiLodge` module. Without the flag none of this runs.
+- **Project:** the `multi-lodge` Playwright project is only added to
+  `playwright.config.ts` when `E2E_MULTI_LODGE=1`, and the default `chromium`
+  project always ignores `e2e/multi-lodge/`, so the blocking suite's project and
+  spec list are byte-identical (verify with `npx playwright test --list`).
+
+Run it locally (uses the same staging stack; keep off ports 5432/3001 in use):
+
+```bash
+E2E_MULTI_LODGE=1 npm run test:e2e:prepare              # stack + second lodge
+E2E_MULTI_LODGE=1 npm run test:e2e:run -- --project=multi-lodge
+```
+
+This project is a **coverage aid, not a substitute** for the manual two-lodge
+staging matrix in `docs/multi-lodge/test-plan.md`, which remains the hard gate
+before enabling `multiLodge` in production.
+
 ## Environment
 
 Configuration comes from `.env.staging` (override the path with
@@ -247,6 +281,14 @@ the `STRIPE_TEST_SECRET_KEY` / `STRIPE_TEST_PUBLISHABLE_KEY` repository secrets
 hold genuine Stripe **test-mode** keys, and otherwise `test.skip` cleanly (they
 are also retry-scoped to absorb the datacenter-IP Link/hCaptcha flake). So a
 green E2E run does not imply Stripe E2E coverage ran unless those secrets are set.
+
+The same workflow also runs a separate **`E2E multi-lodge (advisory)`** job (the
+`multi-lodge` project, above). It is `continue-on-error: true` and its name is
+not a required status check, so a red run never blocks a merge — it exists to
+make two-lodge regressions and the project's flake rate observable via its own
+`playwright-report-multi-lodge` artifact. Decide any advisory→blocking flip only
+after a stable green window (precedent: the #1315 advisory→blocking promotion of
+the main suite).
 
 ## Safety
 

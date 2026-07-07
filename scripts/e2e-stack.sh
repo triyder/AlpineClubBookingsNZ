@@ -81,6 +81,14 @@ prepare() {
   echo "==> Enabling the modules the E2E journeys need"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
 
+  # Advisory multi-lodge project only (E2E_MULTI_LODGE=1): provision a second
+  # active lodge and enable the multiLodge module. Skipped by default, so the
+  # blocking single-lodge suite is seeded byte-identically.
+  if [[ "${E2E_MULTI_LODGE:-}" == "1" ]]; then
+    echo "==> Provisioning second lodge (E2E_MULTI_LODGE=1)"
+    DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/seed-second-lodge.ts
+  fi
+
   echo "==> Starting app (http://localhost:${STAGING_HTTP_PORT})"
   if [[ "${E2E_SKIP_APP_BUILD:-}" == "1" ]]; then
     compose up -d --wait app

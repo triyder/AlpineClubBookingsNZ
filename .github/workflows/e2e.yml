@@ -144,3 +144,122 @@ jobs:
       - name: Tear down stack
         if: always()
         run: bash scripts/e2e-stack.sh down
+
+  # Advisory (non-blocking) two-lodge coverage — issue #1568. Runs the small
+  # `multi-lodge` Playwright project against a stack seeded with a SECOND active
+  # lodge (E2E_MULTI_LODGE=1 → e2e/setup/seed-second-lodge.ts). It is a separate
+  # job with a name outside branch protection's required checks AND
+  # continue-on-error: true, so a red run never gates a merge — the uploaded
+  # report is where flake rate is observed before any advisory→blocking flip
+  # (precedent: #1315). The blocking `playwright` job above is untouched.
+  multi-lodge:
+    name: E2E multi-lodge (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    env:
+      STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+      APP_IMAGE: tacbookings-e2e-app:ci
+      # Provisions lodge B in prepare and adds the `multi-lodge` project to the
+      # Playwright config for the run step.
+      E2E_MULTI_LODGE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write staging env file
+        run: |
+          STRIPE_SK="${STRIPE_TEST_SECRET_KEY:-sk_test_e2e_placeholder}"
+          STRIPE_PK="${STRIPE_TEST_PUBLISHABLE_KEY:-pk_test_e2e_placeholder}"
+          case "$STRIPE_SK" in sk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
+          case "$STRIPE_PK" in pk_live*) echo "Live Stripe key in secrets — refusing"; exit 1;; esac
+          cat > .env.staging <<EOF
+          STAGING_HTTP_PORT=3001
+          STAGING_POSTGRES_PORT=5433
+          NEXTAUTH_URL=http://localhost:3001
+          AUTH_TRUST_HOST=true
+          DB_PASSWORD=e2e-ci-db-password
+          AUTH_SECRET=e2e-ci-auth-secret
+          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          SEED_ADMIN_EMAIL=e2e-admin@example.org
+          SEED_ADMIN_PASSWORD=e2e-ci-seed-password
+          SEED_LODGE_PASSWORD=e2e-ci-lodge-password
+          STRIPE_SECRET_KEY=$STRIPE_SK
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$STRIPE_PK
+          STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder
+          XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false
+          XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false
+          XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
+          SMTP_PORT=587
+          USE_AWS_SES=false
+          USE_SMTP_RELAY=true
+          EMAIL_SERVER_HOST=mailpit
+          EMAIL_SERVER_PORT=1025
+          EMAIL_SERVER_USER=e2e
+          EMAIL_SERVER_PASSWORD=e2e
+          MAILPIT_HTTP_PORT=8025
+          EMAIL_FROM=e2e@example.org
+          CONTACT_EMAIL=e2e@example.org
+          NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
+          CRON_SECRET=e2e-ci-cron-secret
+          CRON_ENABLED=false
+          BACKUP_ENABLED=false
+          LOG_LEVEL=info
+          EOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build app image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: tacbookings-e2e-app:ci
+          build-args: |
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.STRIPE_TEST_PUBLISHABLE_KEY || 'pk_test_e2e_placeholder' }}
+            NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
+            NEXT_PUBLIC_SENTRY_DSN=
+          cache-from: |
+            type=gha,scope=alpineclubbookingsnz-app
+            type=gha,scope=alpineclubbookingsnz-e2e
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
+
+      - name: Prepare staging stack with a second lodge
+        run: E2E_SKIP_APP_BUILD=1 bash scripts/e2e-stack.sh prepare
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run multi-lodge Playwright project
+        run: bash scripts/e2e-stack.sh run --project=multi-lodge
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-multi-lodge-${{ github.run_id }}
+          path: playwright-report/
+          if-no-files-found: ignore
+
+      - name: Show app logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p tacbookings-staging \
+            -f docker-compose.yml -f docker-compose.staging.yml logs app | tail -200
+
+      - name: Tear down stack
+        if: always()
+        run: bash scripts/e2e-stack.sh down
