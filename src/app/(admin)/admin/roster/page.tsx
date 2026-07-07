@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -104,15 +104,30 @@ export default function RosterPage() {
   const [overlayByDate, setOverlayByDate] = useState<
     Record<string, { tone: CalendarTone; label: string }>
   >({})
+  // Latest selected lodge, read after an async overlay fetch resolves so a
+  // slow earlier-lodge response cannot repaint the current lodge's overlay
+  // (the roster list fetch is already ordering-guarded via AbortController).
+  const lodgeIdRef = useRef(lodgeId)
+  useEffect(() => {
+    lodgeIdRef.current = lodgeId
+  }, [lodgeId])
 
   // Load the roster colour statuses for a month and merge them into the
   // calendar overlay. `no-guests` dates are skipped (no overlay). Failures are
   // swallowed: the overlay is a non-essential decoration over the calendar.
   const loadMonthStatus = useCallback(async (month: string) => {
     try {
-      const res = await fetch(`/api/admin/roster/status?month=${month}`)
+      const query = new URLSearchParams({ month })
+      // Scope the overlay to the selected lodge so its badges agree with the
+      // lodge-filtered roster list below (#1587 item 3). Mirrors `rosterUrl`:
+      // omitted when no lodge is selected, keeping single-lodge behaviour.
+      if (lodgeId) query.set("lodgeId", lodgeId)
+      const res = await fetch(`/api/admin/roster/status?${query.toString()}`)
       if (!res.ok) return
       const data: { month: string; statuses: RosterDayStatusResult[] } = await res.json()
+      // Drop a response for a lodge the user has since switched away from, so a
+      // late earlier-lodge fetch never repaints the current lodge's overlay.
+      if (lodgeId !== lodgeIdRef.current) return
       // Merge this month's statuses into the overlay, and explicitly DELETE any
       // date that has dropped to `no-guests` (e.g. a booking cancelled elsewhere)
       // so a stale coloured badge from a previous load never lingers.
@@ -130,7 +145,7 @@ export default function RosterPage() {
     } catch {
       // Non-essential overlay; ignore load failures.
     }
-  }, [])
+  }, [lodgeId])
 
   const rosterUrl = useCallback(
     (date: string, params: Record<string, string> = {}) => {
@@ -180,6 +195,15 @@ export default function RosterPage() {
     fetchRoster(selectedDate, controller.signal)
     return () => controller.abort()
   }, [selectedDate, fetchRoster])
+
+  // Drop every overlay badge when the lodge filter changes so a previously
+  // loaded month (e.g. one navigated to but not currently selected) can never
+  // keep showing the previous lodge's colours (#1587 item 3). The selected
+  // month repopulates via the fetchRoster effect above; other months
+  // repopulate when navigated to via `onVisibleMonthChange`.
+  useEffect(() => {
+    setOverlayByDate({})
+  }, [lodgeId])
 
   async function handleReassign(assignmentId: string, bookingGuestId: string) {
     setSaving(true)

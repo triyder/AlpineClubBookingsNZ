@@ -10,6 +10,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -170,9 +171,16 @@ export function computeRosterDayStatuses(
  * booking query mirrors `getAdminOccupancyMonth` (same operational filter and
  * overlap window) and additionally selects each guest's `ageTier` so the
  * adult/youth attention knob is available to callers that want it.
+ *
+ * `lodgeId` scopes the aggregate to a single lodge so the roster calendar
+ * overlay matches the lodge-filtered roster list (#1587 item 3). Bookings scope
+ * directly via `lodgeNullTolerantScope`; chore assignments scope through their
+ * (required) booking relation. Omitting `lodgeId` keeps the club-wide query
+ * byte-identical to before multi-lodge — the single-active-lodge default.
  */
 export async function getRosterMonthStatus(input: {
   month: string;
+  lodgeId?: string;
 }): Promise<RosterDayStatusResult[]> {
   const parsedMonth = parseOccupancyMonth(input.month);
   if (!parsedMonth.ok) {
@@ -186,6 +194,7 @@ export async function getRosterMonthStatus(input: {
       deletedAt: null,
       checkIn: { lt: endDate },
       checkOut: { gt: startDate },
+      ...(input.lodgeId ? lodgeNullTolerantScope(input.lodgeId) : {}),
       guests: {
         some: {
           stayStart: { lt: endDate },
@@ -216,6 +225,9 @@ export async function getRosterMonthStatus(input: {
   const assignments = await prisma.choreAssignment.findMany({
     where: {
       date: { gte: startDate, lt: endDate },
+      ...(input.lodgeId
+        ? { booking: lodgeNullTolerantScope(input.lodgeId) }
+        : {}),
     },
     select: {
       date: true,

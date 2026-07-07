@@ -1,19 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDateOnly } from "@/lib/date-only";
 import {
   computeRosterDayStatuses,
+  getRosterMonthStatus,
   type RosterStatusAssignment,
   type RosterStatusBooking,
   type RosterStatusGuest,
 } from "@/lib/roster-status";
 
-// roster-status imports prisma at module scope for getRosterMonthStatus; the
-// pure computeRosterDayStatuses under test never touches it. Mock it so no real
-// client is constructed.
+// roster-status imports prisma at module scope for getRosterMonthStatus. Mock
+// it so no real client is constructed. The hoisted findMany refs let the
+// getRosterMonthStatus scoping tests below assert on the `where` clauses; the
+// pure computeRosterDayStatuses tests never touch them.
+const prismaMocks = vi.hoisted(() => ({
+  bookingFindMany: vi.fn(),
+  choreAssignmentFindMany: vi.fn(),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    booking: { findMany: vi.fn() },
-    choreAssignment: { findMany: vi.fn() },
+    booking: { findMany: prismaMocks.bookingFindMany },
+    choreAssignment: { findMany: prismaMocks.choreAssignmentFindMany },
   },
 }));
 
@@ -236,5 +243,66 @@ describe("computeRosterDayStatuses", () => {
       expect(result.status).toBe("needs-attention");
       expect(result.uncoveredBookingCount).toBe(1);
     });
+  });
+});
+
+describe("getRosterMonthStatus lodge scoping", () => {
+  // Assert the DB-touching entry point threads `lodgeId` into both the booking
+  // and the chore-assignment queries (#1587 item 3), so the roster calendar
+  // overlay aggregates only the selected lodge's data. prisma is mocked; the
+  // where clauses are inspected directly.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.bookingFindMany.mockResolvedValue([]);
+    prismaMocks.choreAssignmentFindMany.mockResolvedValue([]);
+  });
+
+  function bookingWhere() {
+    return prismaMocks.bookingFindMany.mock.calls[0][0].where;
+  }
+  function assignmentWhere() {
+    return prismaMocks.choreAssignmentFindMany.mock.calls[0][0].where;
+  }
+
+  it("scopes both queries to a provided lodgeId", async () => {
+    // `lodgeNullTolerantScope` is a strict `{ lodgeId }` match now that Booking
+    // is NOT NULL on lodgeId (see docs/multi-lodge/lodge-scoping-contract.md);
+    // there are no null-lodge rows to tolerate, so a default vs non-default
+    // lodge is scoped identically — the spec's "null rows iff default" clause
+    // is stale pre-NOT-NULL language.
+    await getRosterMonthStatus({ month: "2099-07", lodgeId: "lodge-a" });
+
+    // Bookings scope directly by lodgeId.
+    expect(bookingWhere()).toMatchObject({ lodgeId: "lodge-a" });
+    // Chore assignments scope through their (required) booking relation.
+    expect(assignmentWhere()).toMatchObject({ booking: { lodgeId: "lodge-a" } });
+  });
+
+  it("scopes the default lodge the same strict way (no null-tolerant branch)", async () => {
+    await getRosterMonthStatus({ month: "2099-07", lodgeId: "lodge-default" });
+
+    expect(bookingWhere()).toMatchObject({ lodgeId: "lodge-default" });
+    expect(assignmentWhere()).toMatchObject({
+      booking: { lodgeId: "lodge-default" },
+    });
+  });
+
+  it("stays club-wide (byte-identical) when no lodgeId is given", async () => {
+    await getRosterMonthStatus({ month: "2099-07" });
+
+    // No lodge key is added to either query: the omit path must match the
+    // pre-multi-lodge club-wide behaviour exactly.
+    expect(bookingWhere()).not.toHaveProperty("lodgeId");
+    expect(assignmentWhere()).not.toHaveProperty("booking");
+  });
+
+  it("passes the parsed month window through unchanged with a lodgeId", async () => {
+    await getRosterMonthStatus({ month: "2099-07", lodgeId: "lodge-a" });
+
+    // Adding the lodge scope must not disturb the operational overlap window.
+    const where = bookingWhere();
+    expect(where.checkIn).toEqual({ lt: parseDateOnly("2099-08-01") });
+    expect(where.checkOut).toEqual({ gt: parseDateOnly("2099-07-01") });
+    expect(where.deletedAt).toBeNull();
   });
 });

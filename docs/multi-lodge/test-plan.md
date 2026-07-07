@@ -92,6 +92,10 @@ lifted.
 - hut-leader PIN for lodge A rejected at lodge B's kiosk
 - roster generation for a shared date produces separate, correct rosters
   per lodge
+- with two active lodges, the `/admin/roster` calendar colour overlay
+  matches the lodge-filtered roster list below it: selecting lodge A shows
+  A's per-date statuses only, and switching to lodge B repaints to B's
+  (no cross-lodge badges linger). Reference #1587 item 3.
 - door-code email for a lodge B booking carries lodge B's code and
   travel note
 
