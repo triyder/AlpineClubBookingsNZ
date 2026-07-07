@@ -777,6 +777,141 @@ describe("review finding source/schema contracts", () => {
   );
 
   it(
+    "rejects a SET NOT NULL paired only with a cast-form SET DEFAULT NULL as vacuous (#1587 item 7)",
+    { timeout: 20000 },
+    () => {
+      // A cast-wrapped NULL default still fills nothing, exactly like a bare
+      // SET DEFAULT NULL: an old colour's omitted-column INSERT lands a null and
+      // the NOT NULL aborts mid-cutover. The validator must normalise the cast away
+      // and treat the pairing as vacuous (override required), not waive it as if the
+      // cast made it a real non-null default. Both cast spellings named in the spec
+      // are pinned: the tight "NULL::text" and the spaced/parenthesised
+      // "NULL :: varchar(10)".
+      const castDefaults = ["NULL::text", "NULL :: varchar(10)"];
+      for (const castDefault of castDefaults) {
+        const fixture = createTempMigration(
+          [
+            `ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT ${castDefault};`,
+            'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+            "",
+          ].join("\n"),
+          [
+            LEDGER_HEADER,
+            "20990101000000_test_migration\texpand\tn/a\tyes\tCast-form NULL default does not backfill; NOT NULL stays breaking.",
+          ].join("\n")
+        );
+
+        try {
+          const blocked = runMigrationSafetyValidator(
+            fixture.migrationPath,
+            fixture.ledgerPath
+          );
+          const allowed = runMigrationSafetyValidator(
+            fixture.migrationPath,
+            fixture.ledgerPath,
+            {
+              ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+              BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+                "cast-NULL-default NOT NULL accepted after out-of-band verification",
+            }
+          );
+
+          expect(blocked.status, `${castDefault}: ${blocked.stderr}`).not.toBe(0);
+          expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+          expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+          expect(allowed.status).toBe(0);
+        } finally {
+          rmSync(fixture.tempDir, { recursive: true, force: true });
+        }
+      }
+    }
+  );
+
+  it(
+    "rejects a SET NOT NULL whose last same-column SET DEFAULT resets to NULL (last-wins, #1587 item 7)",
+    { timeout: 20000 },
+    () => {
+      // A non-null SET DEFAULT followed by a SET DEFAULT NULL on the same column
+      // leaves the effective default NULL (last-wins). The earlier non-null value
+      // must NOT waive the NOT NULL: an old colour's omitted-column INSERT still
+      // lands a null once the reset applies. The validator must judge only the
+      // final default, so the pairing stays vacuous (override required).
+      const fixture = createTempMigration(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL;',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tLast SET DEFAULT resets to NULL; NOT NULL stays breaking.",
+        ].join("\n")
+      );
+
+      try {
+        const blocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+        const allowed = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath,
+          {
+            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+              "last-wins-NULL NOT NULL accepted after out-of-band verification",
+          }
+        );
+
+        expect(blocked.status).not.toBe(0);
+        expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+        expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+        expect(allowed.status).toBe(0);
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "waives a SET NOT NULL whose last same-column SET DEFAULT is non-NULL (last-wins, #1587 item 7)",
+    { timeout: 20000 },
+    () => {
+      // A SET DEFAULT NULL followed by a non-null SET DEFAULT on the same column
+      // leaves the effective default non-null (last-wins): an old colour's
+      // omitted-column INSERT gets the real default, so no null is written and the
+      // NOT NULL is old-code-safe. The validator must waive it (reviewed no-outage,
+      // no override) just like a single non-null default — the earlier NULL reset
+      // must not over-correct into a false breaking flag.
+      const fixture = createTempMigration(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL;',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tLast SET DEFAULT is non-null; old-colour inserts stay non-null.",
+        ].join("\n")
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
     "passes the committed multi-lodge NOT NULL migration override-free against the real ledger (H4)",
     { timeout: 20000 },
     () => {

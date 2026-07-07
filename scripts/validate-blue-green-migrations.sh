@@ -39,10 +39,14 @@ migration_name_for_file() {
 # no outage). Such a NOT NULL still needs a documented ledger entry, but not the
 # ALLOW_BREAKING override. A "SET DEFAULT NULL" does NOT qualify: it fills nothing,
 # so an old colour's omitted-column INSERT still lands a null and the NOT NULL
-# would abort — the pairing is vacuous and the NOT NULL stays unsafe. Drops,
-# renames, type changes, and an unmatched SET NOT NULL remain unsafe.
+# would abort — the pairing is vacuous and the NOT NULL stays unsafe. A NULL
+# default counts as NULL in any spelling, including a cast form like
+# "SET DEFAULT NULL::text". When a migration issues several SET DEFAULT statements
+# for the same column, only the LAST one is the effective default (last-wins), so
+# only that final statement is judged. Drops, renames, type changes, and an
+# unmatched SET NOT NULL remain unsafe.
 unsafe_breaking_lines() {
-  local file="$1" breaking line stmt table col default_lines
+  local file="$1" breaking line stmt table col default_lines last_default
   breaking="$(sql_lines "$file" | grep -Ei "$BREAKING_SQL_REGEX" || true)"
   [ -n "$breaking" ] || return 0
   while IFS= read -r line; do
@@ -55,13 +59,19 @@ unsafe_breaking_lines() {
       if [ -n "$table" ] && [ -n "$col" ]; then
         default_lines="$(sql_lines "$file" |
           grep -Ei "ALTER TABLE \"${table}\" ALTER COLUMN \"${col}\" SET DEFAULT" || true)"
-        # Qualifies only if a same-column SET DEFAULT with a non-NULL value
-        # exists. -Eivq succeeds iff at least one matching line is NOT a bare
-        # "SET DEFAULT NULL" (case-insensitive, whitespace/semicolon tolerant).
-        if [ -n "$default_lines" ] &&
-          printf '%s\n' "$default_lines" |
-            grep -Eivq 'SET DEFAULT[[:space:]]+NULL[[:space:]]*;?[[:space:]]*$'; then
-          continue
+        # Last-wins: several SET DEFAULT statements for the same column leave the
+        # FINAL one as the effective default, so judge only that last line. It
+        # qualifies (waives the NOT NULL) iff its value is non-NULL. A NULL default
+        # in any spelling — bare "SET DEFAULT NULL" or a cast such as
+        # "SET DEFAULT NULL::text" / "NULL :: varchar(10)" — fills nothing, so the
+        # pairing is vacuous and the NOT NULL stays unsafe (the optional
+        # "(::[^;]*)?" tail normalises the cast away before the NULL check).
+        if [ -n "$default_lines" ]; then
+          last_default="$(printf '%s\n' "$default_lines" | tail -n1)"
+          if ! printf '%s\n' "$last_default" |
+            grep -Eiq 'SET DEFAULT[[:space:]]+NULL[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
+            continue
+          fi
         fi
       fi
     fi
