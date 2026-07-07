@@ -136,7 +136,7 @@ export async function sendSchoolAttendeeConfirmationPrompts(
   return result;
 }
 
-export type SchoolAttendeeConfirmationStatus =
+type SchoolAttendeeConfirmationStatus =
   | "ready"
   | "confirmed"
   | "invalid"
