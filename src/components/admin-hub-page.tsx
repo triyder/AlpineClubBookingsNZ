@@ -16,7 +16,7 @@ export interface AdminHubSection {
   icon: LucideIcon;
 }
 
-export function getVisibleAdminHubSections(
+function getVisibleAdminHubSections(
   sections: AdminHubSection[],
   features: FeatureFlags,
 ) {

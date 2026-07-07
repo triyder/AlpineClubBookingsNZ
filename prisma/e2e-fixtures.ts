@@ -5,7 +5,7 @@
 // drift apart. Keep this a pure constants module: no Playwright, no Prisma, no
 // `server-only` imports.
 
-export const DEMO_DOMAIN = "demo.alpineclub.test";
+const DEMO_DOMAIN = "demo.alpineclub.test";
 
 const demoEmail = (local: string) => `${local}@${DEMO_DOMAIN}`;
 
@@ -50,8 +50,6 @@ export const ROLE_PERSONAS = {
     lastName: "Lodge",
   },
 } as const;
-
-export type RoleKey = keyof typeof ROLE_PERSONAS;
 
 // A full ADMIN with a known password (the base seed admin forces a password
 // change and uses an unknown password, so it cannot drive E2E logins). Used to

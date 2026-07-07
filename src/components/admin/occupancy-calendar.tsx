@@ -8,7 +8,7 @@ import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only
 import { APP_LOCALE } from "@/config/operational";
 import { CalendarDays, ChevronLeft, ChevronRight, Users } from "lucide-react";
 
-export type OccupancyCalendarMode = "range" | "single";
+type OccupancyCalendarMode = "range" | "single";
 
 export type OccupancyCalendarBooking = {
   id: string;
