@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -23,21 +24,93 @@ import {
   CreditCard,
   TicketPercent,
   ClipboardCheck,
+  ChevronRight,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
-import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
-import { getAvailablePromoCodesForMember } from "@/lib/promo";
+import {
+  isDashboardPaymentOwed,
+  summarizeMemberPaymentOwed,
+} from "@/lib/member-dashboard";
+import {
+  getAvailablePromoCodesForMember,
+  type AvailablePromoCode,
+} from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import {
+  buildHrefWithReturnTo,
+  buildProfilePathWithReturnTo,
+} from "@/lib/internal-return-path";
 import { hasAccessRole } from "@/lib/access-roles";
 import {
   ACTIVE_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
+
+function formatPromoBenefitSummary(promo: AvailablePromoCode) {
+  if (promo.type === "PERCENTAGE") {
+    return promo.percentOff !== null
+      ? `${promo.percentOff}% off per individual`
+      : "Percentage discount";
+  }
+
+  if (promo.type === "FIXED_AMOUNT") {
+    return promo.valueCents !== null
+      ? `${formatCents(promo.valueCents)} off per individual`
+      : "Fixed discount";
+  }
+
+  if (promo.type === "FREE_NIGHTS") {
+    if (promo.freeNightsPerIndividual === null) {
+      return "Free nights";
+    }
+    return `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`;
+  }
+
+  if (promo.type === "FIXED_NIGHTLY_PRICE") {
+    return promo.fixedNightlyPriceCents !== null
+      ? `${formatCents(promo.fixedNightlyPriceCents)} per eligible night`
+      : "Fixed nightly price";
+  }
+
+  return "Promo discount";
+}
+
+function SummaryLinkCard({
+  children,
+  href,
+  icon,
+  title,
+}: {
+  children: ReactNode;
+  href: string;
+  icon: ReactNode;
+  title: string;
+}) {
+  return (
+    <Link
+      className="group block h-full rounded-xl text-card-foreground no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      href={href}
+    >
+      <Card className="h-full transition-colors group-hover:border-slate-400 group-hover:bg-slate-50 group-focus-visible:border-slate-400 group-focus-visible:bg-slate-50">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <span className="flex items-center gap-1 text-muted-foreground transition-colors group-hover:text-slate-900 group-focus-visible:text-slate-900">
+            {icon}
+            <ChevronRight
+              aria-hidden="true"
+              className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+            />
+          </span>
+        </CardHeader>
+        <CardContent>{children}</CardContent>
+      </Card>
+    </Link>
+  );
+}
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -57,23 +130,19 @@ export default async function DashboardPage() {
       status: "PAID",
       checkIn: { lte: tomorrow },
       checkOut: { gte: today },
-      OR: [
-        { memberId },
-        { guests: { some: { memberId } } },
-      ],
+      OR: [{ memberId }, { guests: { some: { memberId } } }],
     },
     select: { id: true },
   });
   const isStayingGuest = !!stayingGuestBooking;
 
   // Check if member has an active hut leader assignment (day-before access)
-  const isHutLeaderActive =
-    hasAccessRole(session.user, "USER")
-      ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
-          if (dayBefore) return true;
-          return isHutLeader(memberId, today);
-        })
-      : false;
+  const isHutLeaderActive = hasAccessRole(session.user, "USER")
+    ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
+        if (dayBefore) return true;
+        return isHutLeader(memberId, today);
+      })
+    : false;
 
   const [
     upcomingBookings,
@@ -89,10 +158,7 @@ export default async function DashboardPage() {
         deletedAt: null,
         status: { in: [...ACTIVE_BOOKING_STATUSES] },
         checkIn: { gte: today },
-        OR: [
-          { memberId },
-          { guests: { some: { memberId } } },
-        ],
+        OR: [{ memberId }, { guests: { some: { memberId } } }],
       },
       orderBy: { checkIn: "asc" },
       take: 20,
@@ -110,10 +176,7 @@ export default async function DashboardPage() {
       where: {
         deletedAt: null,
         status: { not: "DRAFT" },
-        OR: [
-          { memberId },
-          { guests: { some: { memberId } } },
-        ],
+        OR: [{ memberId }, { guests: { some: { memberId } } }],
       },
       orderBy: { createdAt: "desc" },
       take: 5,
@@ -156,6 +219,7 @@ export default async function DashboardPage() {
         ],
       },
       select: {
+        id: true,
         status: true,
         finalPriceCents: true,
         payment: {
@@ -178,6 +242,28 @@ export default async function DashboardPage() {
 
   const nextStay = upcomingBookings[0] ?? null;
   const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
+  const paymentOwedBookingIds = paymentOwedBookings
+    .filter(isDashboardPaymentOwed)
+    .map((booking) => booking.id);
+  const nextStayHref = nextStay
+    ? buildHrefWithReturnTo(`/bookings/${nextStay.id}`, "/dashboard")
+    : "/book";
+  const paymentOwedHref =
+    paymentOwed.bookingCount === 1 && paymentOwedBookingIds.length === 1
+      ? buildHrefWithReturnTo(
+          `/bookings/${paymentOwedBookingIds[0]}`,
+          "/dashboard",
+        )
+      : "/bookings";
+  const accountCreditHref = buildProfilePathWithReturnTo(
+    "/dashboard",
+    "account-credit",
+  );
+  const promoCodesHref = buildProfilePathWithReturnTo(
+    "/dashboard",
+    "promo-codes",
+  );
+  const firstPromoCode = availablePromoCodes[0] ?? null;
 
   // Lodge induction status for the member-portal card.
   const inductionInfo = await prisma.member.findUnique({
@@ -256,114 +342,106 @@ export default async function DashboardPage() {
 
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Upcoming Bookings
-            </CardTitle>
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{upcomingBookings.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {upcomingBookings.length === 0
-                ? "No bookings scheduled"
-                : `${upcomingBookings.length} booking${upcomingBookings.length !== 1 ? "s" : ""} coming up`}
-            </p>
-          </CardContent>
-        </Card>
+        <SummaryLinkCard
+          href="/bookings"
+          icon={<CalendarDays aria-hidden="true" className="h-4 w-4" />}
+          title="Upcoming Bookings"
+        >
+          <div className="text-3xl font-bold">{upcomingBookings.length}</div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {upcomingBookings.length === 0
+              ? "No bookings scheduled"
+              : `${upcomingBookings.length} booking${upcomingBookings.length !== 1 ? "s" : ""} coming up`}
+          </p>
+        </SummaryLinkCard>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Next Stay</CardTitle>
-            <BedDouble className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {nextStay ? (
-              <>
-                <div className="text-lg font-semibold">
-                  {new Date(nextStay.checkIn).toLocaleDateString("en-NZ", {
-                    day: "numeric",
-                    month: "short",
-                  })}
-                  {" — "}
-                  {new Date(nextStay.checkOut).toLocaleDateString("en-NZ", {
-                    day: "numeric",
-                    month: "short",
-                  })}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {nextStay._count.guests} guest
-                  {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
-                  {formatCents(nextStay.finalPriceCents)}
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="text-lg font-semibold text-slate-500">
-                  No upcoming stays
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Book a stay at the lodge
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Account Credit</CardTitle>
-            <Wallet className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">
-              {formatCents(creditBalanceCents)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {creditBalanceCents > 0
-                ? "Available account credit for future bookings"
-                : "No account credit available"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Payment Owed</CardTitle>
-            <CreditCard className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">
-              {formatCents(paymentOwed.totalCents)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {paymentOwed.totalCents > 0
-                ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
-                : "No payment due"}
-            </p>
-          </CardContent>
-        </Card>
-
-        {modules.promoCodes && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Promo Codes Available
-              </CardTitle>
-              <TicketPercent className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">
-                {availablePromoCodes.length}
+        <SummaryLinkCard
+          href={nextStayHref}
+          icon={<BedDouble aria-hidden="true" className="h-4 w-4" />}
+          title="Next Stay"
+        >
+          {nextStay ? (
+            <>
+              <div className="text-lg font-semibold">
+                {new Date(nextStay.checkIn).toLocaleDateString("en-NZ", {
+                  day: "numeric",
+                  month: "short",
+                })}
+                {" — "}
+                {new Date(nextStay.checkOut).toLocaleDateString("en-NZ", {
+                  day: "numeric",
+                  month: "short",
+                })}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                {availablePromoCodes.length > 0
-                  ? "Assigned to your member account"
-                  : "No assigned promo codes available"}
+                {nextStay._count.guests} guest
+                {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
+                {formatCents(nextStay.finalPriceCents)}
               </p>
-            </CardContent>
-          </Card>
+            </>
+          ) : (
+            <>
+              <div className="text-lg font-semibold text-slate-500">
+                No upcoming stays
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Book a stay at the lodge
+              </p>
+            </>
+          )}
+        </SummaryLinkCard>
+
+        <SummaryLinkCard
+          href={accountCreditHref}
+          icon={<Wallet aria-hidden="true" className="h-4 w-4" />}
+          title="Account Credit"
+        >
+          <div className="text-3xl font-bold">
+            {formatCents(creditBalanceCents)}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {creditBalanceCents > 0
+              ? "Available account credit for future bookings"
+              : "No account credit available"}
+          </p>
+        </SummaryLinkCard>
+
+        <SummaryLinkCard
+          href={paymentOwedHref}
+          icon={<CreditCard aria-hidden="true" className="h-4 w-4" />}
+          title="Payment Owed"
+        >
+          <div className="text-3xl font-bold">
+            {formatCents(paymentOwed.totalCents)}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {paymentOwed.totalCents > 0
+              ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
+              : "No payment due"}
+          </p>
+        </SummaryLinkCard>
+
+        {modules.promoCodes && (
+          <SummaryLinkCard
+            href={promoCodesHref}
+            icon={<TicketPercent aria-hidden="true" className="h-4 w-4" />}
+            title="Promo Codes Available"
+          >
+            <div className="text-3xl font-bold">
+              {availablePromoCodes.length}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {availablePromoCodes.length > 0
+                ? "Assigned to your member account"
+                : "No assigned promo codes available"}
+            </p>
+            {firstPromoCode ? (
+              <p className="mt-2 break-words text-xs font-medium text-slate-700">
+                {firstPromoCode.code} ·{" "}
+                {formatPromoBenefitSummary(firstPromoCode)}
+              </p>
+            ) : null}
+          </SummaryLinkCard>
         )}
 
         <Card>
