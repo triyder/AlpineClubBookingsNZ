@@ -1,4 +1,4 @@
-name: Codex Finding
+name: "[internal] Codex Finding"
 description: Record a review finding before it is split into one or more tasks.
 title: "[Finding] "
 labels:

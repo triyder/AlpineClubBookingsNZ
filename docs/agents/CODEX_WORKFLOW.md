@@ -81,6 +81,10 @@ procedure, or review workflow changes. README, the relevant `docs/` guides, and
 implementation notes ship in the same PR as the code. Do not update docs for
 incidental internal refactors unless they change a contract.
 
+Codex workflow and label examples are documentation-only fixtures under
+`docs/agents/examples/`. Do not copy them into `.github/workflows/` or
+`.github/labels/` without human review of permissions, triggers, and labels.
+
 ## Residual Risk Reporting
 
 Every PR or review handoff should state:
