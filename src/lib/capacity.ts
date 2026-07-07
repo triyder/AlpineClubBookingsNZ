@@ -24,6 +24,29 @@ export interface NightAvailability {
   availableBeds: number;
 }
 
+// Capacity queries scope to one lodge with a plain `lodgeId` field alongside
+// the capacity-holding filter: Booking.lodgeId is NOT NULL (no null-lodge rows
+// to tolerate), so the per-lodge match is exact.
+
+/**
+ * Serialize capacity-mutating booking transactions for one lodge. Replaces
+ * the historical club-wide pg_advisory_xact_lock(1): bookings at different
+ * lodges no longer contend. hashtextextended gives a stable per-lodge bigint
+ * key; a cross-lodge hash collision only causes unnecessary serialization,
+ * never a correctness problem. The lock releases at transaction end.
+ *
+ * $executeRaw, not $queryRaw: pg_advisory_xact_lock returns void, which the
+ * driver adapter cannot deserialize as a result row — $queryRaw here fails
+ * at runtime on every booking transaction (found in browser verification;
+ * every other advisory lock in the codebase already uses $executeRaw).
+ */
+export async function acquireLodgeCapacityLock(
+  tx: Pick<TransactionClient, "$executeRaw">,
+  lodgeId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lodgeId}, 0))`;
+}
+
 function getMonthStartDateOnly(year: number, month: number): Date {
   const date = parseDateOnly(
     `${year}-${String(month + 1).padStart(2, "0")}-01`
@@ -109,6 +132,7 @@ export function getOccupiedBedsForNight(
  * Check if there's enough capacity for a given number of guests across all nights.
  */
 export async function checkCapacity(
+  lodgeId: string,
   checkIn: Date,
   checkOut: Date,
   guestCount: number,
@@ -116,7 +140,7 @@ export async function checkCapacity(
   tx?: TransactionClient
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
-  const lodgeCapacity = await getLodgeCapacity(db);
+  const lodgeCapacity = await getLodgeCapacity(lodgeId, db);
   const start = normalizeDateOnlyForTimeZone(checkIn);
   const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
@@ -125,9 +149,11 @@ export async function checkCapacity(
     where: {
       checkIn: { lt: exclusiveEnd },
       checkOut: { gt: start },
-      // Capacity-holding population (issue #1254): holding statuses plus
-      // request-converted PENDING holds. See capacityHoldingBookingFilter.
+      // Capacity-holding population (issue #1254) spread at top level; the
+      // per-lodge scope (also an OR fragment) goes under AND so the two OR
+      // conditions compose — a second top-level OR would clobber the first.
       ...capacityHoldingBookingFilter(),
+      lodgeId,
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
@@ -159,6 +185,7 @@ export async function checkCapacity(
 }
 
 export async function checkCapacityForGuestRanges(
+  lodgeId: string,
   checkIn: Date,
   checkOut: Date,
   guests: GuestStayRange[],
@@ -166,7 +193,7 @@ export async function checkCapacityForGuestRanges(
   tx?: TransactionClient
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
-  const lodgeCapacity = await getLodgeCapacity(db);
+  const lodgeCapacity = await getLodgeCapacity(lodgeId, db);
   const start = normalizeDateOnlyForTimeZone(checkIn);
   const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
@@ -179,9 +206,11 @@ export async function checkCapacityForGuestRanges(
     where: {
       checkIn: { lt: exclusiveEnd },
       checkOut: { gt: start },
-      // Capacity-holding population (issue #1254): holding statuses plus
-      // request-converted PENDING holds. See capacityHoldingBookingFilter.
+      // Capacity-holding population (issue #1254) spread at top level; the
+      // per-lodge scope (also an OR fragment) goes under AND so the two OR
+      // conditions compose — a second top-level OR would clobber the first.
       ...capacityHoldingBookingFilter(),
+      lodgeId,
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
@@ -217,9 +246,10 @@ export async function checkCapacityForGuestRanges(
 }
 
 /**
- * Get a monthly availability summary for calendar display.
+ * Get a monthly availability summary for calendar display at one lodge.
  */
 export async function getMonthAvailability(
+  lodgeId: string,
   year: number,
   month: number
 ): Promise<Map<string, number>> {
@@ -230,9 +260,10 @@ export async function getMonthAvailability(
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: startDate },
-      // Capacity-holding population (issue #1254): holding statuses plus
-      // request-converted PENDING holds. See capacityHoldingBookingFilter.
+      // Capacity-holding population (issue #1254) spread at top level; the
+      // per-lodge scope (also an OR fragment) goes under AND so the two compose.
       ...capacityHoldingBookingFilter(),
+      lodgeId,
     },
     include: {
       // Load each guest's explicit night set (issue #713) so non-contiguous
