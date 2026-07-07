@@ -1,5 +1,5 @@
 import { type Invoice } from "xero-node";
-import { BookingEventType, BookingStatus, CreditType, PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { BookingEventType, BookingStatus, CreditType, PaymentSource, PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert, sendBookingCancelledEmail, sendBookingConfirmedEmail } from "@/lib/email";
@@ -142,26 +142,87 @@ function quantifyXeroInvoiceCashCents(
   return { knownCents, complete };
 }
 
-// Resolve how much a credit-minting arm may mint for one payment (#1459).
-// Verified cash floors the mint: `min(face, knownCents)`, flagged partial
-// when it undercuts the payment's face amount so the alerts can name both
-// figures. When NOTHING quantified but the classifier still saw positive
-// cash evidence, fall back to the payment's full amount (the issue-blessed
-// fallback: minting the zero floor would silently under-credit a genuinely
-// cash-settled invoice, and this arm only guards degraded payloads).
+// Resolve how much a credit-minting arm may mint for one payment (#1459,
+// #1505). Two independent clamps apply:
+//  - Per payment (#1459): verified cash floors the mint at `min(face,
+//    knownCents)`, flagged partial when it undercuts the payment's face
+//    amount so the alerts can name both figures.
+//  - Per invoice, aggregate (#1505): `otherPaymentsMintedCents` is the cash of
+//    this SAME invoice already minted as credit for OTHER matched Internet
+//    Banking payments; the mint is further capped at the invoice's remaining
+//    cash (`knownCents - otherPaymentsMintedCents`). The per-payment clamp
+//    alone let two never-settled payments matched to one invoice each mint
+//    `min(own, cash)`, so their SUM could exceed the invoice's cash; this cap
+//    apportions the invoice's cash across its payments so the aggregate can
+//    never exceed it. `aggregateCapped` is true when this second clamp bit.
+// When NOTHING quantified but the classifier still saw positive cash evidence,
+// fall back to the payment's full amount (the issue-blessed fallback: minting
+// the zero floor would silently under-credit a genuinely cash-settled invoice,
+// and this arm only guards degraded payloads).
 function resolveMintableCents(
   faceCents: number,
-  cash: XeroInvoiceCashQuantification
-): { mintableCents: number; mintPartial: boolean; cashUnverified: boolean } {
+  cash: XeroInvoiceCashQuantification,
+  otherPaymentsMintedCents = 0
+): {
+  mintableCents: number;
+  mintPartial: boolean;
+  cashUnverified: boolean;
+  aggregateCapped: boolean;
+} {
   if (cash.knownCents <= 0 && !cash.complete) {
-    return { mintableCents: faceCents, mintPartial: false, cashUnverified: true };
+    // Nothing quantifiable (degraded payload only; the fresh getInvoice fetch
+    // behind the caller always carries the amount fields). The aggregate cap
+    // needs a known cash figure to apportion against, so it cannot apply here
+    // — fall back to the issue-blessed full-amount mint exactly as pre-#1505.
+    return {
+      mintableCents: faceCents,
+      mintPartial: false,
+      cashUnverified: true,
+      aggregateCapped: false,
+    };
   }
-  const mintableCents = Math.min(faceCents, cash.knownCents);
+  const perPaymentCents = Math.min(faceCents, cash.knownCents);
+  const invoiceRemainingCents = Math.max(
+    0,
+    cash.knownCents - otherPaymentsMintedCents
+  );
+  const mintableCents = Math.min(perPaymentCents, invoiceRemainingCents);
   return {
     mintableCents,
     mintPartial: mintableCents < faceCents,
     cashUnverified: !cash.complete,
+    aggregateCapped: mintableCents < perPaymentCents,
   };
+}
+
+// Sum the credit THIS Internet Banking minting pipeline has already minted for
+// a set of bookings (#1505). Read back INSIDE the reconcile transaction (after
+// the shared advisory lock) so the aggregate cap sees every credit committed
+// by an earlier payment in the same invoice's loop — each payment commits its
+// own transaction under `pg_advisory_xact_lock(1)` before the next begins — as
+// well as any prior invocation's, which keeps the cap idempotent under retry:
+// a replayed payment finds its own credit via the per-booking dedup and mints
+// nothing, and the cap for a fresh payment is computed from OTHER bookings'
+// already-committed credits (never this booking's own), so it is stable across
+// runs. Keyed on the pipeline's own credit descriptions and CANCELLATION_REFUND
+// type — never on amount — exactly as the per-booking dedup keys, so it never
+// counts unrelated cancellation-flow credit rows.
+async function sumInternetBankingMintedCentsForBookings(
+  tx: Prisma.TransactionClient,
+  bookingIds: string[]
+): Promise<number> {
+  if (bookingIds.length === 0) {
+    return 0;
+  }
+  const aggregate = await tx.memberCredit.aggregate({
+    where: {
+      sourceBookingId: { in: bookingIds },
+      type: CreditType.CANCELLATION_REFUND,
+      description: { startsWith: "Internet Banking payment credit for " },
+    },
+    _sum: { amountCents: true },
+  });
+  return aggregate._sum.amountCents ?? 0;
 }
 
 export async function syncInternetBankingPaymentsForPaidInvoice(
@@ -334,6 +395,17 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
 
   result.matchedInternetBankingPayments = payments.length;
 
+  // #1505: the set of bookings whose Internet Banking payments are matched to
+  // this invoice. Each minting arm below caps its mint at the invoice's cash
+  // MINUS what has already been minted for the OTHER bookings in this set, so
+  // the aggregate credit across every matched payment can never exceed the
+  // invoice's cash. With a single matched payment this set has one entry, the
+  // "other bookings" list is empty, and the aggregate cap is inert — leaving
+  // the #1459 per-payment clamp exactly as it was.
+  const matchedBookingIds = Array.from(
+    new Set(payments.map((payment) => payment.bookingId))
+  );
+
   for (const payment of payments) {
     const outcome = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -458,8 +530,17 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // operator-allocated member credit note) — `amountPaid` is only the
         // cash portion, and minting the full payment amount would credit
         // money that never arrived.
-        const { mintableCents, mintPartial, cashUnverified } =
-          resolveMintableCents(fresh.amountCents, invoiceCash);
+        // #1505: further cap the mint at the invoice's cash NOT already minted
+        // for the other payments matched to it, so two never-settled payments
+        // on one invoice can never in aggregate mint more than its cash. The
+        // sum excludes this booking's own credit (read fresh under the advisory
+        // lock), which keeps the cap stable across replays.
+        const otherMintedCents = await sumInternetBankingMintedCentsForBookings(
+          tx,
+          matchedBookingIds.filter((id) => id !== fresh.bookingId)
+        );
+        const { mintableCents, mintPartial, cashUnverified, aggregateCapped } =
+          resolveMintableCents(fresh.amountCents, invoiceCash, otherMintedCents);
 
         // Looked up unconditionally (amount included): the dedup gate needs
         // its existence, and the later-cash detection below needs its size.
@@ -488,20 +569,23 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         // for this invoice lands here with a settled payment (or the dedup
         // hit) and mints nothing. When the VERIFIED cash now exceeds what was
         // already minted, say so instead of staying silent — the member is
-        // owed the delta and only an operator can size the top-up.
+        // owed the delta and only an operator can size the top-up. The
+        // comparison uses the aggregate-apportioned `mintableCents` (#1505), so
+        // a multi-payment replay whose cash was already shared out does not
+        // raise a false later-cash alert on every sweep.
         const laterCashCents =
           !credited &&
           existingCredit &&
           invoiceCash.complete &&
-          Math.min(fresh.amountCents, invoiceCash.knownCents) >
-            existingCredit.amountCents
-            ? Math.min(fresh.amountCents, invoiceCash.knownCents) -
-              existingCredit.amountCents
+          mintableCents > existingCredit.amountCents
+            ? mintableCents - existingCredit.amountCents
             : 0;
 
-        // Classifier and quantifier disagreeing at zero (cash-classified
-        // evidence that quantifies to nothing) is a payload anomaly: the
-        // payment just settled, but no credit backs it. Never silent.
+        // A never-settled payment whose creditable cash is zero settled with no
+        // credit behind it — never silent. Two causes, both loud below: the
+        // classifier and quantifier disagree at zero (cash-classified evidence
+        // that quantifies to nothing), or the invoice's cash was already fully
+        // minted for the other payments matched to it (#1505 aggregate cap).
         const zeroCashAnomaly =
           invoiceHasCashPayment &&
           paymentNeverSettled &&
@@ -510,8 +594,15 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           fresh.amountCents > 0;
         if (zeroCashAnomaly) {
           logger.warn(
-            { invoiceId, paymentId: fresh.id, bookingId: fresh.bookingId },
-            "Xero PAID invoice classified as cash-settled but its cash quantified to zero; no member credit minted for the cancelled booking"
+            { invoiceId, paymentId: fresh.id, bookingId: fresh.bookingId, aggregateCapped },
+            aggregateCapped
+              ? "Xero PAID invoice's cash was already fully minted for other Internet Banking payments on the same invoice; no further member credit minted for this cancelled booking (#1505)"
+              : "Xero PAID invoice classified as cash-settled but its cash quantified to zero; no member credit minted for the cancelled booking"
+          );
+        } else if (aggregateCapped && credited) {
+          logger.warn(
+            { invoiceId, paymentId: fresh.id, bookingId: fresh.bookingId, mintableCents, otherMintedCents, invoiceCashCents: invoiceCash.knownCents },
+            "Internet Banking credit mint reduced by the per-invoice aggregate cap: other payments on this invoice already claimed part of its cash (#1505)"
           );
         }
 
@@ -559,6 +650,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           creditedCents: mintableCents,
           creditedPartial: mintPartial,
           cashUnverified,
+          aggregateCapped,
           laterCashCents,
           zeroCashAnomaly,
           clearingNoteAlreadyIssued: Boolean(fresh.xeroRefundCreditNoteId),
@@ -594,8 +686,22 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           // clamp as the already-cancelled arm — a live booking's invoice can
           // also be mixed (operator write-off or allocated credit note plus
           // partial cash).
-          const { mintableCents, mintPartial, cashUnverified } =
-            resolveMintableCents(fresh.amountCents, invoiceCash);
+          // #1505: and the same per-invoice aggregate cap — the sum excludes
+          // this booking's own credit, so the mint (and therefore the
+          // amount-keyed dedup below) is stable across replays.
+          const otherMintedCents =
+            await sumInternetBankingMintedCentsForBookings(
+              tx,
+              matchedBookingIds.filter((id) => id !== fresh.bookingId)
+            );
+          const { mintableCents, mintPartial, cashUnverified, aggregateCapped } =
+            resolveMintableCents(fresh.amountCents, invoiceCash, otherMintedCents);
+          if (aggregateCapped) {
+            logger.warn(
+              { invoiceId, paymentId: fresh.id, bookingId: fresh.bookingId, mintableCents, otherMintedCents, invoiceCashCents: invoiceCash.knownCents },
+              "Internet Banking credit mint reduced by the per-invoice aggregate cap on the late-capacity-failure arm: other payments on this invoice already claimed part of its cash (#1505)"
+            );
+          }
 
           const creditDescription = `Internet Banking payment credit for booking ${fresh.bookingId.slice(0, 8)}`;
           const existingCredit = await tx.memberCredit.findFirst({
@@ -639,6 +745,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             creditedCents: mintableCents,
             creditedPartial: mintPartial,
             cashUnverified,
+            aggregateCapped,
           };
         }
       }
@@ -717,7 +824,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.creditedCents,
-          errorMessage: outcome.creditedPartial
+          errorMessage: outcome.aggregateCapped
+            ? `Internet Banking cash of ${formatCents(outcome.creditedCents)} was credited for an already-cancelled booking, but this invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice. This payment's face amount is ${formatCents(outcome.payment.amountCents)}; only the invoice's remaining cash is held as the member's account credit, because the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero. If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
+            : outcome.creditedPartial
             ? `Internet Banking cash of ${formatCents(outcome.creditedCents)} was received for an already-cancelled booking whose ${formatCents(outcome.payment.amountCents)} payment was otherwise settled by credit allocation in Xero (mixed invoice). Only the cash portion is held as the member's account credit — verify the allocation source on the invoice (the app's own invoice-clearing credit note is routine; a manual write-off or an operator-allocated member credit note needs its own follow-up). If more cash arrives for this invoice later it will NOT credit automatically — top up the member's account credit manually.${outcome.clearingNoteAlreadyIssued ? " An invoice-clearing credit note was ALREADY issued for this invoice, so also check Xero for duplicate settlement artifacts." : ""}${unverifiedSuffix}`
             : outcome.clearingNoteAlreadyIssued
               ? `Internet Banking payment was received for an already-cancelled booking. The amount is held as the member's account credit — and an invoice-clearing credit note was ALREADY issued for this invoice, so Xero needs manual reconciliation (void the clearing note's refund payment or the duplicate artifact).${unverifiedSuffix}`
@@ -749,8 +858,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           checkIn: outcome.payment.booking.checkIn,
           checkOut: outcome.payment.booking.checkOut,
           amountCents: outcome.payment.amountCents,
-          errorMessage:
-            "This cancelled booking's Xero invoice reports PAID with cash-classified evidence that quantifies to zero, so the payment was marked settled but NO member credit was minted. Reconcile the invoice manually in Xero and credit the member if cash actually arrived.",
+          errorMessage: outcome.aggregateCapped
+            ? "This cancelled booking's Xero invoice reports PAID, but the invoice's cash was already fully credited to other Internet Banking payment(s) matched to the same invoice, so this payment was marked settled with NO member credit (the aggregate credit across all payments on one invoice can never exceed the invoice's cash). Reconcile the invoice manually in Xero and credit the member if additional cash actually arrived for this payment."
+            : "This cancelled booking's Xero invoice reports PAID with cash-classified evidence that quantifies to zero, so the payment was marked settled but NO member credit was minted. Reconcile the invoice manually in Xero and credit the member if cash actually arrived.",
           paymentIntentId: invoiceId,
         }).catch((err) =>
           logger.error(
@@ -793,7 +903,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
         amountCents: outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
-        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial ? ` Only ${formatCents(outcome.creditedCents)} of the ${formatCents(outcome.payment.amountCents)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
+        errorMessage: `Internet Banking payment reconciled, but the lodge no longer had capacity. The booking was cancelled and member account credit was created.${outcome.creditedPartial && !outcome.aggregateCapped ? ` Only ${formatCents(outcome.creditedCents)} of the ${formatCents(outcome.payment.amountCents)} payment arrived as cash (mixed invoice) — the credit was sized at the cash portion; verify the allocation source on the invoice in Xero.` : ""}${outcome.aggregateCapped ? ` This invoice's cash was already partly credited to other Internet Banking payment(s) matched to the same invoice, so this booking's credit was capped at the invoice's remaining cash${outcome.credited ? ` (${formatCents(outcome.creditedCents)}, from a ${formatCents(outcome.payment.amountCents)} payment)` : " (nothing remained, so no credit was created)"}; the aggregate credit across all payments on one invoice can never exceed the invoice's cash. Verify the invoice's payments in Xero.` : ""}${outcome.cashUnverified ? " Cash amounts could not be fully verified from the Xero payload — confirm the figures against the invoice in Xero." : ""}`,
         paymentIntentId: invoiceId,
       }).catch((err) =>
         logger.error(

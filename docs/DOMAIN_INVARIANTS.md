@@ -163,9 +163,22 @@ Future reviews and issues should cite this file when proposing changes.
   verified cash and the alert says the figures are unverified; only evidence
   that quantifies NOTHING (degraded shapes only; the fresh getInvoice fetch
   carries the amount fields) falls back to the full payment amount rather
-  than silently under-crediting. The clamp is per payment, not apportioned
-  across multiple payments matched to one invoice — a shape no app flow
-  produces (group settlements ride their own settlement path). When it mints,
+  than silently under-crediting. Beyond the per-payment clamp, the mint is
+  also capped PER INVOICE (#1505): each arm caps its mint at the invoice's
+  quantified cash MINUS the cash already minted as credit for the OTHER
+  Internet Banking payments matched to the same invoice, so two never-settled
+  payments on one invoice can never in aggregate mint more than the invoice's
+  cash (the earlier payment mints its per-payment amount; a later payment is
+  apportioned only the remaining cash, and one whose remainder is zero settles
+  with no credit). No app flow produces multiple never-settled payments on one
+  invoice (payments/invoices are 1:1; same-booking retries are booking-keyed-
+  deduped; group settlements ride their own settlement path) — this is a
+  defensive invariant. The remaining-cash figure is read back INSIDE each
+  payment's reconcile transaction, under the shared advisory lock and excluding
+  the payment's own booking, so the cap is idempotent under retry (a replayed
+  payment finds its own credit via the per-booking dedup and mints nothing);
+  an apportioned or fully-exhausted mint raises the same loud admin alert the
+  partial-mint path uses, never a silent overmint. When it mints,
   the inbound reconcile creates the member credit and enqueues the offsetting
   account-credit note — both sized at the minted amount — and retires the
   now-obsolete still-PENDING invoice-clearing refund note, all in ONE
