@@ -187,32 +187,6 @@ Triggers and frequency:
 - One email per selected/new/imported member per admin action.
 - Bulk sends have no per-admin cooldown: the 100-ids-per-request cap plus SES batch pacing (batches of 10, 1 second between batches) are the sole provider protections. The response reports honest per-member outcomes (`sent`, `failed`, and a `results` array) so the admin UI surfaces failures inside the dialog and can retry the members whose email did not deliver.
 
-### welcome
-
-Subject:
-
-```text
-Welcome to {{CLUB_BOOKINGS_NAME}}
-```
-
-Body:
-
-```text
-Welcome, {{firstName}}!
-
-Your {{CLUB_NAME}} booking account has been created successfully.
-
-You can now log in to book stays at the lodge, manage your bookings, and view your upcoming trips.
-
-Log In to Your Account: {{BASE_URL}}/login
-
-If you did not create this account, please ignore this email.
-```
-
-Triggers and frequency:
-
-- Defined as `sendWelcomeEmail`, but no current caller was found in `src/`.
-
 ### email-verification
 
 Subject:
@@ -405,36 +379,6 @@ Triggers and frequency:
 
 - Pending-booking cron every 3 hours when a pending booking reaches its hold deadline and capacity is no longer available.
 - One email per bumped booking.
-
-### booking-guests-removed
-
-Subject:
-
-```text
-Booking Update - {{CLUB_LODGE_NAME}}
-```
-
-Body:
-
-```text
-Booking Update
-
-Hi {{firstName}}, the lodge filled up with member bookings, so we couldn't keep the non-member guests on your booking. The rest of your booking continues.
-
-Check-in: {{checkIn}}
-Check-out: {{checkOut}}
-Guests: {{guestCount}}
-New Total: {{newTotal}}
-
-Only your non-member guests were removed — your booking has not been cancelled. Your updated total reflects the remaining guests. You're welcome to rebook the non-member guests for different dates where availability exists.
-
-View Booking: {{BASE_URL}}/bookings
-```
-
-Triggers and frequency:
-
-- Default partial bump (`bumping.ts` candidate loop and the pending-booking cron) when a member booking's non-member guests can't be accommodated but the member guests stay.
-- One email per partially bumped booking.
 
 ### booking-guests-cancelled
 
