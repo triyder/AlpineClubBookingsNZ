@@ -1357,6 +1357,8 @@ const adminHelpEntries: HelpEntry[] = [
         "Create or edit a type in the editor before assigning it to members or rolling seasons forward.",
         "Use the separate roll-forward section to preview changes and exceptions before applying them.",
         "Keep access roles separate from seasonal membership type policy.",
+        "Delete removes an unused custom type outright; a custom type that still has seasonal assignments must be merged into another active type (reassign, then delete). Built-in types can never be deleted or merged.",
+        "Before merging, check the Xero-rule warning: reassigned members keep their Xero contact-group membership until the next periodic Xero reconciliation.",
       ],
       [
         {

@@ -312,7 +312,7 @@ export async function DELETE(
     return NextResponse.json(
       {
         error:
-          "Membership types with seasonal assignments cannot be deleted. Archive the type instead.",
+          "Membership types with seasonal assignments cannot be deleted directly. Merge its members into another type, or archive it instead.",
       },
       { status: 409 },
     );

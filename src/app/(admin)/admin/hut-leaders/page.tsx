@@ -1,16 +1,30 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { Trash2, UserCheck, CalendarDays, KeyRound } from "lucide-react";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  getTodayDateOnly,
+  parseDateOnly,
+} from "@/lib/date-only";
+import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { OccupancyCalendar } from "@/components/admin/occupancy-calendar";
+import type {
+  CalendarOverlayValue,
+  CalendarTone,
+} from "@/components/admin/occupancy-calendar";
+import type { PickedMember } from "@/components/admin/member-picker";
+import {
+  AssignmentForm,
+  type AssignmentSummary,
+  type AssignmentTarget,
+  type EligibleMember,
+} from "./_components/assignment-form";
 
 interface HutLeaderAssignment {
   id: string;
@@ -24,25 +38,38 @@ interface HutLeaderAssignment {
   lodgeName: string | null;
 }
 
-interface EligibleMember {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  hutLeaderEligible: boolean;
-  hutLeaderEligibleAt: string | null;
-  bookingCheckIn: string;
-  bookingCheckOut: string;
-  suggestedStartDate: string;
-  suggestedEndDate: string;
-  uncoveredNightCount: number;
-  fullyCovered: boolean;
-}
-
 interface UnassignedDate {
   date: string;
   bookingCount: number;
   guestCount: number;
+}
+
+function monthKeyForDate(date: Date) {
+  return formatDateOnly(date).slice(0, 7);
+}
+
+// Compute the last inclusive day of a "YYYY-MM" month.
+function monthBounds(monthKey: string) {
+  const start = parseDateOnly(`${monthKey}-01`);
+  const [year, month] = monthKey.split("-").map(Number);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const endExclusive = parseDateOnly(
+    `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`,
+  );
+  return { start, end: addDaysDateOnly(endExclusive, -1) };
+}
+
+// Short calendar-badge label for a covered night: the surname, or initials when
+// the surname is long, so a custodian's multi-month block reads as a band.
+function shortLeaderLabel(memberName: string) {
+  const parts = memberName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return memberName;
+  const surname = parts[parts.length - 1];
+  if (surname.length > 10) {
+    return parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
+  }
+  return surname;
 }
 
 export default function HutLeadersPage() {
@@ -53,26 +80,30 @@ export default function HutLeadersPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [editingMember, setEditingMember] = useState<string | null>(null);
-  const [editDates, setEditDates] = useState({ startDate: "", endDate: "" });
   const [resettingPinId, setResettingPinId] = useState<string | null>(null);
   const [pinMessage, setPinMessage] = useState<{
     memberName: string;
     pin: string;
     emailSent: boolean;
   } | null>(null);
-  const [formData, setFormData] = useState({
-    memberId: "",
-    startDate: "",
-    endDate: "",
-  });
+
+  const [selection, setSelection] = useState({ startDate: "", endDate: "" });
+  const [target, setTarget] = useState<AssignmentTarget | null>(null);
   const [error, setError] = useState<{ message: string; memberId: string | null } | null>(null);
   // Lodge context for new assignments; LodgeSelect renders nothing (and
   // reports the sole lodge) while fewer than two lodges exist (ADR-002).
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
   const [lodgeId, setLodgeId] = useState<string | null>(null);
   const showLodgeColumn = lodges.length > 1;
+
+  const [visibleMonthKey, setVisibleMonthKey] = useState(() =>
+    monthKeyForDate(getTodayDateOnly()),
+  );
+  // Windowed "needs a leader" dates and occupied nights, keyed by visible month.
+  const [redDatesByMonth, setRedDatesByMonth] = useState<Record<string, string[]>>({});
+  const [guestNightsByMonth, setGuestNightsByMonth] = useState<
+    Record<string, Set<string>>
+  >({});
 
   const fetchAssignments = useCallback(async () => {
     try {
@@ -86,6 +117,8 @@ export default function HutLeadersPage() {
     }
   }, []);
 
+  // Default lookahead window — feeds the amber "Upcoming Dates Without…" card.
+  // Intentionally the un-windowed variant so that card is byte-for-byte unchanged.
   const fetchUnassignedDates = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/hut-leaders/unassigned-dates");
@@ -98,30 +131,74 @@ export default function HutLeadersPage() {
     }
   }, []);
 
+  // Per-month overlay data: red (needs-leader) nights via the windowed variant,
+  // and occupied nights (for violet fill-vs-ring emphasis) via the occupancy API.
+  const refreshOverlay = useCallback(async (monthKey: string) => {
+    try {
+      const res = await fetch(
+        `/api/admin/hut-leaders/unassigned-dates?month=${monthKey}`,
+      );
+      if (res.ok) {
+        const data: { unassignedDates: UnassignedDate[] } = await res.json();
+        setRedDatesByMonth((prev) => ({
+          ...prev,
+          [monthKey]: data.unassignedDates.map((d) => d.date),
+        }));
+      }
+    } catch {
+      // non-essential overlay
+    }
+    try {
+      const res = await fetch(`/api/admin/occupancy?month=${monthKey}`);
+      if (res.ok) {
+        const data: { nights?: Array<{ date: string; guestCount: number }> } =
+          await res.json();
+        const guestNights = new Set(
+          (data.nights ?? [])
+            .filter((n) => n.guestCount > 0)
+            .map((n) => n.date),
+        );
+        setGuestNightsByMonth((prev) => ({ ...prev, [monthKey]: guestNights }));
+      }
+    } catch {
+      // non-essential overlay
+    }
+  }, []);
+
+  const handleVisibleMonthChange = useCallback(
+    (monthKey: string) => {
+      setVisibleMonthKey(monthKey);
+      fetchAssignments();
+      refreshOverlay(monthKey);
+    },
+    [fetchAssignments, refreshOverlay],
+  );
+
   useEffect(() => {
     fetchAssignments();
     fetchUnassignedDates();
   }, [fetchAssignments, fetchUnassignedDates]);
 
-  // Fetch eligible members when dates change
+  // Fetch eligible members whenever the picked range changes.
   useEffect(() => {
-    if (!formData.startDate || !formData.endDate || formData.startDate > formData.endDate) {
+    if (
+      !selection.startDate ||
+      !selection.endDate ||
+      selection.startDate > selection.endDate
+    ) {
       setEligibleMembers([]);
-      setFormData((prev) => ({ ...prev, memberId: "" }));
       return;
     }
 
     let cancelled = false;
     setLoadingMembers(true);
-    setFormData((prev) => ({ ...prev, memberId: "" }));
-    setEditingMember(null);
 
-    fetch(`/api/admin/hut-leaders/eligible-members?startDate=${formData.startDate}&endDate=${formData.endDate}`)
+    fetch(
+      `/api/admin/hut-leaders/eligible-members?startDate=${selection.startDate}&endDate=${selection.endDate}`,
+    )
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
-        if (!cancelled) {
-          setEligibleMembers(data.members);
-        }
+        if (!cancelled) setEligibleMembers(data.members);
       })
       .catch(() => {
         if (!cancelled) setEligibleMembers([]);
@@ -133,43 +210,38 @@ export default function HutLeadersPage() {
     return () => {
       cancelled = true;
     };
-  }, [formData.startDate, formData.endDate]);
+  }, [selection.startDate, selection.endDate]);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setCreating(true);
-    try {
-      const submitData = {
-        ...(editingMember
-          ? { memberId: editingMember, startDate: editDates.startDate, endDate: editDates.endDate }
-          : formData),
-        ...(lodgeId ? { lodgeId } : {}),
-      };
-      const res = await fetch("/api/admin/hut-leaders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(submitData),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        setError({
-          message: data.error || "Failed to create",
-          memberId: editingMember ?? formData.memberId ?? null,
-        });
-        return;
-      }
-      setFormData({ memberId: "", startDate: "", endDate: "" });
-      setShowForm(false);
-      setEditingMember(null);
-      fetchAssignments();
-      fetchUnassignedDates();
-    } finally {
-      setCreating(false);
-    }
+  // Step 1 — picking new nights always drops any selected target.
+  function handlePickNights(next: { startDate: string; endDate: string }) {
+    setSelection(next);
+    setTarget(null);
   }
 
-  async function handleQuickAssign(member: EligibleMember) {
+  // Step 2a — a suggestion adopts the member's conflict-free suggested range.
+  function handleSelectEligible(member: EligibleMember) {
+    setSelection({
+      startDate: member.suggestedStartDate,
+      endDate: member.suggestedEndDate,
+    });
+    setTarget({
+      memberId: member.id,
+      memberName: `${member.firstName} ${member.lastName}`,
+    });
+    setError(null);
+  }
+
+  // Step 2b — any member (including a no-booking custodian) keeps the picked range.
+  function handleSelectAnyMember(member: PickedMember) {
+    setTarget({
+      memberId: member.id,
+      memberName: `${member.firstName} ${member.lastName}`,
+    });
+    setError(null);
+  }
+
+  async function handleConfirm() {
+    if (!target || !selection.startDate || !selection.endDate) return;
     setError(null);
     setCreating(true);
     try {
@@ -177,33 +249,28 @@ export default function HutLeadersPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          memberId: member.id,
-          startDate: member.suggestedStartDate,
-          endDate: member.suggestedEndDate,
+          memberId: target.memberId,
+          startDate: selection.startDate,
+          endDate: selection.endDate,
           ...(lodgeId ? { lodgeId } : {}),
         }),
       });
       if (!res.ok) {
         const data = await res.json();
-        setError({ message: data.error || "Failed to create", memberId: member.id });
+        setError({
+          message: data.error || "Failed to create",
+          memberId: target.memberId,
+        });
         return;
       }
-      // Don't reset form or close it — only re-fetch data so remaining
-      // unassigned dates and eligible members stay visible
-      setEditingMember(null);
+      setSelection({ startDate: "", endDate: "" });
+      setTarget(null);
       fetchAssignments();
       fetchUnassignedDates();
+      refreshOverlay(visibleMonthKey);
     } finally {
       setCreating(false);
     }
-  }
-
-  function handleEditAndAssign(member: EligibleMember) {
-    setEditingMember(member.id);
-    setEditDates({
-      startDate: member.suggestedStartDate,
-      endDate: member.suggestedEndDate,
-    });
   }
 
   async function handleDelete(id: string) {
@@ -212,13 +279,14 @@ export default function HutLeadersPage() {
     if (res.ok) {
       fetchAssignments();
       fetchUnassignedDates();
+      refreshOverlay(visibleMonthKey);
     }
   }
 
   async function handleResetPin(assignment: HutLeaderAssignment) {
     if (
       !confirm(
-        `Generate a new kiosk PIN for ${assignment.memberName}? Their existing PIN will stop working.`
+        `Generate a new kiosk PIN for ${assignment.memberName}? Their existing PIN will stop working.`,
       )
     ) {
       return;
@@ -249,35 +317,124 @@ export default function HutLeadersPage() {
   }
 
   function handleAssignForDate(date: string) {
-    setShowForm(true);
-    setFormData({ memberId: "", startDate: date, endDate: date });
-    setEditingMember(null);
+    setSelection({ startDate: date, endDate: date });
+    setTarget(null);
   }
 
+  // ---- Calendar overlay (three layers: red needs-leader, violet covered) ----
+  const overlayByDate = useMemo<Record<string, CalendarOverlayValue>>(() => {
+    const overlay: Record<string, CalendarOverlayValue> = {};
+    const { start: monthStart, end: monthEnd } = monthBounds(visibleMonthKey);
+    const guestNights = guestNightsByMonth[visibleMonthKey];
+
+    // Red first (violet overwrites on any collision so "covered" always wins).
+    for (const date of redDatesByMonth[visibleMonthKey] ?? []) {
+      overlay[date] = { tone: "red", label: "Needs leader" };
+    }
+
+    // Violet — covered nights, combining surnames on a shared handover day.
+    const surnamesByDate = new Map<string, Set<string>>();
+    for (const a of assignments) {
+      const aStart = parseDateOnly(a.startDate);
+      const aEnd = parseDateOnly(a.endDate);
+      const from = aStart.getTime() > monthStart.getTime() ? aStart : monthStart;
+      const to = aEnd.getTime() < monthEnd.getTime() ? aEnd : monthEnd;
+      const surname = shortLeaderLabel(a.memberName);
+      for (
+        let day = from;
+        day.getTime() <= to.getTime();
+        day = addDaysDateOnly(day, 1)
+      ) {
+        const ds = formatDateOnly(day);
+        const set = surnamesByDate.get(ds) ?? new Set<string>();
+        set.add(surname);
+        surnamesByDate.set(ds, set);
+      }
+    }
+    for (const [ds, surnames] of surnamesByDate) {
+      overlay[ds] = {
+        tone: "violet",
+        label: [...surnames].join(" / "),
+        emphasis: guestNights?.has(ds) ? "fill" : "ring",
+      };
+    }
+
+    return overlay;
+  }, [assignments, redDatesByMonth, guestNightsByMonth, visibleMonthKey]);
+
+  const overlayLegend = useMemo<Array<{ tone: CalendarTone; label: string }>>(
+    () => [
+      { tone: "violet", label: `Has a ${hutLeaderLabel}` },
+      { tone: "red", label: `Needs a ${hutLeaderLabel}` },
+    ],
+    [hutLeaderLabel],
+  );
+
+  // ---- Step-3 summary + client-side conflict preview -----------------------
+  const summary = useMemo<AssignmentSummary | null>(() => {
+    if (!target || !selection.startDate || !selection.endDate) return null;
+    if (selection.startDate > selection.endDate) return null;
+
+    const start = parseDateOnly(selection.startDate);
+    const end = parseDateOnly(selection.endDate);
+    const nights =
+      Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+
+    // Fills: how many currently-red nights this range would cover. Uses every
+    // month of red data we have loaded so a cross-month range still counts.
+    const redSet = new Set(Object.values(redDatesByMonth).flat());
+    let fills = 0;
+    for (
+      let day = start;
+      day.getTime() <= end.getTime();
+      day = addDaysDateOnly(day, 1)
+    ) {
+      if (redSet.has(formatDateOnly(day))) fills++;
+    }
+
+    // Conflicts: same calculateOverlapDays the POST route uses (no logic drift).
+    // >1 day overlap with any existing assignment blocks the assignment.
+    const conflicts = assignments
+      .map((a) => ({
+        name: a.memberName,
+        startDate: a.startDate,
+        endDate: a.endDate,
+        days: calculateOverlapDays(
+          start,
+          end,
+          parseDateOnly(a.startDate),
+          parseDateOnly(a.endDate),
+        ),
+      }))
+      .filter((c) => c.days > 1);
+
+    return {
+      name: target.memberName,
+      startDate: selection.startDate,
+      endDate: selection.endDate,
+      nights,
+      fills,
+      conflicts,
+    };
+  }, [target, selection.startDate, selection.endDate, assignments, redDatesByMonth]);
+
   const today = formatDateOnly(getTodayDateOnly());
-  const datesSelected = formData.startDate && formData.endDate && formData.startDate <= formData.endDate;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{hutLeaderLabel} Assignments</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Assign members as {hutLeaderLabel.toLowerCase()} for specific date ranges
-          </p>
-        </div>
-        <Button onClick={() => setShowForm(!showForm)}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Assignment
-        </Button>
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">{hutLeaderLabel} Assignments</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Paint the calendar: assign a member as {hutLeaderLabel.toLowerCase()} for
+          the nights that need cover.
+        </p>
       </div>
 
       {/*
-        Intentionally page-level (more prominent than the spec's "top of the
-        form"): reset-PIN errors originate in the assignments table, where the
-        form may be closed, so a form-scoped banner would never show them. This
-        guarantees every error — create, quick-assign, reset-PIN — is visible
-        without scrolling regardless of form/table position.
+        Page-level (more prominent than a form-scoped banner): reset-PIN errors
+        originate in the assignments table, so a form banner would never show
+        them. This guarantees every error — create, reset-PIN — is visible
+        without scrolling.
       */}
       {error && (
         <div
@@ -292,22 +449,23 @@ export default function HutLeadersPage() {
       {unassignedDates.length > 0 && (
         <Card className="border-amber-200 bg-amber-50">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base text-amber-800 flex items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-base text-amber-800">
               <CalendarDays className="h-5 w-5" />
               Upcoming Dates Without {hutLeaderLabel} ({unassignedDates.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
               {unassignedDates.map((d) => (
                 <div
                   key={d.date}
                   className="flex items-center justify-between rounded-lg border border-amber-200 bg-white px-3 py-2"
                 >
                   <div>
-                    <p className="font-medium text-sm text-slate-800">{d.date}</p>
+                    <p className="text-sm font-medium text-slate-800">{d.date}</p>
                     <p className="text-xs text-slate-500">
-                      {d.bookingCount} booking{d.bookingCount !== 1 ? "s" : ""}, {d.guestCount} guest{d.guestCount !== 1 ? "s" : ""}
+                      {d.bookingCount} booking{d.bookingCount !== 1 ? "s" : ""},{" "}
+                      {d.guestCount} guest{d.guestCount !== 1 ? "s" : ""}
                     </p>
                   </div>
                   <Button
@@ -325,207 +483,33 @@ export default function HutLeadersPage() {
         </Card>
       )}
 
-      {showForm && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">New {hutLeaderLabel} Assignment</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div className="max-w-xs">
-                <LodgeSelect
-                  lodges={lodges}
-                  value={lodgeId}
-                  onChange={setLodgeId}
-                  loading={lodgesLoading}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="startDate">Start Date</Label>
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={formData.startDate}
-                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="endDate">End Date</Label>
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={formData.endDate}
-                    onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-              <OccupancyCalendar
-                mode="range"
-                selectedStartDate={formData.startDate}
-                selectedEndDate={formData.endDate}
-                onSelectionChange={({ startDate, endDate }) =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    startDate,
-                    endDate,
-                  }))
-                }
-              />
-              <div>
-                <Label>Members at the lodge</Label>
-                {!datesSelected ? (
-                  <p className="mt-1 text-sm text-slate-500">
-                    Select a date range first to see adults staying at the lodge
-                  </p>
-                ) : loadingMembers ? (
-                  <p className="mt-1 text-sm text-slate-500">Loading eligible members...</p>
-                ) : eligibleMembers.length === 0 ? (
-                  <p className="mt-1 text-sm text-amber-600">
-                    No adult members have bookings during this date range
-                  </p>
-                ) : (
-                  <div className="mt-2 space-y-3">
-                    {eligibleMembers.map((m) => {
-                      // Nights covered by the suggested range (inclusive day count).
-                      const suggestedNightCount =
-                        Math.round(
-                          (parseDateOnly(m.suggestedEndDate).getTime() -
-                            parseDateOnly(m.suggestedStartDate).getTime()) /
-                            86_400_000,
-                        ) + 1;
-                      return (
-                      <div
-                        key={m.id}
-                        className={`rounded-lg border p-4 ${
-                          m.fullyCovered ? "opacity-60 " : ""
-                        }${
-                          editingMember === m.id ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-white"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="font-medium text-sm">
-                              {m.firstName} {m.lastName}
-                            </p>
-                            <p className="text-xs text-slate-500">{m.email}</p>
-                            <div className="mt-1.5">
-                              {m.hutLeaderEligible ? (
-                                <Badge className="bg-green-100 text-green-800 border-green-200">
-                                  {hutLeaderLabel} qualified
-                                </Badge>
-                              ) : (
-                                <span className="text-xs text-slate-500">
-                                  Not yet inducted
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1 mt-1.5 text-xs text-slate-600">
-                              <CalendarDays className="h-3.5 w-3.5" />
-                              <span>
-                                Booking: {m.bookingCheckIn} — {m.bookingCheckOut}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              Suggested: {m.suggestedStartDate} — {m.suggestedEndDate}
-                            </p>
-                            {suggestedNightCount < m.uncoveredNightCount && (
-                              <p className="text-xs text-slate-500 mt-0.5">
-                                covers {suggestedNightCount} of {m.uncoveredNightCount} uncovered night
-                                {m.uncoveredNightCount !== 1 ? "s" : ""} (an existing {hutLeaderLabel.toLowerCase()} splits this stay)
-                              </p>
-                            )}
-                            {m.fullyCovered && (
-                              <p className="text-xs text-amber-600 mt-1">
-                                These dates already have a {hutLeaderLabel.toLowerCase()}.
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex gap-2 flex-shrink-0">
-                            <Button
-                              type="button"
-                              size="sm"
-                              disabled={creating || m.fullyCovered}
-                              onClick={() => handleQuickAssign(m)}
-                            >
-                              <Check className="h-3.5 w-3.5 mr-1" />
-                              Confirm
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              disabled={creating || m.fullyCovered}
-                              onClick={() => handleEditAndAssign(m)}
-                            >
-                              <Pencil className="h-3.5 w-3.5 mr-1" />
-                              Edit &amp; Assign
-                            </Button>
-                          </div>
-                        </div>
-                        {error?.memberId === m.id && (
-                          <p className="mt-2 text-sm text-red-600">{error.message}</p>
-                        )}
-                        {editingMember === m.id && (
-                          <div className="mt-3 pt-3 border-t border-blue-200">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <Label htmlFor={`edit-start-${m.id}`} className="text-xs">Start Date</Label>
-                                <Input
-                                  id={`edit-start-${m.id}`}
-                                  type="date"
-                                  value={editDates.startDate}
-                                  onChange={(e) => setEditDates({ ...editDates, startDate: e.target.value })}
-                                  className="mt-1"
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor={`edit-end-${m.id}`} className="text-xs">End Date</Label>
-                                <Input
-                                  id={`edit-end-${m.id}`}
-                                  type="date"
-                                  value={editDates.endDate}
-                                  onChange={(e) => setEditDates({ ...editDates, endDate: e.target.value })}
-                                  className="mt-1"
-                                />
-                              </div>
-                            </div>
-                            <div className="flex gap-2 mt-3">
-                              <Button
-                                type="submit"
-                                size="sm"
-                                disabled={creating || !editDates.startDate || !editDates.endDate}
-                              >
-                                {creating ? "Saving..." : "Save Assignment"}
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setEditingMember(null)}
-                              >
-                                Cancel Edit
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => { setShowForm(false); setEditingMember(null); }}>
-                  Close
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      )}
+      <AssignmentForm
+        hutLeaderLabel={hutLeaderLabel}
+        selectedStartDate={selection.startDate}
+        selectedEndDate={selection.endDate}
+        onPickNights={handlePickNights}
+        onVisibleMonthChange={handleVisibleMonthChange}
+        overlayByDate={overlayByDate}
+        overlayLegend={overlayLegend}
+        eligibleMembers={eligibleMembers}
+        loadingMembers={loadingMembers}
+        target={target}
+        onSelectEligible={handleSelectEligible}
+        onSelectAnyMember={handleSelectAnyMember}
+        onClearTarget={() => setTarget(null)}
+        summary={summary}
+        creating={creating}
+        error={error}
+        onConfirm={handleConfirm}
+        lodgeSelector={
+          <LodgeSelect
+            lodges={lodges}
+            value={lodgeId}
+            onChange={setLodgeId}
+            loading={lodgesLoading}
+          />
+        }
+      />
 
       {pinMessage && (
         <Card className="border-blue-200 bg-blue-50">
@@ -544,11 +528,7 @@ export default function HutLeadersPage() {
                   : "Email delivery failed, so provide it directly."}
               </p>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPinMessage(null)}
-            >
+            <Button type="button" variant="outline" onClick={() => setPinMessage(null)}>
               Dismiss
             </Button>
           </CardContent>
@@ -568,14 +548,14 @@ export default function HutLeadersPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-slate-50">
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Member</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Member</th>
                     {showLodgeColumn && (
-                      <th className="text-left px-4 py-3 font-medium text-slate-600">Lodge</th>
+                      <th className="px-4 py-3 text-left font-medium text-slate-600">Lodge</th>
                     )}
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Start</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">End</th>
-                    <th className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
-                    <th className="text-right px-4 py-3 font-medium text-slate-600">Actions</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Start</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">End</th>
+                    <th className="px-4 py-3 text-left font-medium text-slate-600">Status</th>
+                    <th className="px-4 py-3 text-right font-medium text-slate-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -600,11 +580,11 @@ export default function HutLeadersPage() {
                         <td className="px-4 py-3">{a.endDate}</td>
                         <td className="px-4 py-3">
                           {isActive ? (
-                            <Badge className="bg-green-100 text-green-800 border-green-200">Active</Badge>
+                            <Badge className="border-green-200 bg-green-100 text-green-800">Active</Badge>
                           ) : isPast ? (
                             <Badge variant="secondary">Past</Badge>
                           ) : (
-                            <Badge className="bg-blue-100 text-blue-800 border-blue-200">Upcoming</Badge>
+                            <Badge className="border-blue-200 bg-blue-100 text-blue-800">Upcoming</Badge>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -614,7 +594,7 @@ export default function HutLeadersPage() {
                               size="sm"
                               onClick={() => handleResetPin(a)}
                               disabled={resettingPinId === a.id}
-                              className="text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                              className="text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                               title="Reset kiosk PIN"
                             >
                               <KeyRound className="h-4 w-4" />
@@ -624,7 +604,7 @@ export default function HutLeadersPage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => handleDelete(a.id)}
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              className="text-red-600 hover:bg-red-50 hover:text-red-700"
                               title="Delete assignment"
                             >
                               <Trash2 className="h-4 w-4" />

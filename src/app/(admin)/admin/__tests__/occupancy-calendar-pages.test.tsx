@@ -76,8 +76,8 @@ describe("occupancy calendar page integration", () => {
     const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
 
     render(<HutLeadersPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /new assignment/i }));
-    fireEvent.click(screen.getByRole("button", { name: /pick range/i }));
+    // Calendar-first: the range picker is visible without opening a form.
+    fireEvent.click(await screen.findByRole("button", { name: /pick range/i }));
 
     expect(screen.getByLabelText("Start Date")).toHaveValue("2099-07-10");
     expect(screen.getByLabelText("End Date")).toHaveValue("2099-07-12");
