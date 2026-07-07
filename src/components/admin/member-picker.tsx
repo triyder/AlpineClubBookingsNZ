@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { isOperationalRole } from "@/lib/member-roles";
 
-interface PickedMember {
+export interface PickedMember {
   id: string;
   firstName: string;
   lastName: string;
@@ -18,9 +18,21 @@ interface MemberPickerProps {
   onSelect: (member: PickedMember) => void;
   selected?: PickedMember | null;
   onClear?: () => void;
+  // Copy overrides. Default to the original book-on-behalf strings so the
+  // existing consumer is unchanged.
+  label?: string;
+  placeholder?: string;
+  selectedPrefix?: string;
 }
 
-export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps) {
+export function MemberPicker({
+  onSelect,
+  selected,
+  onClear,
+  label = "Search for a member to book on behalf of",
+  placeholder = "Type a name or email...",
+  selectedPrefix = "Booking on behalf of:",
+}: MemberPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PickedMember[]>([]);
   const [loading, setLoading] = useState(false);
@@ -77,7 +89,7 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
       <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
         <div className="flex-1">
           <p className="font-medium text-sm">
-            Booking on behalf of: {selected.firstName} {selected.lastName}
+            {selectedPrefix} {selected.firstName} {selected.lastName}
           </p>
           <p className="text-xs text-slate-500">{selected.email}</p>
         </div>
@@ -94,10 +106,10 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
   return (
     <div ref={wrapperRef} className="relative">
       <label className="block text-sm font-medium text-gray-700 mb-1">
-        Search for a member to book on behalf of
+        {label}
       </label>
       <Input
-        placeholder="Type a name or email..."
+        placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => results.length > 0 && setShowDropdown(true)}

@@ -32,16 +32,52 @@ type OccupancyCalendarResponse = {
   bookings: OccupancyCalendarBooking[];
 };
 
-export type CalendarTone = "red" | "amber" | "orange" | "green";
+export type CalendarTone = "red" | "amber" | "orange" | "green" | "violet";
+
+// How prominently an overlay paints its cell. "fill" (default) is the original
+// solid tint; "ring" draws a low-emphasis outline over a white cell so a covered
+// night with no guests reads as quiet history rather than an active state.
+export type CalendarOverlayEmphasis = "fill" | "ring";
+
+export type CalendarOverlayValue = {
+  tone: CalendarTone;
+  label: string;
+  emphasis?: CalendarOverlayEmphasis;
+};
 
 // Static class table so Tailwind sees every class literally (no dynamic class
 // construction, which its JIT would prune). Consumers pass a tone; the calendar
-// never builds these strings at runtime.
-const CALENDAR_TONE_CLASSES: Record<CalendarTone, { cell: string; badge: string }> = {
-  red: { cell: "border-red-300 bg-red-50 text-slate-900 hover:bg-red-100", badge: "bg-red-100 text-red-800" },
-  amber: { cell: "border-amber-300 bg-amber-50 text-slate-900 hover:bg-amber-100", badge: "bg-amber-100 text-amber-800" },
-  orange: { cell: "border-orange-300 bg-orange-50 text-slate-900 hover:bg-orange-100", badge: "bg-orange-100 text-orange-800" },
-  green: { cell: "border-green-300 bg-green-50 text-slate-900 hover:bg-green-100", badge: "bg-green-100 text-green-800" },
+// never builds these strings at runtime. `ringCell` is the low-emphasis variant
+// used when an overlay sets emphasis: "ring".
+const CALENDAR_TONE_CLASSES: Record<
+  CalendarTone,
+  { cell: string; ringCell: string; badge: string }
+> = {
+  red: {
+    cell: "border-red-300 bg-red-50 text-slate-900 hover:bg-red-100",
+    ringCell: "ring-1 ring-inset ring-red-300 bg-white text-slate-900 hover:bg-red-50",
+    badge: "bg-red-100 text-red-800",
+  },
+  amber: {
+    cell: "border-amber-300 bg-amber-50 text-slate-900 hover:bg-amber-100",
+    ringCell: "ring-1 ring-inset ring-amber-300 bg-white text-slate-900 hover:bg-amber-50",
+    badge: "bg-amber-100 text-amber-800",
+  },
+  orange: {
+    cell: "border-orange-300 bg-orange-50 text-slate-900 hover:bg-orange-100",
+    ringCell: "ring-1 ring-inset ring-orange-300 bg-white text-slate-900 hover:bg-orange-50",
+    badge: "bg-orange-100 text-orange-800",
+  },
+  green: {
+    cell: "border-green-300 bg-green-50 text-slate-900 hover:bg-green-100",
+    ringCell: "ring-1 ring-inset ring-green-300 bg-white text-slate-900 hover:bg-green-50",
+    badge: "bg-green-100 text-green-800",
+  },
+  violet: {
+    cell: "border-violet-300 bg-violet-100 text-slate-900 hover:bg-violet-200",
+    ringCell: "ring-1 ring-inset ring-violet-300 bg-white text-slate-900 hover:bg-violet-50",
+    badge: "bg-violet-100 text-violet-800",
+  },
 };
 
 type OccupancyCalendarProps = {
@@ -50,8 +86,9 @@ type OccupancyCalendarProps = {
   selectedEndDate?: string;
   onSelectionChange: (selection: { startDate: string; endDate: string }) => void;
   // Optional per-date colour overlay (e.g. roster status). Backwards compatible:
-  // consumers that pass none behave exactly as before.
-  overlayByDate?: Record<string, { tone: CalendarTone; label: string }>;
+  // consumers that pass none behave exactly as before. An entry may set
+  // emphasis: "ring" to paint a low-emphasis outline instead of a solid fill.
+  overlayByDate?: Record<string, CalendarOverlayValue>;
   overlayLegend?: Array<{ tone: CalendarTone; label: string }>;
   // Fires with the visible month key (YYYY-MM) on mount and every navigation, so
   // a parent can lazily load overlay data for the month in view.
@@ -401,7 +438,9 @@ export function OccupancyCalendar({
               : isInRange
                 ? "border-blue-200 bg-blue-50 text-blue-900"
                 : overlay
-                  ? CALENDAR_TONE_CLASSES[overlay.tone].cell
+                  ? overlay.emphasis === "ring"
+                    ? CALENDAR_TONE_CLASSES[overlay.tone].ringCell
+                    : CALENDAR_TONE_CLASSES[overlay.tone].cell
                   : hasGuests
                     ? "border-emerald-200 bg-emerald-50 text-slate-900 hover:bg-emerald-100"
                     : "border-slate-100 bg-white text-slate-700 hover:bg-slate-50";
