@@ -246,7 +246,12 @@ export async function processWaitlistForDates(freedDates: {
       // Own-lodge checks span every candidate's lodge and the cross-lodge
       // pass offers at the freed lodge, so hold every active lodge's
       // capacity lock. Sorted order keeps concurrent processors
-      // deadlock-free; the club has a handful of lodges at most.
+      // deadlock-free; the club has a handful of lodges at most. The
+      // resulting club-wide serialisation of waitlist events is an accepted
+      // throughput trade-off (owner decision, #1565): correctness never
+      // depends on it being narrower, and a narrowed lock set would need
+      // careful re-validation under lock to stay double-offer-safe. Revisit
+      // only with observed contention evidence.
       const activeLodges = await tx.lodge.findMany({
         where: { active: true },
         select: { id: true },
