@@ -25,6 +25,19 @@ export interface WhakapapaCondition {
   snowfall7d: string;
 }
 
+/**
+ * Controls which articles the public widget renders. Each flag maps to one
+ * article; `true` shows the article and `false` hides it. Missing flags default
+ * to visible so legacy cached payloads keep rendering every section.
+ */
+export interface WhakapapaSectionVisibility {
+  roadStatus: boolean;
+  lifts: boolean;
+  facilities: boolean;
+  foodAndDrink: boolean;
+  conditions: boolean;
+}
+
 export interface WhakapapaCurlData {
   updated: string;
   roadStatus: WhakapapaRoadStatus;
@@ -32,6 +45,40 @@ export interface WhakapapaCurlData {
   foodAndDrink: WhakapapaFacilityItem[];
   lifts: WhakapapaFacilityItem[];
   conditions: WhakapapaCondition[];
+  visibility: WhakapapaSectionVisibility;
+}
+
+export function emptyWhakapapaSectionVisibility(): WhakapapaSectionVisibility {
+  return {
+    roadStatus: true,
+    lifts: true,
+    facilities: true,
+    foodAndDrink: true,
+    conditions: true,
+  };
+}
+
+export function coerceWhakapapaSectionVisibility(
+  value: unknown,
+): WhakapapaSectionVisibility {
+  const defaults = emptyWhakapapaSectionVisibility();
+  if (!value || typeof value !== "object") {
+    return defaults;
+  }
+
+  const entry = value as Partial<
+    Record<keyof WhakapapaSectionVisibility, unknown>
+  >;
+  const resolve = (key: keyof WhakapapaSectionVisibility): boolean =>
+    typeof entry[key] === "boolean" ? (entry[key] as boolean) : defaults[key];
+
+  return {
+    roadStatus: resolve("roadStatus"),
+    lifts: resolve("lifts"),
+    facilities: resolve("facilities"),
+    foodAndDrink: resolve("foodAndDrink"),
+    conditions: resolve("conditions"),
+  };
 }
 
 export function emptyWhakapapaCurlData(): WhakapapaCurlData {
@@ -47,6 +94,7 @@ export function emptyWhakapapaCurlData(): WhakapapaCurlData {
     foodAndDrink: [],
     lifts: [],
     conditions: [],
+    visibility: emptyWhakapapaSectionVisibility(),
   };
 }
 
@@ -60,6 +108,7 @@ export function coerceWhakapapaCurlData(
   const data = payload as Partial<WhakapapaCurlData> & {
     roadStatus?: Partial<WhakapapaRoadStatus>;
     chairlifts?: unknown;
+    visibility?: unknown;
   };
 
   if (!data.roadStatus || typeof data.roadStatus !== "object") {
@@ -119,6 +168,7 @@ export function coerceWhakapapaCurlData(
     foodAndDrink,
     lifts,
     conditions,
+    visibility: coerceWhakapapaSectionVisibility(data.visibility),
   };
 }
 

@@ -54,7 +54,10 @@ function isFrozenUntil(frozenUntil: Date | null): boolean {
 }
 
 export async function GET(request: Request) {
-  const rateLimited = await applyRateLimit(rateLimiters.skifieldConditions, request);
+  const rateLimited = await applyRateLimit(
+    rateLimiters.skifieldConditions,
+    request,
+  );
   if (rateLimited) return rateLimited;
 
   const existing = await whakapapaReportCache.findUnique({
@@ -77,6 +80,12 @@ export async function GET(request: Request) {
 
   try {
     const curlData = await fetchWhakapapaCurlData();
+
+    // Section visibility is admin-controlled config that lives in the cached
+    // payload, so carry it across upstream refreshes instead of resetting it.
+    if (cachedData) {
+      curlData.visibility = cachedData.visibility;
+    }
 
     await whakapapaReportCache.upsert({
       where: { source: WHAKAPAPA_SOURCE },

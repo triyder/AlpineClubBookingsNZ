@@ -20,10 +20,24 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   emptyWhakapapaCurlData,
+  emptyWhakapapaSectionVisibility,
   type WhakapapaCurlData,
+  type WhakapapaSectionVisibility,
 } from "@/lib/whakapapa-report";
+
+const VISIBILITY_SECTIONS: {
+  key: keyof WhakapapaSectionVisibility;
+  label: string;
+}[] = [
+  { key: "roadStatus", label: "Road Status" },
+  { key: "lifts", label: "Lifts" },
+  { key: "facilities", label: "Facilities" },
+  { key: "foodAndDrink", label: "Food & Drink" },
+  { key: "conditions", label: "Mountain Conditions" },
+];
 
 type AdminMountainConditionsRecord = {
   source: string;
@@ -63,6 +77,10 @@ export function MountainConditionsPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [savingVisibility, setSavingVisibility] = useState(false);
+  const [visibility, setVisibility] = useState<WhakapapaSectionVisibility>(
+    emptyWhakapapaSectionVisibility(),
+  );
   const [error, setError] = useState<string>("");
   // Sampled whenever the record is (re)loaded so the frozen check below can
   // stay pure during render (Date.now() must not run mid-render).
@@ -82,10 +100,14 @@ export function MountainConditionsPanel() {
       setRecord(nextRecord);
       setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(nextRecord?.payload ?? emptyWhakapapaCurlData()));
+      setVisibility(
+        nextRecord?.payload.visibility ?? emptyWhakapapaSectionVisibility(),
+      );
     } catch (loadError) {
       setRecord(null);
       setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(emptyWhakapapaCurlData()));
+      setVisibility(emptyWhakapapaSectionVisibility());
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -117,6 +139,9 @@ export function MountainConditionsPanel() {
       setRecord(body.record);
       setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(body.record?.payload ?? emptyWhakapapaCurlData()));
+      setVisibility(
+        body.record?.payload.visibility ?? emptyWhakapapaSectionVisibility(),
+      );
       toast.success(body.message || "Mountain conditions saved");
     } catch (saveError) {
       setError(
@@ -145,6 +170,9 @@ export function MountainConditionsPanel() {
       setRecord(body.record);
       setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(body.record?.payload ?? emptyWhakapapaCurlData()));
+      setVisibility(
+        body.record?.payload.visibility ?? emptyWhakapapaSectionVisibility(),
+      );
       toast.success(body.message || "Mountain conditions refreshed");
     } catch (refreshError) {
       setError(
@@ -155,6 +183,39 @@ export function MountainConditionsPanel() {
       toast.error("Mountain conditions refresh failed");
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function saveVisibility() {
+    setSavingVisibility(true);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/mountain-conditions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility }),
+      });
+      const body = (await response.json()) as ApiResponse;
+      if (!response.ok) {
+        throw new Error(body.error || "Failed to save section visibility");
+      }
+
+      setRecord(body.record);
+      setRecordSyncedAt(Date.now());
+      setRawJson(prettyJson(body.record?.payload ?? emptyWhakapapaCurlData()));
+      setVisibility(
+        body.record?.payload.visibility ?? emptyWhakapapaSectionVisibility(),
+      );
+      toast.success(body.message || "Section visibility saved");
+    } catch (visibilityError) {
+      setError(
+        visibilityError instanceof Error
+          ? visibilityError.message
+          : "Failed to save section visibility",
+      );
+      toast.error("Section visibility save failed");
+    } finally {
+      setSavingVisibility(false);
     }
   }
 
@@ -202,6 +263,55 @@ export function MountainConditionsPanel() {
           {error}
         </div>
       ) : null}
+
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>Section visibility</CardTitle>
+          <CardDescription>
+            Choose which articles appear on the public Whakapapa Conditions
+            widget. Unticked sections are hidden from visitors.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {VISIBILITY_SECTIONS.map((section) => (
+              <label
+                key={section.key}
+                htmlFor={`visibility-${section.key}`}
+                className="flex items-center gap-3 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700"
+              >
+                <Checkbox
+                  id={`visibility-${section.key}`}
+                  checked={visibility[section.key]}
+                  onCheckedChange={(checked) =>
+                    setVisibility((current) => ({
+                      ...current,
+                      [section.key]: checked,
+                    }))
+                  }
+                  disabled={savingVisibility}
+                />
+                {section.label}
+              </label>
+            ))}
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={saveVisibility}
+              disabled={savingVisibility}
+            >
+              {savingVisibility ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              {savingVisibility ? "Saving..." : "Save visibility"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -285,6 +395,14 @@ export function MountainConditionsPanel() {
               The public page uses the same cached data, so changes here will
               flow through to the website immediately after saving or
               refreshing.
+            </p>
+            <p>
+              <i>
+                <b>Section visibility</b>
+              </i>{" "}
+              controls which articles appear on the public widget. Unticked
+              sections are hidden from visitors, and the choices are preserved
+              across automatic and manual upstream refreshes.
             </p>
           </div>
         </DialogContent>
