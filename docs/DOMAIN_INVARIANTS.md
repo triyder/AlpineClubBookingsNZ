@@ -119,7 +119,18 @@ Future reviews and issues should cite this file when proposing changes.
   commit in ONE transaction (#1357): the release marks the hold consumed
   (re-runs skip it), so an intent enqueued post-commit would ride a crash
   window with no self-heal. The outbox enqueue is a pure local insert — the
-  Xero call itself stays in the outbox worker, outside the transaction.
+  Xero call itself stays in the outbox worker, outside the transaction. The
+  clearing note is sized like the never-captured cancel path (#1597), NOT the
+  credit-reduced payment amount: the booking invoice is raised at the FULL
+  finalPrice, so the note is `max(0, finalPrice + changeFee − Xero-allocated
+  applied credit)` (only credit already allocated to the invoice AS A XERO
+  credit note is subtracted; locally-applied credit never reduced the invoice,
+  and the 100% local restore does not double-count). It is gated on an ISSUED
+  invoice: the create-time hold-slots shape is CONFIRMED and booking-create
+  enqueues the invoice only for PAYMENT_PENDING, so that shape reaches release
+  with no invoice and enqueues nothing (a refund note against no invoice was a
+  permanently-failing outbox op pre-#1597). `scripts/audit-ib-hold-clearing.ts`
+  reports invoices under-cleared by the pre-fix sizing (read-only).
 - Cancelling a booking never rewrites captured-payment truth (#1473).
   "Captured" is decided on LEDGER evidence — a payment transaction row in a
   captured status (SUCCEEDED / (PARTIALLY_)REFUNDED), or, for STRIPE rows

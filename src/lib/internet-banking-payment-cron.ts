@@ -1,12 +1,14 @@
 import {
   BookingEventType,
   BookingStatus,
+  CreditType,
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import { sendBookingCancelledEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
@@ -91,23 +93,103 @@ function releaseOneHold(paymentId: string, now: Date) {
         tx,
       );
 
-      // Enqueue the invoice-clearing credit note INSIDE the release
-      // transaction (#1357, the #1233 in-tx pattern): the outbox row commits
-      // atomically with `internetBankingHoldReleasedAt`, so no crash point can
-      // strand the open Xero invoice with no self-heal (re-runs skip released
-      // holds). The enqueue is a pure local insert — the Xero call happens in
-      // the outbox worker, outside this transaction.
-      const queued = await enqueueXeroRefundCreditNoteOperation(
-        fresh.id,
-        fresh.amountCents,
-        { store: tx },
-      );
+      // Size the invoice-clearing credit note like the never-captured cancel
+      // path (#1547 / booking-cancel.ts), NOT the credit-reduced payment amount
+      // (#1597). The booking invoice is raised at the FULL finalPriceCents
+      // (createXeroInvoiceForBooking bills guest lines + promo, never the
+      // effectivePriceCents the member still owes after credit), so
+      // `fresh.amountCents` (= effectivePriceCents) under-clears the invoice by
+      // exactly the applied credit and leaves that slice open forever. The true
+      // outstanding is finalPrice + changeFee minus only the credit already
+      // allocated to the invoice AS A XERO CREDIT NOTE (BOOKING_APPLIED rows
+      // carrying xeroCreditNoteId). Locally-applied credit never reduced the
+      // Xero invoice balance, so it is NOT subtracted here — the 100% local
+      // restore above and this full-invoice clearing note do not double-count.
+      // changeFeeCents is 0 for a never-captured hold; it is kept for exact
+      // parity with the cancel formula.
+      //
+      // The cancel path gates on `xeroInvoiceId && !freshPaymentCaptured`
+      // (booking-cancel.ts:820); mirror BOTH clauses.
+      //
+      // (1) Issued invoice (#1597 trace): the create-time hold-slots shape is
+      // CONFIRMED, and booking-create only enqueues the invoice for a
+      // PAYMENT_PENDING booking, so that shape reaches release with NO invoice
+      // (`xeroInvoiceId` null). Enqueuing a refund note for it minted a
+      // permanently-failing outbox op — the worker's createXeroCreditNote
+      // throws "No Xero invoice linked to payment" (xero-credit-notes.ts).
+      //
+      // (2) Never-captured payment: a clearing note is only ever right for money
+      // that never settled. If ledger evidence shows the payment captured, its
+      // invoice is normally already settled Xero-side, and in the failed-record
+      // retry window a clearing note would close the invoice under the op-retry
+      // stack and poison it (booking-cancel.ts's #1473 reasoning). The candidate
+      // guards already require a PENDING payment, so this is inert for every
+      // reachable candidate — but it completes the mirror and protects the
+      // unprovable edge (a captured ledger row under a stale PENDING aggregate).
+      // Reuse the exported capture discriminator (kept in lockstep with
+      // booking-cancel's private copy) with one ledger read under the advisory
+      // lock held above (line 33).
+      //
+      // Either clause failing skips the note entirely (nothing to clear).
+      let xeroClearingAmountCents = 0;
+      if (fresh.xeroInvoiceId) {
+        const paymentTransactions = await tx.paymentTransaction.findMany({
+          where: { paymentId: fresh.id },
+          select: { status: true },
+        });
+        const freshPaymentCaptured = paymentHasCaptureEvidence({
+          ...fresh,
+          transactions: paymentTransactions,
+        });
+        if (!freshPaymentCaptured) {
+          // Read the Xero-allocated applied credit under the same advisory lock,
+          // matching the cancel path's "read allocated credit under lock(1)"
+          // requirement so the aggregate is consistent.
+          const xeroAllocated = await tx.memberCredit.aggregate({
+            where: {
+              appliedToBookingId: fresh.bookingId,
+              type: CreditType.BOOKING_APPLIED,
+              xeroCreditNoteId: { not: null },
+            },
+            _sum: { amountCents: true },
+          });
+          const xeroAllocatedAppliedCreditCents = Math.max(
+            0,
+            -(xeroAllocated._sum.amountCents ?? 0),
+          );
+          xeroClearingAmountCents = Math.max(
+            0,
+            fresh.booking.finalPriceCents +
+              fresh.changeFeeCents -
+              xeroAllocatedAppliedCreditCents,
+          );
+        }
+      }
+
+      // Enqueue the clearing credit note INSIDE the release transaction (#1357,
+      // the #1233 in-tx pattern): the outbox row commits atomically with
+      // `internetBankingHoldReleasedAt`, so no crash point can strand the open
+      // Xero invoice with no self-heal (re-runs skip released holds). The
+      // enqueue is a pure local insert — the Xero call happens in the outbox
+      // worker, outside this transaction. Guard on `> 0` exactly like the
+      // cancel path (#1547): a zero amount (no invoice, or an invoice already
+      // fully credit-noted) enqueues nothing at all — no refund note, no
+      // permanently-failing outbox op.
+      let queueOperationId: string | null = null;
+      if (xeroClearingAmountCents > 0) {
+        const queued = await enqueueXeroRefundCreditNoteOperation(
+          fresh.id,
+          xeroClearingAmountCents,
+          { store: tx },
+        );
+        queueOperationId = queued.queueOperationId;
+      }
 
       return {
         type: "released" as const,
         payment: fresh,
         creditRestoredCents,
-        queueOperationId: queued.queueOperationId,
+        queueOperationId,
       };
     },
     // The enqueue adds a handful of reads under the club-wide advisory lock;

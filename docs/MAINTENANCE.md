@@ -298,6 +298,49 @@ transaction):
 DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-orphaned-applied-credits.ts --apply
 ```
 
+### Audit IB hold-expiry invoice under-clears (#1597)
+
+`scripts/audit-ib-hold-clearing.ts` is a READ-ONLY audit — it never writes and
+never calls a live provider, and it has no `--apply` by design (owner decision,
+2026-07-08). Before #1597, the Internet-Banking hold-expiry release
+(`internet-banking-payment-cron.ts`) sized its invoice-clearing credit note at
+`payment.amountCents` — the credit-REDUCED effectivePriceCents — while the
+booking invoice is raised at the FULL finalPriceCents. Where a released hold
+carried an issued invoice AND applied credit, the invoice was left open by
+exactly the applied-credit slice. #1597 fixed the sizing going forward (it now
+clears `max(0, finalPrice + changeFee − Xero-allocated applied credit)` and skips
+entirely when the payment has no issued invoice).
+
+The script scans every released IB hold, mirrors the corrected #1597 formula, and
+lists each booking whose clearing note was under-sized: booking id, invoice ref,
+expected clearing, actual (enqueued) clearing, and the open delta. It reads only
+local rows (no Xero calls); "actual" is `payment.amountCents`, frozen once the
+hold released, which is exactly what the pre-fix release enqueued.
+
+```bash
+DATABASE_URL=<non-prod copy> npx tsx scripts/audit-ib-hold-clearing.ts
+DATABASE_URL=<non-prod copy> npx tsx scripts/audit-ib-hold-clearing.ts --json
+```
+
+**The existing `xero-booking-repair.ts` CLI cannot express this repair.** Its
+`CANCELLED_BOOKING_OPEN_INVOICE` finding sizes a FULL clearing note
+(`getUnpaidCancellationClearingAmountCents` → `max(amountCents − refunded,
+finalPrice + changeFee)`) and recognizes only a `MODIFICATION_CREDIT_NOTE`, not
+the `REFUND_CREDIT_NOTE` the release already issued — so `--apply` would queue a
+full-finalPrice note on top of the partly-cleared invoice and OVER-allocate
+(Xero rejects over-allocation, poisoning the op). Repair each finding by hand
+instead: issue a supplementary credit note for exactly the reported open delta
+against the named invoice, then confirm the invoice reaches a zero balance in
+Xero. Do **not** run `xero-booking-repair.ts --apply` on these bookings.
+
+Note: because Internet-Banking bed-holding is off by default
+(`DOMAIN_INVARIANTS.md`), and the two hold-slots paths that reach release either
+carry no invoice (create-time, skipped by the fix) or already clear the full
+finalPrice (switch-to-IB, where `amountCents` equals finalPrice), this audit is
+expected to report zero on most tenants. A non-empty result means a hold-slots
+booking reached release with both an issued invoice and a credit-reduced
+`amountCents` (e.g. an operator-created invoice on a credit-carrying hold).
+
 ## Quarterly Backup Restore Drill
 
 A backup you have never restored is a hope, not a backup. `scripts/backup-restore-drill.sh`

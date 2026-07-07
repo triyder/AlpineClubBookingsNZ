@@ -22,6 +22,9 @@
     // Documented operator CLI (docs/MAINTENANCE.md, docs/DOMAIN_INVARIANTS.md,
     // docs/STATE_MACHINES.md; invoked via `npx tsx`, never imported).
     "scripts/backfill-orphaned-applied-credits.ts",
+    // Documented read-only operator CLI (docs/MAINTENANCE.md, #1597; invoked via
+    // `npx tsx`, never imported). Audits under-cleared IB hold-expiry invoices.
+    "scripts/audit-ib-hold-clearing.ts",
     // Next.js runtime entry: register() and the onRequestError convention hook are
     // invoked by the framework, not imported by app code (#1178 kept onRequestError).
     "src/instrumentation.node.ts"
