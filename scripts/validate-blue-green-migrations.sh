@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Requires GNU sed: unsafe_breaking_lines uses the case-insensitive "I" flag on
-# its s/// commands (a GNU extension, the only GNU-only construct here). CI runs
-# GNU coreutils; BSD/macOS sed rejects the flag and errors out, so the script
-# fails closed there rather than silently misclassifying a migration.
-
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
@@ -13,12 +8,47 @@ MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SA
 HOT_TABLE_SQL_REGEX='(ALTER TABLE|UPDATE|DELETE FROM|TRUNCATE|CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX|DROP INDEX|CREATE[[:space:]]+(CONSTRAINT[[:space:]]+)?TRIGGER|DROP TRIGGER|ADD CONSTRAINT|DROP CONSTRAINT|REFERENCES)[^;]*"(Member|MemberSubscription|MemberApplication|MemberCredit|FamilyGroup|FamilyGroupMember|FamilyGroupJoinRequest|Booking|BookingGuest|BookingModification|Payment|PaymentTransaction|PaymentRefund|RefundRequest|PasswordResetToken|EmailVerificationToken|EmailChangeToken|GuestChoreToken|NominationToken|XeroToken|FinanceXeroToken)"'
 BREAKING_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|DROP CONSTRAINT|ALTER TABLE .* RENAME|RENAME COLUMN|ALTER COLUMN .* TYPE|ALTER COLUMN .* SET NOT NULL)'
 DESTRUCTIVE_REMOVAL_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|ALTER TABLE .* RENAME|RENAME COLUMN)'
+# A "SET DEFAULT <value>" whose value is semantically NULL fills nothing, so it
+# cannot waive a paired SET NOT NULL (see unsafe_breaking_lines). This matches the
+# common Postgres/Prisma NULL-default spellings: a bare NULL, a parenthesised
+# (NULL), and CAST(NULL AS <type>) — each with an optional ::cast tail and
+# tolerant whitespace/semicolon. Expression forms such as NULLIF(...) are
+# deliberately NOT matched (they classify as a non-NULL default): SQL expression
+# analysis is out of scope for this gate. A parenthesised NULL whose inner cast
+# type itself contains parentheses, e.g. "(NULL::numeric(10,2))", is likewise not
+# recognised, but plain "(NULL)" and "CAST(NULL AS varchar(10))" are.
+NULL_DEFAULT_VALUE_SQL_REGEX='SET DEFAULT[[:space:]]+(NULL|\([[:space:]]*NULL[[:space:]]*(::[^)]*)?[[:space:]]*\)|CAST[[:space:]]*\([[:space:]]*NULL[[:space:]]+AS[[:space:]]+.+\))[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'
 
 trim_whitespace() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   printf '%s' "$value"
+}
+
+# Remove a trailing "-- ..." SQL line comment so it cannot defeat the end-anchored
+# NULL-default check (e.g. "SET DEFAULT NULL; -- reset"). A "--" inside a single-
+# or double-quoted string is preserved: the scan tracks quote parity (including
+# doubled "''"/'""' escapes) and only cuts at a "--" seen outside any quote.
+# Limitation: dollar-quoted string bodies ($tag$...$tag$) and C-style /* */
+# comments are not modelled, so a "--" inside those is treated as a comment.
+strip_sql_comment() {
+  awk -v sq="'" -v dq='"' '
+    {
+      in_s = 0; in_d = 0; out = $0
+      n = length($0)
+      for (i = 1; i <= n; i++) {
+        c = substr($0, i, 1)
+        if (c == sq && !in_d) { in_s = !in_s; continue }
+        if (c == dq && !in_s) { in_d = !in_d; continue }
+        if (!in_s && !in_d && c == "-" && substr($0, i + 1, 1) == "-") {
+          out = substr($0, 1, i - 1)
+          break
+        }
+      }
+      print out
+    }
+  ' <<<"$1"
 }
 
 sql_lines() {
@@ -29,83 +59,6 @@ sql_lines() {
     /^[[:space:]]*$/ { next }
     { printf "%d:%s\n", NR, $0 }
   ' "$file"
-}
-
-# Strip a trailing "-- ..." line comment from each stdin line so a comment can
-# never defeat the $-anchored NULL-default check (e.g. "SET DEFAULT NULL; -- reset"
-# would otherwise classify as a non-NULL default and wrongly waive). Applied only
-# in the default-classification pipeline below, NOT in sql_lines/the breaking grep:
-# stripping there would drop a breaking keyword that appears inside a trailing
-# comment and loosen breaking detection. Common case only: a "--" starts a comment
-# unless an ODD number of single quotes precedes it (i.e. it sits inside a
-# single-quoted string literal such as SET DEFAULT '--'). Dollar-quoted bodies and
-# doubled '' escapes inside a literal are out of scope; migration DEFAULT clauses
-# here never use them. Because it only ever trims a trailing comment, it can only
-# remove a comment-only false match from selection, never rewrite a real
-# SET/DROP DEFAULT statement into something looser.
-strip_trailing_sql_comments() {
-  awk -v q="'" '{
-    n = length($0)
-    inq = 0
-    for (i = 1; i <= n; i++) {
-      c = substr($0, i, 1)
-      if (c == q) { inq = !inq; continue }
-      if (!inq && c == "-" && substr($0, i + 1, 1) == "-") {
-        $0 = substr($0, 1, i - 1)
-        break
-      }
-    }
-    print
-  }'
-}
-
-# Classify a single (already comment-stripped) ALTER COLUMN default statement as a
-# NULL reset — one that leaves the column with no usable default, so an old
-# colour's omitted-column INSERT still lands a null and a paired SET NOT NULL would
-# abort mid-cutover. Returns 0 for a NULL reset (the pairing is vacuous; the
-# NOT NULL stays breaking), 1 for a real non-NULL default that backfills.
-#
-# A NULL reset is any of:
-#   * DROP DEFAULT               — removes the default entirely (gap 1)
-#   * SET DEFAULT NULL [::type]  — bare or cast NULL
-#   * SET DEFAULT (NULL[::type]) — parenthesised NULL
-#   * SET DEFAULT NULLIF('','')  — empty-string same-arg NULLIF evaluates to NULL
-#   * SET DEFAULT CAST(NULL AS <type>) — casting NULL to any type stays NULL
-#
-# This is deliberate enumeration, NOT expression evaluation: only these named
-# spellings are recognised. Anything else (a function call, a literal, a compound
-# expression) is treated as a real non-NULL default. A same-arg NULLIF with
-# non-empty args or a CAST wrapped inside a larger expression (e.g.
-# COALESCE(CAST(NULL AS text), 'x')) is intentionally left to classify non-NULL;
-# recognising arbitrary NULL-valued expressions is out of scope.
-default_is_null_reset() {
-  local clean="$1"
-  # DROP DEFAULT removes the default entirely -> column resets to NULL.
-  if printf '%s\n' "$clean" | grep -Eiq 'DROP DEFAULT[[:space:]]*;?[[:space:]]*$'; then
-    return 0
-  fi
-  # Bare or cast NULL: SET DEFAULT NULL [::type] ;
-  if printf '%s\n' "$clean" |
-    grep -Eiq 'SET DEFAULT[[:space:]]+NULL[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
-    return 0
-  fi
-  # Parenthesised NULL: SET DEFAULT (NULL) / (NULL::type) [::type] ;
-  if printf '%s\n' "$clean" |
-    grep -Eiq 'SET DEFAULT[[:space:]]+\([[:space:]]*NULL[[:space:]]*(::[^)]*)?[[:space:]]*\)[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
-    return 0
-  fi
-  # Empty-string same-arg NULLIF: NULLIF('','') evaluates to NULL.
-  if printf '%s\n' "$clean" |
-    grep -Eiq "SET DEFAULT[[:space:]]+NULLIF[[:space:]]*\([[:space:]]*''[[:space:]]*,[[:space:]]*''[[:space:]]*\)[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$"; then
-    return 0
-  fi
-  # CAST(NULL AS <type>): the exact type text is irrelevant, but stay anchored so a
-  # CAST(NULL ...) nested inside a larger non-NULL expression does not match.
-  if printf '%s\n' "$clean" |
-    grep -Eiq 'SET DEFAULT[[:space:]]+CAST[[:space:]]*\([[:space:]]*NULL[[:space:]]+AS[[:space:]]+[^()]+(\([^)]*\))?[[:space:]]*\)[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
-    return 0
-  fi
-  return 1
 }
 
 migration_name_for_file() {
@@ -121,23 +74,22 @@ migration_name_for_file() {
 # no outage). Such a NOT NULL still needs a documented ledger entry, but not the
 # ALLOW_BREAKING override.
 #
-# A "SET DEFAULT NULL" does NOT qualify: it fills nothing, so an old colour's
-# omitted-column INSERT still lands a null and the NOT NULL would abort — the
-# pairing is vacuous and the NOT NULL stays unsafe. NULL is recognised in every
-# enumerated spelling (see default_is_null_reset): bare/cast NULL, parenthesised
-# (NULL), empty-string NULLIF('',''), and CAST(NULL AS <type>).
-#
-# The effective default is the LAST same-column SET DEFAULT *or* DROP DEFAULT
-# (last-wins). A trailing DROP DEFAULT ordered after the last SET DEFAULT leaves
-# the column with no default at all, so it voids the waiver exactly like a
-# SET DEFAULT NULL; a DROP DEFAULT ordered before a later SET DEFAULT does not.
-# Table/column extraction is case-insensitive (matching the case-insensitive
-# greps), so a lowercase "alter table … set not null" can enter this branch and
-# waive when it is genuinely paired; a lowercase vacuous pairing still blocks.
-# Trailing "-- comments" are stripped before classification. Drops, renames, type
-# changes, and an unmatched SET NOT NULL remain unsafe.
+# The waiver only holds when the column's EFFECTIVE final default is a real,
+# non-NULL constant. Both SET DEFAULT and DROP DEFAULT for the column are read in
+# file order and only the LAST one is judged (last-wins):
+#   * a "SET DEFAULT NULL" in any spelling — bare, cast "NULL::text", parenthesised
+#     "(NULL)", or "CAST(NULL AS <type>)" — fills nothing; and
+#   * a trailing DROP DEFAULT after the last SET DEFAULT clears the default;
+# either way an old colour's omitted-column INSERT still lands a null and the
+# NOT NULL would abort — the pairing is vacuous and stays unsafe. A trailing
+# "-- comment" on that final statement is stripped before the NULL check so it
+# cannot hide a NULL default behind the end anchor. Expression defaults such as
+# NULLIF(...) count as non-NULL (expression analysis is out of scope). Keyword
+# matching is case-insensitive so lowercase DDL follows the same rules; quoted
+# identifiers keep their original case. Drops, renames, type changes, and an
+# unmatched SET NOT NULL remain unsafe.
 unsafe_breaking_lines() {
-  local file="$1" breaking line stmt stmt_sql table col default_lines last_default
+  local file="$1" breaking line stmt table col default_lines last_default
   breaking="$(sql_lines "$file" | grep -Ei "$BREAKING_SQL_REGEX" || true)"
   [ -n "$breaking" ] || return 0
   while IFS= read -r line; do
@@ -145,29 +97,27 @@ unsafe_breaking_lines() {
     # strip the leading "NR:" line-number prefix sql_lines adds
     stmt="${line#*:}"
     if printf '%s' "$stmt" | grep -Eiq 'ALTER COLUMN .* SET NOT NULL'; then
-      # Extract the table/column from the SQL only, never a trailing comment: the
-      # greedy ".*" in the sed capture would otherwise pull the identifier from an
-      # "-- ALTER COLUMN \"other\"" comment on this same line, retargeting the
-      # default lookup and waiving an unpaired NOT NULL. The breaking-keyword grep
-      # above deliberately stays on the raw line (comment keywords must still be
-      # caught). Case-insensitive so lowercase SQL enters the branch; the quoted
-      # identifier is captured verbatim (Postgres quoted identifiers are
-      # case-sensitive).
-      stmt_sql="$(printf '%s\n' "$stmt" | strip_trailing_sql_comments)"
-      table="$(printf '%s' "$stmt_sql" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/Ip')"
-      col="$(printf '%s' "$stmt_sql" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/Ip')"
+      # Case-insensitive keyword match (GNU sed s///I) so lowercase DDL reaches
+      # the waiver logic instead of always blocking; the captured identifiers keep
+      # their original case ("[^"]+" is unaffected by the I modifier) because
+      # quoted Postgres identifiers are case-significant.
+      table="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/pI')"
+      col="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/pI')"
       if [ -n "$table" ] && [ -n "$col" ]; then
-        # Collect every same-column SET DEFAULT / DROP DEFAULT in file order,
-        # trailing comments stripped first so a comment can neither defeat the
-        # NULL check nor inject a phantom candidate line into selection.
-        default_lines="$(sql_lines "$file" | strip_trailing_sql_comments |
-          grep -Ei "ALTER TABLE \"${table}\" ALTER COLUMN \"${col}\" (SET DEFAULT|DROP DEFAULT)" || true)"
-        # Last-wins: judge only the final default statement. Waive the NOT NULL iff
-        # that last statement is a real non-NULL SET DEFAULT; a SET DEFAULT NULL (any
-        # spelling) or a trailing DROP DEFAULT is a NULL reset that keeps it unsafe.
+        # Collect both SET DEFAULT and DROP DEFAULT for this column so the
+        # effective final default is judged across both statement kinds.
+        default_lines="$(sql_lines "$file" |
+          grep -Ei "ALTER TABLE \"${table}\" ALTER COLUMN \"${col}\" (SET|DROP) DEFAULT" || true)"
+        # Last-wins: only the FINAL SET/DROP DEFAULT is the effective default, so
+        # judge only that last line. It waives the NOT NULL iff it is a SET DEFAULT
+        # (not a DROP DEFAULT, which clears the default) whose value is non-NULL. A
+        # NULL default in any recognised spelling fills nothing, so the pairing is
+        # vacuous and the NOT NULL stays unsafe. A trailing "-- comment" is stripped
+        # first so it cannot hide a NULL default behind the end anchor.
         if [ -n "$default_lines" ]; then
-          last_default="$(printf '%s\n' "$default_lines" | tail -n1)"
-          if ! default_is_null_reset "$last_default"; then
+          last_default="$(strip_sql_comment "$(printf '%s\n' "$default_lines" | tail -n1)")"
+          if printf '%s\n' "$last_default" | grep -Eiq 'SET DEFAULT' &&
+            ! printf '%s\n' "$last_default" | grep -Eiq "$NULL_DEFAULT_VALUE_SQL_REGEX"; then
             continue
           fi
         fi

@@ -134,67 +134,6 @@ function runMigrationSafetyCoverage(
   });
 }
 
-// #1602 helpers: the blue/green NOT-NULL waiver fixtures come in matched pairs.
-// A "blocks without an override" fixture proves the pairing is vacuous (the
-// NOT NULL stays breaking): it must fail with no override, name the
-// ALLOW_BREAKING escape hatch, NOT print the reviewed-safe line, and pass once
-// the override is set. A "waives" fixture proves a genuinely-paired non-null
-// default is accepted override-free (status 0 + reviewed-safe line).
-function expectNotNullBlocksWithoutOverride(sql: string, note: string) {
-  const fixture = createTempMigration(
-    sql,
-    [
-      LEDGER_HEADER,
-      `20990101000000_test_migration\texpand\tn/a\tyes\t${note}`,
-    ].join("\n")
-  );
-
-  try {
-    const blocked = runMigrationSafetyValidator(
-      fixture.migrationPath,
-      fixture.ledgerPath
-    );
-    const allowed = runMigrationSafetyValidator(
-      fixture.migrationPath,
-      fixture.ledgerPath,
-      {
-        ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
-        BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
-          "vacuous NOT NULL pairing accepted after out-of-band verification",
-      }
-    );
-
-    expect(blocked.status, blocked.stderr).not.toBe(0);
-    expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
-    expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
-    expect(allowed.status, allowed.stderr).toBe(0);
-  } finally {
-    rmSync(fixture.tempDir, { recursive: true, force: true });
-  }
-}
-
-function expectNotNullWaivesWithoutOverride(sql: string, note: string) {
-  const fixture = createTempMigration(
-    sql,
-    [
-      LEDGER_HEADER,
-      `20990101000000_test_migration\texpand\tn/a\tyes\t${note}`,
-    ].join("\n")
-  );
-
-  try {
-    const result = runMigrationSafetyValidator(
-      fixture.migrationPath,
-      fixture.ledgerPath
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
-  } finally {
-    rmSync(fixture.tempDir, { recursive: true, force: true });
-  }
-}
-
 describe("review finding source/schema contracts", () => {
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
@@ -1011,239 +950,339 @@ describe("review finding source/schema contracts", () => {
   );
 
   it(
-    "rejects a SET NOT NULL whose same-column DROP DEFAULT lands after the last SET DEFAULT (#1602 gap 1)",
+    "rejects a SET NOT NULL whose default is cleared by a trailing DROP DEFAULT (#1602 gap 1)",
     { timeout: 20000 },
     () => {
-      // The DROP DEFAULT loophole: SET DEFAULT 'x'; SET NOT NULL; ... DROP DEFAULT.
-      // The earlier non-null default would waive, but the trailing DROP DEFAULT
-      // leaves the column with NO default, so an old colour's omitted-column INSERT
-      // lands a null and the NOT NULL aborts mid-cutover. A same-column DROP DEFAULT
-      // ordered after the last SET DEFAULT is a NULL reset and must void the waiver.
-      expectNotNullBlocksWithoutOverride(
+      // A non-null SET DEFAULT, then SET NOT NULL, then DROP DEFAULT on the same
+      // column leaves the column with NO default: an old colour's omitted-column
+      // INSERT lands a null and the NOT NULL aborts mid-cutover. The trailing DROP
+      // DEFAULT is the effective final default statement (last-wins across SET and
+      // DROP), so the pairing is vacuous and must stay breaking (override required).
+      // This waived on the pre-#1602 script, which only inspected SET DEFAULT.
+      const fixture = createTempMigration(
         [
           'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
           'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
           'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" DROP DEFAULT;',
           "",
         ].join("\n"),
-        "Trailing DROP DEFAULT clears the default; NOT NULL stays breaking."
-      );
-    }
-  );
-
-  it(
-    "still waives a genuine SET DEFAULT + SET NOT NULL with no DROP DEFAULT (#1602 gap 1)",
-    { timeout: 20000 },
-    () => {
-      // The DROP-DEFAULT hardening must not over-correct: a plain non-null
-      // SET DEFAULT paired with SET NOT NULL and no DROP DEFAULT anywhere is still
-      // old-code-safe and must waive override-free.
-      expectNotNullWaivesWithoutOverride(
         [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
-          "",
-        ].join("\n"),
-        "Paired non-null SET DEFAULT, no DROP DEFAULT; old-colour inserts stay non-null."
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tTrailing DROP DEFAULT clears the default; NOT NULL stays breaking.",
+        ].join("\n")
       );
-    }
-  );
 
-  it(
-    "still waives when a DROP DEFAULT precedes a later non-null SET DEFAULT (#1602 gap 1)",
-    { timeout: 20000 },
-    () => {
-      // Ordering matters: a DROP DEFAULT followed by a non-null SET DEFAULT on the
-      // same column leaves the effective default non-null (last-wins). The earlier
-      // DROP DEFAULT must not void the waiver — only a DROP DEFAULT after the last
-      // SET DEFAULT does.
-      expectNotNullWaivesWithoutOverride(
-        [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" DROP DEFAULT;',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
-          "",
-        ].join("\n"),
-        "DROP DEFAULT before a later non-null SET DEFAULT; effective default stays non-null."
-      );
-    }
-  );
-
-  it(
-    "rejects a SET DEFAULT NULL defeated by a trailing -- comment (#1602 gap 2)",
-    { timeout: 20000 },
-    () => {
-      // A trailing "-- comment" pushes the ';' off the end of the line, so the
-      // $-anchored NULL check used to miss and the vacuous SET DEFAULT NULL waived.
-      // The comment must be stripped before classification so it correctly blocks.
-      expectNotNullBlocksWithoutOverride(
-        [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL; -- reset',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
-          "",
-        ].join("\n"),
-        "Trailing comment must not hide the vacuous SET DEFAULT NULL."
-      );
-    }
-  );
-
-  it(
-    "does not treat a -- inside a string-literal default as a comment (#1602 gap 2)",
-    { timeout: 20000 },
-    () => {
-      // The comment strip is quote-aware: a "--" inside a single-quoted literal is
-      // part of the (non-null) default value, not a comment, so the pairing still
-      // waives. Guards against the strip over-reaching into string literals.
-      expectNotNullWaivesWithoutOverride(
-        [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'a--b\';',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
-          "",
-        ].join("\n"),
-        "Dashes inside a string literal are a real non-null default, not a comment."
-      );
-    }
-  );
-
-  it(
-    "classifies enumerated NULL-valued default expressions as vacuous (#1602 gap 3)",
-    { timeout: 20000 },
-    () => {
-      // Semantically-NULL expressions used to slip through the bare-NULL check and
-      // waive. Enumerate (do NOT evaluate) the common spellings — an empty-string
-      // same-arg NULLIF, a CAST(NULL AS <type>), and a parenthesised (NULL) — all of
-      // which leave the column effectively NULL, so each must block override-free.
-      const nullExpressions = [
-        "NULLIF('','')",
-        "CAST(NULL AS text)",
-        "CAST(NULL AS varchar(10))",
-        "(NULL)",
-        "(NULL)::text",
-      ];
-      for (const nullExpression of nullExpressions) {
-        expectNotNullBlocksWithoutOverride(
-          [
-            `ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT ${nullExpression};`,
-            'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
-            "",
-          ].join("\n"),
-          `${nullExpression} evaluates to NULL; NOT NULL stays breaking.`
+      try {
+        const blocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
         );
+        const allowed = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath,
+          {
+            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+              "dropped-default NOT NULL accepted after out-of-band verification",
+          }
+        );
+
+        expect(blocked.status, blocked.stderr).not.toBe(0);
+        expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+        expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+        expect(allowed.status).toBe(0);
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
       }
     }
   );
 
   it(
-    "still waives a same-arg-shaped NULLIF whose arguments differ (#1602 gap 3 boundary)",
+    "waives a SET NOT NULL whose DROP DEFAULT precedes a later non-NULL SET DEFAULT (#1602 gap 1)",
     { timeout: 20000 },
     () => {
-      // The enumeration is exact: only the empty-string same-arg NULLIF('','') is a
-      // NULL reset. NULLIF('a','b') can be non-null, so it must classify as a real
-      // default and waive — proving gap 3 did not over-reach into general NULLIF.
-      expectNotNullWaivesWithoutOverride(
+      // A DROP DEFAULT followed by a non-null SET DEFAULT on the same column leaves
+      // the effective default non-null (last-wins): an old colour's omitted-column
+      // INSERT gets the real default, so no null is written and the NOT NULL is
+      // old-code-safe. An earlier DROP DEFAULT must not over-correct into a false
+      // breaking flag — the validator waives it (reviewed no-outage, no override).
+      const fixture = createTempMigration(
         [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULLIF(\'a\',\'b\');',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" DROP DEFAULT;',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
           'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
           "",
         ].join("\n"),
-        "Different-argument NULLIF is a real non-null default."
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tLast SET DEFAULT is non-null despite an earlier DROP DEFAULT.",
+        ].join("\n")
       );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
     }
   );
 
   it(
-    "waives a lowercase legitimate SET NOT NULL + non-null SET DEFAULT pairing (#1602 gap 4)",
+    "rejects a SET NOT NULL whose SET DEFAULT NULL hides behind a trailing comment (#1602 gap 2)",
     { timeout: 20000 },
     () => {
-      // The table/column extraction is now case-insensitive (the identifiers are
-      // still captured verbatim), so a lowercase pairing can finally enter the
-      // waiver branch and be recognised as old-code-safe.
-      expectNotNullWaivesWithoutOverride(
+      // "SET DEFAULT NULL; -- reset" is a vacuous NULL default, but the trailing
+      // comment defeats the end-anchored NULL check on the pre-#1602 script, so it
+      // waived. The comment must be stripped before classification so the pairing
+      // is recognised as vacuous and stays breaking (override required).
+      const fixture = createTempMigration(
         [
-          'alter table "LodgeRoom" alter column "lodgeId" set default default_lodge_id();',
-          'alter table "LodgeRoom" alter column "lodgeId" set not null;',
-          "",
-        ].join("\n"),
-        "Lowercase paired non-null default; old-colour inserts stay non-null."
-      );
-    }
-  );
-
-  it(
-    "still blocks a lowercase vacuous SET NOT NULL + SET DEFAULT NULL pairing (#1602 gap 4 guard)",
-    { timeout: 20000 },
-    () => {
-      // Case normalisation must not loosen anything: a lowercase pairing that is
-      // vacuous (SET DEFAULT NULL) must still block override-free, exactly like its
-      // uppercase form. This is the guard that proves gap 4 only newly-waives
-      // provably-safe lowercase spellings.
-      expectNotNullBlocksWithoutOverride(
-        [
-          'alter table "LodgeRoom" alter column "lodgeId" set default null;',
-          'alter table "LodgeRoom" alter column "lodgeId" set not null;',
-          "",
-        ].join("\n"),
-        "Lowercase SET DEFAULT NULL is still vacuous; NOT NULL stays breaking."
-      );
-    }
-  );
-
-  it(
-    "does not let a trailing-comment phantom SET DEFAULT flip a real NULL default to waived (#1602 gaps 1+2)",
-    { timeout: 20000 },
-    () => {
-      // Selection strips trailing comments BEFORE grepping same-column defaults, so
-      // a non-null SET DEFAULT injected inside a trailing comment after the real
-      // effective SET DEFAULT NULL can never become the last-wins default and waive
-      // the NOT NULL. The real (null) default must win and block.
-      expectNotNullBlocksWithoutOverride(
-        [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL;',
-          'INSERT INTO "Seed" VALUES (1); -- ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'x\'',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL; -- reset',
           'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
           "",
         ].join("\n"),
-        "Commented-out SET DEFAULT must not backfill; real default is NULL."
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tCommented SET DEFAULT NULL is still vacuous; NOT NULL stays breaking.",
+        ].join("\n")
       );
+
+      try {
+        const blocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+        const allowed = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath,
+          {
+            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+              "commented NULL-default NOT NULL accepted after out-of-band verification",
+          }
+        );
+
+        expect(blocked.status, blocked.stderr).not.toBe(0);
+        expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+        expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+        expect(allowed.status).toBe(0);
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
     }
   );
 
   it(
-    "rejects a SET NOT NULL whose trailing comment hijacks the column extraction (#1602 gap 2 / PE-1)",
+    "waives a SET NOT NULL whose non-NULL default carries a trailing comment, with a quoted -- kept intact (#1602 gap 2)",
     { timeout: 20000 },
     () => {
-      // Greedy column-extraction comment hijack: a trailing "-- ALTER COLUMN
-      // \"paired\"" on the SET NOT NULL line used to make the greedy sed capture read
-      // "paired" from the comment, so the default lookup found the paired column's
-      // non-null default and waived the UNPAIRED lodgeId NOT NULL. The extraction now
-      // strips the trailing comment first, so it reads the real lodgeId (no default)
-      // and blocks.
-      expectNotNullBlocksWithoutOverride(
-        [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "paired" SET DEFAULT \'x\';',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL; -- ALTER COLUMN "paired"',
-          "",
-        ].join("\n"),
-        "Comment must not retarget the extraction; real lodgeId has no default."
-      );
+      // Comment stripping must not corrupt classification of a genuine non-null
+      // default: "SET DEFAULT 'x'; -- note" still waives. It also must NOT strip a
+      // "--" inside a single-quoted string literal ("SET DEFAULT 'a--b'"), which
+      // stays a non-null default and waives — proving the common quoted-string case
+      // the spec calls out.
+      for (const sql of [
+        'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\'; -- note',
+        "ALTER TABLE \"LodgeRoom\" ALTER COLUMN \"lodgeId\" SET DEFAULT 'a--b';",
+      ]) {
+        const fixture = createTempMigration(
+          [
+            sql,
+            'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+            "",
+          ].join("\n"),
+          [
+            LEDGER_HEADER,
+            "20990101000000_test_migration\texpand\tn/a\tyes\tNon-null default with a comment / quoted dashes stays a real backfill.",
+          ].join("\n")
+        );
+
+        try {
+          const result = runMigrationSafetyValidator(
+            fixture.migrationPath,
+            fixture.ledgerPath
+          );
+
+          expect(result.status, `${sql}: ${result.stderr}`).toBe(0);
+          expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+        } finally {
+          rmSync(fixture.tempDir, { recursive: true, force: true });
+        }
+      }
     }
   );
 
   it(
-    "still waives a genuine pairing with a benign trailing comment on the SET NOT NULL line (#1602 gap 2 / PE-1)",
+    "rejects a SET NOT NULL paired with a semantically-NULL default expression (#1602 gap 3)",
     { timeout: 20000 },
     () => {
-      // The extraction strip must not over-reach: a legitimate paired non-null
-      // default with a harmless trailing comment on the SET NOT NULL line still
-      // reads the real column and waives override-free.
-      expectNotNullWaivesWithoutOverride(
+      // CAST(NULL AS <type>) and a parenthesised (NULL) are semantically NULL: they
+      // fill nothing, so an old colour's omitted-column INSERT lands a null and the
+      // NOT NULL aborts. The pre-#1602 script only recognised a bare NULL after
+      // SET DEFAULT, so these spellings waived. They must now be recognised as NULL
+      // and stay breaking (override required). NULLIF(...) is deliberately out of
+      // scope and is covered by the non-NULL waiver test below.
+      const nullSpellings = [
+        "CAST(NULL AS text)",
+        "CAST(NULL AS varchar(10))",
+        "(NULL)",
+        "(NULL)::text",
+        "( NULL )",
+      ];
+      for (const spelling of nullSpellings) {
+        const fixture = createTempMigration(
+          [
+            `ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT ${spelling};`,
+            'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+            "",
+          ].join("\n"),
+          [
+            LEDGER_HEADER,
+            "20990101000000_test_migration\texpand\tn/a\tyes\tSemantically-NULL default does not backfill; NOT NULL stays breaking.",
+          ].join("\n")
+        );
+
+        try {
+          const blocked = runMigrationSafetyValidator(
+            fixture.migrationPath,
+            fixture.ledgerPath
+          );
+          const allowed = runMigrationSafetyValidator(
+            fixture.migrationPath,
+            fixture.ledgerPath,
+            {
+              ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+              BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+                "semantic-NULL-default NOT NULL accepted after out-of-band verification",
+            }
+          );
+
+          expect(blocked.status, `${spelling}: ${blocked.stderr}`).not.toBe(0);
+          expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+          expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+          expect(allowed.status).toBe(0);
+        } finally {
+          rmSync(fixture.tempDir, { recursive: true, force: true });
+        }
+      }
+    }
+  );
+
+  it(
+    "waives a SET NOT NULL whose default is a NULLIF(...) expression, kept non-NULL by design (#1602 gap 3)",
+    { timeout: 20000 },
+    () => {
+      // NULLIF(x, x) is semantically NULL, but SQL expression analysis is out of
+      // scope: the validator classifies it as a non-NULL default and waives. This
+      // pins the documented choice so a future change that starts recognising it
+      // does so deliberately, not by accident.
+      const fixture = createTempMigration(
         [
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT default_lodge_id();',
-          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL; -- backfilled in prior migration',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULLIF(\'a\', \'a\');',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
           "",
         ].join("\n"),
-        "Benign trailing comment does not change the real paired column."
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tNULLIF default classifies as non-NULL by documented choice.",
+        ].join("\n")
       );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "waives a lowercase SET NOT NULL paired with a lowercase non-NULL SET DEFAULT (#1602 gap 4)",
+    { timeout: 20000 },
+    () => {
+      // The table/column extraction is now case-insensitive on keywords, so a
+      // lowercase safe pairing gets the same waiver as its uppercase form. On the
+      // pre-#1602 script the case-sensitive sed extraction returned empty, so the
+      // waiver branch was skipped and this BLOCKED — this is the intended
+      // block->waive flip that proves fix 4.
+      const fixture = createTempMigration(
+        [
+          'alter table "LodgeRoom" alter column "lodgeId" set default \'seed-lodge\';',
+          'alter table "LodgeRoom" alter column "lodgeId" set not null;',
+          "",
+        ].join("\n"),
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tLowercase paired default keeps old-colour inserts non-null.",
+        ].join("\n")
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "requires an override for a lowercase unmatched SET NOT NULL (#1602 gap 4)",
+    { timeout: 20000 },
+    () => {
+      // Case-insensitive extraction must not soften a genuinely breaking lowercase
+      // NOT NULL: with no same-column SET DEFAULT it stays breaking (override
+      // required), exactly like its uppercase counterpart. This blocks on both the
+      // pre- and post-#1602 script, but for different reasons — before because the
+      // extraction failed and it fell through, now because the pairing is genuinely
+      // unmatched — so it is a guard, not a closed evasion.
+      const fixture = createTempMigration(
+        'alter table "LodgeRoom" alter column "lodgeId" set not null;\n',
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tLowercase SET NOT NULL with no paired default; documented as breaking.",
+        ].join("\n")
+      );
+
+      try {
+        const blocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+        const allowed = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath,
+          {
+            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+              "lowercase unmatched NOT NULL verified old-code compatible out of band",
+          }
+        );
+
+        expect(blocked.status, blocked.stderr).not.toBe(0);
+        expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+        expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+        expect(allowed.status).toBe(0);
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
     }
   );
 
