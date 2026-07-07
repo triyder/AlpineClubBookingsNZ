@@ -71,7 +71,7 @@ export const subscriptionStatusClasses: Record<string, string> = {
   NOT_REQUIRED: "bg-blue-50 text-blue-700",
 };
 
-export const subscriptionStatusLabels: Record<string, string> = {
+const subscriptionStatusLabels: Record<string, string> = {
   PAID: "Paid",
   UNPAID: "Unpaid",
   OVERDUE: "Overdue",

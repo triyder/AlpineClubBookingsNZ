@@ -29,8 +29,8 @@ export const SETUP_STEP_IDS = [
 ] as const;
 
 export type SetupStepId = (typeof SETUP_STEP_IDS)[number];
-export type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
-export type SetupCategoryId =
+type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
+type SetupCategoryId =
   | "foundation"
   | "booking"
   | "integrations"
@@ -68,7 +68,7 @@ export interface SetupDatabaseSnapshot {
   xeroEntranceFeeMappingCount: number;
 }
 
-export interface SetupStepCheck {
+interface SetupStepCheck {
   id: SetupStepId;
   title: string;
   description: string;
@@ -85,7 +85,7 @@ export interface SetupStepCheck {
   progress: "open" | "completed" | "skipped";
 }
 
-export interface SetupCategory {
+interface SetupCategory {
   id: SetupCategoryId;
   title: string;
   description: string;

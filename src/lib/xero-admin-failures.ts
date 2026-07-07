@@ -5,7 +5,7 @@ import { parseXeroOperationRequeueOriginalId } from "@/lib/xero-operation-queue"
 
 const REDACTED_SECRET = "[REDACTED]";
 
-export type XeroFailureState = "ACTIVE" | "REPAIRED" | "SUPERSEDED";
+type XeroFailureState = "ACTIVE" | "REPAIRED" | "SUPERSEDED";
 
 export interface XeroFailureResolution {
   state: XeroFailureState;

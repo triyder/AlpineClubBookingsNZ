@@ -56,7 +56,7 @@ type LifecycleActionRequestRecord =
     include: typeof lifecycleActionRequestInclude;
   }>;
 
-export type MemberDeleteEligibilityBlocker = {
+type MemberDeleteEligibilityBlocker = {
   code: string;
   label: string;
   count?: number;
@@ -169,7 +169,7 @@ async function sendLifecycleEmailSafely(
   }
 }
 
-export function serializeMemberLifecycleActionRequest(
+function serializeMemberLifecycleActionRequest(
   request: LifecycleActionRequestRecord,
 ): SerializedMemberLifecycleActionRequest {
   return {

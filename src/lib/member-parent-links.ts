@@ -1,4 +1,4 @@
-export type ParentLinkKind = "PRIMARY" | "SECONDARY";
+type ParentLinkKind = "PRIMARY" | "SECONDARY";
 
 export type ParentLinkSummary = {
   id: string;

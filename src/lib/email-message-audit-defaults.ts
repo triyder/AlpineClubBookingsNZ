@@ -1,5 +1,5 @@
-// Seeded from docs/email-message-audit.md with editor-safe default subjects.
-// Keep template keys and wording aligned when the audit changes.
+// Seeded from docs/EMAIL_MESSAGE_REGISTRY.md with editor-safe default subjects.
+// Keep template keys and wording aligned when the registry changes.
 
 export const EMAIL_AUDIT_DEFAULTS = {
   "password-reset": {

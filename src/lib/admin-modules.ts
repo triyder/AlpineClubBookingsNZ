@@ -57,7 +57,7 @@ export async function loadAdminModuleSettings(
   }
 }
 
-export async function loadEffectiveModuleState(
+async function loadEffectiveModuleState(
   client?: ClubModuleSettingsClient,
 ): Promise<FeatureFlags> {
   if (!client) {

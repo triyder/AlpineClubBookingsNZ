@@ -1,4 +1,4 @@
-export interface XeroErrorHeaders {
+interface XeroErrorHeaders {
   [key: string]: string | number | undefined;
 }
 

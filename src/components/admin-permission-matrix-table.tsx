@@ -19,7 +19,7 @@ const LEVEL_CLASSES: Record<AdminPermissionLevel, string> = {
   edit: "border-emerald-200 bg-emerald-50 text-emerald-700",
 };
 
-export function AdminPermissionLevelBadge({
+function AdminPermissionLevelBadge({
   level,
 }: {
   level: AdminPermissionLevel;

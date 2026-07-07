@@ -15,7 +15,7 @@ import {
   emailPalette,
   primeEmailPalette,
 } from "../email-theme";
-import { welcomeTemplate } from "../email-templates";
+import { passwordResetTemplate } from "../email-templates";
 import { DEFAULT_CLUB_THEME_VALUES } from "../club-theme-schema";
 
 // Distinctive hex values that cannot be confused with any default palette entry.
@@ -61,7 +61,7 @@ describe("email-theme palette cache", () => {
 
     await primeEmailPalette();
 
-    const html = welcomeTemplate("Jo");
+    const html = passwordResetTemplate("Jo");
     // Header bar (charcoal) + accent/button (gold) prove the theme drives the email.
     expect(html).toContain("#654321");
     expect(html).toContain("#123456");
@@ -96,7 +96,7 @@ describe("email-theme palette cache", () => {
     expect(palette.charcoal).toBe("#654321");
     expect(palette.mist).toBe("#abcdef");
 
-    const html = welcomeTemplate("Jo");
+    const html = passwordResetTemplate("Jo");
     expect(html).toContain("#8fa87c"); // default gold substituted into the email
     expect(html).toContain("#654321"); // custom hex charcoal preserved
     expect(html).not.toContain("oklch");
@@ -119,7 +119,7 @@ describe("email-theme palette cache", () => {
     expect(palette.gold).toBe("#8fa87c");
     expect(palette.gold).not.toBe(LEGACY_EMAIL_GOLD);
 
-    const html = welcomeTemplate("Jo");
+    const html = passwordResetTemplate("Jo");
     expect(html).toContain("#8fa87c");
     expect(html).not.toContain(LEGACY_EMAIL_GOLD);
   });

@@ -14,7 +14,7 @@ export interface NotificationDeliveryPolicyRecord {
   updatedByMemberId?: string | null;
 }
 
-export interface NotificationDeliveryPolicyPayload {
+interface NotificationDeliveryPolicyPayload {
   templateName: string;
   label: string;
   mode: NotificationDeliveryModeValue;
@@ -24,7 +24,7 @@ export interface NotificationDeliveryPolicyPayload {
   updatedByMemberId: string | null;
 }
 
-export interface StaleNotificationDeliveryPolicyPayload {
+interface StaleNotificationDeliveryPolicyPayload {
   templateName: string;
   mode: NotificationDeliveryModeValue;
   updatedAt: string | null;
@@ -126,7 +126,7 @@ export async function listNotificationDeliveryPolicySettings(): Promise<
   };
 }
 
-export async function getNotificationDeliveryMode(
+async function getNotificationDeliveryMode(
   templateName: string,
 ): Promise<NotificationDeliveryModeValue> {
   const delegate = (prisma as unknown as {

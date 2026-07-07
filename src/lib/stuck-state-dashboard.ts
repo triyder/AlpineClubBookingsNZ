@@ -46,7 +46,7 @@ export type StuckStateDomain =
   | "bed_allocation"
   | "lodge";
 
-export type StuckStateOwner = "Admin" | "Finance" | "Lodge" | "System";
+type StuckStateOwner = "Admin" | "Finance" | "Lodge" | "System";
 
 export interface StuckStateItem {
   id: string;
@@ -60,7 +60,7 @@ export interface StuckStateItem {
   summary: string;
 }
 
-export interface StuckStateDomainSummary {
+interface StuckStateDomainSummary {
   domain: StuckStateDomain;
   label: string;
   count: number;

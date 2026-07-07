@@ -14,7 +14,7 @@ import {
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 
-export interface MissingXeroInvoiceBooking {
+interface MissingXeroInvoiceBooking {
   bookingId: string;
   paymentId: string;
   memberId: string;
@@ -39,7 +39,7 @@ export interface MissingXeroInvoicesSnapshot {
 // still being in flight, so it should be surfaced as a local↔Xero divergence.
 export const REFUND_CREDIT_NOTE_GRACE_HOURS = 24;
 
-export interface RefundMissingCreditNote {
+interface RefundMissingCreditNote {
   paymentId: string;
   bookingId: string;
   memberName: string;

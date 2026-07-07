@@ -21,8 +21,8 @@ import baseLogger from "@/lib/logger";
  * scope here — that is #1211's shared-state work.
  */
 
-export type ObservabilityScope = "cron" | "webhook";
-export type ObservabilityLevel = "error" | "fatal";
+type ObservabilityScope = "cron" | "webhook";
+type ObservabilityLevel = "error" | "fatal";
 
 interface ReportScopedErrorInput {
   /** Genuine-failure scope. Only cron + webhook modules call this. */

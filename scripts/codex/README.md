@@ -33,9 +33,9 @@ scripts/codex/install-local-skills.sh
 scripts/codex/install-local-skills.sh --install --target repo
 ```
 
-Workflow examples live in `.github/workflow-examples/`, not
-`.github/workflows/`, so GitHub Actions will not load them until a human copies
-or renames one into the active workflow directory.
+Codex workflow and label examples live in `docs/agents/examples/`, not
+`.github/workflows/` or `.github/labels/`, so GitHub will not load them until a
+human copies or renames one into the active GitHub configuration directories.
 
 ## Review Issue Input Format
 

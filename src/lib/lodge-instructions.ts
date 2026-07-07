@@ -9,9 +9,9 @@ import { hasAdminAccess, type AccessRoleInput } from "@/lib/access-roles";
 // Canonical display order for the three keyed documents.
 export const LODGE_INSTRUCTION_KEYS = ["OPEN", "CLOSE", "DAY_TO_DAY"] as const;
 
-export type LodgeInstructionKeyValue = (typeof LODGE_INSTRUCTION_KEYS)[number];
+type LodgeInstructionKeyValue = (typeof LODGE_INSTRUCTION_KEYS)[number];
 
-export const LODGE_INSTRUCTION_LABELS: Record<
+const LODGE_INSTRUCTION_LABELS: Record<
   LodgeInstructionKeyValue,
   { title: string; description: string }
 > = {
@@ -42,7 +42,7 @@ export type LodgeInstructionDocument = {
  * current or upcoming hut leader assignment (endDate on or after today,
  * NZ date-only semantics). Expired assignments do not qualify.
  */
-export async function hasCurrentOrUpcomingHutLeaderAssignment(
+async function hasCurrentOrUpcomingHutLeaderAssignment(
   memberId: string,
 ): Promise<boolean> {
   const today = getTodayDateOnly();
