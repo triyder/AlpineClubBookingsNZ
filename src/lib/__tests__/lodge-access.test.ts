@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LodgeBookingEligibilityError,
   assertMemberMayBookLodge,
+  getEligibleLodgeIdsForMember,
   getStaffLodgeBinding,
   isMemberEligibleToBookLodge,
 } from "@/lib/lodge-access";
@@ -48,6 +49,27 @@ describe("isMemberEligibleToBookLodge", () => {
       "lodge-1",
     );
     expect(eligible).toBe(false);
+  });
+});
+
+describe("getEligibleLodgeIdsForMember", () => {
+  it("reports allLodges when the member has no BOOKING_RESTRICTION rows", async () => {
+    const db = dbWithRestrictions([]);
+    const eligible = await getEligibleLodgeIdsForMember(db, "member-1");
+    expect(eligible).toEqual({ allLodges: true });
+    expect(db.memberLodgeAccess.findMany).toHaveBeenCalledWith({
+      where: { memberId: "member-1", kind: "BOOKING_RESTRICTION" },
+      select: { lodgeId: true },
+    });
+  });
+
+  it("returns the restricted lodge ids when the member has restriction rows", async () => {
+    const db = dbWithRestrictions([{ lodgeId: "lodge-1" }, { lodgeId: "lodge-2" }]);
+    const eligible = await getEligibleLodgeIdsForMember(db, "member-1");
+    expect(eligible).toEqual({
+      allLodges: false,
+      lodgeIds: ["lodge-1", "lodge-2"],
+    });
   });
 });
 

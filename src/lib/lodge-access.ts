@@ -18,21 +18,39 @@ export class LodgeBookingEligibilityError extends Error {
 }
 
 /**
- * Booking eligibility is default-open (ADR-001 resolved question 2): a member
- * with no BOOKING_RESTRICTION rows can book every active lodge. A member with
- * any such rows can book only the listed lodges.
+ * The lodges a member may book, resolved once from their BOOKING_RESTRICTION
+ * rows. Default-open (ADR-001 resolved question 2): a member with no such rows
+ * can book every active lodge (`allLodges: true`); any rows narrow eligibility
+ * to exactly the listed lodges. This is the single source of the eligibility
+ * rule — isMemberEligibleToBookLodge derives from it — so the lodge-targeted
+ * 403 gate and the cross-lodge listing filter cannot drift.
+ */
+export async function getEligibleLodgeIdsForMember(
+  db: LodgeAccessDb,
+  memberId: string,
+): Promise<{ allLodges: true } | { allLodges: false; lodgeIds: string[] }> {
+  const restrictions = await db.memberLodgeAccess.findMany({
+    where: { memberId, kind: "BOOKING_RESTRICTION" },
+    select: { lodgeId: true },
+  });
+  if (restrictions.length === 0) return { allLodges: true };
+  return { allLodges: false, lodgeIds: restrictions.map((row) => row.lodgeId) };
+}
+
+/**
+ * Whether a member may book one named lodge. Derived from
+ * getEligibleLodgeIdsForMember so the single-lodge gate and any batch listing
+ * filter share one rule: a member with no BOOKING_RESTRICTION rows can book
+ * every active lodge; a member with any such rows can book only the listed
+ * lodges.
  */
 export async function isMemberEligibleToBookLodge(
   db: LodgeAccessDb,
   memberId: string,
   lodgeId: string,
 ): Promise<boolean> {
-  const restrictions = await db.memberLodgeAccess.findMany({
-    where: { memberId, kind: "BOOKING_RESTRICTION" },
-    select: { lodgeId: true },
-  });
-  if (restrictions.length === 0) return true;
-  return restrictions.some((row) => row.lodgeId === lodgeId);
+  const eligible = await getEligibleLodgeIdsForMember(db, memberId);
+  return eligible.allLodges || eligible.lodgeIds.includes(lodgeId);
 }
 
 /**

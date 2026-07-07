@@ -66,9 +66,15 @@ operational documents (which may carry door/emergency access details).
   check (`isMemberEligibleToBookLodge`) also gates the read-side
   availability/pricing surfaces so a restricted member cannot discover a
   forbidden lodge's data: `/api/availability`, `/api/availability/check`,
-  `/api/bookings/quote`, and `/api/bookings/rooms` return `403` for the
-  restricted lodge. Admin on-behalf bookings and quotes bypass it as the
-  audited override path. `STAFF` rows bind a kiosk account to its lodge;
+  `/api/bookings/quote`, and `/api/bookings/rooms` return `403` when a
+  restricted lodge is named. `/api/bookings/rooms` also has a no-`lodgeId`
+  mode that lists room config across lodges; that listing is **filtered** to
+  the member's eligible lodges (empty when none match) rather than returning
+  `403` — a listing omits what the member cannot see. Both the named-lodge
+  gate and the listing filter derive from `getEligibleLodgeIdsForMember`
+  (which `isMemberEligibleToBookLodge` also derives from), so the two are the
+  same eligibility set by construction. Admin on-behalf bookings and quotes
+  bypass it as the audited override path. `STAFF` rows bind a kiosk account to its lodge;
   exactly one grant binds, zero grants fall back to the default lodge, and
   **two or more grants are ambiguous and denied** (`getStaffLodgeBinding`
   returns `{ kind: "ambiguous" }`; `resolveKioskLodgeId` throws

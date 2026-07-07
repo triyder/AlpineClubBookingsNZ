@@ -148,13 +148,31 @@ describe("GET /api/bookings/rooms BOOKING_RESTRICTION gate (Low 1)", () => {
     expect(mockLodgeRoomFindMany).toHaveBeenCalled();
   });
 
-  it("skips the check and lists all lodges' rooms when no lodgeId is given", async () => {
-    // No single target lodge to restrict against; existing resolution stands.
-    restrictTo(["other-lodge"]);
+  it("filters the no-lodgeId listing to a restricted member's eligible lodges", async () => {
+    // #1587 item 6: the cross-lodge listing must apply the same eligibility
+    // rule as the named-lodge branch, so a member restricted to lodge-a only
+    // sees lodge-a's rooms (never 403 — a listing filters, it does not deny).
+    restrictTo(["lodge-a"]);
     const { GET } = await import("@/app/api/bookings/rooms/route");
     const res = await GET(new NextRequest("http://localhost/api/bookings/rooms"));
     expect(res.status).toBe(200);
-    expect(mockMemberLodgeAccessFindMany).not.toHaveBeenCalled();
+    expect(mockMemberLodgeAccessFindMany).toHaveBeenCalled();
     expect(mockLodgeRoomFindMany).toHaveBeenCalled();
+    expect(mockLodgeRoomFindMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({ active: true, lodgeId: { in: ["lodge-a"] } }),
+    );
+  });
+
+  it("lists every lodge's rooms unfiltered for an unrestricted member", async () => {
+    // Default-open: no BOOKING_RESTRICTION rows means no lodge filter, so the
+    // response is unchanged from today's behaviour.
+    restrictTo([]);
+    const { GET } = await import("@/app/api/bookings/rooms/route");
+    const res = await GET(new NextRequest("http://localhost/api/bookings/rooms"));
+    expect(res.status).toBe(200);
+    expect(mockLodgeRoomFindMany).toHaveBeenCalled();
+    const whereArg = mockLodgeRoomFindMany.mock.calls[0][0].where;
+    expect(whereArg).toEqual({ active: true });
+    expect(whereArg).not.toHaveProperty("lodgeId");
   });
 });
