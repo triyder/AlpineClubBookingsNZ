@@ -42,7 +42,7 @@ export interface ResolvedPromo {
     | null;
 }
 
-export type LockedPromoRow = {
+type LockedPromoRow = {
   id: string;
   active: boolean;
   validFrom: Date | null;
@@ -169,7 +169,7 @@ export async function resolvePromoInTransaction(
   };
 }
 
-export const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
+const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
   "A promo code cannot be combined with a working bee discount. Please remove one of them and try again.";
 
 /**

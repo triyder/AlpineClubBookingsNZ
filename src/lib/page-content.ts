@@ -32,7 +32,7 @@ export function isSystemPageSlug(slug: string): boolean {
  * must not be unpublished/hidden — those links would 404. Only admin-created
  * pages can be hidden. (`home` is also a system page; listed here for clarity.)
  */
-export const BUILTIN_PAGE_SLUGS: ReadonlySet<string> = new Set([
+const BUILTIN_PAGE_SLUGS: ReadonlySet<string> = new Set([
   "home",
   "about",
   "join",
@@ -58,7 +58,7 @@ export function canUnpublishPage(slug: string): boolean {
   return !isSystemPageSlug(slug) && !isBuiltinPageSlug(slug);
 }
 
-export const PAGE_SLUG_PATTERN =
+const PAGE_SLUG_PATTERN =
   /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/;
 
 // Names that must not appear in any segment of an admin-created slug.

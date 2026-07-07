@@ -70,7 +70,7 @@ export class BookingGuestValidationError extends Error {
   }
 }
 
-export const GUEST_PROFILE_REQUIRED_ERROR_CODE = "GUEST_PROFILE_REQUIRED";
+const GUEST_PROFILE_REQUIRED_ERROR_CODE = "GUEST_PROFILE_REQUIRED";
 
 export type BookingGuestProfileAction =
   | "complete_details"

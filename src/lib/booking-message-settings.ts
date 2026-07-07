@@ -3,7 +3,6 @@ import {
   BOOKING_MESSAGE_DEFINITIONS,
   BOOKING_MESSAGE_DEFINITION_BY_KEY,
   getDefaultBookingMessages,
-  renderBookingMessageTemplate,
   type BookingMessageKey,
   type BookingMessageMergeData,
 } from "@/lib/booking-message-definitions";
@@ -41,7 +40,7 @@ function serializeOverride(override: BookingMessageOverride | null | undefined) 
   };
 }
 
-export async function loadBookingMessageOverrides() {
+async function loadBookingMessageOverrides() {
   return prisma.bookingMessageOverride.findMany();
 }
 
@@ -59,7 +58,7 @@ export async function loadEffectiveBookingMessages(): Promise<EffectiveBookingMe
   });
 }
 
-export async function loadEffectiveBookingMessageMap(): Promise<EffectiveBookingMessageMap> {
+async function loadEffectiveBookingMessageMap(): Promise<EffectiveBookingMessageMap> {
   const defaults = getDefaultBookingMessages();
   const overrides = await loadBookingMessageOverrides();
 
@@ -76,7 +75,7 @@ export async function loadPublicBookingMessages(): Promise<EffectiveBookingMessa
   return loadEffectiveBookingMessageMap();
 }
 
-export async function buildBookingMessageGlobalData(): Promise<BookingMessageMergeData> {
+async function buildBookingMessageGlobalData(): Promise<BookingMessageMergeData> {
   const settings = await loadEmailMessageSettings();
   const emailData = buildEmailTemplateGlobalData(settings);
 
@@ -115,13 +114,4 @@ export async function buildSampleBookingMessageData(): Promise<BookingMessageMer
     minimumDaysBeforeCheckIn: internetBankingSettings.minimumDaysBeforeCheckIn,
     bookingStatus: "Payment pending",
   };
-}
-
-export async function renderBookingMessage(
-  key: BookingMessageKey,
-  data: BookingMessageMergeData,
-): Promise<string> {
-  const messages = await loadEffectiveBookingMessageMap();
-  const template = messages[key] ?? BOOKING_MESSAGE_DEFINITION_BY_KEY.get(key)?.defaultBody ?? "";
-  return renderBookingMessageTemplate(template, data);
 }

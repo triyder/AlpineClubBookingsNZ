@@ -31,9 +31,9 @@ import { prisma } from "@/lib/prisma";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
 export type SortDir = "asc" | "desc";
-export type BedStateFilter = "all" | "unallocated" | "partial" | "complete" | "warning";
-export type BedState = Exclude<BedStateFilter, "all">;
-export type ChangeStateFilter = "all" | "requiresReview" | "pendingRequest" | "hasModification" | "creditGenerated";
+type BedStateFilter = "all" | "unallocated" | "partial" | "complete" | "warning";
+type BedState = Exclude<BedStateFilter, "all">;
+type ChangeStateFilter = "all" | "requiresReview" | "pendingRequest" | "hasModification" | "creditGenerated";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -73,17 +73,7 @@ export type AdminBookingsQuery = z.infer<typeof adminBookingsQuerySchema>;
 
 type BookingCandidate = Awaited<ReturnType<typeof loadBookingCandidates>>[number];
 
-export interface AdminBookingGuestRow {
-  id: string;
-  firstName: string;
-  lastName: string;
-  ageTier: string;
-  isMember: boolean;
-  stayStart: Date;
-  stayEnd: Date;
-}
-
-export interface AdminBookingOperationalState {
+interface AdminBookingOperationalState {
   paymentSource: PaymentSourceFilter;
   xeroState: XeroState;
   xeroActivity: XeroActivitySummary;
@@ -140,7 +130,7 @@ function monthEndDateOnly(year: number, month: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
 }
 
-export function getAdminBookingSortBy(params: { sortBy?: string; sort?: string }): BookingSortBy {
+function getAdminBookingSortBy(params: { sortBy?: string; sort?: string }): BookingSortBy {
   const requested = params.sortBy ?? params.sort;
   return bookingSortColumns.has(requested as BookingSortBy)
     ? (requested as BookingSortBy)

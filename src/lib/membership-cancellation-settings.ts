@@ -62,7 +62,7 @@ export function normalizeMembershipCancellationXeroGroups(
   return normalized;
 }
 
-export function getDefaultMembershipCancellationSettings(): MembershipCancellationSettings {
+function getDefaultMembershipCancellationSettings(): MembershipCancellationSettings {
   return {
     warningText: DEFAULT_MEMBERSHIP_CANCELLATION_WARNING_TEXT,
     rejoinProcessText: DEFAULT_MEMBERSHIP_REJOIN_PROCESS_TEXT,
@@ -88,7 +88,7 @@ export function normalizeMembershipCancellationSettings(
   };
 }
 
-export async function loadPersistedMembershipCancellationSettings(): Promise<
+async function loadPersistedMembershipCancellationSettings(): Promise<
   PersistedMembershipCancellationSettings | null
 > {
   // Some unit tests stub @/lib/prisma with a partial client that omits

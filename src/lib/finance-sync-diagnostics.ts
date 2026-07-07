@@ -46,7 +46,7 @@ type CronJobRunDiagnosticsRecord = Prisma.CronJobRunGetPayload<{
   select: typeof cronJobRunDiagnosticsSelect;
 }>;
 
-export interface FinanceSyncDiagnosticsDatasetSummary {
+interface FinanceSyncDiagnosticsDatasetSummary {
   datasetKey: string;
   snapshotCount: number;
   totalRowCount: number;
@@ -54,13 +54,13 @@ export interface FinanceSyncDiagnosticsDatasetSummary {
   errorMessage: string | null;
 }
 
-export interface FinanceSyncDiagnosticsFailureDetail {
+interface FinanceSyncDiagnosticsFailureDetail {
   stage: string | null;
   datasetKey: string | null;
   message: string;
 }
 
-export interface FinanceSyncDiagnosticsRunSummary {
+interface FinanceSyncDiagnosticsRunSummary {
   id: string;
   workflow: string;
   trigger: string;
@@ -80,7 +80,7 @@ export interface FinanceSyncDiagnosticsRunSummary {
   failureDetails: FinanceSyncDiagnosticsFailureDetail[];
 }
 
-export interface FinanceSyncDiagnosticsCronRunSummary {
+interface FinanceSyncDiagnosticsCronRunSummary {
   id: string;
   jobName: string;
   status: string;

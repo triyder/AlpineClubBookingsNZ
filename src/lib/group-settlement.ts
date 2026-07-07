@@ -68,7 +68,7 @@ const SETTLEABLE_CHILD_STATUSES = [
   BookingStatus.CONFIRMED,
 ] as const;
 
-export type GroupSettlementOutcome =
+type GroupSettlementOutcome =
   | "ready"
   | "invoice_sent"
   | "already_settled"

@@ -21,7 +21,7 @@ import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { prisma } from "@/lib/prisma";
 
-export const BED_ALLOCATION_SETTINGS_ID = "default";
+const BED_ALLOCATION_SETTINGS_ID = "default";
 export const MAX_BED_ALLOCATION_RANGE_NIGHTS = 31;
 
 export class BedAllocationAdminError extends Error {
@@ -217,7 +217,7 @@ export function parseBedAllocationDateRange(input: {
   return { from, to, fromDate, toDate };
 }
 
-export async function getBedAllocationSettings(
+async function getBedAllocationSettings(
   db: BedAllocationDb = prisma,
 ): Promise<BedAllocationSettingsPayload> {
   const record = await db.bedAllocationSettings.findUnique({
@@ -257,7 +257,7 @@ export async function updateBedAllocationSettings(input: {
   };
 }
 
-export async function listBedAllocationRooms(db: BedAllocationDb = prisma) {
+async function listBedAllocationRooms(db: BedAllocationDb = prisma) {
   return db.lodgeRoom.findMany({
     include: {
       beds: {
@@ -1113,7 +1113,7 @@ export async function manuallyAllocateBed(input: {
   }
 }
 
-export interface BulkAllocationConflict {
+interface BulkAllocationConflict {
   stayDate: string;
   reason: "BED_TAKEN";
 }

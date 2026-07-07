@@ -43,7 +43,7 @@ interface FinanceSnapshotReportPayload {
   rows: FinanceSnapshotReportRow[];
 }
 
-export interface ParsedCashAccount {
+interface ParsedCashAccount {
   label: string;
   balanceCents: number;
 }

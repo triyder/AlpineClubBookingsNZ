@@ -33,7 +33,7 @@ function resolveTimeoutMillis(databaseUrl: string): number {
     : DEFAULT_CONNECTION_TIMEOUT_MILLIS;
 }
 
-export function requireDatabaseUrl(envKey = "DATABASE_URL"): string {
+function requireDatabaseUrl(envKey = "DATABASE_URL"): string {
   const databaseUrl = process.env[envKey]?.trim();
   if (!databaseUrl) {
     throw new Error(`${envKey} must be set before creating PrismaClient`);

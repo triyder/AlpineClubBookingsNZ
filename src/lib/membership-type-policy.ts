@@ -16,7 +16,7 @@ import {
 } from "@/lib/pricing";
 import { getSeasonYear } from "@/lib/utils";
 
-export const MEMBERSHIP_TYPE_BLOCKS_BOOKING_CODE =
+const MEMBERSHIP_TYPE_BLOCKS_BOOKING_CODE =
   "MEMBERSHIP_TYPE_BLOCKS_BOOKING";
 
 type PolicyDbDelegate<Row> = {
@@ -29,12 +29,12 @@ type MembershipTypePolicyDb = {
   membershipType: PolicyDbDelegate<MembershipTypePolicyType>;
 };
 
-export type MembershipTypePolicySource =
+type MembershipTypePolicySource =
   | "assignment"
   | "role_default"
   | "built_in_default";
 
-export type MembershipTypePolicyType = {
+type MembershipTypePolicyType = {
   id: string | null;
   key: string;
   name: string;
@@ -109,7 +109,7 @@ export function getMembershipTypeBookingPolicyErrorBody(
   };
 }
 
-export function isMembershipTypePolicyDb(db: unknown): db is MembershipTypePolicyDb {
+function isMembershipTypePolicyDb(db: unknown): db is MembershipTypePolicyDb {
   const candidate = db as Partial<MembershipTypePolicyDb> | null | undefined;
   return Boolean(
     candidate?.member?.findMany &&

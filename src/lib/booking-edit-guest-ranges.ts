@@ -5,7 +5,7 @@ import {
 } from "@/lib/pricing";
 import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 
-export interface ExistingBookingEditGuest {
+interface ExistingBookingEditGuest {
   id: string;
   firstName: string;
   lastName: string;
@@ -18,7 +18,7 @@ export interface ExistingBookingEditGuest {
   priceCents: number;
 }
 
-export interface AddedBookingEditGuest {
+interface AddedBookingEditGuest {
   firstName: string;
   lastName: string;
   ageTier: AgeTier;
@@ -27,7 +27,7 @@ export interface AddedBookingEditGuest {
   forceNonMemberRate?: boolean;
 }
 
-export interface ProposedExistingGuestRange {
+interface ProposedExistingGuestRange {
   guest: ExistingBookingEditGuest;
   stayStart: Date;
   stayEnd: Date;
@@ -38,7 +38,7 @@ export interface ProposedExistingGuestRange {
   removedFromFuture: boolean;
 }
 
-export interface ProposedAddedGuestRange {
+interface ProposedAddedGuestRange {
   guest: AddedBookingEditGuest;
   stayStart: Date;
   stayEnd: Date;

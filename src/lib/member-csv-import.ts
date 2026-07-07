@@ -20,7 +20,7 @@ export const MEMBER_IMPORT_ADDRESS_MAX_LENGTHS = {
   streetPostalCode: 20,
 } as const;
 
-export const MEMBER_IMPORT_ADDRESS_FIELD_KEYS = [
+const MEMBER_IMPORT_ADDRESS_FIELD_KEYS = [
   "streetAddressLine1",
   "streetAddressLine2",
   "streetCity",
@@ -29,21 +29,18 @@ export const MEMBER_IMPORT_ADDRESS_FIELD_KEYS = [
   "streetPostalCode",
 ] as const;
 
-export type MemberImportAddressFieldKey =
-  (typeof MEMBER_IMPORT_ADDRESS_FIELD_KEYS)[number];
-
 export interface CsvRecord {
   lineNumber: number;
   values: string[];
 }
 
-export interface CsvParseSuccess {
+interface CsvParseSuccess {
   ok: true;
   records: CsvRecord[];
   blankLineCount: number;
 }
 
-export interface CsvParseFailure {
+interface CsvParseFailure {
   ok: false;
   error: string;
   lineNumber: number;
@@ -61,7 +58,7 @@ export type MemberImportCsvParseResult =
   | { ok: true; data: MemberImportCsvData }
   | { ok: false; error: string; lineNumber?: number };
 
-export interface MemberImportRowPayload {
+interface MemberImportRowPayload {
   fullName?: string;
   title?: string;
   firstName: string;
@@ -277,7 +274,7 @@ export type MemberImportDateFormatMapping = Record<
 export const DEFAULT_MEMBER_IMPORT_DATE_FORMAT: MemberImportDateFormat =
   "yyyy-MM-dd";
 
-export interface MemberImportPreviewRow {
+interface MemberImportPreviewRow {
   lineNumber: number;
   sourceValues: string[];
   values: MemberImportRowPayload;
@@ -534,11 +531,11 @@ export function parseMemberImportCsv(text: string): MemberImportCsvParseResult {
   };
 }
 
-export function normalizeMemberImportHeader(header: string) {
+function normalizeMemberImportHeader(header: string) {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-export function createEmptyMemberImportColumnMapping(): MemberImportColumnMapping {
+function createEmptyMemberImportColumnMapping(): MemberImportColumnMapping {
   return {
     fullName: null,
     title: null,

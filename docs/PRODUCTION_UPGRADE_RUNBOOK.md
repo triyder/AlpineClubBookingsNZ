@@ -26,8 +26,6 @@ rehearsal, then work top to bottom during the production window and fill in the
   - `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` — the per-migration safety ledger the
     gate reads.
   - `DEPLOYMENT.md` — the supported blue/green deploy path and health endpoints.
-  - `docs/ACCESS_ROLE_MEMBERSHIP_CLEANUP_AUDIT.md` — the access-role/membership
-    cleanup rehearsal referenced in [§3](#3-post-upgrade-checklist).
   - `docs/MAINTENANCE.md` → "Quarterly Backup Restore Drill" — the restore-test
     tooling used in pre-flight.
 
@@ -282,24 +280,13 @@ capture), after confirming provider/setup readiness for each:
 Saving the module page stamps `updatedByMemberId`, so this reset is a one-time
 event, not a recurring one.
 
-### 3.2 Access-role/membership cleanup audit (only if intermediate `main` was deployed)
+### 3.2 Historical access-role/membership cleanup window
 
-Run:
-
-```bash
-npm run db:audit-access-role-cleanup
-```
-
-**When this applies:** only forks that deployed an *intermediate* `main` during
-the **2026-06-28 .. 2026-06-30** window — i.e. after the access-role/membership
-cleanup migration `20260629160000_access_roles_membership_type_cleanup` but
-around the `Role` → `USER` rename contract migration
-`20260630120000_rename_member_role_to_user`. A fork jumping cleanly from a
-`v0.9.0`-era tag straight to `v0.10.0` never used that intermediate window and
-does not need this check. When in doubt, run it: the audit is read-oriented and
-reports before/after counts. See
-`docs/ACCESS_ROLE_MEMBERSHIP_CLEANUP_AUDIT.md`; the healthy result is
-`Result: PASS`.
+The temporary access-role and membership-type cleanup rehearsal applied only to
+forks that deployed an intermediate `main` during the 2026-06-28 .. 2026-06-30
+window. That fork migration window is closed, and the disposable-data rehearsal
+note has been retired from the living documentation set. A fork upgrading from
+a `v0.9.0`-era tag straight to `v0.10.0` does not need this check.
 
 ### 3.3 Spot-check money and integrations
 

@@ -110,19 +110,19 @@ type SubscriptionPreviewRecord = {
   paidAt: Date | null;
 };
 
-export type SerializedMembershipTypeSummary = ReturnType<
+type SerializedMembershipTypeSummary = ReturnType<
   typeof serializeMembershipTypeSummary
 >;
 
-export type SerializedSeasonalMembershipAssignment = ReturnType<
+type SerializedSeasonalMembershipAssignment = ReturnType<
   typeof serializeSeasonalMembershipAssignment
 >;
 
-export type SeasonalMembershipBookingSummary = ReturnType<
+type SeasonalMembershipBookingSummary = ReturnType<
   typeof summarizeBookings
 >;
 
-export type SeasonalMembershipChangePreview = {
+type SeasonalMembershipChangePreview = {
   memberId: string;
   seasonYear: number;
   generatedAt: string;
@@ -163,11 +163,11 @@ export type SeasonalMembershipChangePreview = {
   previewToken: string;
 };
 
-export type RollForwardExceptionCode =
+type RollForwardExceptionCode =
   | "missing_prior_assignment"
   | "inactive_membership_type";
 
-export type SeasonalMembershipRollForwardException = {
+type SeasonalMembershipRollForwardException = {
   code: RollForwardExceptionCode;
   memberId: string;
   memberName: string;
@@ -304,7 +304,7 @@ function previewTokenPayload(preview: Omit<SeasonalMembershipChangePreview, "pre
   };
 }
 
-export function buildSeasonalMembershipPreviewToken(
+function buildSeasonalMembershipPreviewToken(
   preview: Omit<SeasonalMembershipChangePreview, "previewToken">,
 ): string {
   return createHmac("sha256", getPreviewSecret())
@@ -312,7 +312,7 @@ export function buildSeasonalMembershipPreviewToken(
     .digest("hex");
 }
 
-export function verifySeasonalMembershipPreviewToken(
+function verifySeasonalMembershipPreviewToken(
   preview: Omit<SeasonalMembershipChangePreview, "previewToken">,
   token: string,
 ): boolean {

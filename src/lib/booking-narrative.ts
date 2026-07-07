@@ -62,7 +62,7 @@ export interface NarrativeBooking {
   adminReviewReason: string | null;
 }
 
-export interface NarrativeLinkState {
+interface NarrativeLinkState {
   expiresAt: Date;
   usedAt: Date | null;
   revokedAt: Date | null;

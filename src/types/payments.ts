@@ -7,12 +7,3 @@ export const CreatePaymentIntentSchema = z.object({
 export const CreateSetupIntentSchema = z.object({
   bookingId: z.string().min(1),
 });
-
-export const ConfirmBookingPaymentSchema = z.object({
-  bookingId: z.string().min(1),
-  paymentIntentId: z.string().min(1),
-});
-
-export type CreatePaymentIntentInput = z.infer<typeof CreatePaymentIntentSchema>;
-export type CreateSetupIntentInput = z.infer<typeof CreateSetupIntentSchema>;
-export type ConfirmBookingPaymentInput = z.infer<typeof ConfirmBookingPaymentSchema>;

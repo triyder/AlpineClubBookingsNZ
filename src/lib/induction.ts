@@ -21,7 +21,7 @@ export class InductionError extends Error {
 }
 
 // Statuses from which an induction can still receive sign-offs.
-export const SIGNABLE_INDUCTION_STATUSES: InductionStatus[] = [
+const SIGNABLE_INDUCTION_STATUSES: InductionStatus[] = [
   "DRAFT",
   "IN_PROGRESS",
 ];

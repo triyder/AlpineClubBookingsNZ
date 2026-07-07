@@ -13,13 +13,13 @@ import type { Gender, Title } from "@prisma/client";
  * import and does not pull zod into the admin client bundle.
  */
 
-export const GENDER_LABELS: Record<Gender, string> = {
+const GENDER_LABELS: Record<Gender, string> = {
   MALE: "Male",
   FEMALE: "Female",
   OTHER: "Other",
 };
 
-export const TITLE_LABELS: Record<Title, string> = {
+const TITLE_LABELS: Record<Title, string> = {
   MR: "Mr",
   MS: "Ms",
   MRS: "Mrs",

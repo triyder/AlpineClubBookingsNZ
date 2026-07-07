@@ -6,6 +6,7 @@ import {
   parseFinanceChartOfAccountsContext,
   parseReportColumnMonth,
   shiftMonthKey,
+  XERO_CURRENT_YEAR_EARNINGS_ACCOUNT_ID,
   type FinanceMonthlyChartContext,
 } from "@/lib/finance-monthly-facts";
 
@@ -120,18 +121,23 @@ function buildMultiPeriodPayload(extraIncomeRows: TestReportRow[] = []) {
             ],
             rows: [],
           },
-          {
-            rowType: "Row",
-            title: null,
-            cells: [
-              plainCell("Mystery line"),
-              plainCell("10.00"),
-              plainCell("0.00"),
-              plainCell("0.00"),
-            ],
-            rows: [],
-          },
         ],
+      },
+      {
+        // Xero emits cross-section totals (Gross Profit, Net Profit, Net
+        // Assets, Current Year Earnings, ...) as leaf "Row" rows that carry an
+        // amount but no account attribute. They are derived, not GL accounts,
+        // so the extractor must exclude them from per-account facts without
+        // flagging them unresolved.
+        rowType: "Row",
+        title: null,
+        cells: [
+          plainCell("Gross Profit"),
+          plainCell("1,205.00"),
+          plainCell("1,100.50"),
+          plainCell("0.00"),
+        ],
+        rows: [],
       },
     ],
   };
@@ -222,7 +228,8 @@ describe("extractMonthlyFactsFromReport", () => {
     });
 
     expect(result.months).toEqual(["2026-02", "2026-03", "2026-04"]);
-    expect(result.unresolvedRowLabels).toEqual(["Mystery line"]);
+    // The account-less "Gross Profit" total is excluded, not flagged.
+    expect(result.unresolvedRowLabels).toEqual([]);
     expect(result.rows).toEqual([
       {
         month: "2026-02",
@@ -357,7 +364,7 @@ describe("extractMonthlyFactsFromReport", () => {
     expect(result.periodColumnCount).toBe(3);
   });
 
-  it("treats accounts missing from the chart as unresolved when they carry amounts", () => {
+  it("flags account-bearing rows missing from the chart, but not account-less totals", () => {
     const chart = parseFinanceChartOfAccountsContext({
       accounts: [
         {
@@ -375,7 +382,61 @@ describe("extractMonthlyFactsFromReport", () => {
       chart,
     });
 
-    expect(result.unresolvedRowLabels).toEqual(["Catering", "Mystery line"]);
+    // Catering names acc-cat, which is absent from this chart: a real account
+    // we could not map, so it is flagged. "Gross Profit" carries no account
+    // attribute at all and is a derived total, so it is excluded rather than
+    // flagged.
+    expect(result.unresolvedRowLabels).toEqual(["Catering"]);
     expect(result.rows.every((row) => row.accountCode === "200")).toBe(true);
+  });
+
+  it("excludes account-less computed total rows instead of flagging them unresolved", () => {
+    // Regression (finance monthly-facts): Xero's Gross Profit / Net Profit /
+    // Net Assets lines are leaf "Row" rows with an amount but no account
+    // attribute. They must be skipped — not stored, not flagged — so the sync's
+    // unresolved-row guard does not refuse the entire write over derived totals
+    // that were never per-account facts.
+    const result = extractMonthlyFactsFromReport({
+      payload: buildMultiPeriodPayload(),
+      chart: buildChart(),
+    });
+
+    expect(result.unresolvedRowLabels).toEqual([]);
+    expect(result.rows.some((row) => row.accountName === "Gross Profit")).toBe(
+      false
+    );
+    expect(result.rows.some((row) => row.accountCode === "200")).toBe(true);
+  });
+
+  it("excludes the Xero Current Year Earnings sentinel account instead of flagging it", () => {
+    // Regression (finance monthly-facts): unlike Net Assets, the balance-sheet
+    // "Current Year Earnings" line carries an account attribute — Xero's fixed
+    // sentinel id — but is a derived equity figure that getAccounts never
+    // returns, so it has no code. It must be excluded like the other totals,
+    // not flagged as an unmapped account (which would block the whole write).
+    const payload = buildMultiPeriodPayload([
+      {
+        rowType: "Row",
+        title: null,
+        cells: [
+          accountCell("Current Year Earnings", XERO_CURRENT_YEAR_EARNINGS_ACCOUNT_ID),
+          plainCell("5,000.00"),
+          plainCell("4,000.00"),
+          plainCell("0.00"),
+        ],
+        rows: [],
+      },
+    ]);
+
+    const result = extractMonthlyFactsFromReport({
+      payload,
+      chart: buildChart(),
+    });
+
+    expect(result.unresolvedRowLabels).toEqual([]);
+    expect(
+      result.rows.some((row) => row.accountName === "Current Year Earnings")
+    ).toBe(false);
+    expect(result.rows.some((row) => row.accountCode === "200")).toBe(true);
   });
 });

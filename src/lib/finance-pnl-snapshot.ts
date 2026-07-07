@@ -8,12 +8,12 @@
  * those callers agree on how a P&L is read.
  */
 
-export interface PnlReportAttribute {
+interface PnlReportAttribute {
   id: string | null;
   value: string | null;
 }
 
-export interface PnlReportCell {
+interface PnlReportCell {
   value: string | null;
   /**
    * Xero attaches structured attributes to report cells. The account-name cell
@@ -31,7 +31,7 @@ export interface PnlReportRow {
   rows: PnlReportRow[];
 }
 
-export interface PnlReportField {
+interface PnlReportField {
   fieldId: string | null;
   description: string | null;
   value: string | null;

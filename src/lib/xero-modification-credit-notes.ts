@@ -25,17 +25,11 @@ import { getResolvedAccountMapping } from "./xero-mappings";
 import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
-  type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
 import {
   buildSyntheticAllocationId,
   formatDate,
 } from "./xero-invoice-helpers";
-
-export interface CreateXeroModificationCreditNoteOptions
-  extends FindOrCreateXeroContactOptions {
-  syncOperationId?: string;
-}
 
 export async function createXeroCreditNoteForModification(params: {
   bookingId: string;

@@ -144,7 +144,7 @@ export function isGroupDiscountAppliedToBooking(input: {
   );
 }
 
-export function calculateHoldDaysUntilCheckIn(
+function calculateHoldDaysUntilCheckIn(
   checkIn: Date,
   now: Date = new Date()
 ): number {

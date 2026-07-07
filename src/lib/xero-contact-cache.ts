@@ -37,8 +37,8 @@ export const CONTACT_GROUP_CACHE_CURSOR_RESOURCE = "CONTACT_GROUP_CACHE";
  */
 export const CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE =
   "CONTACT_GROUP_FULL_REFRESH";
-export const XERO_PAGE_SIZE = 100;
-export const XERO_CONTACT_ID_BATCH_SIZE = 50;
+const XERO_PAGE_SIZE = 100;
+const XERO_CONTACT_ID_BATCH_SIZE = 50;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,7 +69,7 @@ export interface CachedXeroContact {
   postalCountry: string | null;
 }
 
-export interface RefreshXeroContactGroupMembershipCacheForContactResult {
+interface RefreshXeroContactGroupMembershipCacheForContactResult {
   contactId: string | null;
   observed: boolean;
   contactGroupsSeen: number;
@@ -92,7 +92,7 @@ export interface RefreshXeroContactCachesFromContactResult {
  * Find the best phone from a Xero contact's phones array and return structured
  * fields. Prefers MOBILE, falls back to any phone with a number.
  */
-export function getXeroContactPhoneStructured(
+function getXeroContactPhoneStructured(
   phones?: Array<{
     phoneType?: Phone.PhoneTypeEnum;
     phoneCountryCode?: string;
@@ -121,7 +121,7 @@ export function getXeroContactPhoneStructured(
  * Extract structured address data from a Xero contact's addresses array.
  * Returns STREET and POBOX addresses separately.
  */
-export function getXeroContactAddresses(
+function getXeroContactAddresses(
   addresses?: Array<{
     addressType?: Address.AddressTypeEnum;
     addressLine1?: string;
@@ -187,7 +187,7 @@ export function getXeroContactDisplayName(contact: {
   );
 }
 
-export function getXeroContactSourceUpdatedAt(contact: Contact): Date | null {
+function getXeroContactSourceUpdatedAt(contact: Contact): Date | null {
   if (!contact.updatedDateUTC) {
     return null;
   }
@@ -196,7 +196,7 @@ export function getXeroContactSourceUpdatedAt(contact: Contact): Date | null {
   return Number.isNaN(updatedAt.getTime()) ? null : updatedAt;
 }
 
-export function buildCachedXeroContact(
+function buildCachedXeroContact(
   contact: Contact
 ): CachedXeroContact | null {
   if (!contact.contactID) {
@@ -266,7 +266,7 @@ export function extractActiveXeroContactGroups(contact: Contact) {
 // Cache writes
 // ---------------------------------------------------------------------------
 
-export async function refreshXeroContactGroupMembershipCacheForContact(
+async function refreshXeroContactGroupMembershipCacheForContact(
   contact: Contact,
   fetchedAt: Date = new Date()
 ): Promise<RefreshXeroContactGroupMembershipCacheForContactResult> {

@@ -76,7 +76,7 @@ import { nameField } from "@/lib/zod-helpers";
 import { getSeasonYear } from "@/lib/utils";
 
 /** Age tiers a school can request counts for. Teachers are always ADULT. */
-export const SCHOOL_CHILD_TIERS = [
+const SCHOOL_CHILD_TIERS = [
   AgeTier.INFANT,
   AgeTier.CHILD,
   AgeTier.YOUTH,

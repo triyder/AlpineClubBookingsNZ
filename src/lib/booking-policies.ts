@@ -10,7 +10,7 @@ export {
   formatViolationMessage,
   formatViolationsDetail,
 } from "@/lib/policies/minimum-stay";
-export type { MinimumStayPolicyLike, MinimumStayViolation } from "@/lib/policies/minimum-stay";
+export type { MinimumStayViolation } from "@/lib/policies/minimum-stay";
 
 /**
  * Validate booking dates against all active minimum stay policies.

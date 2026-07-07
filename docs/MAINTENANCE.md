@@ -163,10 +163,10 @@ extraction over expanding this table casually.
 | `src/lib/xero-operation-outbox.ts` | 1972 | Queued for future split when queue dispatch, release, or retry policy changes next land (PR-b of #1272 co-locates the replay stack). |
 | `src/lib/email-templates.ts` | 2006 | Accepted as-is for now: central template catalogue; split only with a template-registry change. |
 | `src/lib/email.ts` | 11 | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). The `admin-alerts` surface was itself split (#1210) by **domain/source** — `admin-alerts.ts` is now a barrel re-exporting `admin-alerts-shared` (plumbing + `getAdminEmails`), `admin-alerts-booking`, `admin-alerts-membership`, `admin-alerts-finance`, and `admin-alerts-ops`. When an alerts/email module next exceeds the ~700 LOC soft cap, split it along the **domain axis** (booking/capacity, membership lifecycle, finance/Xero/payments, ops) — not by audience, which is fuzzy because most alerts fan out to all admins — and keep the facade barrel's exports byte-identical so `src/lib/email.ts` and every importer keep resolving. |
-| `src/lib/xero-hardening.ts` | 1606 | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. |
-| `src/lib/finance-sync-xero-datasets.ts` | 1573 | Queued for future split by finance snapshot family when finance dataset work resumes. |
+| `src/lib/xero-hardening.ts` | 1606 | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. The `xero-hardening-canonical-links.ts` ↔ `xero-hardening-report.ts` clone pair (112 duplicated lines / 2 clones, jscpd 2026-07-07) is recorded as accepted under this same disposition (#1524 C4, owner-ticked 2026-07; same subsystem call as #1208 items 5/6). |
+| `src/lib/finance-sync-xero-datasets.ts` | 1573 | Split by finance snapshot family pulled forward (#1524 C3, owner-ticked 2026-07): tracked in #1531. jscpd found 186 self-duplicated lines across 7 internal clones. |
 | `src/app/(admin)/admin/members/[id]/page.tsx` | 1747 | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
-| `src/app/(admin)/admin/family-groups/page.tsx` | 1312 | Queued for future route-shell thinning when family-group workflows are next touched. |
+| `src/app/(admin)/admin/family-groups/page.tsx` | 1312 | Route-shell thinning pulled forward (#1524 C2, owner-ticked 2026-07): tracked in #1530. The duplication is specifically with `src/components/admin/family-group-editor.tsx` (225 duplicated lines / 7 clones, jscpd 2026-07-07). |
 
 ## Operational Repair Tools
 

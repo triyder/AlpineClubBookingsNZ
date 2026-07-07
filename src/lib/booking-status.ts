@@ -142,7 +142,7 @@ export function capacityHoldingBookingFilter(): Prisma.BookingWhereInput {
  * future enum values rank LAST so adding a BookingStatus never throws and never
  * scatters rows unpredictably.
  */
-export const BOOKING_STATUS_LIFECYCLE_ORDER: readonly BookingStatus[] = [
+const BOOKING_STATUS_LIFECYCLE_ORDER: readonly BookingStatus[] = [
   BookingStatus.DRAFT,
   BookingStatus.PENDING,
   BookingStatus.PAYMENT_PENDING,

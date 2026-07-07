@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 
 // Public pages that describe the non-member hold ("Members First") behaviour.
-export const HOLD_COPY_SLUGS = ["terms", "faq"] as const;
+const HOLD_COPY_SLUGS = ["terms", "faq"] as const;
 export type HoldCopySlug = (typeof HOLD_COPY_SLUGS)[number];
 
 const HOLD_COPY_TITLES: Record<HoldCopySlug, string> = {

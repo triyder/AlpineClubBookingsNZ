@@ -9,7 +9,7 @@ import {
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 
-export const BOOKING_MEMBER_NIGHT_CONFLICT_CODE =
+const BOOKING_MEMBER_NIGHT_CONFLICT_CODE =
   "BOOKING_MEMBER_NIGHT_CONFLICT";
 
 // test seam

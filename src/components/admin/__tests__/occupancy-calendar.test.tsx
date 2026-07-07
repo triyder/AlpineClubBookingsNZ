@@ -220,6 +220,27 @@ function SingleHarness() {
   );
 }
 
+function OverlayHarness({
+  onVisibleMonthChange,
+}: {
+  onVisibleMonthChange?: (month: string) => void;
+}) {
+  const [selectedDate, setSelectedDate] = useState("2099-07-01");
+  return (
+    <OccupancyCalendar
+      mode="single"
+      selectedStartDate={selectedDate}
+      selectedEndDate={selectedDate}
+      onSelectionChange={({ startDate }) => setSelectedDate(startDate)}
+      overlayByDate={{ "2099-07-10": { tone: "orange", label: "Needs chores" } }}
+      overlayLegend={[
+        { tone: "orange", label: "Confirmed — some guests need chores" },
+      ]}
+      onVisibleMonthChange={onVisibleMonthChange}
+    />
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -333,5 +354,60 @@ describe("OccupancyCalendar", () => {
     expect(screen.getByTestId("single-output")).toHaveTextContent("2099-07-11");
     expect(screen.getByText(/2099-07-11 to 2099-07-11/i)).toBeInTheDocument();
     expect(screen.getByText("Alex Snow")).toBeInTheDocument();
+  });
+
+  it("applies the overlay tone class, aria-label, and badge to a day cell", async () => {
+    stubFetch();
+    render(<OverlayHarness />);
+
+    const dayButton = await screen.findByRole("button", {
+      name: /10 Jul.*Needs chores/i,
+    });
+    // Tone cell class (static table, orange) is applied over the guest emerald.
+    expect(dayButton.className).toContain("bg-orange-50");
+    expect(dayButton.className).not.toContain("bg-emerald-50");
+    // aria-label keeps the existing guest label and appends the overlay label.
+    expect(dayButton.getAttribute("aria-label")).toMatch(/1 guest, Needs chores$/);
+    // Compact overlay badge renders the label as visible text.
+    expect(screen.getByText("Needs chores")).toBeInTheDocument();
+  });
+
+  it("renders the overlay legend entries", async () => {
+    stubFetch();
+    render(<OverlayHarness />);
+
+    await screen.findByRole("button", { name: /10 Jul.*Needs chores/i });
+    expect(
+      screen.getByText("Confirmed — some guests need chores"),
+    ).toBeInTheDocument();
+  });
+
+  it("fires onVisibleMonthChange with the visible month on mount and navigation", async () => {
+    stubFetch();
+    const onVisibleMonthChange = vi.fn();
+    render(<OverlayHarness onVisibleMonthChange={onVisibleMonthChange} />);
+
+    await waitFor(() =>
+      expect(onVisibleMonthChange).toHaveBeenCalledWith("2099-07"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    await waitFor(() =>
+      expect(onVisibleMonthChange).toHaveBeenCalledWith("2099-08"),
+    );
+  });
+
+  it("leaves day cells, aria-labels, and badges unchanged with no overlay props", async () => {
+    stubFetch();
+    render(<SingleHarness />);
+
+    const dayButton = await screen.findByRole("button", {
+      name: /10 Jul.*1 guest/i,
+    });
+    // No overlay label appended; aria-label ends at the guest count.
+    expect(dayButton.getAttribute("aria-label")).toMatch(/, 1 guest$/);
+    // Guest cells keep their emerald styling; no tone class leaks in.
+    expect(dayButton.className).toContain("bg-emerald-50");
+    expect(dayButton.className).not.toContain("bg-orange-50");
   });
 });

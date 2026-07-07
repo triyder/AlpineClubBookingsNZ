@@ -9,7 +9,7 @@ usage() {
 Usage:
   scripts/codex/install-local-skills.sh [--dry-run] [--install] [--target repo|user]
 
-Dry-run by default. With --install --target repo, copies codex/skills/* to
+Dry-run by default. With --install --target repo, copies docs/agents/codex/skills/* to
 .agents/skills for repository discovery. With --target user, copies to
 $HOME/.agents/skills.
 USAGE
@@ -54,12 +54,12 @@ case "$TARGET" in
     ;;
 esac
 
-echo "Skill source: codex/skills"
+echo "Skill source: docs/agents/codex/skills"
 echo "Skill target: $TARGET_DIR"
 
 if [[ "$INSTALL" -ne 1 ]]; then
   echo "Dry run only. Re-run with --install to copy skill sources."
-  for dir in codex/skills/*; do
+  for dir in docs/agents/codex/skills/*; do
     if [[ -d "$dir" && -f "$dir/SKILL.md" ]]; then
       echo "would copy $dir -> $TARGET_DIR/$(basename "$dir")"
     fi
@@ -68,7 +68,7 @@ if [[ "$INSTALL" -ne 1 ]]; then
 fi
 
 mkdir -p "$TARGET_DIR"
-for dir in codex/skills/*; do
+for dir in docs/agents/codex/skills/*; do
   if [[ -d "$dir" && -f "$dir/SKILL.md" ]]; then
     rm -rf "$TARGET_DIR/$(basename "$dir")"
     cp -R "$dir" "$TARGET_DIR/$(basename "$dir")"

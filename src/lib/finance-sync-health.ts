@@ -36,7 +36,7 @@ const STALE_SYNC_AMBER_HOURS = 36;
 
 export type FinanceSyncHealthTone = "green" | "amber" | "red";
 
-export interface FinanceSyncHealthSignal {
+interface FinanceSyncHealthSignal {
   id: string;
   label: string;
   value: string;
@@ -46,7 +46,7 @@ export interface FinanceSyncHealthSignal {
   linkLabel?: string;
 }
 
-export interface FinanceSyncHealthSection {
+interface FinanceSyncHealthSection {
   id: "daily-sync" | "reconciliation" | "xero-operations" | "monthly-facts";
   title: string;
   description: string;

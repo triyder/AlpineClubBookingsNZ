@@ -22,7 +22,7 @@ import {
 } from "@/lib/member-roles";
 import { prisma } from "@/lib/prisma";
 
-export const MEMBERSHIP_CANCELLATION_CONFIRMATION_TTL_MS =
+const MEMBERSHIP_CANCELLATION_CONFIRMATION_TTL_MS =
   7 * 24 * 60 * 60 * 1000;
 
 const OPEN_REQUEST_STATUSES = ["REQUESTED", "APPROVED"] as const;
@@ -112,7 +112,7 @@ type CancellationRequestRecord = {
   participants: CancellationParticipantRecord[];
 };
 
-export type MembershipCancellationRelationship =
+type MembershipCancellationRelationship =
   | "self"
   | "dependent"
   | "non_login_adult"

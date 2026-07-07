@@ -16,7 +16,7 @@ type BookingDeleteActor = {
   ipAddress?: string | null;
 };
 
-export type BookingDeleteBlocker = {
+type BookingDeleteBlocker = {
   code: string;
   label: string;
   count: number;

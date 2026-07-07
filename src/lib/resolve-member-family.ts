@@ -1,8 +1,8 @@
 import { prisma } from "@/lib/prisma";
 
-export type ResolvedFamilyRelationship = "self" | "partner" | "dependent";
+type ResolvedFamilyRelationship = "self" | "partner" | "dependent";
 
-export type ResolvedFamilyMember = {
+type ResolvedFamilyMember = {
   id: string;
   firstName: string;
   lastName: string;

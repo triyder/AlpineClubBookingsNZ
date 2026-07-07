@@ -1,4 +1,4 @@
-export const BOOKING_DELETED_VISIBILITY_VALUES = [
+const BOOKING_DELETED_VISIBILITY_VALUES = [
   "hide",
   "include",
   "only",

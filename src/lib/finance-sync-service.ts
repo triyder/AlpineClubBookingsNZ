@@ -23,7 +23,7 @@ export const DEFAULT_FINANCE_SYNC_WORKFLOW = "daily-finance-sync";
  * When present, runFinanceSync persists them to FinanceAccountMonthlyBalance
  * (replacing the covered months) right after the snapshot itself is stored.
  */
-export interface FinanceSyncSnapshotMonthlyFacts {
+interface FinanceSyncSnapshotMonthlyFacts {
   statementKind: FinanceMonthlyStatementKind;
   /** Month keys ("YYYY-MM") covered by the pulled report window. */
   months: string[];
@@ -76,7 +76,7 @@ export interface RunFinanceSyncInput {
   startedAt?: Date;
 }
 
-export interface FinanceSyncDatasetResult {
+interface FinanceSyncDatasetResult {
   datasetKey: string;
   snapshotCount: number;
   totalRowCount: number;

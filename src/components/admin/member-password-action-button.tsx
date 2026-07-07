@@ -4,7 +4,6 @@ import { formatDistanceToNow } from "date-fns"
 import { Button } from "@/components/ui/button"
 import {
   getMemberPasswordActionKind,
-  type MemberPasswordActionKind,
   type MemberPasswordActionState,
 } from "@/lib/member-login-stage"
 
@@ -13,11 +12,10 @@ import {
 // one source of truth. Re-exported here so existing imports keep working.
 export {
   getMemberPasswordActionKind,
-  type MemberPasswordActionKind,
   type MemberPasswordActionState,
 }
 
-export function getMemberPasswordActionLabel(member: MemberPasswordActionState) {
+function getMemberPasswordActionLabel(member: MemberPasswordActionState) {
   const kind = getMemberPasswordActionKind(member)
   if (kind === "reset-password") return "Reset Password"
   if (kind === "resend-invite") return "Resend Invite"
@@ -29,7 +27,7 @@ function formatPendingInviteExpiry(expiresAt: string | Date) {
   return formatDistanceToNow(new Date(expiresAt), { addSuffix: true })
 }
 
-export function getMemberPasswordActionTooltip(member: MemberPasswordActionState) {
+function getMemberPasswordActionTooltip(member: MemberPasswordActionState) {
   if (getMemberPasswordActionKind(member) !== "resend-invite" || !member.pendingInviteExpiresAt) {
     return undefined
   }

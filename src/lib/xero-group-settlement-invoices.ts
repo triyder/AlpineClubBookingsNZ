@@ -54,7 +54,7 @@ export interface CreateXeroGroupSettlementInvoiceOptions
 }
 
 /** The Xero object-link role for a combined settlement invoice. */
-export const GROUP_SETTLEMENT_INVOICE_ROLE = "GROUP_SETTLEMENT_INVOICE";
+const GROUP_SETTLEMENT_INVOICE_ROLE = "GROUP_SETTLEMENT_INVOICE";
 
 /**
  * Raise (or re-link) the single combined Xero invoice for an Internet Banking

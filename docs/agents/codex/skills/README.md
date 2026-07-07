@@ -1,7 +1,7 @@
 # Codex Skill Sources
 
 These are repo-local source folders for optional Codex skills. They are kept in
-`codex/skills` for review and version control.
+`docs/agents/codex/skills` for review and version control.
 
 Current Codex documentation supports repository-discoverable skills under
 `.agents/skills`. This repo keeps source here and provides a dry-run installer:

@@ -25,7 +25,7 @@ function dayName(day: number): string {
  * Check if two date ranges overlap.
  * Range A: [aStart, aEnd], Range B: [bStart, bEnd] (all inclusive).
  */
-export function dateRangesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
+function dateRangesOverlap(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
   return aStart <= bEnd && bStart <= aEnd;
 }
 
