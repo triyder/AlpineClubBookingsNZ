@@ -1,7 +1,7 @@
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
-export const ADMIN_ALERT_DELIVERY_ESCALATION_ACTION =
+const ADMIN_ALERT_DELIVERY_ESCALATION_ACTION =
   "email.admin-alert-undeliverable";
 
 const ADMIN_ALERT_ESCALATION_LOOKBACK_DAYS = 7;

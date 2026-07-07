@@ -1,8 +1,8 @@
 type EnvMap = Record<string, string | undefined>;
 
-export type EmailDeliveryMode = "aws-ses" | "smtp-relay";
+type EmailDeliveryMode = "aws-ses" | "smtp-relay";
 
-export interface EmailTransportOptions {
+interface EmailTransportOptions {
   host: string;
   port: number;
   secure: boolean;
