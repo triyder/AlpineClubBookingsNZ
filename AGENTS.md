@@ -79,9 +79,13 @@ before changing Next.js APIs or conventions.
 At the successful end of a meaningful piece of work:
 
 1. Push the branch and open a PR using `.github/pull_request_template.md`.
-2. Monitor CI to green. Fix any failure (lint, typecheck, `npm test`, build,
-   migration-drift, and the dependency/secret/static scans) and push fixes until
-   every required check passes. `main` is branch-protected: the `verify`,
+2. Monitor CI to green. Fix any failure (lint, typecheck, the `npm run knip`
+   dead-code gate, `npm test`, build, migration-drift, and the
+   dependency/secret/static scans) and push fixes until every required check
+   passes. When knip flags a genuinely-used file or export it cannot statically
+   trace, add a justified `entry` or file-scoped `ignoreIssues` carve-out to
+   `knip.jsonc` (see CONTRIBUTING.md "Dead-code gate") rather than deleting live
+   code. `main` is branch-protected: the `verify`,
    `Migration drift check`, `Playwright E2E`, and `Static analysis gate` checks
    must pass to merge, and force-pushes and branch deletions are blocked.
    Because `enforce_admins` is off and no review approval is required, an admin
