@@ -241,6 +241,7 @@ describe("email-templates", () => {
         startDate,
         endDate,
         pin: "123456",
+        assignmentId: "assign-abc123",
       });
 
       expect(html).toContain("123456");
@@ -253,6 +254,7 @@ describe("email-templates", () => {
         startDate,
         endDate,
         pin: "123456",
+        assignmentId: "assign-abc123",
       });
 
       expect(html).toContain("arrivals");

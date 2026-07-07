@@ -166,6 +166,7 @@ export async function POST(req: NextRequest) {
         startDate: newStart,
         endDate: newEnd,
         pin,
+        assignmentId: assignment.id,
       });
     } catch (err) {
       emailSent = false;

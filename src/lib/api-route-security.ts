@@ -156,6 +156,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Serves Image Manager uploads from the shared images volume at runtime.",
   },
+  "src/app/api/lodge/instructions/preview/route.ts": {
+    boundary: "public",
+    reason:
+      "Remote pre-arrival lodge-instructions view for non-login hut leaders (#1642): no session by design — verifies a per-assignment id (from the assignment email) plus the 6-digit kiosk PIN with IP lockout + auth-sensitive rate limiting, and returns only the sanitised instruction documents for that assignment's lodge.",
+  },
   "src/app/api/skifield-conditions/route.ts": {
     boundary: "public",
     reason:

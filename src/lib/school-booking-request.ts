@@ -531,6 +531,7 @@ export async function approveSchoolBookingRequest(input: {
     schoolMemberId: string;
     teacherAssignments: Array<{
       memberId: string;
+      assignmentId: string;
       email: string;
       firstName: string;
       pin: string;
@@ -791,6 +792,7 @@ export async function approveSchoolBookingRequest(input: {
 
       const teacherAssignments: Array<{
         memberId: string;
+        assignmentId: string;
         email: string;
         firstName: string;
         pin: string;
@@ -811,7 +813,7 @@ export async function approveSchoolBookingRequest(input: {
           select: { id: true, firstName: true, email: true },
         });
 
-        await tx.hutLeaderAssignment.create({
+        const teacherAssignment = await tx.hutLeaderAssignment.create({
           data: {
             memberId: teacherMember.id,
             startDate: request.checkIn,
@@ -822,10 +824,12 @@ export async function approveSchoolBookingRequest(input: {
             // manual and cron paths, not left null.
             lodgeId: bookingLodgeId,
           },
+          select: { id: true },
         });
 
         teacherAssignments.push({
           memberId: teacherMember.id,
+          assignmentId: teacherAssignment.id,
           email: teacherMember.email,
           firstName: teacherMember.firstName,
           pin: plan.pin,
@@ -880,6 +884,7 @@ export async function approveSchoolBookingRequest(input: {
         startDate: request.checkIn,
         endDate: request.checkOut,
         pin: assignment.pin,
+        assignmentId: assignment.assignmentId,
       }).catch((err) =>
         logger.error(
           { err, bookingId: conversion.bookingId, memberId: assignment.memberId },

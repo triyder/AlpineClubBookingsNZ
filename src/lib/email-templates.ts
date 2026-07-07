@@ -620,6 +620,7 @@ export function hutLeaderAssignmentTemplate(params: {
   startDate: Date;
   endDate: Date;
   pin: string;
+  assignmentId: string;
 }): string {
   const p = emailPalette();
   return layout(`
@@ -633,7 +634,7 @@ export function hutLeaderAssignmentTemplate(params: {
     ${paragraph(`When you arrive, open the lodge kiosk and use this PIN to unlock ${CLUB_HUT_LEADER_LABEL.toLowerCase()} controls for arrivals, departures, and roster management.`)}
     ${alertBox(`Please keep this PIN private and share it only with the assigned ${CLUB_HUT_LEADER_LABEL.toLowerCase()} team for these dates.`, "warning")}
     ${paragraph("Responsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.")}
-    ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/lodge-instructions")}" style="color: ${p.charcoal}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge.`)}
+    ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/hut-leader-instructions?a=" + encodeURIComponent(params.assignmentId))}" style="color: ${p.charcoal}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge — open the link and enter your kiosk PIN above to view them (no login needed).`)}
     ${button("Open Lodge View", BASE_URL + "/lodge")}
     ${muted("If you have any issues accessing the kiosk, please contact a club administrator.")}
   `);
