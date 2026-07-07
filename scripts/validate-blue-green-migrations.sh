@@ -31,6 +31,34 @@ migration_name_for_file() {
   basename "$(dirname "$file")"
 }
 
+# Breaking SQL lines that are genuinely unsafe for a blue/green cutover. This is
+# every BREAKING_SQL_REGEX match EXCEPT an "ALTER COLUMN ... SET NOT NULL" whose
+# same table+column also gets a "SET DEFAULT" in the SAME migration: an old
+# colour that omits the column on INSERT receives the default, so no null is ever
+# written and the NOT NULL holds throughout the cutover (old-code-compatible, no
+# outage). Such a NOT NULL still needs a documented ledger entry, but not the
+# ALLOW_BREAKING override. Drops, renames, type changes, and an unmatched
+# SET NOT NULL remain unsafe.
+unsafe_breaking_lines() {
+  local file="$1" breaking line stmt table col
+  breaking="$(sql_lines "$file" | grep -Ei "$BREAKING_SQL_REGEX" || true)"
+  [ -n "$breaking" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    # strip the leading "NR:" line-number prefix sql_lines adds
+    stmt="${line#*:}"
+    if printf '%s' "$stmt" | grep -Eiq 'ALTER COLUMN .* SET NOT NULL'; then
+      table="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/p')"
+      col="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/p')"
+      if [ -n "$table" ] && [ -n "$col" ] &&
+        sql_lines "$file" | grep -Eiq "ALTER TABLE \"${table}\" ALTER COLUMN \"${col}\" SET DEFAULT"; then
+        continue
+      fi
+    fi
+    printf '%s\n' "$line"
+  done <<<"$breaking"
+}
+
 ledger_entry_for_migration() {
   local migration_name="$1"
 
@@ -159,9 +187,14 @@ for migration_sql in "$@"; do
   fi
 
   if [ -n "$breaking_matches" ]; then
-    found_breaking=1
-    printf 'Potentially blue/green-incompatible migration detected: %s\n' "$migration_sql" >&2
-    printf '%s\n\n' "$breaking_matches" >&2
+    unsafe_matches="$(unsafe_breaking_lines "$migration_sql" || true)"
+    if [ -n "$unsafe_matches" ]; then
+      found_breaking=1
+      printf 'Potentially blue/green-incompatible migration detected: %s\n' "$migration_sql" >&2
+      printf '%s\n\n' "$unsafe_matches" >&2
+    else
+      printf 'Reviewed no-outage NOT NULL (SET NOT NULL paired with a same-column SET DEFAULT): %s\n' "$migration_sql" >&2
+    fi
   fi
 done
 
