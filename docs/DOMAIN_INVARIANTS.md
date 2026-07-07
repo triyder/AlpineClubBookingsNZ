@@ -81,7 +81,9 @@ Future reviews and issues should cite this file when proposing changes.
   footprint takes the global booking advisory lock (`pg_advisory_xact_lock(1)`)
   before running the guard (`assertNoBookingMemberNightConflicts`); that
   lock-before-guard ordering is frozen for every such writer by
-  `review-findings-contracts.test.ts`. Writes that do not change the member-night
+  `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps this
+  lock alongside the per-lodge capacity and per-member credit locks and the
+  ordering discipline each follows.) Writes that do not change the member-night
   footprint — re-pricing, name-only guest edits, lodge arrive/depart timestamps,
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
