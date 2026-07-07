@@ -153,8 +153,13 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "lodge-capacity",
     kind: "text",
     description:
-      "Replaced with the current lodge capacity when the content renders.",
+      "Replaced with the default lodge's capacity when the content renders. " +
+      "With more than one lodge, name a lodge by its slug — " +
+      "{{lodge-capacity:lodge-slug}} — to show that lodge's capacity; an " +
+      "unknown slug falls back to the default lodge.",
     example: "{{lodge-capacity}}",
+    allowsParameter: true,
+    parameterExample: "{{lodge-capacity:whakapapa-river-lodge}}",
     allowsLegacySingleBrace: false,
     contexts: ["page-content-body", "lodge-instructions", "site-footer"],
   },
@@ -221,5 +226,23 @@ export function legacySingleBraceTokenNames(): string[] {
 export function textTokenNames(): string[] {
   return HTML_TOKEN_CATALOGUE.filter(
     (definition) => definition.kind === "text",
+  ).map((definition) => definition.token);
+}
+
+/**
+ * Text tokens split by declared parameter support: only tokens with
+ * `allowsParameter` accept a `{{token:parameter}}` form (currently the
+ * multi-lodge {{lodge-capacity:lodge-slug}}); every other text token
+ * matches bare only, preserving the no-parameters rule.
+ */
+export function parameterisedTextTokenNames(): string[] {
+  return HTML_TOKEN_CATALOGUE.filter(
+    (definition) => definition.kind === "text" && definition.allowsParameter,
+  ).map((definition) => definition.token);
+}
+
+export function plainTextTokenNames(): string[] {
+  return HTML_TOKEN_CATALOGUE.filter(
+    (definition) => definition.kind === "text" && !definition.allowsParameter,
   ).map((definition) => definition.token);
 }

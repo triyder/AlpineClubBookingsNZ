@@ -86,6 +86,7 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
         checkOut: booking.checkOut,
         guestCount: booking.guests.length,
         expectedArrivalTime: booking.expectedArrivalTime,
+        lodgeId: booking.lodgeId,
       });
       result.sentBookingIds.push(booking.id);
     } catch (err) {

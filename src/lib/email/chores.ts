@@ -20,6 +20,8 @@ export async function sendChoreRosterEmail(
   date: string,
   chores: Array<{ name: string; description: string | null }>,
   choreLink?: string,
+  // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
+  lodgeId?: string | null,
 ) {
   const formattedDate = new Date(date + "T00:00:00").toLocaleDateString(
     "en-NZ",
@@ -46,6 +48,7 @@ export async function sendChoreRosterEmail(
         .join(", "),
       choreLink: choreLink ?? "",
     },
+    lodgeId,
   });
 }
 

@@ -63,6 +63,7 @@ export interface WorkPartyEvent {
   startDate: string;
   endDate: string;
   discountPercent: number;
+  lodgeName: string | null;
 }
 
 export type BookingPaymentMethod = "stripe" | "internet_banking";

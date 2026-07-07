@@ -32,6 +32,9 @@ const mockPrisma = {
   lodgeSettings: {
     findUnique: vi.fn().mockResolvedValue(null),
   },
+  lodge: {
+    findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -98,6 +101,7 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "lodge-1" });
   });
 
   function d(str: string) {

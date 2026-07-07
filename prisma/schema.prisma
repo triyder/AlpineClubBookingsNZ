@@ -368,32 +368,32 @@ enum ClubThemeFont {
 // ---------------------------------------------------------------------------
 
 model Member {
-  id                  String    @id @default(cuid())
+  id                      String           @id @default(cuid())
   // Lookup index only in Prisma schema. Login identity uniqueness is enforced
   // by the manual partial unique index Member_email_login_unique
   // (WHERE canLogin = true), because Prisma schema cannot express partial unique indexes.
-  email               String
-  passwordHash        String
-  forcePasswordChange Boolean   @default(false)
-  passwordChangedAt   DateTime?
-  lastLoginAt         DateTime?
-  twoFactorEnabled    Boolean   @default(false)
-  twoFactorMethod     TwoFactorMethod?
-  totpSecret          String?
-  twoFactorEnrolledAt DateTime?
-  twoFactorFailedAttempts Int   @default(0)
+  email                   String
+  passwordHash            String
+  forcePasswordChange     Boolean          @default(false)
+  passwordChangedAt       DateTime?
+  lastLoginAt             DateTime?
+  twoFactorEnabled        Boolean          @default(false)
+  twoFactorMethod         TwoFactorMethod?
+  totpSecret              String?
+  twoFactorEnrolledAt     DateTime?
+  twoFactorFailedAttempts Int              @default(0)
   twoFactorLockedUntil    DateTime?
   // Email verification: new registrations start as false.
   // Existing members should be bulk-updated: UPDATE "Member" SET "emailVerified" = true;
-  emailVerified       Boolean   @default(false)
-  title               Title?
-  firstName           String
-  lastName            String
-  gender              Gender?
-  dateOfBirth         DateTime?
+  emailVerified           Boolean          @default(false)
+  title                   Title?
+  firstName               String
+  lastName                String
+  gender                  Gender?
+  dateOfBirth             DateTime?
   // Free-text occupation. Optional, adult-only, and admin-toggleable via
   // MemberFieldsSettings.showOccupation.
-  occupation          String?
+  occupation              String?
 
   // Structured phone (matches Xero's countryCode/areaCode/number format)
   phoneCountryCode String? // e.g. "64"
@@ -495,6 +495,8 @@ model Member {
   promoCodeAssignments                       PromoCodeAssignment[]
   notificationPreference                     NotificationPreference?
   hutLeaderAssignments                       HutLeaderAssignment[]
+  lodgeAccess                                MemberLodgeAccess[]
+  lodgeAccessCreated                         MemberLodgeAccess[]                        @relation("MemberLodgeAccessCreatedBy")
   familyGroupRequests                        FamilyGroupJoinRequest[]                   @relation("FamilyGroupRequester")
   familyGroupInvitations                     FamilyGroupJoinRequest[]                   @relation("FamilyGroupInvitedMember")
   familyGroupLinkedRequests                  FamilyGroupJoinRequest[]                   @relation("FamilyGroupLinkedMember")
@@ -819,16 +821,16 @@ model XeroContactGroupRule {
 }
 
 model SeasonalMembershipAssignment {
-  id                 String   @id @default(cuid())
+  id                 String                     @id @default(cuid())
   memberId           String
   seasonYear         Int
   membershipTypeId   String
-  applyFrom          DateTime? @db.Date
+  applyFrom          DateTime?                  @db.Date
   assignedByMemberId String?
   source             MembershipAssignmentSource @default(ADMIN)
   sourceDetail       String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
 
   member         Member         @relation("SeasonalMembershipAssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
   membershipType MembershipType @relation(fields: [membershipTypeId], references: [id], onDelete: Restrict)
@@ -939,13 +941,16 @@ model Season {
   startDate DateTime   @db.Date
   endDate   DateTime   @db.Date
   active    Boolean    @default(true)
+  lodgeId   String     @default(dbgenerated("default_lodge_id()"))
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
   // Relations
   rates SeasonRate[]
+  lodge Lodge        @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
   @@index([startDate, endDate])
+  @@index([lodgeId])
 }
 
 model SeasonRate {
@@ -1011,19 +1016,32 @@ model Booking {
   waitlistPosition          Int?
   waitlistOfferedAt         DateTime?
   waitlistOfferExpiresAt    DateTime?
+  // Cross-lodge waitlist offers (ADR-004): set only when the current offer
+  // is for an alternate lodge the member opted into — the offered lodge and
+  // the price quoted for it. Null for same-lodge offers, which behave
+  // exactly as before ADR-004. Money in integer cents.
+  waitlistOfferedLodgeId    String?
+  waitlistOfferedPriceCents Int?
   deletedAt                 DateTime?
   deletedById               String?
   deletedReason             String?            @db.VarChar(500)
+  // NOT NULL (migration 20260708001100): a default_lodge_id() column default
+  // fills omitted-column writes so enforcement was outage-free. One booking
+  // belongs to exactly one lodge (ADR-001 resolved question 1).
+  lodgeId                   String             @default(dbgenerated("default_lodge_id()"))
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
-  member                      Member                       @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  createdBy                   Member?                      @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  deletedBy                   Member?                      @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
-  adminReviewedBy             Member?                      @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
-  requestedRoom               LodgeRoom?                   @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
-  parentBooking               Booking?                     @relation("BookingGroup", fields: [parentBookingId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  linkedBookings              Booking[]                    @relation("BookingGroup")
+  member                      Member                          @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  lodge                       Lodge                           @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  waitlistOfferedLodge        Lodge?                          @relation("BookingWaitlistOfferedLodge", fields: [waitlistOfferedLodgeId], references: [id], onDelete: SetNull)
+  waitlistAlternateLodges     BookingWaitlistAlternateLodge[]
+  createdBy                   Member?                         @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy                   Member?                         @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  adminReviewedBy             Member?                         @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
+  requestedRoom               LodgeRoom?                      @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
+  parentBooking               Booking?                        @relation("BookingGroup", fields: [parentBookingId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  linkedBookings              Booking[]                       @relation("BookingGroup")
   guests                      BookingGuest[]
   payment                     Payment?
   choreAssignments            ChoreAssignment[]
@@ -1032,25 +1050,25 @@ model Booking {
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
   modifications               BookingModification[]
   changeRequests              BookingChangeRequest[]
-  creditsFromCancellation     MemberCredit[]               @relation("CreditSource")
-  creditsApplied              MemberCredit[]               @relation("CreditApplied")
+  creditsFromCancellation     MemberCredit[]                  @relation("CreditSource")
+  creditsApplied              MemberCredit[]                  @relation("CreditApplied")
   refundRequests              RefundRequest[]
   paymentRecoveryOperations   PaymentRecoveryOperation[]
   bedAllocations              BedAllocation[]
   // Present when this booking was created from a public BookingRequest.
-  originBookingRequest        BookingRequest?              @relation("BookingRequestConvertedBooking")
+  originBookingRequest        BookingRequest?                 @relation("BookingRequestConvertedBooking")
   // Present while a public BookingRequest has been capacity-held by an admin
   // before the requester accepts a quote. Acceptance converts this row rather
   // than creating a duplicate booking.
-  heldForBookingRequest       BookingRequest?              @relation("BookingRequestHeldBooking")
+  heldForBookingRequest       BookingRequest?                 @relation("BookingRequestHeldBooking")
   paymentLinks                PaymentLink[]
   // Durable per-transition fact store (issue #740). Unlike AuditLog these rows
   // are never retention-pruned, so booking/payment-link narratives survive.
   events                      BookingEvent[]
   // Group booking this booking anchors as organiser, and the join row that
   // created this booking as a group child (issue: group-booking join code).
-  groupBookingAsOrganiser     GroupBooking?                @relation("GroupBookingOrganiser")
-  groupBookingJoin            GroupBookingJoin?            @relation("GroupBookingJoinBooking")
+  groupBookingAsOrganiser     GroupBooking?                   @relation("GroupBookingOrganiser")
+  groupBookingJoin            GroupBookingJoin?               @relation("GroupBookingJoinBooking")
 
   @@index([memberId])
   @@index([createdById])
@@ -1069,6 +1087,7 @@ model Booking {
   @@index([adminReviewedById])
   @@index([requestedRoomId])
   @@index([parentBookingId])
+  @@index([lodgeId])
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -1296,15 +1315,22 @@ model BookingRequest {
   message          String?              @db.VarChar(1000)
 
   // SCHOOL variant only. The school is the invoiced party / Xero contact.
-  schoolName String? @db.VarChar(200)
+  schoolName         String?                   @db.VarChar(200)
   // Teacher contact snapshot: array of { firstName, lastName, email? }.
   // Each becomes a non-login Member with a HutLeaderAssignment on approval.
-  teachers   Json?
+  teachers           Json?
   // School quote intake preference. GENERAL requests leave this null.
   cateringPreference SchoolCateringPreference?
   // Admin-linked member guests: array of { guestIndex, memberId }. Linked
   // adults are copied into BookingGuest.memberId on hold/acceptance.
   linkedGuestMembers Json?
+
+  // Lodge the stay is requested at (lodge-scoping contract, audited
+  // 2026-07-03). Null rows predate the column and mean the club's default
+  // lodge; readers resolve request.lodgeId ?? default. New requests always
+  // set it (the public forms offer a choice only when a second active
+  // lodge exists, ADR-002).
+  lodgeId String?
 
   // Indicative pricing shown on the public form (when enabled) at submit time.
   indicativePriceCents Int?
@@ -1330,23 +1356,24 @@ model BookingRequest {
   reviewedAt         DateTime?
   declineReason      String?   @db.VarChar(2000)
 
-  convertedBookingId String? @unique
-  convertedMemberId  String?
-  heldBookingId      String? @unique
-  acceptedQuoteId    String? @unique
+  convertedBookingId    String?   @unique
+  convertedMemberId     String?
+  heldBookingId         String?   @unique
+  acceptedQuoteId       String?   @unique
   acceptedQuoteOptionId String?
   acceptedQuoteSnapshot Json?
-  acceptedPriceCents Int?
-  acceptedAt         DateTime?
-  responseMessage    String?   @db.VarChar(2000)
-  responseMessageAt  DateTime?
+  acceptedPriceCents    Int?
+  acceptedAt            DateTime?
+  responseMessage       String?   @db.VarChar(2000)
+  responseMessageAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  convertedBooking Booking?      @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
-  heldBooking      Booking?      @relation("BookingRequestHeldBooking", fields: [heldBookingId], references: [id], onDelete: SetNull)
-  acceptedQuote    BookingRequestQuote? @relation("BookingRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: SetNull)
+  lodge            Lodge?                @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  convertedBooking Booking?              @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
+  heldBooking      Booking?              @relation("BookingRequestHeldBooking", fields: [heldBookingId], references: [id], onDelete: SetNull)
+  acceptedQuote    BookingRequestQuote?  @relation("BookingRequestAcceptedQuote", fields: [acceptedQuoteId], references: [id], onDelete: SetNull)
   quotes           BookingRequestQuote[]
   paymentLinks     PaymentLink[]
 
@@ -1381,7 +1408,7 @@ model BookingRequestQuote {
   createdAt              DateTime                  @default(now())
   updatedAt              DateTime                  @updatedAt
 
-  bookingRequest   BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
+  bookingRequest    BookingRequest  @relation(fields: [bookingRequestId], references: [id], onDelete: Cascade)
   acceptedByRequest BookingRequest? @relation("BookingRequestAcceptedQuote")
 
   @@unique([bookingRequestId, version])
@@ -1412,17 +1439,20 @@ model PaymentLink {
 
 // Admin-controlled settings for the public booking request flow (single row).
 model BookingRequestSettings {
-  id                      String   @id @default("default")
-  showPricingToNonMembers Boolean  @default(false)
-  quoteResponseTtlDays    Int      @default(14)
-  quoteReminderLeadDays   Int      @default(3)
+  id                               String   @id @default("default")
+  showPricingToNonMembers          Boolean  @default(false)
+  quoteResponseTtlDays             Int      @default(14)
+  quoteReminderLeadDays            Int      @default(3)
+  // Soft link for the phase-7 singleton-to-per-lodge conversion
+  // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
+  lodgeId                          String?
   // School attendee confirmation cadence (#1101): first prompt this many
   // days before check-in, then a reminder every N days until confirmed.
-  attendeeConfirmationLeadDays     Int @default(14)
-  attendeeConfirmationReminderDays Int @default(3)
-  updatedByMemberId       String?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  attendeeConfirmationLeadDays     Int      @default(14)
+  attendeeConfirmationReminderDays Int      @default(3)
+  updatedByMemberId                String?
+  createdAt                        DateTime @default(now())
+  updatedAt                        DateTime @updatedAt
 
   @@index([updatedByMemberId])
 }
@@ -1437,27 +1467,40 @@ model LodgeRoom {
   sortOrder Int      @default(0)
   active    Boolean  @default(true)
   notes     String?  @db.VarChar(500)
+  lodgeId   String   @default(dbgenerated("default_lodge_id()"))
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   beds                LodgeBed[]
   allocations         BedAllocation[]
   requestedByBookings Booking[]       @relation("BookingRequestedRoom")
+  lodge               Lodge           @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
-  @@unique([name])
+  // Per-lodge name uniqueness. lodgeId is NOT NULL (migration 20260708001100),
+  // so [lodgeId, name] is exact per lodge; no null-lodge rows remain.
+  @@unique([lodgeId, name])
   @@index([active, sortOrder])
+  @@index([lodgeId])
 }
 
 model Locker {
   id                  String   @id @default(cuid())
-  name                String   @unique @db.VarChar(200)
+  name                String   @db.VarChar(200)
   allocatedToMemberId String?
+  lodgeId             String   @default(dbgenerated("default_lodge_id()"))
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   allocatedTo Member? @relation("LockerAllocatedMember", fields: [allocatedToMemberId], references: [id], onDelete: SetNull)
+  lodge       Lodge   @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
+  // Re-scoped from global to per-lodge ahead of the contract release
+  // (expand-safe; see LodgeRoom). lodgeId is NOT NULL (migration 20260708001100),
+  // so [lodgeId, name] is exact per lodge; no null-lodge rows remain. App checks
+  // stay case-insensitive.
+  @@unique([lodgeId, name])
   @@index([allocatedToMemberId])
+  @@index([lodgeId])
 }
 
 model LodgeBed {
@@ -1507,6 +1550,9 @@ model BedAllocation {
 model BedAllocationSettings {
   id                    String   @id @default("default")
   autoAllocationEnabled Boolean  @default(true)
+  // Soft link for the phase-7 singleton-to-per-lodge conversion
+  // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
+  lodgeId               String?
   updatedByMemberId     String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1535,30 +1581,30 @@ model MemberFieldsSettings {
 // ---------------------------------------------------------------------------
 
 model Payment {
-  id                        String        @id @default(cuid())
-  bookingId                 String        @unique
-  amountCents               Int
-  source                    PaymentSource @default(STRIPE)
-  reference                 String?
-  stripePaymentIntentId     String?       @unique
-  stripePaymentMethodId     String?
-  stripeSetupIntentId       String?       @unique
-  stripeCustomerId          String?
-  xeroInvoiceId             String?       @unique
-  xeroInvoiceNumber         String?
-  status                    PaymentStatus @default(PENDING)
-  refundedAmountCents       Int           @default(0)
-  changeFeeCents            Int           @default(0)
-  additionalPaymentIntentId String?       @unique
-  additionalAmountCents     Int           @default(0)
-  additionalPaymentStatus   String? // PENDING, SUCCEEDED, FAILED
-  xeroRefundCreditNoteId    String? // Track Xero credit note to prevent duplicates
-  creditAppliedCents        Int           @default(0) // Account credit applied to this booking
-  internetBankingHoldSlots  Boolean       @default(false)
-  internetBankingHoldUntil  DateTime?
+  id                            String        @id @default(cuid())
+  bookingId                     String        @unique
+  amountCents                   Int
+  source                        PaymentSource @default(STRIPE)
+  reference                     String?
+  stripePaymentIntentId         String?       @unique
+  stripePaymentMethodId         String?
+  stripeSetupIntentId           String?       @unique
+  stripeCustomerId              String?
+  xeroInvoiceId                 String?       @unique
+  xeroInvoiceNumber             String?
+  status                        PaymentStatus @default(PENDING)
+  refundedAmountCents           Int           @default(0)
+  changeFeeCents                Int           @default(0)
+  additionalPaymentIntentId     String?       @unique
+  additionalAmountCents         Int           @default(0)
+  additionalPaymentStatus       String? // PENDING, SUCCEEDED, FAILED
+  xeroRefundCreditNoteId        String? // Track Xero credit note to prevent duplicates
+  creditAppliedCents            Int           @default(0) // Account credit applied to this booking
+  internetBankingHoldSlots      Boolean       @default(false)
+  internetBankingHoldUntil      DateTime?
   internetBankingHoldReleasedAt DateTime?
-  createdAt                 DateTime      @default(now())
-  updatedAt                 DateTime      @updatedAt
+  createdAt                     DateTime      @default(now())
+  updatedAt                     DateTime      @updatedAt
 
   // Relations
   booking            Booking                    @relation(fields: [bookingId], references: [id], onDelete: Restrict)
@@ -1739,6 +1785,7 @@ model PromoCode {
 
   // Relations
   redemptions    PromoRedemption[]
+  lodges         PromoCodeLodge[]
   allocations    PromoRedemptionAllocation[]
   assignments    PromoCodeAssignment[]
   workPartyEvent WorkPartyEvent?
@@ -1810,6 +1857,23 @@ model PromoRedemptionGuestTarget {
   @@index([bookingGuestId])
 }
 
+// Optional per-lodge promo restriction (ADR-001 resolved question 4). No rows
+// = the promo is redeemable at every lodge (the club-wide default). Rows =
+// redeemable only at the listed lodges, supporting "two of three lodges"
+// restrictions. Redemption validation compares against the booking's lodge.
+model PromoCodeLodge {
+  id          String   @id @default(cuid())
+  promoCodeId String
+  lodgeId     String
+  createdAt   DateTime @default(now())
+
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  lodge     Lodge     @relation(fields: [lodgeId], references: [id], onDelete: Cascade)
+
+  @@unique([promoCodeId, lodgeId])
+  @@index([lodgeId])
+}
+
 model PromoCodeAssignment {
   id          String   @id @default(cuid())
   promoCodeId String
@@ -1843,13 +1907,21 @@ model WorkPartyEvent {
   discountPercent Int      @default(100)
   active          Boolean  @default(true)
   promoCodeId     String   @unique
+  // Lodge the working bee is held at (lodge-scoping contract, audited
+  // 2026-07-03). Null = club-wide event bookable at any lodge (also the
+  // pre-migration meaning of every existing row). When set, bookings
+  // attending this event must be at this lodge, so the event's internal
+  // promo cannot be redeemed against a stay at the other property.
+  lodgeId         String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  lodge     Lodge?    @relation(fields: [lodgeId], references: [id], onDelete: SetNull)
 
   @@index([active])
   @@index([startDate, endDate])
+  @@index([lodgeId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1872,11 +1944,15 @@ model ChoreTemplate {
   frequencyDays        Int?
   frequencyDaysOfWeek  Int[]
   active               Boolean            @default(true)
+  lodgeId              String             @default(dbgenerated("default_lodge_id()"))
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
   // Relations
   assignments ChoreAssignment[]
+  lodge       Lodge             @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+
+  @@index([lodgeId])
 }
 
 model ChoreAssignment {
@@ -1913,10 +1989,25 @@ model CancellationPolicy {
   creditRefundPercentage Int? // Credit refund percentage (null = same as refundPercentage)
   fixedFeeCents          Int      @default(0) // Fixed fee deducted from card refunds per tier
   creditFixedFeeCents    Int? // Fixed fee deducted from credit refunds per tier (null = same as fixedFeeCents)
+  // Null = club-wide default tier. Rows with a lodgeId are that lodge's
+  // override set and replace (never merge with) the club-wide tiers
+  // (ADR-001 resolved question 3). Permanently nullable.
+  lodgeId                String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  @@unique([daysBeforeStay])
+  lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+
+  // Tier uniqueness is per partition: [lodgeId, daysBeforeStay]. PostgreSQL
+  // treats nulls as distinct here, so this does not hard-enforce uniqueness
+  // within the club-wide (null lodgeId) partition — the admin route enforces
+  // it app-side inside a Serializable replace transaction, and the phase-2
+  // contract release adds the partial unique index over the null partition
+  // (WHERE "lodgeId" IS NULL) to restore the database-level guarantee
+  // (Prisma cannot express partial indexes in this schema, and the drift
+  // check compares migrations to the schema).
+  @@unique([lodgeId, daysBeforeStay])
+  @@index([lodgeId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1932,20 +2023,55 @@ model BookingPeriod {
   nonMemberHoldDays    Int      @default(7)
   cancellationRules    Json // Array of {daysBeforeStay: number, refundPercentage: number}
   active               Boolean  @default(true)
+  // Null = applies club-wide; a lodgeId scopes the period to that lodge
+  // (ADR-001 resolved question 3). Permanently nullable.
+  lodgeId              String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
+  lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+
   @@index([startDate, endDate])
+  @@index([lodgeId])
 }
 
 // ---------------------------------------------------------------------------
 // Booking Defaults (global settings, single row)
 // ---------------------------------------------------------------------------
 
+// Cross-lodge waitlist queue order (ADR-004, owner decision 1): when
+// capacity frees at a lodge, OWN_LODGE_FIRST serves that lodge's own
+// waitlist before cross-lodge opt-ins (each in join order); MERGED ranks
+// everyone eligible purely by when they joined. Club-wide policy.
+enum WaitlistCrossLodgeOrder {
+  OWN_LODGE_FIRST
+  MERGED
+}
+
 model BookingDefaults {
-  id                   String  @id @default("default")
-  nonMemberHoldEnabled Boolean @default(true)
-  nonMemberHoldDays    Int     @default(7)
+  id                      String                  @id @default("default")
+  nonMemberHoldEnabled    Boolean                 @default(true)
+  nonMemberHoldDays       Int                     @default(7)
+  waitlistCrossLodgeOrder WaitlistCrossLodgeOrder @default(OWN_LODGE_FIRST)
+  // Soft link for the phase-7 singleton-to-per-lodge conversion
+  // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
+  lodgeId                 String?
+}
+
+// Alternate lodges a waitlisted member would also accept (ADR-004). The
+// entry itself stays bound to Booking.lodgeId — these rows only widen what
+// the waitlist processor may offer. Rows are deleted with their booking.
+model BookingWaitlistAlternateLodge {
+  id        String   @id @default(cuid())
+  bookingId String
+  lodgeId   String
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  lodge   Lodge   @relation("WaitlistAlternateLodge", fields: [lodgeId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, lodgeId])
+  @@index([lodgeId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1960,11 +2086,17 @@ model MinimumStayPolicy {
   triggerDays   Int[] // Days of week: 0=Sunday, 1=Monday, ..., 6=Saturday
   minimumNights Int
   active        Boolean  @default(true)
+  // Null = applies club-wide; a lodgeId scopes the policy to that lodge
+  // (ADR-001 resolved question 3). Permanently nullable.
+  lodgeId       String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+
   @@index([startDate, endDate])
   @@index([active])
+  @@index([lodgeId])
 }
 
 // ---------------------------------------------------------------------------
@@ -1987,22 +2119,22 @@ model XeroToken {
 // ---------------------------------------------------------------------------
 
 model FinanceSyncRun {
-  id                  String                @id @default(cuid())
+  id                  String                         @id @default(cuid())
   workflow            String
   trigger             FinanceSyncRunTrigger
-  status              FinanceSyncRunStatus  @default(RUNNING)
-  startedAt           DateTime              @default(now())
+  status              FinanceSyncRunStatus           @default(RUNNING)
+  startedAt           DateTime                       @default(now())
   completedAt         DateTime?
-  snapshotCount       Int                   @default(0)
-  totalRowCount       Int                   @default(0)
+  snapshotCount       Int                            @default(0)
+  totalRowCount       Int                            @default(0)
   xeroTenantId        String?
   requestedByMemberId String?
   resultSummary       Json?
   errorSummary        String?
   errorDetails        Json?
   metadata            Json?
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
+  createdAt           DateTime                       @default(now())
+  updatedAt           DateTime                       @updatedAt
   snapshots           FinanceSnapshot[]
   monthlyBalances     FinanceAccountMonthlyBalance[]
 
@@ -2072,16 +2204,16 @@ model FinanceAccountMonthlyBalance {
 }
 
 model FinanceReportCategory {
-  id        String                    @id @default(cuid())
+  id        String                         @id @default(cuid())
   kind      FinanceReportCategoryKind
-  name      String                    @db.VarChar(120)
+  name      String                         @db.VarChar(120)
   // Optional free-text sub-heading used to group categories into labelled
   // sub-sections (with sub-totals) in the finance dashboard.
-  subtype   String?                   @db.VarChar(120)
-  sortOrder Int                       @default(0)
-  archived  Boolean                   @default(false)
-  createdAt DateTime                  @default(now())
-  updatedAt DateTime                  @updatedAt
+  subtype   String?                        @db.VarChar(120)
+  sortOrder Int                            @default(0)
+  archived  Boolean                        @default(false)
+  createdAt DateTime                       @default(now())
+  updatedAt DateTime                       @updatedAt
   mappings  FinanceReportCategoryMapping[]
 
   @@unique([kind, name])
@@ -2111,20 +2243,20 @@ model FinanceReportCategoryMapping {
 // ---------------------------------------------------------------------------
 
 model XeroSyncOperation {
-  id                String    @id @default(cuid())
-  direction         String
-  entityType        String
-  operationType     String
-  localModel        String?
-  localId           String?
-  status            String
-  idempotencyKey    String?
-  correlationKey    String?
-  attemptCount      Int       @default(1)
-  replayable        Boolean   @default(true)
-  lastErrorCode     String?
-  lastErrorMessage  String?
-  requestPayload    Json?
+  id                     String    @id @default(cuid())
+  direction              String
+  entityType             String
+  operationType          String
+  localModel             String?
+  localId                String?
+  status                 String
+  idempotencyKey         String?
+  correlationKey         String?
+  attemptCount           Int       @default(1)
+  replayable             Boolean   @default(true)
+  lastErrorCode          String?
+  lastErrorMessage       String?
+  requestPayload         Json?
   // Denormalized copy of the outbox discriminator, captured once at enqueue in
   // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
   // #1208). Dispatch reads queueType from `requestPayload` (not this column),
@@ -2135,23 +2267,23 @@ model XeroSyncOperation {
   // every row still awaiting dispatch (PENDING / WAITING_PAYMENT -- the set #1272
   // will scan) the column faithfully mirrors the enqueue-time queueType. Null for
   // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
-  queueType         String?
-  responsePayload   Json?
-  xeroObjectType    String?
-  xeroObjectId      String?
-  xeroObjectNumber  String?
-  xeroObjectUrl     String?
-  createdByMemberId String?
-  startedAt         DateTime?
-  completedAt       DateTime?
+  queueType              String?
+  responsePayload        Json?
+  xeroObjectType         String?
+  xeroObjectId           String?
+  xeroObjectNumber       String?
+  xeroObjectUrl          String?
+  createdByMemberId      String?
+  startedAt              DateTime?
+  completedAt            DateTime?
   // Operator override: a failed operation that was resolved directly in Xero.
   // When set, the operation is excluded from the active-failure overview and the
   // stuck-state dashboard count.
   manuallyResolvedAt     DateTime?
   manuallyResolvedReason String?
   manuallyResolvedById   String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   @@index([status, createdAt])
   @@index([direction, status, createdAt])
@@ -2269,13 +2401,13 @@ model XeroAdminCache {
 }
 
 model WhakapapaReportCache {
-  id        String   @id @default(cuid())
-  source    String   @unique
-  payload   Json
-  fetchedAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  source      String    @unique
+  payload     Json
+  fetchedAt   DateTime  @default(now())
   frozenUntil DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([fetchedAt])
   @@index([frozenUntil])
@@ -2484,6 +2616,7 @@ model ClubModuleSettings {
   hutLeaders              Boolean  @default(true)
   communications          Boolean  @default(true)
   skifieldConditions      Boolean  @default(true)
+  multiLodge              Boolean  @default(false)
   twoFactor               Boolean  @default(false)
   analytics               Boolean  @default(false)
   updatedByMemberId       String?
@@ -2493,10 +2626,58 @@ model ClubModuleSettings {
   @@index([updatedByMemberId])
 }
 
+// A physical lodge property. Every deployment has at least one row (seeded by
+// migration/seed). Lodge management UI is gated by the multiLodge Admin Module,
+// but this table is core: booking data will scope to it from phase 2 of
+// docs/multi-lodge/implementation-plan.md onward. While exactly one active
+// lodge exists the UI shows no lodge concept (ADR-002 presentation rule).
+model Lodge {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  active     Boolean  @default(true)
+  doorCode   String?  @db.VarChar(80)
+  travelNote String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // lodgeId is nullable on these tables during the expand release
+  // (docs/multi-lodge/implementation-plan.md phase 2); a contract release
+  // enforces NOT NULL and per-lodge uniqueness once every writer sets it. The
+  // policy tables (CancellationPolicy, BookingPeriod, MinimumStayPolicy) stay
+  // permanently nullable: null rows are the club-wide defaults (ADR-001).
+  rooms                    LodgeRoom[]
+  lockers                  Locker[]
+  seasons                  Season[]
+  bookings                 Booking[]
+  choreTemplates           ChoreTemplate[]
+  cancellationPolicies     CancellationPolicy[]
+  bookingPeriods           BookingPeriod[]
+  minimumStayPolicies      MinimumStayPolicy[]
+  hutLeaderAssignments     HutLeaderAssignment[]
+  memberAccess             MemberLodgeAccess[]
+  promoCodes               PromoCodeLodge[]
+  waitlistOfferedBookings  Booking[]                       @relation("BookingWaitlistOfferedLodge")
+  waitlistAlternateEntries BookingWaitlistAlternateLodge[] @relation("WaitlistAlternateLodge")
+  workPartyEvents          WorkPartyEvent[]
+  instructions             LodgeInstruction[]
+  bookingRequests          BookingRequest[]
+}
+
 model LodgeSettings {
   id                     String   @id @default("default")
   capacity               Int?
   hutLeaderLookaheadDays Int      @default(14)
+  // Per-lodge school-group soft cap (the bed count above which a school
+  // group needs a club member to host). Null falls back to the code
+  // default. Per-lodge like capacity; resolves via the default lodge in a
+  // single-lodge club (ADR-002). Warning-only — the hard limit stays the
+  // lodge's capacity.
+  schoolGroupSoftCap     Int?
+  // Soft link to the lodge this settings row belongs to. Becomes the row key
+  // when singleton settings convert to per-lodge rows (phase 7); until then
+  // the "default" row keeps serving the sole lodge.
+  lodgeId                String?
   updatedByMemberId      String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @default(now()) @updatedAt
@@ -2845,13 +3026,52 @@ model HutLeaderAssignment {
   startDate    DateTime @db.Date
   endDate      DateTime @db.Date
   hutLeaderPin String?
+  // A hut leader serves one lodge (ADR-001 resolved question 5). Nullable
+  // during the phase-4 expand release (null = the club's default lodge); a
+  // later contract release enforces NOT NULL.
+  lodgeId      String   @default(dbgenerated("default_lodge_id()"))
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  lodge  Lodge  @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
   @@index([memberId])
   @@index([startDate, endDate])
+  @@index([lodgeId])
+}
+
+// Per-lodge access grants (docs/multi-lodge/lodge-scoping-contract.md,
+// ADR-001 resolved questions 2 and 5).
+//
+// BOOKING_RESTRICTION: a member with any rows of this kind may book ONLY the
+// listed lodges. No rows = default-open (every active member books every
+// active lodge) — the club-wide default that most members keep forever.
+//
+// STAFF: binds a lodge-operational account (shared kiosk login) to a lodge so
+// its kiosk screens and PIN logins scope to that property. ADMIN access is
+// club-wide and never expressed through this table.
+enum LodgeAccessKind {
+  BOOKING_RESTRICTION
+  STAFF
+}
+
+model MemberLodgeAccess {
+  id          String          @id @default(cuid())
+  memberId    String
+  lodgeId     String
+  kind        LodgeAccessKind
+  createdById String?
+  createdAt   DateTime        @default(now())
+
+  member    Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  lodge     Lodge   @relation(fields: [lodgeId], references: [id], onDelete: Cascade)
+  createdBy Member? @relation("MemberLodgeAccessCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([memberId, lodgeId, kind])
+  @@index([lodgeId])
+  @@index([memberId, kind])
+  @@index([createdById])
 }
 
 // ---------------------------------------------------------------------------
@@ -2870,12 +3090,23 @@ enum LodgeInstructionKey {
 
 model LodgeInstruction {
   id                String              @id @default(cuid())
-  key               LodgeInstructionKey @unique
+  key               LodgeInstructionKey
   contentHtml       String
   updatedByMemberId String?
+  // Per-lodge override partition (lodge-scoping contract, audited
+  // 2026-07-03): null rows are the club-wide documents; a row for
+  // [lodgeId, key] replaces the club-wide document of that key at that
+  // lodge (replace, never merge — same rule as the booking policies).
+  // Nulls are distinct under the composite unique, so the admin route
+  // guards the club-wide partition until the contract release adds a
+  // null-partition partial unique index.
+  lodgeId           String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
 
+  lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Cascade)
+
+  @@unique([lodgeId, key])
   @@index([updatedByMemberId])
 }
 
@@ -3395,14 +3626,14 @@ enum InductionSectionPriority {
 }
 
 model InductionChecklistTemplate {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   name        String
   version     String
   kind        InductionKind @default(NEW_MEMBER)
   sourceLabel String?
-  isActive    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isActive    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   sections   InductionChecklistSection[]
   inductions MemberInduction[]
@@ -3443,17 +3674,17 @@ model InductionChecklistItem {
 }
 
 model MemberInduction {
-  id                String                     @id @default(cuid())
-  memberId          String
-  templateId        String
-  applicationId     String?                    @unique
-  kind              InductionKind              @default(NEW_MEMBER)
-  status            InductionStatus            @default(IN_PROGRESS)
-  requiredSignOffs  Int                        @default(2)
-  inductionDate     DateTime?
-  completedAt       DateTime?
-  completionSource  InductionCompletionSource?
-  finalComments     String?
+  id                 String                     @id @default(cuid())
+  memberId           String
+  templateId         String
+  applicationId      String?                    @unique
+  kind               InductionKind              @default(NEW_MEMBER)
+  status             InductionStatus            @default(IN_PROGRESS)
+  requiredSignOffs   Int                        @default(2)
+  inductionDate      DateTime?
+  completedAt        DateTime?
+  completionSource   InductionCompletionSource?
+  finalComments      String?
   voidedReason       String?
   createdByMemberId  String?
   selfAssessedAt     DateTime?
@@ -3461,9 +3692,9 @@ model MemberInduction {
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
 
-  member          Member                             @relation("MemberInductions", fields: [memberId], references: [id], onDelete: Cascade)
-  template        InductionChecklistTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  application     MemberApplication?                 @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  member          Member                          @relation("MemberInductions", fields: [memberId], references: [id], onDelete: Cascade)
+  template        InductionChecklistTemplate      @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  application     MemberApplication?              @relation(fields: [applicationId], references: [id], onDelete: SetNull)
   itemResults     MemberInductionItemResult[]
   signOffs        MemberInductionSignOff[]
   assignedSigners MemberInductionAssignedSigner[]

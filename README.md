@@ -74,8 +74,8 @@ recommended reading paths.
    run the seed command, then change the seeded admin password on first login.
 5. After sign-in, use **Admin > Modules** to set club-level activation for
    optional modules. Kiosk, chores, finance dashboard, waitlist, Xero, bed
-   allocation, Internet Banking payments, address autocomplete, two-factor
-   authentication, and Google Analytics default off until an admin enables
+   allocation, multiple lodges, Internet Banking payments, address autocomplete,
+   two-factor authentication, and Google Analytics default off until an admin enables
    them. General-purpose modules default on and can be disabled there.
 6. Use **Admin > Members** to assign access roles. `Full Admin` keeps all
    admin permissions and is never editable; `Read-only Admin`,

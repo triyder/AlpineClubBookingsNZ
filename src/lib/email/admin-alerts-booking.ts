@@ -183,14 +183,18 @@ export async function sendAdminCapacityWarningAlert(
     availableBeds: number;
   }>,
   lodgeCapacity: number,
+  // Lodge the warning is about; null for single-lodge clubs (ADR-002),
+  // which keeps the pre-multi-lodge subject and body unchanged.
+  lodgeName?: string | null,
 ) {
   await sendToAdmins({
-    subject: `Capacity Warning: ${days.length} high-occupancy day${days.length > 1 ? "s" : ""} ahead`,
-    html: adminCapacityWarningTemplate(days, lodgeCapacity),
+    subject: `Capacity Warning: ${days.length} high-occupancy day${days.length > 1 ? "s" : ""} ahead${lodgeName ? ` at ${lodgeName}` : ""}`,
+    html: adminCapacityWarningTemplate(days, lodgeCapacity, lodgeName),
     templateName: "admin-capacity-warning",
     templateData: {
       count: days.length,
       s: days.length === 1 ? "" : "s",
+      lodgeName: lodgeName ?? "",
       date: days.map((day) => formatNZDate(day.date)).join(", "),
       occupiedBeds: days.map((day) => day.occupiedBeds).join(", "),
       availableBeds: days.map((day) => day.availableBeds).join(", "),

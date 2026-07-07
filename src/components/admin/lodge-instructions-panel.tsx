@@ -15,6 +15,10 @@ import {
   WysiwygEditor,
   type WysiwygEditorHandle,
 } from "@/components/admin/page-content-panel";
+import {
+  PolicyScopeSelect,
+  usePolicyScopeLodgeName,
+} from "@/components/admin/booking-policies/policy-scope-select";
 
 // Mirrors LODGE_INSTRUCTION_KEYS / LODGE_INSTRUCTION_LABELS in
 // src/lib/lodge-instructions.ts (that module is server-only).
@@ -42,7 +46,20 @@ type ApiDocument = {
   key: DocumentKey;
   contentHtml: string;
   updatedAt: string | null;
+  hasOverride?: boolean;
 };
+
+type KeyedRecord<T> = Record<DocumentKey, T>;
+
+function emptyRecord<T>(value: T): KeyedRecord<T> {
+  return { OPEN: value, CLOSE: value, DAY_TO_DAY: value };
+}
+
+function partitionUrl(lodgeId: string | null): string {
+  return lodgeId
+    ? `/api/admin/lodge-instructions?lodgeId=${encodeURIComponent(lodgeId)}`
+    : "/api/admin/lodge-instructions";
+}
 
 function formatUpdatedAt(value: string | null): string {
   if (!value) {
@@ -55,68 +72,68 @@ function formatUpdatedAt(value: string | null): string {
 }
 
 export function LodgeInstructionsPanel() {
+  // Scope (lodge-scoping contract): null edits the club-wide (null lodgeId)
+  // documents; a lodge edits that lodge's override rows, each of which
+  // replaces the club-wide document of that key at that lodge. The scope
+  // control renders nothing while fewer than two lodges exist.
+  const [scopeLodgeId, setScopeLodgeId] = useState<string | null>(null);
+  const scopeLodgeName = usePolicyScopeLodgeName(scopeLodgeId);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<DocumentKey, string>>({
-    OPEN: "",
-    CLOSE: "",
-    DAY_TO_DAY: "",
-  });
-  const [updatedAt, setUpdatedAt] = useState<
-    Record<DocumentKey, string | null>
-  >({
-    OPEN: null,
-    CLOSE: null,
-    DAY_TO_DAY: null,
-  });
+  const [drafts, setDrafts] = useState<KeyedRecord<string>>(emptyRecord(""));
+  const [updatedAt, setUpdatedAt] = useState<KeyedRecord<string | null>>(
+    emptyRecord(null),
+  );
+  const [hasOverride, setHasOverride] = useState<KeyedRecord<boolean>>(
+    emptyRecord(false),
+  );
+  // Keys where the admin has started an override (seeded from the club-wide
+  // content) but not saved it yet.
+  const [pendingOverride, setPendingOverride] = useState<
+    KeyedRecord<boolean>
+  >(emptyRecord(false));
   const [savingKey, setSavingKey] = useState<DocumentKey | null>(null);
-  const editorRefs = useRef<
-    Record<DocumentKey, WysiwygEditorHandle | null>
-  >({
-    OPEN: null,
-    CLOSE: null,
-    DAY_TO_DAY: null,
-  });
+  const editorRefs = useRef<KeyedRecord<WysiwygEditorHandle | null>>(
+    emptyRecord(null),
+  );
 
-  // Load all three documents for editing.
+  // Load all three documents of the selected partition for editing.
   const loadDocuments = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch("/api/admin/lodge-instructions", {
+      const res = await fetch(partitionUrl(scopeLodgeId), {
         credentials: "same-origin",
       });
       if (!res.ok) {
         throw new Error("load-failed");
       }
       const body = (await res.json()) as { documents: ApiDocument[] };
-      const nextDrafts = { OPEN: "", CLOSE: "", DAY_TO_DAY: "" } as Record<
-        DocumentKey,
-        string
-      >;
-      const nextUpdatedAt = {
-        OPEN: null,
-        CLOSE: null,
-        DAY_TO_DAY: null,
-      } as Record<DocumentKey, string | null>;
+      const nextDrafts = emptyRecord("");
+      const nextUpdatedAt = emptyRecord<string | null>(null);
+      const nextHasOverride = emptyRecord(false);
       for (const doc of body.documents) {
         nextDrafts[doc.key] = doc.contentHtml;
         nextUpdatedAt[doc.key] = doc.updatedAt;
+        nextHasOverride[doc.key] = doc.hasOverride === true;
       }
       setDrafts(nextDrafts);
       setUpdatedAt(nextUpdatedAt);
+      setHasOverride(nextHasOverride);
+      setPendingOverride(emptyRecord(false));
     } catch {
       setLoadError("Failed to load lodge instructions. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scopeLodgeId]);
 
   useEffect(() => {
     loadDocuments();
   }, [loadDocuments]);
 
-  // Save a single document; content is sanitised again server-side.
+  // Save a single document into the selected partition; content is
+  // sanitised again server-side.
   async function saveDocument(key: DocumentKey, title: string) {
     const contentHtml = editorRefs.current[key]?.getHtml() ?? drafts[key];
     setSavingKey(key);
@@ -125,7 +142,11 @@ export function LodgeInstructionsPanel() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ key, contentHtml }),
+        body: JSON.stringify({
+          key,
+          contentHtml,
+          ...(scopeLodgeId ? { lodgeId: scopeLodgeId } : {}),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -135,7 +156,15 @@ export function LodgeInstructionsPanel() {
       const body = (await res.json()) as { document: ApiDocument };
       setDrafts((prev) => ({ ...prev, [key]: body.document.contentHtml }));
       setUpdatedAt((prev) => ({ ...prev, [key]: body.document.updatedAt }));
-      toast.success(`${title} saved`);
+      if (scopeLodgeId) {
+        setHasOverride((prev) => ({ ...prev, [key]: true }));
+        setPendingOverride((prev) => ({ ...prev, [key]: false }));
+      }
+      toast.success(
+        scopeLodgeId
+          ? `${title} override saved for ${scopeLodgeName ?? "lodge"}`
+          : `${title} saved`,
+      );
     } catch {
       toast.error(`Failed to save ${title}`);
     } finally {
@@ -143,13 +172,83 @@ export function LodgeInstructionsPanel() {
     }
   }
 
+  // Start a lodge override as a copy of the club-wide document, so the
+  // admin adjusts existing content rather than writing from a blank slate.
+  async function createOverride(key: DocumentKey, title: string) {
+    try {
+      const res = await fetch(partitionUrl(null), {
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        throw new Error("load-failed");
+      }
+      const body = (await res.json()) as { documents: ApiDocument[] };
+      const clubWide = body.documents.find((doc) => doc.key === key);
+      setDrafts((prev) => ({ ...prev, [key]: clubWide?.contentHtml ?? "" }));
+      setPendingOverride((prev) => ({ ...prev, [key]: true }));
+    } catch {
+      toast.error(`Failed to load the club-wide ${title.toLowerCase()} content`);
+    }
+  }
+
+  // Remove a lodge's override row so the lodge reverts to the club-wide
+  // document (explicit remove flag; see the admin route).
+  async function removeOverride(key: DocumentKey, title: string) {
+    if (
+      !window.confirm(
+        `Remove ${scopeLodgeName ?? "this lodge"}'s ${title.toLowerCase()} override? Hut leaders there will see the club-wide document again.`,
+      )
+    ) {
+      return;
+    }
+    setSavingKey(key);
+    try {
+      const res = await fetch("/api/admin/lodge-instructions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ key, lodgeId: scopeLodgeId, remove: true }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? `Failed to remove the ${title} override`);
+        return;
+      }
+      setDrafts((prev) => ({ ...prev, [key]: "" }));
+      setUpdatedAt((prev) => ({ ...prev, [key]: null }));
+      setHasOverride((prev) => ({ ...prev, [key]: false }));
+      setPendingOverride((prev) => ({ ...prev, [key]: false }));
+      toast.success(`${title} override removed — this lodge uses the club-wide document`);
+    } catch {
+      toast.error(`Failed to remove the ${title} override`);
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  const scopeIsLodge = scopeLodgeId !== null;
+
   if (loading) {
-    return <p className="text-sm text-slate-500">Loading lodge instructions...</p>;
+    return (
+      <div className="space-y-6">
+        <PolicyScopeSelect
+          value={scopeLodgeId}
+          onChange={setScopeLodgeId}
+          id="lodge-instructions-scope"
+        />
+        <p className="text-sm text-slate-500">Loading lodge instructions...</p>
+      </div>
+    );
   }
 
   if (loadError) {
     return (
       <div className="space-y-3">
+        <PolicyScopeSelect
+          value={scopeLodgeId}
+          onChange={setScopeLodgeId}
+          id="lodge-instructions-scope"
+        />
         <p className="text-sm text-red-600">{loadError}</p>
         <Button type="button" variant="outline" onClick={loadDocuments}>
           Retry
@@ -160,41 +259,107 @@ export function LodgeInstructionsPanel() {
 
   return (
     <div className="space-y-6">
-      {DOCUMENTS.map((doc) => (
-        <Card key={doc.key}>
-          <CardHeader>
-            <CardTitle>{doc.title}</CardTitle>
-            <CardDescription>
-              {doc.description} Last saved: {formatUpdatedAt(updatedAt[doc.key])}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {/* Text tokens ({{club-name}} etc.) resolve on the reader and
-                kiosk surfaces; the token help button lists what's available. */}
-            <WysiwygEditor
-              ref={(handle) => {
-                editorRefs.current[doc.key] = handle;
-              }}
-              value={drafts[doc.key]}
-              onChange={(html) =>
-                setDrafts((prev) => ({ ...prev, [doc.key]: html }))
-              }
-              placeholder={`Write the ${doc.title.toLowerCase()} instructions...`}
-              tokenHelpContext="lodge-instructions"
-            />
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                onClick={() => saveDocument(doc.key, doc.title)}
-                disabled={savingKey !== null}
-              >
-                <Save className="mr-2 h-4 w-4" />
-                {savingKey === doc.key ? "Saving..." : `Save ${doc.title}`}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+      <PolicyScopeSelect
+        value={scopeLodgeId}
+        onChange={setScopeLodgeId}
+        id="lodge-instructions-scope"
+      />
+
+      {DOCUMENTS.map((doc) => {
+        const showEditor =
+          !scopeIsLodge || hasOverride[doc.key] || pendingOverride[doc.key];
+        return (
+          <Card key={doc.key}>
+            <CardHeader>
+              <CardTitle>
+                {scopeIsLodge
+                  ? `${doc.title} — ${scopeLodgeName ?? "Lodge"} override`
+                  : doc.title}
+              </CardTitle>
+              <CardDescription>
+                {scopeIsLodge
+                  ? `Replaces the club-wide ${doc.title.toLowerCase()} document for this lodge.`
+                  : doc.description}{" "}
+                Last saved: {formatUpdatedAt(updatedAt[doc.key])}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!showEditor ? (
+                <>
+                  <p className="text-sm text-slate-600">
+                    {scopeLodgeName ?? "This lodge"} uses the club-wide{" "}
+                    {doc.title.toLowerCase()} document. An override replaces it
+                    entirely for this lodge.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => createOverride(doc.key, doc.title)}
+                    disabled={savingKey !== null}
+                  >
+                    Create override (copies club-wide content)
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <WysiwygEditor
+                    key={`${scopeLodgeId ?? "club-wide"}-${doc.key}-${pendingOverride[doc.key] ? "pending" : "saved"}`}
+                    ref={(handle) => {
+                      editorRefs.current[doc.key] = handle;
+                    }}
+                    value={drafts[doc.key]}
+                    onChange={(html) =>
+                      setDrafts((prev) => ({ ...prev, [doc.key]: html }))
+                    }
+                    placeholder={`Write the ${doc.title.toLowerCase()} instructions...`}
+                    tokenHelpContext="lodge-instructions"
+                  />
+                  <div className="flex flex-wrap items-center justify-end gap-3">
+                    {scopeIsLodge && pendingOverride[doc.key] ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setPendingOverride((prev) => ({
+                            ...prev,
+                            [doc.key]: false,
+                          }));
+                          setDrafts((prev) => ({ ...prev, [doc.key]: "" }));
+                        }}
+                        disabled={savingKey !== null}
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                    {scopeIsLodge && hasOverride[doc.key] ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => removeOverride(doc.key, doc.title)}
+                        disabled={savingKey !== null}
+                      >
+                        Remove override
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      onClick={() => saveDocument(doc.key, doc.title)}
+                      disabled={savingKey !== null}
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      {savingKey === doc.key
+                        ? "Saving..."
+                        : scopeIsLodge
+                          ? "Save Override"
+                          : `Save ${doc.title}`}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }

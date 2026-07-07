@@ -114,7 +114,9 @@ describe("non-member hold policy admin API", () => {
   });
 
   it("returns the default enabled flag with the hold threshold", async () => {
-    const res = await getDefaultPolicy();
+    const res = await getDefaultPolicy(
+      new NextRequest("http://localhost/api/admin/booking-policies/cancellation"),
+    );
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
       nonMemberHoldEnabled: false,

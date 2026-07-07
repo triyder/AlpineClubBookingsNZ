@@ -18,6 +18,7 @@ import {
   type UnallocatedGuestNight,
 } from "@/lib/bed-allocation";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { prisma } from "@/lib/prisma";
 
@@ -219,10 +220,33 @@ export function parseBedAllocationDateRange(input: {
 
 async function getBedAllocationSettings(
   db: BedAllocationDb = prisma,
+  // Lodge scope (lodge-scoping contract): the lodge's own row (id =
+  // lodgeId) wins; else the legacy "default" row applies when unlinked or
+  // soft-linked to this lodge; else code defaults.
+  lodgeId?: string | null,
 ): Promise<BedAllocationSettingsPayload> {
+  if (lodgeId && lodgeId !== BED_ALLOCATION_SETTINGS_ID) {
+    const ownRow = await db.bedAllocationSettings.findUnique({
+      where: { id: lodgeId },
+    });
+    if (ownRow) {
+      return {
+        autoAllocationEnabled: ownRow.autoAllocationEnabled,
+        updatedByMemberId: ownRow.updatedByMemberId,
+        updatedAt: ownRow.updatedAt.toISOString(),
+      };
+    }
+  }
   const record = await db.bedAllocationSettings.findUnique({
     where: { id: BED_ALLOCATION_SETTINGS_ID },
   });
+  if (record && lodgeId && record.lodgeId && record.lodgeId !== lodgeId) {
+    return {
+      autoAllocationEnabled: true,
+      updatedByMemberId: null,
+      updatedAt: null,
+    };
+  }
 
   return {
     autoAllocationEnabled: record?.autoAllocationEnabled ?? true,
@@ -235,18 +259,38 @@ export async function updateBedAllocationSettings(input: {
   autoAllocationEnabled: boolean;
   updatedByMemberId: string;
   db?: BedAllocationDb;
+  // Lodge scope: the legacy "default" row keeps serving the lodge it was
+  // soft-linked to (and single-lodge clubs); other lodges get their own
+  // row keyed by lodge id. An unlinked legacy row is claimed on write.
+  lodgeId?: string | null;
 }): Promise<BedAllocationSettingsPayload> {
   const db = input.db ?? prisma;
-  const record = await db.bedAllocationSettings.upsert({
+  const legacy = await db.bedAllocationSettings.findUnique({
     where: { id: BED_ALLOCATION_SETTINGS_ID },
+  });
+  const targetsLegacyRow =
+    !input.lodgeId ||
+    !legacy ||
+    legacy.lodgeId === null ||
+    legacy.lodgeId === input.lodgeId;
+  const targetId = targetsLegacyRow
+    ? BED_ALLOCATION_SETTINGS_ID
+    : input.lodgeId!;
+
+  const record = await db.bedAllocationSettings.upsert({
+    where: { id: targetId },
     create: {
-      id: BED_ALLOCATION_SETTINGS_ID,
+      id: targetId,
       autoAllocationEnabled: input.autoAllocationEnabled,
       updatedByMemberId: input.updatedByMemberId,
+      lodgeId: input.lodgeId ?? null,
     },
     update: {
       autoAllocationEnabled: input.autoAllocationEnabled,
       updatedByMemberId: input.updatedByMemberId,
+      ...(input.lodgeId && (!legacy || legacy.lodgeId === null) && targetsLegacyRow
+        ? { lodgeId: input.lodgeId }
+        : {}),
     },
   });
 
@@ -257,8 +301,15 @@ export async function updateBedAllocationSettings(input: {
   };
 }
 
-async function listBedAllocationRooms(db: BedAllocationDb = prisma) {
+export async function listBedAllocationRooms(
+  db: BedAllocationDb = prisma,
+  lodgeId?: string,
+) {
   return db.lodgeRoom.findMany({
+    // Null-tolerant filter: rooms without a lodgeId (pre-backfill or written
+    // by a draining old colour during the expand deploy) show under every
+    // lodge.
+    where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
     include: {
       beds: {
         orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { id: "asc" }],
@@ -270,17 +321,22 @@ async function listBedAllocationRooms(db: BedAllocationDb = prisma) {
 
 export async function getRoomsAndBedsConfiguration(
   db: BedAllocationDb = prisma,
+  requestedLodgeId?: string,
 ): Promise<RoomsAndBedsConfigurationPayload> {
-  const [rooms, capacity] = await Promise.all([
-    listBedAllocationRooms(db),
-    getLodgeCapacityStatus(db),
+  const lodgeId = requestedLodgeId ?? (await getDefaultLodgeId(db));
+  const rooms = await listBedAllocationRooms(db, lodgeId);
+  const capacity = await getLodgeCapacityStatus(lodgeId, db);
+  // Import seeds the club's first lodge only, so the offer keys off the
+  // whole tables being empty, not just the selected lodge's slice.
+  const [totalRoomCount, totalBedCount] = await Promise.all([
+    db.lodgeRoom.count(),
+    db.lodgeBed.count(),
   ]);
-  const bedCount = rooms.reduce((total, room) => total + room.beds.length, 0);
 
   return {
     rooms: serializeRooms(rooms),
     capacity,
-    canImportFromConfig: rooms.length === 0 && bedCount === 0,
+    canImportFromConfig: totalRoomCount === 0 && totalBedCount === 0,
     configBeds: clubConfig.beds.map((bed) => ({
       id: bed.id,
       name: bed.name,
@@ -331,6 +387,7 @@ export async function importRoomsAndBedsFromClubConfig(input: {
   const db = input.db ?? prisma;
   await assertRoomBedTablesEmpty(db);
 
+  const lodgeId = await getDefaultLodgeId(db);
   const seenNames = new Set<string>();
   let createdRoomCount = 0;
   let createdBedCount = 0;
@@ -342,6 +399,7 @@ export async function importRoomsAndBedsFromClubConfig(input: {
         sortOrder: roomIndex + 1,
         active: true,
         notes: `${configBed.type} room imported from club config.`,
+        lodgeId,
       },
     });
     createdRoomCount += 1;
@@ -373,16 +431,121 @@ export async function createBedAllocationRoom(input: {
   sortOrder?: number;
   active?: boolean;
   notes?: string | null;
+  lodgeId?: string;
   db?: BedAllocationDb;
 }) {
-  return (input.db ?? prisma).lodgeRoom.create({
+  const db = input.db ?? prisma;
+  const lodgeId = input.lodgeId ?? (await getDefaultLodgeId(db));
+  const name = input.name.trim();
+  // Per-lodge uniqueness with null tolerance: a null-lodge row (pre-backfill
+  // or draining old colour) is visible at every lodge, so it clashes here.
+  const clash = await db.lodgeRoom.findFirst({
+    where: { name, ...lodgeNullTolerantScope(lodgeId) },
+    select: { id: true },
+  });
+  if (clash) {
+    throw new BedAllocationAdminError(
+      `A room named "${name}" already exists at this lodge.`,
+      409,
+    );
+  }
+  return db.lodgeRoom.create({
     data: {
-      name: input.name.trim(),
+      name,
       sortOrder: input.sortOrder ?? 0,
       active: input.active ?? true,
       notes: input.notes?.trim() || null,
+      lodgeId,
     },
   });
+}
+
+export const MAX_BULK_ROOMS = 50;
+export const MAX_BULK_BEDS_PER_ROOM = 20;
+
+/**
+ * Seed a lodge with `roomCount` rooms of `bedsPerRoom` beds each
+ * ("<prefix> 1..N" / "Bed 1..M"), transactionally (ADR-003 bulk seeding).
+ * Room names are unique per lodge (null-lodge rows clash at every lodge
+ * until the contract release), so a clashing prefix rejects the whole
+ * batch rather than half-applying.
+ */
+export async function createBedAllocationRoomsBulk(input: {
+  roomCount: number;
+  bedsPerRoom: number;
+  namePrefix?: string;
+  lodgeId?: string;
+  db?: BedAllocationDb;
+}): Promise<{ createdRoomCount: number; createdBedCount: number }> {
+  if (!input.db) {
+    return prisma.$transaction((tx) =>
+      createBedAllocationRoomsBulk({ ...input, db: tx }),
+    );
+  }
+  const db = input.db;
+
+  if (input.roomCount < 1 || input.roomCount > MAX_BULK_ROOMS) {
+    throw new BedAllocationAdminError(
+      `Room count must be between 1 and ${MAX_BULK_ROOMS}.`,
+      400,
+    );
+  }
+  if (input.bedsPerRoom < 0 || input.bedsPerRoom > MAX_BULK_BEDS_PER_ROOM) {
+    throw new BedAllocationAdminError(
+      `Beds per room must be between 0 and ${MAX_BULK_BEDS_PER_ROOM}.`,
+      400,
+    );
+  }
+
+  const namePrefix = input.namePrefix?.trim() || "Room";
+  const lodgeId = input.lodgeId ?? (await getDefaultLodgeId(db));
+  const names = Array.from(
+    { length: input.roomCount },
+    (_, index) => `${namePrefix} ${index + 1}`,
+  );
+
+  const clash = await db.lodgeRoom.findFirst({
+    where: { name: { in: names }, ...lodgeNullTolerantScope(lodgeId) },
+    select: { name: true },
+  });
+  if (clash) {
+    throw new BedAllocationAdminError(
+      `A room named "${clash.name}" already exists at this lodge. Choose a different name prefix.`,
+      409,
+    );
+  }
+
+  const existingCount = await db.lodgeRoom.count({
+    where: lodgeNullTolerantScope(lodgeId),
+  });
+
+  let createdBedCount = 0;
+  for (const [index, name] of names.entries()) {
+    const room = await db.lodgeRoom.create({
+      data: {
+        name,
+        sortOrder: existingCount + index + 1,
+        active: true,
+        lodgeId,
+      },
+    });
+    if (input.bedsPerRoom > 0) {
+      await db.lodgeBed.createMany({
+        data: Array.from({ length: input.bedsPerRoom }, (_, bedIndex) => ({
+          roomId: room.id,
+          name: `Bed ${bedIndex + 1}`,
+          sortOrder: bedIndex + 1,
+          active: true,
+        })),
+      });
+      createdBedCount += input.bedsPerRoom;
+    }
+  }
+
+  return {
+    createdRoomCount: names.length,
+    createdBedCount,
+  };
 }
 
 export async function updateBedAllocationRoom(input: {
@@ -531,6 +694,7 @@ function clampGuestToRange(
 async function loadBookingRecords(
   range: BedAllocationDateRange,
   db: BedAllocationDb,
+  lodgeId?: string,
 ) {
   return db.booking.findMany({
     where: {
@@ -544,6 +708,9 @@ async function loadBookingRecords(
           stayEnd: { gt: range.from },
         },
       },
+      // Null-tolerant: bookings still missing a lodgeId (expand-release
+      // tolerance) show on every lodge's board.
+      ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}),
     },
     select: {
       id: true,
@@ -551,6 +718,7 @@ async function loadBookingRecords(
       createdAt: true,
       checkIn: true,
       checkOut: true,
+      lodgeId: true,
       requestedRoomId: true,
       parentBookingId: true,
       // Whether this booking is the converted booking of a BookingRequest — an
@@ -595,6 +763,7 @@ async function loadBookingRecords(
 async function loadAllocationRecords(
   range: BedAllocationDateRange,
   db: BedAllocationDb,
+  lodgeId?: string,
 ) {
   return db.bedAllocation.findMany({
     where: {
@@ -602,6 +771,9 @@ async function loadAllocationRecords(
         gte: range.from,
         lt: range.to,
       },
+      // Allocations follow their bed's room; rooms without a lodgeId
+      // (expand-release tolerance) show on every lodge's board.
+      ...(lodgeId ? { room: lodgeNullTolerantScope(lodgeId) } : {}),
     },
     include: {
       booking: {
@@ -778,12 +950,13 @@ function candidateGuestBookings(
   }
 
   return [...guestsByBooking.entries()]
-    .map(([bookingId, guests]) => {
+    .map(([bookingId, guests]): BedAllocationBooking | null => {
       const booking = bookingById.get(bookingId);
       if (!booking) return null;
       return {
         id: booking.id,
         createdAt: booking.createdAt,
+        lodgeId: booking.lodgeId,
         requestedRoomId: booking.requestedRoomId,
         guests,
       };
@@ -797,6 +970,7 @@ function buildPlannerRooms(rooms: Awaited<ReturnType<typeof listBedAllocationRoo
     name: room.name,
     sortOrder: room.sortOrder,
     active: room.active,
+    lodgeId: room.lodgeId,
     beds: room.beds.map((bed) => ({
       id: bed.id,
       roomId: bed.roomId,
@@ -865,6 +1039,10 @@ export function buildBedAllocationWarnings(input: {
 
 export async function getBedAllocationDashboard(input: {
   range: BedAllocationDateRange;
+  // Scope the whole board — rooms, bookings, allocations, and therefore the
+  // first-fit suggestions — to one lodge (ADR-003). Omitted = club-wide,
+  // preserving single-lodge behaviour.
+  lodgeId?: string;
   // Deep-linked focused booking (?bookingId=…). When set and out of range, the
   // response carries its stay window so the board can snap onto it (#1302).
   bookingId?: string | null;
@@ -872,10 +1050,10 @@ export async function getBedAllocationDashboard(input: {
 }): Promise<BedAllocationDashboardPayload> {
   const db = input.db ?? prisma;
   const [settings, rooms, bookings, allocationRecords] = await Promise.all([
-    getBedAllocationSettings(db),
-    listBedAllocationRooms(db),
-    loadBookingRecords(input.range, db),
-    loadAllocationRecords(input.range, db),
+    getBedAllocationSettings(db, input.lodgeId),
+    listBedAllocationRooms(db, input.lodgeId),
+    loadBookingRecords(input.range, db, input.lodgeId),
+    loadAllocationRecords(input.range, db, input.lodgeId),
   ]);
   const serializedAllocations = serializeAllocations(allocationRecords);
   const allGuestNights = buildGuestNightRows(bookings, input.range);
@@ -950,10 +1128,17 @@ export async function getBedAllocationDashboard(input: {
 
 export async function runAutoBedAllocation(input: {
   range: BedAllocationDateRange;
+  // Auto-allocation follows the board's lodge scope, so a suggestion can
+  // never place a guest into another lodge's bed.
+  lodgeId?: string;
   db?: BedAllocationDb;
 }) {
   const db = input.db ?? prisma;
-  const dashboard = await getBedAllocationDashboard({ range: input.range, db });
+  const dashboard = await getBedAllocationDashboard({
+    range: input.range,
+    lodgeId: input.lodgeId,
+    db,
+  });
 
   if (!dashboard.settings.autoAllocationEnabled) {
     throw new BedAllocationAdminError(
@@ -993,6 +1178,7 @@ async function assertGuestAndBedForAllocation(input: {
             id: true,
             status: true,
             deletedAt: true,
+            lodgeId: true,
           },
         },
       },
@@ -1019,6 +1205,19 @@ async function assertGuestAndBedForAllocation(input: {
   ) {
     throw new BedAllocationAdminError(
       "Booking status is not allocatable",
+      409,
+    );
+  }
+  // Lodge-scoping contract: a booking's bed allocations must belong to the
+  // booking's lodge. Rows still missing a lodgeId (expand-release tolerance)
+  // pass on either side.
+  if (
+    guest.booking.lodgeId &&
+    bed.room.lodgeId &&
+    guest.booking.lodgeId !== bed.room.lodgeId
+  ) {
+    throw new BedAllocationAdminError(
+      "Bed belongs to a different lodge than the booking",
       409,
     );
   }
@@ -1250,6 +1449,9 @@ export async function approveBedAllocations(input: {
   approvedByMemberId: string;
   allocationIds?: string[];
   range?: BedAllocationDateRange;
+  // Range approval follows the board's lodge scope so approving one lodge's
+  // board never approves another lodge's pending allocations.
+  lodgeId?: string;
   db?: BedAllocationDb;
 }) {
   const db = input.db ?? prisma;
@@ -1264,6 +1466,9 @@ export async function approveBedAllocations(input: {
       gte: input.range.from,
       lt: input.range.to,
     };
+    if (input.lodgeId) {
+      where.room = lodgeNullTolerantScope(input.lodgeId);
+    }
   } else {
     throw new BedAllocationAdminError(
       "Select allocations or provide a date range to approve.",

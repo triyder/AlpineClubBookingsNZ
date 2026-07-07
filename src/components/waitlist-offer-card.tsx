@@ -8,12 +8,31 @@ interface WaitlistOfferCardProps {
   bookingId: string;
   expiresAt: string;
   finalPriceCents: number;
+  // Cross-lodge offer (ADR-004): the alternate lodge and the price quoted
+  // for it. Both null for a same-lodge offer, which renders as before.
+  offeredLodgeName?: string | null;
+  offeredPriceCents?: number | null;
 }
 
-export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: WaitlistOfferCardProps) {
+function formatOfferCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+export function WaitlistOfferCard({
+  bookingId,
+  expiresAt,
+  finalPriceCents,
+  offeredLodgeName,
+  offeredPriceCents,
+}: WaitlistOfferCardProps) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [timeLeft, setTimeLeft] = useState("");
+  // Refreshed quote after an OFFER_PRICE_CHANGED rejection; the member
+  // re-confirms at this figure.
+  const [updatedPriceCents, setUpdatedPriceCents] = useState<number | null>(null);
+  const isCrossLodge = offeredPriceCents !== null && offeredPriceCents !== undefined;
+  const displayPriceCents = updatedPriceCents ?? offeredPriceCents;
 
   useEffect(() => {
     function updateCountdown() {
@@ -47,6 +66,13 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
     const data = await res.json();
 
     if (res.ok && data.success) {
+      if (data.newBookingId) {
+        // Cross-lodge accept: the entry was replaced by a fresh booking at the
+        // offered lodge — hard-navigate there. A full load (not router.push)
+        // keeps the F28 guarantee that the CTA can never stick on "Confirming…".
+        window.location.href = `/bookings/${data.newBookingId}`;
+        return;
+      }
       // Hard reload: the confirm POST succeeded server-side, so re-render the
       // page from the server to its new status (CONFIRMED/PENDING/PAID) with a
       // full document reload. `confirming` stays true until the reload navigates,
@@ -54,6 +80,9 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
       // raced the server re-render and could leave the button frozen (#1371 F28).
       window.location.reload();
     } else {
+      if (data.code === "OFFER_PRICE_CHANGED" && typeof data.updatedPriceCents === "number") {
+        setUpdatedPriceCents(data.updatedPriceCents);
+      }
       setError(data.error || "Failed to confirm booking");
       setConfirming(false);
     }
@@ -67,9 +96,26 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
         <CardTitle className="text-teal-900">A Spot Has Opened Up!</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-teal-800">
-          A spot has become available for your waitlisted booking. Confirm now to secure your place.
-        </p>
+        {isCrossLodge ? (
+          <>
+            <p className="text-sm text-teal-800">
+              A spot has become available at{" "}
+              <strong>{offeredLodgeName ?? "another of our lodges"}</strong>, one
+              of the alternate lodges you said you&apos;d accept.
+            </p>
+            <p className="text-sm text-teal-800">
+              The price at this lodge for your stay is{" "}
+              <strong>{displayPriceCents !== null && displayPriceCents !== undefined ? formatOfferCents(displayPriceCents) : ""}</strong>
+              , which differs from your original booking. Nothing is booked
+              until you confirm this price — your original waitlist entry is
+              replaced only once you do.
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-teal-800">
+            A spot has become available for your waitlisted booking. Confirm now to secure your place.
+          </p>
+        )}
 
         <div className="flex items-center gap-2 text-sm font-medium text-teal-700">
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
@@ -82,7 +128,7 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
           )}
         </div>
 
-        {finalPriceCents > 0 && (
+        {(isCrossLodge ? (displayPriceCents ?? 0) > 0 : finalPriceCents > 0) && (
           <p className="text-sm text-teal-700">
             You will be prompted to complete payment after confirming.
           </p>
@@ -98,7 +144,11 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
             disabled={confirming || isExpired}
             className="bg-teal-600 hover:bg-teal-700"
           >
-            {confirming ? "Confirming..." : "Confirm Booking"}
+            {confirming
+              ? "Confirming..."
+              : isCrossLodge && displayPriceCents !== null && displayPriceCents !== undefined
+                ? `Confirm at ${offeredLodgeName ?? "this lodge"} for ${formatOfferCents(displayPriceCents)}`
+                : "Confirm Booking"}
           </Button>
         </div>
       </CardContent>

@@ -38,7 +38,8 @@ import {
   findOrCreateCustomer,
   getPaymentIntent,
 } from "@/lib/stripe";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import {
@@ -407,10 +408,11 @@ async function cancelSupersededSettlementIntent(
 }
 
 /**
- * Commit every still-PAYMENT_PENDING child to CONFIRMED under the global booking
- * advisory lock, claiming capacity for each in turn so later children see the
- * earlier ones' beds. All-or-nothing: if any child no longer fits, the whole
- * transaction rolls back and a 409 lists the nights that are full.
+ * Commit every still-PAYMENT_PENDING child to CONFIRMED under the CHILDREN'S
+ * per-lodge advisory lock(s), claiming capacity for each in turn so later
+ * children see the earlier ones' beds. All-or-nothing: if any child no longer
+ * fits, the whole transaction rolls back and a 409 lists the nights that are
+ * full.
  */
 async function commitChildrenToConfirmed(children: SettleableChild[]) {
   const pending = children.filter(
@@ -419,7 +421,26 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
   if (pending.length === 0) return;
 
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Flipping PAYMENT_PENDING -> CONFIRMED is a net-new capacity claim, so it
+    // must serialize under the lodge whose beds are being claimed: the child's
+    // lodge, NOT the group's default lodge. Booking creators at that lodge hold
+    // hash(childLodge); locking hash(default) for a non-default-lodge group
+    // would leave them unserialized (overbooking race). Read the pending
+    // children's lodge ids first (lodgeId is NOT NULL, so no fallback is
+    // needed), then lock every distinct lodge in sorted id order before
+    // claiming any capacity — deadlock-safe, matching the draft-cleanup cron.
+    // Group joins cannot cross lodges, so this is normally a single lodge; the
+    // multi-lock loop is defensive.
+    const pendingLodgeRows = await tx.booking.findMany({
+      where: { id: { in: pending.map((c) => c.id) } },
+      select: { lodgeId: true },
+    });
+    const lodgeIds = Array.from(
+      new Set(pendingLodgeRows.map((row) => row.lodgeId))
+    ).sort();
+    for (const lodgeId of lodgeIds) {
+      await acquireLodgeCapacityLock(tx, lodgeId);
+    }
 
     for (const child of pending) {
       // Re-read inside the lock; another path may have already moved it.
@@ -432,6 +453,7 @@ async function commitChildrenToConfirmed(children: SettleableChild[]) {
       }
 
       const capacity = await checkCapacityForGuestRanges(
+        fresh.lodgeId,
         fresh.checkIn,
         fresh.checkOut,
         fresh.guests,
@@ -512,7 +534,14 @@ async function settleConfirmedChildrenAndNotify(
   }
 ): Promise<GroupSettlementAppliedResult> {
   const settled = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // This path only flips CONFIRMED -> PAID; both statuses already hold
+    // capacity, so NO net-new capacity claim occurs here and the lock key is
+    // immaterial to capacity correctness. The default-lodge key is therefore
+    // acceptable (and kept for continuity) — do NOT copy this into a path that
+    // CLAIMS capacity (e.g. commitChildrenToConfirmed above), which must lock
+    // the specific lodge whose beds it reserves.
+    const defaultLodgeId = await getDefaultLodgeId(tx);
+    await acquireLodgeCapacityLock(tx, defaultLodgeId);
 
     // Re-confirm the settlement is still unpaid inside the lock (idempotency).
     const current = await tx.groupBookingSettlement.findUnique({

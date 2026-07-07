@@ -16,12 +16,20 @@ const createSchema = z.object({
   triggerDays: z.array(z.number().int().min(0).max(6)).min(1, "At least one trigger day is required"),
   minimumNights: z.number().int().min(2, "Minimum nights must be at least 2"),
   active: z.boolean().optional(),
+  // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
+  // club-wide (null lodgeId). Any rows for a lodge REPLACE the club-wide
+  // set at runtime for that lodge.
+  lodgeId: z.string().min(1).optional(),
 })
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  // Exact partition, not null-tolerant: null rows are the club-wide rules
+  // and a lodge's rows are its override set (replace, never merge).
+  const lodgeId = request.nextUrl.searchParams.get("lodgeId")
   const policies = await prisma.minimumStayPolicy.findMany({
+    where: { lodgeId: lodgeId ?? null },
     orderBy: { startDate: "desc" },
   })
 
@@ -46,6 +54,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (data.lodgeId) {
+      const lodge = await prisma.lodge.findUnique({
+        where: { id: data.lodgeId },
+        select: { id: true, active: true },
+      })
+      if (!lodge || !lodge.active) {
+        return NextResponse.json(
+          { error: "Lodge not found or not active" },
+          { status: 400 }
+        )
+      }
+    }
+
     const policy = await prisma.minimumStayPolicy.create({
       data: {
         name: data.name,
@@ -54,6 +75,7 @@ export async function POST(request: NextRequest) {
         triggerDays: data.triggerDays,
         minimumNights: data.minimumNights,
         active: data.active ?? true,
+        lodgeId: data.lodgeId ?? null,
       },
     })
 

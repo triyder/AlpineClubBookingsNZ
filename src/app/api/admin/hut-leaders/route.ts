@@ -11,11 +11,16 @@ import {
   hashHutLeaderPin,
 } from "@/lib/lodge-pin-session";
 import { hasAccessRole } from "@/lib/access-roles";
+import {
+  lodgeNullTolerantScope,
+  resolveOptionalActiveLodgeId,
+} from "@/lib/lodges";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  lodgeId: z.string().min(1).optional(),
 }).refine((data) => data.startDate <= data.endDate, {
   message: "startDate must be before or equal to endDate",
 });
@@ -32,6 +37,9 @@ export async function GET() {
       member: {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
+      lodge: {
+        select: { id: true, name: true },
+      },
     },
     orderBy: { startDate: "desc" },
   });
@@ -45,6 +53,8 @@ export async function GET() {
       startDate: formatDateOnly(a.startDate),
       endDate: formatDateOnly(a.endDate),
       createdAt: a.createdAt.toISOString(),
+      lodgeId: a.lodgeId,
+      lodgeName: a.lodge?.name ?? null,
     })),
   });
 }
@@ -96,10 +106,25 @@ export async function POST(req: NextRequest) {
   const newStart = parseDateOnly(parsed.data.startDate);
   const newEnd = parseDateOnly(parsed.data.endDate);
 
+  const lodgeId = await resolveOptionalActiveLodgeId(
+    prisma,
+    parsed.data.lodgeId,
+  );
+  if (!lodgeId) {
+    return NextResponse.json(
+      { error: "Lodge not found or not active" },
+      { status: 400 }
+    );
+  }
+
+  // Each lodge has its own hut leader, so the overlap check is per lodge;
+  // assignments still missing a lodgeId (expand-release tolerance)
+  // conservatively conflict at every lodge.
   const potentialOverlaps = await prisma.hutLeaderAssignment.findMany({
     where: {
       startDate: { lte: newEnd },
       endDate: { gte: newStart },
+      ...lodgeNullTolerantScope(lodgeId),
     },
     include: {
       member: { select: { firstName: true, lastName: true } },
@@ -129,6 +154,7 @@ export async function POST(req: NextRequest) {
         startDate: newStart,
         endDate: newEnd,
         hutLeaderPin,
+        lodgeId,
       },
     });
 

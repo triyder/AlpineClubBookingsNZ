@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import {
+  lodgeNullTolerantScope,
+  resolveOptionalActiveLodgeId,
+} from "@/lib/lodges"
 
 const choreSchema = z
   .object({
@@ -26,6 +30,7 @@ const choreSchema = z
       .optional()
       .default([]),
     active: z.boolean().default(true),
+    lodgeId: z.string().min(1).optional(),
   })
   .superRefine((data, ctx) => {
     if (
@@ -40,10 +45,23 @@ const choreSchema = z
     }
   });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  // Null-tolerant filter: rows without a lodgeId (pre-backfill or written by
+  // a draining old colour during the expand deploy) show under every lodge.
+  const lodgeId = req.nextUrl.searchParams.get("lodgeId")
+  // Validate an explicit lodge scope the way the POST path does (400 on
+  // unknown/inactive). Omitted lists chores across every lodge, so only
+  // validate when a lodgeId is supplied.
+  if (lodgeId && !(await resolveOptionalActiveLodgeId(prisma, lodgeId))) {
+    return NextResponse.json(
+      { error: "Lodge not found or not active" },
+      { status: 400 }
+    )
+  }
   const chores = await prisma.choreTemplate.findMany({
+    where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
     orderBy: { sortOrder: "asc" },
   })
   return NextResponse.json(chores)
@@ -61,7 +79,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const data = parsed.data
+  const { lodgeId: requestedLodgeId, ...data } = parsed.data
   if (data.recommendedPeopleMax < data.recommendedPeopleMin) {
     return NextResponse.json(
       { error: "Max people must be >= min people" },
@@ -69,6 +87,14 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const chore = await prisma.choreTemplate.create({ data })
+  const lodgeId = await resolveOptionalActiveLodgeId(prisma, requestedLodgeId);
+  if (!lodgeId) {
+    return NextResponse.json(
+      { error: "Lodge not found or not active" },
+      { status: 400 }
+    );
+  }
+
+  const chore = await prisma.choreTemplate.create({ data: { ...data, lodgeId } })
   return NextResponse.json(chore, { status: 201 })
 }

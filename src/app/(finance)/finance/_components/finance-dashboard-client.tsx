@@ -208,6 +208,26 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
                 ))}
               </select>
             </div>
+            {model.lodges.length > 0 &&
+            (model.selection.view === "bookings" ||
+              model.selection.view === "pricing-sensitivity") ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="finance-lodge">Lodge (occupancy)</Label>
+                <select
+                  id="finance-lodge"
+                  name="lodgeId"
+                  defaultValue={model.selectedLodgeId ?? ""}
+                  className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm"
+                >
+                  <option value="">All lodges</option>
+                  {model.lodges.map((lodge) => (
+                    <option key={lodge.id} value={lodge.id}>
+                      {lodge.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             {!hideRangeControls ? (
               <>
                 <div className="space-y-1.5">

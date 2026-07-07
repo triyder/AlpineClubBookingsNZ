@@ -31,10 +31,14 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const lodgeAuthMocks = vi.hoisted(() => ({ checkLodgeAuth: vi.fn() }));
+const lodgeAuthMocks = vi.hoisted(() => ({
+  checkLodgeAuth: vi.fn(),
+  resolveKioskLodgeId: vi.fn(),
+}));
 vi.mock("@/lib/lodge-auth", () => ({
   checkLodgeAuth: lodgeAuthMocks.checkLodgeAuth,
   getLodgeAuthActorMemberId: vi.fn(() => "actor-1"),
+  resolveKioskLodgeId: lodgeAuthMocks.resolveKioskLodgeId,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -71,6 +75,7 @@ describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     lodgeAuthMocks.checkLodgeAuth.mockResolvedValue({ tier: "lodge" });
+    lodgeAuthMocks.resolveKioskLodgeId.mockResolvedValue("lodge-1");
   });
 
   it("arrive lookup (findLodgeGuestForDate) excludes the blocked booking", async () => {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingHoldDecision,
@@ -46,6 +48,7 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
 const quoteSchema = z.object({
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  lodgeId: z.string().min(1).optional(),
   guests: z.array(
     z.object({
       ageTier: bookableAgeTierEnum,
@@ -153,6 +156,40 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
+  // Resolve the lodge being quoted: an explicit lodgeId must be a real,
+  // active lodge; otherwise the club's default lodge is quoted.
+  let quoteLodgeId: string;
+  if (parsed.data.lodgeId) {
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: parsed.data.lodgeId },
+      select: { id: true, active: true },
+    });
+    if (!lodge || !lodge.active) {
+      return NextResponse.json(
+        { error: "Unknown or inactive lodgeId" },
+        { status: 400 },
+      );
+    }
+    quoteLodgeId = lodge.id;
+  } else {
+    quoteLodgeId = await getDefaultLodgeId(prisma);
+  }
+
+  // A BOOKING_RESTRICTION-ed member must not read a forbidden lodge's pricing.
+  // Mirror the create path exactly: admin on-behalf quotes bypass the
+  // restriction (the audited override), everyone else is checked.
+  if (
+    !isAuthorizedOnBehalf &&
+    !(await isMemberEligibleToBookLodge(prisma, effectiveMemberId, quoteLodgeId))
+  ) {
+    return NextResponse.json(
+      { error: "This member cannot book the selected lodge." },
+      { status: 403 }
+    );
+  }
+
+  // Duplicate member nights (upstream #80cbdf4c): a member cannot hold two
+  // bookings covering the same night.
   const memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
     actorMemberId: session.user.id,
     actorRole,
@@ -173,6 +210,7 @@ export async function POST(request: NextRequest) {
       active: true,
       startDate: { lte: checkOut },
       endDate: { gte: checkIn },
+      ...lodgeNullTolerantScope(quoteLodgeId),
     },
     include: { rates: true },
   });

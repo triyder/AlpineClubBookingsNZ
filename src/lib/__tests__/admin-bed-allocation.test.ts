@@ -21,11 +21,17 @@ import {
   BedAllocationAdminError,
   MAX_BED_ALLOCATION_RANGE_NIGHTS,
   buildBedAllocationWarnings,
+  createBedAllocationRoom,
+  createBedAllocationRoomsBulk,
+  approveBedAllocations,
   getBedAllocationDashboard,
+  getRoomsAndBedsConfiguration,
+  listBedAllocationRooms,
   manuallyAllocateBedForNights,
   parseBedAllocationDateRange,
   updateBedAllocationBed,
 } from "@/lib/admin-bed-allocation";
+import { getLodgeCapacityStatus } from "@/lib/lodge-capacity";
 import { parseDateOnly } from "@/lib/date-only";
 
 function readRepoFile(relativePath: string) {
@@ -361,6 +367,369 @@ describe("manuallyAllocateBedForNights", () => {
         db: db as never,
       }),
     ).rejects.toThrow("Booking status is not allocatable");
+  });
+});
+
+describe("multi-lodge room scoping (phase 7)", () => {
+  it("filters rooms strictly to a lodge", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const db = { lodgeRoom: { findMany } };
+
+    await listBedAllocationRooms(db as never, "lodge-2");
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { lodgeId: "lodge-2" },
+      }),
+    );
+  });
+
+  it("lists every room when no lodge filter is given", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const db = { lodgeRoom: { findMany } };
+
+    await listBedAllocationRooms(db as never);
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: undefined }),
+    );
+  });
+
+  it("creates rooms at the requested lodge without consulting the default", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "room-1" });
+    const findFirst = vi.fn();
+    const db = {
+      // Per-lodge name pre-check: no clash in these fixtures.
+      lodgeRoom: { create, findFirst: vi.fn().mockResolvedValue(null) },
+      lodge: { findFirst },
+    };
+
+    await createBedAllocationRoom({
+      name: "Bunkroom 1",
+      lodgeId: "lodge-2",
+      db: db as never,
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ lodgeId: "lodge-2" }),
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("stamps the default lodge when no lodge is requested", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "room-1" });
+    const findFirst = vi.fn().mockResolvedValue({ id: "lodge-default" });
+    const db = {
+      lodgeRoom: { create, findFirst: vi.fn().mockResolvedValue(null) },
+      lodge: { findFirst },
+    };
+
+    await createBedAllocationRoom({ name: "Bunkroom 1", db: db as never });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ lodgeId: "lodge-default" }),
+    });
+  });
+
+  it("reports capacity for the requested lodge and keeps the import offer global", async () => {
+    const db = {
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(3),
+      },
+      lodgeBed: {
+        count: vi.fn().mockResolvedValue(12),
+      },
+      lodge: { findFirst: vi.fn() },
+    };
+
+    const payload = await getRoomsAndBedsConfiguration(db as never, "lodge-2");
+
+    expect(getLodgeCapacityStatus).toHaveBeenCalledWith("lodge-2", db);
+    // Rooms exist elsewhere in the club, so the empty selected lodge must
+    // not offer the config import (it only seeds the first lodge).
+    expect(payload.canImportFromConfig).toBe(false);
+    expect(db.lodge.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("createBedAllocationRoomsBulk (ADR-003 bulk seeding)", () => {
+  function buildBulkDb(overrides: {
+    clashName?: string | null;
+    existingRoomCount?: number;
+  } = {}) {
+    const roomCreate = vi
+      .fn()
+      .mockImplementation(({ data }) =>
+        Promise.resolve({ id: `room-${data.name}`, ...data }),
+      );
+    const bedCreateMany = vi.fn().mockResolvedValue({ count: 0 });
+    return {
+      db: {
+        lodgeRoom: {
+          create: roomCreate,
+          count: vi.fn().mockResolvedValue(overrides.existingRoomCount ?? 0),
+          findFirst: vi
+            .fn()
+            .mockResolvedValue(
+              overrides.clashName ? { name: overrides.clashName } : null,
+            ),
+        },
+        lodgeBed: { createMany: bedCreateMany },
+        lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
+      },
+      roomCreate,
+      bedCreateMany,
+    };
+  }
+
+  it("creates N rooms of M beds with sequential names at the given lodge", async () => {
+    const { db, roomCreate, bedCreateMany } = buildBulkDb();
+
+    const result = await createBedAllocationRoomsBulk({
+      roomCount: 3,
+      bedsPerRoom: 4,
+      lodgeId: "lodge-2",
+      db: db as never,
+    });
+
+    expect(result).toEqual({ createdRoomCount: 3, createdBedCount: 12 });
+    expect(roomCreate).toHaveBeenCalledTimes(3);
+    expect(roomCreate).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({
+        name: "Room 1",
+        sortOrder: 1,
+        lodgeId: "lodge-2",
+      }),
+    });
+    expect(bedCreateMany).toHaveBeenCalledTimes(3);
+    expect(bedCreateMany.mock.calls[0][0].data).toHaveLength(4);
+    expect(bedCreateMany.mock.calls[0][0].data[0]).toEqual(
+      expect.objectContaining({ name: "Bed 1", sortOrder: 1, active: true }),
+    );
+  });
+
+  it("continues sort order after the lodge's existing rooms and honours the prefix", async () => {
+    const { db, roomCreate } = buildBulkDb({ existingRoomCount: 5 });
+
+    await createBedAllocationRoomsBulk({
+      roomCount: 1,
+      bedsPerRoom: 0,
+      namePrefix: "Bunkroom",
+      lodgeId: "lodge-2",
+      db: db as never,
+    });
+
+    expect(roomCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ name: "Bunkroom 1", sortOrder: 6 }),
+    });
+  });
+
+  it("rejects the whole batch when a generated name already exists", async () => {
+    const { db, roomCreate } = buildBulkDb({ clashName: "Room 2" });
+
+    await expect(
+      createBedAllocationRoomsBulk({
+        roomCount: 3,
+        bedsPerRoom: 2,
+        lodgeId: "lodge-2",
+        db: db as never,
+      }),
+    ).rejects.toThrow('A room named "Room 2" already exists');
+    expect(roomCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows the same room name at a different lodge", async () => {
+    const create = vi.fn().mockResolvedValue({ id: "room-1" });
+    // The pre-check runs strictly against the lodge's own partition — a
+    // "Room 1" at another lodge must not match.
+    const roomFindFirst = vi.fn(async ({ where }: { where: { lodgeId?: unknown } }) => {
+      expect(where).toMatchObject({
+        name: "Room 1",
+        lodgeId: "lodge-2",
+      });
+      return null;
+    });
+    const db = { lodgeRoom: { create, findFirst: roomFindFirst }, lodge: { findFirst: vi.fn() } };
+
+    await createBedAllocationRoom({
+      name: "Room 1",
+      lodgeId: "lodge-2",
+      db: db as never,
+    });
+
+    expect(roomFindFirst).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalled();
+  });
+
+  it("rejects a duplicate room name within the same lodge", async () => {
+    const create = vi.fn();
+    const db = {
+      lodgeRoom: {
+        create,
+        findFirst: vi.fn().mockResolvedValue({ id: "existing" }),
+      },
+      lodge: { findFirst: vi.fn() },
+    };
+
+    await expect(
+      createBedAllocationRoom({
+        name: "Room 1",
+        lodgeId: "lodge-2",
+        db: db as never,
+      }),
+    ).rejects.toThrow('A room named "Room 1" already exists at this lodge.');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("rejects out-of-range counts", async () => {
+    const { db } = buildBulkDb();
+
+    await expect(
+      createBedAllocationRoomsBulk({
+        roomCount: 0,
+        bedsPerRoom: 2,
+        lodgeId: "lodge-2",
+        db: db as never,
+      }),
+    ).rejects.toThrow("Room count must be between");
+    await expect(
+      createBedAllocationRoomsBulk({
+        roomCount: 1,
+        bedsPerRoom: 99,
+        lodgeId: "lodge-2",
+        db: db as never,
+      }),
+    ).rejects.toThrow("Beds per room must be between");
+  });
+});
+
+describe("bed allocation board lodge scope (ADR-003)", () => {
+  function buildDashboardDb() {
+    const bookingFindMany = vi.fn().mockResolvedValue([]);
+    const allocationFindMany = vi.fn().mockResolvedValue([]);
+    const roomFindMany = vi.fn().mockResolvedValue([]);
+    return {
+      db: {
+        bedAllocationSettings: {
+          findUnique: vi.fn().mockResolvedValue({
+            autoAllocationEnabled: false,
+            updatedByMemberId: null,
+            updatedAt: parseDateOnly("2026-07-01"),
+          }),
+        },
+        lodgeRoom: { findMany: roomFindMany },
+        booking: { findMany: bookingFindMany },
+        bedAllocation: { findMany: allocationFindMany },
+      },
+      bookingFindMany,
+      allocationFindMany,
+      roomFindMany,
+    };
+  }
+
+  const range = parseBedAllocationDateRange({
+    from: "2026-07-01",
+    to: "2026-07-08",
+  });
+
+  it("scopes rooms, bookings, and allocations strictly to the lodge", async () => {
+    const { db, bookingFindMany, allocationFindMany, roomFindMany } =
+      buildDashboardDb();
+
+    await getBedAllocationDashboard({ range, lodgeId: "lodge-2", db: db as never });
+
+    expect(roomFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { lodgeId: "lodge-2" },
+      }),
+    );
+    expect(bookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          lodgeId: "lodge-2",
+        }),
+      }),
+    );
+    expect(allocationFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          room: { lodgeId: "lodge-2" },
+        }),
+      }),
+    );
+  });
+
+  it("stays club-wide when no lodge is given", async () => {
+    const { db, bookingFindMany, allocationFindMany, roomFindMany } =
+      buildDashboardDb();
+
+    await getBedAllocationDashboard({ range, db: db as never });
+
+    expect(roomFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: undefined }),
+    );
+    expect(bookingFindMany.mock.calls[0][0].where.OR).toBeUndefined();
+    expect(allocationFindMany.mock.calls[0][0].where.room).toBeUndefined();
+  });
+
+  it("scopes range approval to the lodge's rooms", async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 2 });
+    const db = { bedAllocation: { updateMany } };
+
+    await approveBedAllocations({
+      approvedByMemberId: "admin-1",
+      range,
+      lodgeId: "lodge-2",
+      db: db as never,
+    });
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          room: { lodgeId: "lodge-2" },
+        }),
+      }),
+    );
+  });
+
+  it("rejects allocating a guest to another lodge's bed", async () => {
+    const upsert = vi.fn();
+    const db = {
+      bookingGuest: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "guest-1",
+          bookingId: "booking-1",
+          stayStart: parseDateOnly("2026-07-01"),
+          stayEnd: parseDateOnly("2026-07-04"),
+          booking: {
+            id: "booking-1",
+            status: "CONFIRMED",
+            deletedAt: null,
+            lodgeId: "lodge-1",
+          },
+        }),
+      },
+      lodgeBed: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "bed-1",
+          roomId: "room-1",
+          active: true,
+          room: { id: "room-1", active: true, lodgeId: "lodge-2" },
+        }),
+      },
+      bedAllocation: { upsert },
+    };
+
+    await expect(
+      manuallyAllocateBedForNights({
+        bookingGuestId: "guest-1",
+        bedId: "bed-1",
+        stayDates: ["2026-07-01"],
+        db: db as never,
+      }),
+    ).rejects.toThrow("Bed belongs to a different lodge than the booking");
+    expect(upsert).not.toHaveBeenCalled();
   });
 });
 

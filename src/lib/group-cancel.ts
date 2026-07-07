@@ -241,7 +241,9 @@ export async function settleGroupBookingOnOrganiserCancel(
   } else if (settled && children.length > 0) {
     const checkIn = children[0].checkIn;
     const days = daysUntilDate(checkIn);
-    const policy = await loadCancellationPolicy(checkIn);
+    // All children of a group booking share the organiser's lodge (one
+    // booking = one lodge, ADR-001), so the first child's lodge is the group's.
+    const policy = await loadCancellationPolicy(checkIn, children[0].lodgeId);
     for (const child of children) {
       const isPaid =
         child.status === BookingStatus.PAID &&
@@ -531,7 +533,9 @@ export async function settleGroupBookingOnOrganiserCancel(
       child.checkIn,
       child.checkOut,
       refundForChild,
-      "card"
+      "card",
+      0,
+      child.lodgeId
     ).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
@@ -542,6 +546,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     processWaitlistForDates({
       checkIn: child.checkIn,
       checkOut: child.checkOut,
+      lodgeId: child.lodgeId,
     }).catch((err) =>
       logger.error(
         { err, bookingId: child.id },

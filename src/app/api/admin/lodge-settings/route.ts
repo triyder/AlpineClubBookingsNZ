@@ -7,24 +7,55 @@ import {
   loadLodgeSettings,
   updateLodgeSettings,
 } from "@/lib/lodge-settings";
+import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+
+// Per-lodge scope (lodge-scoping contract): an explicit lodgeId must name
+// an active lodge; omitted keeps the legacy single-row behaviour.
+async function validateLodgeScope(lodgeId: string | null | undefined) {
+  if (!lodgeId) return { ok: true as const };
+  const lodge = await prisma.lodge.findUnique({
+    where: { id: lodgeId },
+    select: { active: true },
+  });
+  if (!lodge?.active) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 },
+      ),
+    };
+  }
+  return { ok: true as const };
+}
 
 const settingsSchema = z
   .object({
     // Null clears the override and falls back to the club config bed total.
     capacity: z.number().int().positive().max(100000).nullable(),
     hutLeaderLookaheadDays: z.number().int().min(1).max(365).optional(),
+    // Per-lodge school-group soft cap; null clears it to the code default.
+    schoolGroupSoftCap: z.number().int().positive().max(100000).nullable().optional(),
+    // Lodge whose per-lodge settings are edited; the lookahead stays
+    // club-wide regardless.
+    lodgeId: z.string().min(1).optional(),
   })
   .strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const settings = await loadLodgeSettings();
+  const lodgeId = new URL(request.url).searchParams.get("lodgeId");
+  const scope = await validateLodgeScope(lodgeId);
+  if (!scope.ok) return scope.response;
+
+  const settings = await loadLodgeSettings(prisma, lodgeId);
   return NextResponse.json({
     capacity: settings.capacity,
     hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
+    schoolGroupSoftCap: settings.schoolGroupSoftCap,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
   });
 }
@@ -44,13 +75,22 @@ export async function PUT(request: Request) {
     );
   }
 
-  const previousSettings = await loadLodgeSettings();
+  const scope = await validateLodgeScope(body.data.lodgeId);
+  if (!scope.ok) return scope.response;
+
+  const previousSettings = await loadLodgeSettings(prisma, body.data.lodgeId);
   const settings = await updateLodgeSettings({
     capacity: body.data.capacity,
     hutLeaderLookaheadDays:
       body.data.hutLeaderLookaheadDays ??
       previousSettings.hutLeaderLookaheadDays,
+    // Omitted keeps the current value; explicit null clears to the default.
+    schoolGroupSoftCap:
+      body.data.schoolGroupSoftCap === undefined
+        ? previousSettings.schoolGroupSoftCap
+        : body.data.schoolGroupSoftCap,
     updatedByMemberId: guard.session.user.id,
+    lodgeId: body.data.lodgeId,
   });
 
   await createAuditLog({
@@ -58,7 +98,7 @@ export async function PUT(request: Request) {
     memberId: guard.session.user.id,
     actorMemberId: guard.session.user.id,
     entityType: "LodgeSettings",
-    entityId: "default",
+    entityId: body.data.lodgeId ?? "default",
     category: "admin",
     severity: "important",
     outcome: "success",
@@ -75,6 +115,7 @@ export async function PUT(request: Request) {
   return NextResponse.json({
     capacity: settings.capacity,
     hutLeaderLookaheadDays: settings.hutLeaderLookaheadDays,
+    schoolGroupSoftCap: settings.schoolGroupSoftCap,
     clubConfigCapacity: CLUB_CONFIG_LODGE_CAPACITY,
   });
 }

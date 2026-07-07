@@ -9,7 +9,7 @@ import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
 import { clubIdentity } from "@/config/club-identity";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 
@@ -32,7 +32,9 @@ export default async function PublicLayout({
 }) {
   const [session, lodgeCapacity, siteBanners, modules] = await Promise.all([
     auth(),
-    getLodgeCapacity(),
+    // Default lodge: public-site identity copy (per-lodge figures come
+    // from the {{lodge-capacity:slug}} content token).
+    getDefaultLodgeCapacity(),
     getCurrentSiteBanners(),
     loadEffectiveModuleFlags(),
   ]);

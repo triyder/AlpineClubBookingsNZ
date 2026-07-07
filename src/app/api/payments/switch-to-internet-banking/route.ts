@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
@@ -160,10 +164,12 @@ export async function POST(request: NextRequest) {
   const holdBedSlots = internetBankingSettings.holdBedSlots;
   const holdUntil = buildInternetBankingHoldUntil(internetBankingSettings);
   const paymentResult = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
     if (holdBedSlots) {
       const capacity = await checkCapacityForGuestRanges(
+        bookingLodgeId,
         booking.checkIn,
         booking.checkOut,
         booking.guests,

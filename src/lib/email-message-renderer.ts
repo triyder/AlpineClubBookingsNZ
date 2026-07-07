@@ -4,6 +4,7 @@ import {
   applyEmailMessageSettingsToSubject,
   buildEmailTemplateGlobalData,
   loadEmailMessageSettings,
+  loadEmailMessageSettingsForLodge,
   type EmailMessageSettings,
 } from "@/lib/email-message-settings";
 import {
@@ -324,13 +325,17 @@ export async function prepareEmailMessage({
   subject,
   html,
   templateData,
+  lodgeId,
 }: {
   templateName: string;
   subject: string;
   html: string;
   templateData?: EmailTemplateData;
+  // Lodge whose identity (name, travel note, door code) this message carries
+  // (multi-lodge phase 8). Omitted/null keeps the club-wide singleton values.
+  lodgeId?: string | null;
 }): Promise<PreparedEmailMessage> {
-  const settings = await loadEmailMessageSettings();
+  const settings = await loadEmailMessageSettingsForLodge(lodgeId);
   const override = getEmailTemplateDefinition(templateName)
     ? await loadTemplateOverride(templateName)
     : null;

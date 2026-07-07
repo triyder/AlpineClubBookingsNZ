@@ -75,6 +75,7 @@ vi.mock("@/lib/payment-reconciliation", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: (...args: unknown[]) =>
     mockCheckCapacityForGuestRanges(...args),
 }));
@@ -90,6 +91,9 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
@@ -191,6 +195,7 @@ describe("POST /api/payments/charge-saved-method", () => {
       paymentMethodId: null,
     });
     expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
+      "lodge-1",
       new Date("2026-07-10"),
       new Date("2026-07-12"),
       expect.arrayContaining([

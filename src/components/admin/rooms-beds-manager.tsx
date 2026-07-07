@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BedDouble,
@@ -26,6 +26,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  LodgeSelect,
+  initialLodgeIdFromLocation,
+  useLodgeOptions,
+} from "@/components/lodge-select";
 
 interface DashboardBed {
   id: string;
@@ -115,18 +120,33 @@ export function RoomsBedsManager() {
   const [roomEdits, setRoomEdits] = useState<Record<string, RoomDraft>>({});
   const [bedDrafts, setBedDrafts] = useState<Record<string, BedDraft>>({});
   const [bedEdits, setBedEdits] = useState<Record<string, BedDraft>>({});
+  // Lodge context for the page; LodgeSelect renders nothing (and reports the
+  // sole lodge) while fewer than two lodges exist (ADR-002).
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
+  // Hub links (ADR-003) land pre-filtered; read synchronously so the first
+  // fetch is already lodge-filtered.
+  const [lodgeId, setLodgeId] = useState<string | null>(initialLodgeIdFromLocation);
+  const [bulkRoomCount, setBulkRoomCount] = useState("");
+  const [bulkBedsPerRoom, setBulkBedsPerRoom] = useState("4");
+  const [bulkNamePrefix, setBulkNamePrefix] = useState("Room");
 
   const totalBeds = useMemo(
     () => payload?.rooms.reduce((total, room) => total + room.beds.length, 0) ?? 0,
     [payload],
   );
 
-  async function loadRooms() {
+  const loadRooms = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const response = await fetch("/api/admin/bed-allocation/rooms", {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        lodgeId
+          ? `/api/admin/bed-allocation/rooms?lodgeId=${encodeURIComponent(lodgeId)}`
+          : "/api/admin/bed-allocation/rooms",
+        {
+          cache: "no-store",
+          signal,
+        },
+      );
       if (!response.ok) {
         throw new Error(await readApiError(response, "Failed to load rooms and beds"));
       }
@@ -144,15 +164,22 @@ export function RoomsBedsManager() {
         ),
       );
     } catch (error) {
+      // An aborted request means the lodge changed (or the page unmounted);
+      // a newer request owns the list now.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       toast.error(error instanceof Error ? error.message : "Failed to load rooms and beds");
     } finally {
       setLoading(false);
     }
-  }
+  }, [lodgeId]);
 
   useEffect(() => {
-    void loadRooms();
-  }, []);
+    const controller = new AbortController();
+    void loadRooms(controller.signal);
+    return () => controller.abort();
+  }, [loadRooms]);
 
   async function mutate(
     label: string,
@@ -221,6 +248,8 @@ export function RoomsBedsManager() {
             sortOrder: Number(roomDraft.sortOrder || 0),
             active: roomDraft.active,
             notes: roomDraft.notes || null,
+            // Lodge is set at creation from the page's lodge context.
+            ...(lodgeId ? { lodgeId } : {}),
           }),
         }),
       "Room created",
@@ -310,6 +339,27 @@ export function RoomsBedsManager() {
     );
   }
 
+  async function bulkCreateRooms() {
+    const roomCount = Number(bulkRoomCount);
+    const bedsPerRoom = Number(bulkBedsPerRoom || 0);
+    await mutate(
+      "rooms-bulk",
+      () =>
+        fetch("/api/admin/bed-allocation/rooms/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roomCount,
+            bedsPerRoom,
+            namePrefix: bulkNamePrefix.trim() || undefined,
+            ...(lodgeId ? { lodgeId } : {}),
+          }),
+        }),
+      `Created ${roomCount} room${roomCount === 1 ? "" : "s"}`,
+    );
+    setBulkRoomCount("");
+  }
+
   async function importFromConfig() {
     await mutate(
       "import-config",
@@ -356,6 +406,10 @@ export function RoomsBedsManager() {
         </Button>
       </div>
 
+      <div className="max-w-xs">
+        <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
+      </div>
+
       {loading ? (
         <div className="flex items-center gap-2 rounded-md border bg-white p-6 text-sm text-muted-foreground">
           <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -397,6 +451,68 @@ export function RoomsBedsManager() {
               <Upload className="h-4 w-4" />
               Import
             </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {payload ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Plus className="h-4 w-4" />
+              Quick Add Rooms
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Seed several rooms at once — for example 8 rooms of 4 beds —
+              then rename or adjust them individually below.
+            </p>
+            <div className="grid gap-3 md:grid-cols-[110px_130px_1fr_auto]">
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Rooms</span>
+                <Input
+                  type="number"
+                  min="1"
+                  max="50"
+                  placeholder="8"
+                  value={bulkRoomCount}
+                  onChange={(event) => setBulkRoomCount(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Beds per room</span>
+                <Input
+                  type="number"
+                  min="0"
+                  max="20"
+                  value={bulkBedsPerRoom}
+                  onChange={(event) => setBulkBedsPerRoom(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Name prefix</span>
+                <Input
+                  value={bulkNamePrefix}
+                  onChange={(event) => setBulkNamePrefix(event.target.value)}
+                  placeholder="Room"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button
+                  onClick={() => void bulkCreateRooms()}
+                  disabled={
+                    saving === "rooms-bulk" ||
+                    !bulkRoomCount ||
+                    Number(bulkRoomCount) < 1
+                  }
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Create
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       ) : null}

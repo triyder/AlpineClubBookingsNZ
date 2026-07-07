@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   withXeroRetry: vi.fn(),
   checkMembershipStatus: vi.fn(),
   getAccountMapping: vi.fn(),
+  lodgeFindFirst: vi.fn(),
   checkCapacity: vi.fn(),
   processWaitlist: vi.fn(),
   txLinkFindFirst: vi.fn(),
@@ -292,6 +293,7 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
     mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
+    mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.refreshXeroContactCachesFromContact.mockResolvedValue({
       cachedContact: {
         contactId: "contact_1",
@@ -329,6 +331,10 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         $executeRaw: mocks.txExecuteRaw,
+        $queryRaw: mocks.txExecuteRaw,
+        lodge: {
+          findFirst: mocks.lodgeFindFirst,
+        },
         processedWebhookEvent: {
           deleteMany: mocks.processedDeleteMany,
         },
@@ -936,7 +942,10 @@ describe("processStoredXeroInboundEvents", () => {
       new Date("2026-07-12"),
       1,
       12345,
-      undefined
+      // Multi-lodge phase 8: the options now carry the booking's lodge so
+      // the email renders that lodge's identity (undefined here because the
+      // fixture booking has no lodgeId).
+      { lodgeId: undefined }
     );
   });
 
@@ -952,6 +961,10 @@ describe("processStoredXeroInboundEvents", () => {
       async (callback: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           $executeRaw: mocks.txExecuteRaw,
+          $queryRaw: mocks.txExecuteRaw,
+          lodge: {
+            findFirst: mocks.lodgeFindFirst,
+          },
           processedWebhookEvent: {
             deleteMany: mocks.processedDeleteMany,
           },
@@ -1042,6 +1055,7 @@ describe("processStoredXeroInboundEvents", () => {
               firstName: "Alice",
               lastName: "Smith",
             },
+            lodgeId: "lodge_ib_cap",
             guests: [{ id: "guest_cap", nights: [] }],
             promoRedemption: null,
           },
@@ -1070,6 +1084,7 @@ describe("processStoredXeroInboundEvents", () => {
       booking: {
         id: "booking_ib_cap",
         memberId: "mem_cap",
+        lodgeId: "lodge_ib_cap",
         checkIn: new Date("2026-07-10"),
         checkOut: new Date("2026-07-12"),
         status: "PAYMENT_PENDING",
@@ -1177,6 +1192,38 @@ describe("processStoredXeroInboundEvents", () => {
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
   });
 
+  it("takes BOTH the global lock(1) and the booking's per-lodge lock before the capacity claim (H2)", async () => {
+    // The PAYMENT_PENDING (no hold slots) reconcile is a net-new capacity claim
+    // (available -> PAID, unavailable -> CANCELLED + credit). It must keep the
+    // global pg_advisory_xact_lock(1) that sequences IB webhook processing AND
+    // additionally serialise on the booking's per-lodge lock, or per-lodge
+    // booking creators (who no longer contend on lock(1)) race the claim.
+    mockCapacityFailInboundEvent();
+
+    await processStoredXeroInboundEvents();
+
+    // We are on the capacity-claim branch (booking cancelled, credit minted).
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_ib_cap" },
+      data: { status: "CANCELLED", draftExpiresAt: null },
+    });
+
+    const rawCalls = mocks.txExecuteRaw.mock.calls as unknown[][];
+    const sqlOf = (call: unknown[]) => (call[0] as string[]).join("?");
+    // Global webhook-sequencing lock still taken (composition preserved).
+    expect(
+      rawCalls.some((c) => sqlOf(c).includes("pg_advisory_xact_lock(1)"))
+    ).toBe(true);
+    // ...AND the per-lodge capacity lock keyed to the booking's lodge.
+    expect(
+      rawCalls.some(
+        (c) =>
+          sqlOf(c).includes("pg_advisory_xact_lock(hashtextextended(") &&
+          c[1] === "lodge_ib_cap"
+      )
+    ).toBe(true);
+  });
+
   it("clamps the late-capacity-failure credit to the invoice's cash on a mixed invoice (#1459)", async () => {
     // The capacity-fail arm mints too: a live booking's invoice half-paid in
     // cash and half written off must credit only the cash portion.
@@ -1215,7 +1262,14 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       6172,
-      "credit"
+      "credit",
+      0,
+      "lodge_ib_cap"
+    );
+    // #19: the late-capacity-failure waitlist re-processing is scoped to the
+    // cancelled booking's own lodge, not the default lodge.
+    expect(mocks.processWaitlist).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: "lodge_ib_cap" })
     );
     const [alertArgs] = vi.mocked(sendAdminPaymentFailureAlert).mock.calls[0];
     expect(alertArgs.amountCents).toBe(6172);
@@ -1297,6 +1351,7 @@ describe("processStoredXeroInboundEvents", () => {
     const booking = {
       id: "booking_ib_cancelled",
       memberId: "mem_cancelled",
+      lodgeId: "lodge_ib_ac",
       checkIn: new Date("2026-07-10"),
       checkOut: new Date("2026-07-12"),
       status: "CANCELLED",
@@ -1480,7 +1535,9 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       12345,
-      "credit"
+      "credit",
+      0,
+      "lodge_ib_ac"
     );
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
   });
@@ -1624,7 +1681,9 @@ describe("processStoredXeroInboundEvents", () => {
       expect.any(Date),
       expect.any(Date),
       6172,
-      "credit"
+      "credit",
+      0,
+      "lodge_ib_ac"
     );
     // The admin alert names both amounts so the operator can verify the
     // allocation source (routine clearing-note echo vs. write-off vs. an
@@ -4159,6 +4218,10 @@ describe("replayStoredXeroInboundEvent", () => {
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         $executeRaw: mocks.txExecuteRaw,
+        $queryRaw: mocks.txExecuteRaw,
+        lodge: {
+          findFirst: mocks.lodgeFindFirst,
+        },
         processedWebhookEvent: {
           deleteMany: mocks.processedDeleteMany,
         },

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import {
+  lodgeNullTolerantScope,
+  resolveOptionalActiveLodgeId,
+} from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import {
   type GroupDiscountConfig,
@@ -53,6 +57,11 @@ const validateSchema = z
       .min(1),
     forMemberId: z.string().optional(),
     promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+    // Lodge the booking under quote is for (multi-lodge phase 8): promo
+    // lodge restrictions and season pricing validate against this lodge.
+    // Omitted resolves to the default lodge, so single-lodge clients keep
+    // working unchanged.
+    lodgeId: z.string().min(1).optional(),
   })
   .refine((data) => Boolean(data.code) !== Boolean(data.workPartyEventId), {
     message: "Provide either a promo code or a working bee event, not both",
@@ -110,6 +119,7 @@ export async function POST(req: NextRequest) {
   let promoCode:
     | (Awaited<ReturnType<typeof prisma.promoCode.findUnique>> & {
         assignments: { memberId: string }[];
+        lodges: { lodgeId: string }[];
       })
     | null = null;
   let workPartyEvent: { id: string; name: string; discountPercent: number } | null = null;
@@ -118,7 +128,12 @@ export async function POST(req: NextRequest) {
     const event = await prisma.workPartyEvent.findUnique({
       where: { id: parsed.data.workPartyEventId },
       include: {
-        promoCode: { include: { assignments: { select: { memberId: true } } } },
+        promoCode: {
+          include: {
+            assignments: { select: { memberId: true } },
+            lodges: { select: { lodgeId: true } },
+          },
+        },
       },
     });
     if (!event) {
@@ -152,7 +167,10 @@ export async function POST(req: NextRequest) {
     const normalizedCode = code.toUpperCase().trim();
     const found = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
-      include: { assignments: { select: { memberId: true } } },
+      include: {
+        assignments: { select: { memberId: true } },
+        lodges: { select: { lodgeId: true } },
+      },
     });
     // Internal promos (work party events) are system-applied only; a
     // manually entered internal code behaves like a nonexistent one.
@@ -164,11 +182,22 @@ export async function POST(req: NextRequest) {
     : null;
 
   // Calculate the booking price to determine discount
+  const quoteLodgeId = await resolveOptionalActiveLodgeId(
+    prisma,
+    parsed.data.lodgeId,
+  );
+  if (!quoteLodgeId) {
+    return NextResponse.json(
+      { error: "Unknown or inactive lodgeId" },
+      { status: 400 },
+    );
+  }
   const seasons = await prisma.season.findMany({
     where: {
       active: true,
       startDate: { lte: checkOut },
       endDate: { gte: checkIn },
+      ...lodgeNullTolerantScope(quoteLodgeId),
     },
     include: { rates: true },
   });
@@ -226,7 +255,7 @@ export async function POST(req: NextRequest) {
         guests: promoGuests,
       },
       assignedMemberIds,
-      { db: prisma, selectedGuestIndexes: parsed.data.promoGuestIndexes }
+      { db: prisma, selectedGuestIndexes: parsed.data.promoGuestIndexes, lodgeId: quoteLodgeId }
     );
     if (application.requiresGuestSelection) {
       return NextResponse.json({

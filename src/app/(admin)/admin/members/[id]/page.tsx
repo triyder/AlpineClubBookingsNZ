@@ -39,6 +39,7 @@ import { MemberHistoryGroup } from "./_components/member-history-group";
 import { MemberDeletionCard } from "./_components/member-deletion-card";
 import { MemberLifecycleCard } from "./_components/member-lifecycle-card";
 import { MemberParentLinksCard } from "./_components/member-parent-links-card";
+import { MemberLodgeAccessCard } from "./_components/member-lodge-access-card";
 import { MemberPromoCodesCard } from "./_components/member-promo-codes-card";
 import { MemberDependentsCard } from "./_components/member-dependents-card";
 import { MemberCreditCard } from "./_components/member-credit-card";
@@ -604,6 +605,7 @@ export default function MemberDetailPage({
             edit={accountEdit}
             inheritEmail={inheritEmail}
           />
+          <MemberLodgeAccessCard memberId={id} />
         </MemberGroupCard>
 
         <MemberGroupCard

@@ -8,6 +8,7 @@ const mockSendChoreRosterEmail = vi.fn();
 const mockShouldSendChoreRoster = vi.fn();
 const mockCreateGuestChoreToken = vi.fn();
 const mockMemberCount = vi.fn();
+const mockLodgeFindFirst = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -48,6 +49,9 @@ vi.mock("@/lib/prisma", () => ({
     guestChoreToken: {
       deleteMany: mockGuestTokenDeleteMany,
     },
+    lodge: {
+      findFirst: mockLodgeFindFirst,
+    },
   },
 }));
 
@@ -70,6 +74,7 @@ describe("PUT /api/admin/roster/[date] email action", () => {
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockCreateGuestChoreToken.mockResolvedValue("token-1");
     mockMemberCount.mockResolvedValue(1);
+    mockLodgeFindFirst.mockResolvedValue({ id: "default-lodge" });
     // Default: recipient wants the roster. The hybrid resolution itself is unit
     // tested in notification-preference-gating.test.ts; here we assert the
     // service wires its inputs and honors its verdict.
@@ -175,6 +180,7 @@ describe("PUT /api/admin/roster/[date] email action", () => {
       "2026-04-10",
       [{ name: "Kitchen", description: null }],
       expect.stringContaining("/chores/"),
+      "default-lodge",
     );
   });
 

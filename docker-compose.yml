@@ -36,6 +36,11 @@ x-app-environment: &app-environment
   SES_SNS_TOPIC_ARN: ${SES_SNS_TOPIC_ARN}
   SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN: ${SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN:-false}
   EMAIL_FROM: ${EMAIL_FROM}
+  EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-}
+  SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+  # Server-side contact-form recipient; the NEXT_PUBLIC_ variant below is a
+  # build arg baked into the client bundle and cannot be set at runtime.
+  CONTACT_EMAIL: ${CONTACT_EMAIL:-}
   CRON_SECRET: ${CRON_SECRET}
   SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
   SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}

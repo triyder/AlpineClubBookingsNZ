@@ -8,6 +8,7 @@ import { getEffectiveEmail } from "@/lib/member-utils"
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only"
 import { getActiveGuestsForNight, getGuestStayEnd, getGuestStayStart } from "@/lib/booking-guest-stay-ranges"
 import { validateRosterAllocationsForDate } from "@/lib/lodge-date-scoping"
+import { lodgeNullTolerantScope } from "@/lib/lodges"
 import { z } from "zod"
 import logger from "@/lib/logger"
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
@@ -48,12 +49,13 @@ export const rosterActionSchema = z.discriminatedUnion("action", [
 
 export type RosterActionInput = z.infer<typeof rosterActionSchema>
 
-async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
+async function getGuestsForDate(date: Date, lodgeId: string): Promise<GuestInput[]> {
   const bookings = await prisma.booking.findMany({
     where: {
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: { gt: date },
+      ...lodgeNullTolerantScope(lodgeId),
       guests: {
         some: {
           stayStart: { lte: date },
@@ -95,10 +97,11 @@ async function buildSuggestedAllocations(
   tx: Prisma.TransactionClient,
   date: Date,
   guests: GuestInput[],
-  includeNonEssential: boolean | undefined
+  includeNonEssential: boolean | undefined,
+  lodgeId: string
 ) {
   const choreTemplates = await tx.choreTemplate.findMany({
-    where: { active: true },
+    where: { active: true, ...lodgeNullTolerantScope(lodgeId) },
     orderBy: { sortOrder: "asc" },
   })
 
@@ -169,9 +172,10 @@ export async function getAdminRosterForDate(params: {
   dateString: string
   regenerate: boolean
   includeNonEssential?: boolean
+  lodgeId: string
 }): Promise<JsonRouteResult> {
-  const { date, dateString: dateStr, regenerate, includeNonEssential } = params
-  const guests = await getGuestsForDate(date)
+  const { date, dateString: dateStr, regenerate, includeNonEssential, lodgeId } = params
+  const guests = await getGuestsForDate(date, lodgeId)
 
   // Wrap check + create in a transaction to prevent concurrent duplicate assignments
   const existing = await prisma.$transaction(async (tx) => {
@@ -208,7 +212,8 @@ export async function getAdminRosterForDate(params: {
         tx,
         date,
         guests,
-        includeNonEssential
+        includeNonEssential,
+        lodgeId
       )
 
       // Save allocations
@@ -243,7 +248,7 @@ export async function getAdminRosterForDate(params: {
 
   // Get all active chore templates for the UI
   const allTemplates = await prisma.choreTemplate.findMany({
-    where: { active: true },
+    where: { active: true, ...lodgeNullTolerantScope(lodgeId) },
     orderBy: { sortOrder: "asc" },
   })
 
@@ -299,8 +304,9 @@ export async function updateAdminRosterForDate(params: {
   date: Date
   dateString: string
   data: RosterActionInput
+  lodgeId: string
 }): Promise<JsonRouteResult> {
-  const { date, dateString: dateStr, data } = params
+  const { date, dateString: dateStr, data, lodgeId } = params
   try {
   switch (data.action) {
     case "reassign": {
@@ -371,7 +377,7 @@ export async function updateAdminRosterForDate(params: {
           return { conflict: true as const }
         }
 
-        const guests = await getGuestsForDate(date)
+        const guests = await getGuestsForDate(date, lodgeId)
         const deleteWhere = hasConfirmed
           ? { date }
           : { date, status: "SUGGESTED" as const }
@@ -382,7 +388,8 @@ export async function updateAdminRosterForDate(params: {
           tx,
           date,
           guests,
-          data.includeNonEssential
+          data.includeNonEssential,
+          lodgeId
         )
 
         if (allocations.length > 0) {
@@ -512,6 +519,7 @@ export async function updateAdminRosterForDate(params: {
               dateStr,
               guest.chores,
               choreLink,
+              lodgeId,
             )
             return {
               guestId,

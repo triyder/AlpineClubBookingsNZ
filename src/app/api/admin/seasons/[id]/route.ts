@@ -5,6 +5,7 @@ import { z } from "zod"
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { lodgeNullTolerantScope } from "@/lib/lodges"
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -82,7 +83,9 @@ export async function PUT(
     )
   }
 
-  // Check overlaps excluding current season
+  // Check overlaps excluding current season, scoped to the season's own
+  // lodge (lodges may run different season windows). A season still missing
+  // its lodgeId (expand-release tolerance) conservatively checks every lodge.
   if (startDate || endDate) {
     const overlapping = await prisma.season.findFirst({
       where: {
@@ -90,6 +93,9 @@ export async function PUT(
         AND: [
           { startDate: { lte: effectiveEnd } },
           { endDate: { gte: effectiveStart } },
+          ...(existing.lodgeId
+            ? [lodgeNullTolerantScope(existing.lodgeId)]
+            : []),
         ],
       },
     })

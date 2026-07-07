@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { useLodgeOptions } from "@/components/lodge-select";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { formatCents } from "@/lib/pricing";
@@ -25,6 +26,8 @@ interface WorkPartyEventRow {
   endDate: string;
   discountPercent: number;
   active: boolean;
+  lodgeId: string | null;
+  lodgeName: string | null;
   bookingCount: number;
   totalDiscountCents: number;
 }
@@ -60,6 +63,8 @@ interface EventFormState {
   endDate: string;
   discountPercent: string;
   active: boolean;
+  // Lodge the working bee is held at; "" means club-wide (all lodges).
+  lodgeId: string;
 }
 
 const emptyForm: EventFormState = {
@@ -69,6 +74,7 @@ const emptyForm: EventFormState = {
   endDate: "",
   discountPercent: "100",
   active: true,
+  lodgeId: "",
 };
 
 function formatStoredDate(value: string) {
@@ -85,6 +91,9 @@ export default function AdminWorkPartiesPage() {
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, EventDetail>>({});
+  // Lodge options for the form's lodge field and per-event lodge labels; the
+  // field and labels only render once a second lodge exists (ADR-002).
+  const { lodges } = useLodgeOptions("admin");
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -122,6 +131,7 @@ export default function AdminWorkPartiesPage() {
       endDate: event.endDate.slice(0, 10),
       discountPercent: String(event.discountPercent),
       active: event.active,
+      lodgeId: event.lodgeId ?? "",
     });
     setShowForm(true);
     setError("");
@@ -152,6 +162,7 @@ export default function AdminWorkPartiesPage() {
         endDate: form.endDate,
         discountPercent,
         active: form.active,
+        lodgeId: form.lodgeId || null,
       };
       const res = await fetch(
         editingId ? `/api/admin/work-parties/${editingId}` : "/api/admin/work-parties",
@@ -189,6 +200,7 @@ export default function AdminWorkPartiesPage() {
         endDate: event.endDate.slice(0, 10),
         discountPercent: event.discountPercent,
         active: !event.active,
+        lodgeId: event.lodgeId,
       }),
     });
     const data = await res.json();
@@ -300,6 +312,24 @@ export default function AdminWorkPartiesPage() {
                   onChange={(e) => setForm({ ...form, endDate: e.target.value })}
                 />
               </div>
+              {lodges.length > 1 && (
+                <div className="space-y-2">
+                  <Label htmlFor="wp-lodge">Lodge</Label>
+                  <select
+                    id="wp-lodge"
+                    value={form.lodgeId}
+                    onChange={(e) => setForm({ ...form, lodgeId: e.target.value })}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                  >
+                    <option value="">All lodges (club-wide)</option>
+                    {lodges.map((lodge) => (
+                      <option key={lodge.id} value={lodge.id}>
+                        {lodge.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="wp-description">Description (optional)</Label>
@@ -364,6 +394,12 @@ export default function AdminWorkPartiesPage() {
                       {formatStoredDate(event.startDate)} to {formatStoredDate(event.endDate)}
                       {" · "}
                       {event.discountPercent}% off nights in the window
+                      {lodges.length > 1 && (
+                        <>
+                          {" · "}
+                          {event.lodgeName ?? "All lodges"}
+                        </>
+                      )}
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">

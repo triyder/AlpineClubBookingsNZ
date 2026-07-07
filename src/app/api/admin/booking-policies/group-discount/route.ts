@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 
 const groupDiscountSchema = z.object({
   minGroupSize: z.number().int().min(2).max(200),
@@ -37,7 +37,7 @@ export async function PUT(req: NextRequest) {
     );
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const lodgeCapacity = await getDefaultLodgeCapacity();
   if (parsed.data.minGroupSize > lodgeCapacity) {
     return NextResponse.json(
       { error: `Minimum group size cannot exceed lodge capacity (${lodgeCapacity}).` },

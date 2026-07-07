@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -16,9 +17,12 @@ export async function GET(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status } = await checkLodgeAuth(dateStr, { request: req });
-  if (error) {
-    return NextResponse.json({ error }, { status: status! });
+  const authResult = await checkLodgeAuth(dateStr, { request: req });
+  if (authResult.error) {
+    return NextResponse.json(
+      { error: authResult.error },
+      { status: authResult.status! },
+    );
   }
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
@@ -29,9 +33,22 @@ export async function GET(
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
+  // Frequency history is per lodge: last-rostered dates only consider
+  // assignments of this kiosk's lodge's chore templates.
+  let kioskLodgeId: string;
+  try {
+    kioskLodgeId = await resolveKioskLodgeId(authResult, prisma);
+  } catch (err) {
+    const denied = kioskLodgeAuthErrorResponse(err);
+    if (denied) return denied;
+    throw err;
+  }
   const lastRosteredRecords = await prisma.choreAssignment.groupBy({
     by: ["choreTemplateId"],
-    where: { date: { lt: date } },
+    where: {
+      date: { lt: date },
+      choreTemplate: lodgeNullTolerantScope(kioskLodgeId),
+    },
     _max: { date: true },
   });
 

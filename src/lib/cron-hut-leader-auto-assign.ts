@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { eachDayOfInterval, addDays } from "date-fns";
 import { calculateOverlapDays } from "./hut-leader-overlap";
 import { getNZSTToday } from "@/lib/nzst-date";
+import { getDefaultLodgeId } from "./lodges";
 import { loadHutLeaderLookaheadDays } from "./lodge-settings";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import logger from "./logger";
@@ -58,7 +59,8 @@ export async function autoAssignHutLeaders(): Promise<{
           },
         },
       },
-      include: {
+      select: {
+        lodgeId: true,
         guests: {
           where: {
             ageTier: "ADULT",
@@ -83,6 +85,7 @@ export async function autoAssignHutLeaders(): Promise<{
       name: string;
       checkIn: Date;
       checkOut: Date;
+      lodgeId: string | null;
     }>();
 
     for (const booking of bookingsForDate) {
@@ -93,6 +96,7 @@ export async function autoAssignHutLeaders(): Promise<{
             name: `${guest.member.firstName} ${guest.member.lastName}`,
             checkIn: guest.stayStart,
             checkOut: guest.stayEnd,
+            lodgeId: booking.lodgeId,
           });
         }
       }
@@ -129,11 +133,13 @@ export async function autoAssignHutLeaders(): Promise<{
 
     // Create the assignment
     try {
+      const lodgeId = member.lodgeId ?? (await getDefaultLodgeId(prisma));
       await prisma.hutLeaderAssignment.create({
         data: {
           memberId: member.id,
           startDate: member.checkIn,
           endDate: member.checkOut,
+          lodgeId,
         },
       });
 

@@ -1,18 +1,67 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import {
   canReadLodgeInstructions,
   getSanitizedLodgeInstructions,
 } from "@/lib/lodge-instructions";
+import { getTodayDateOnly } from "@/lib/date-only";
+import { getDefaultLodgeId } from "@/lib/lodges";
+import { hasAdminAccess } from "@/lib/access-roles";
+import { prisma } from "@/lib/prisma";
 
 /**
- * GET /api/lodge-instructions
+ * The distinct lodge ids the member is a hut leader for (current or upcoming
+ * assignments, NZ date-only semantics). Assignments with a null lodgeId count
+ * as the club's default lodge, matching resolveKioskLodgeId's hut-leader
+ * semantics. This is both the set the member may read documents for (M4) and
+ * the basis for the no-lodgeId default below.
+ */
+async function getMemberInstructionLodgeIds(
+  memberId: string,
+): Promise<Set<string>> {
+  const assignments = await prisma.hutLeaderAssignment.findMany({
+    where: { memberId, endDate: { gte: getTodayDateOnly() } },
+    select: { lodgeId: true },
+  });
+
+  const lodgeIds = new Set<string>();
+  let defaultLodgeId: string | null = null;
+  for (const assignment of assignments) {
+    if (assignment.lodgeId) {
+      lodgeIds.add(assignment.lodgeId);
+    } else {
+      defaultLodgeId ??= await getDefaultLodgeId(prisma);
+      lodgeIds.add(defaultLodgeId);
+    }
+  }
+  return lodgeIds;
+}
+
+/**
+ * Resolve which lodge's instructions the member should see when the request
+ * does not name one: the lodge of their current or upcoming hut leader
+ * assignments when those cover exactly one distinct lodge, else null (the
+ * club-wide documents).
+ */
+async function resolveMemberInstructionLodgeId(
+  memberId: string,
+): Promise<string | null> {
+  const lodgeIds = await getMemberInstructionLodgeIds(memberId);
+  return lodgeIds.size === 1 ? [...lodgeIds][0] : null;
+}
+
+/**
+ * GET /api/lodge-instructions?lodgeId=<id>
  * Reader endpoint for the member-facing lodge instructions page.
  * Admins always qualify; members qualify only while they hold a current
  * or upcoming hut leader assignment. Everyone else gets a 403 the page
  * turns into the "you're not currently assigned" state.
+ *
+ * The optional lodgeId selects which lodge's override documents replace
+ * the club-wide ones; when omitted, the member's assignment lodge is used
+ * if unambiguous, otherwise the club-wide documents are returned.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireActiveSession();
   if (!guard.ok) {
     return guard.response;
@@ -30,8 +79,34 @@ export async function GET() {
     );
   }
 
-  // Reader surface: resolve text tokens ({{club-name}} etc.) for display.
+  const requestedLodgeId = request.nextUrl.searchParams.get("lodgeId");
+
+  let lodgeId: string | null;
+  if (requestedLodgeId) {
+    // M4: a hut leader may only read their OWN assignment lodges' documents
+    // (which may carry door codes / emergency access details); admins may
+    // request any lodge. Without this a hut leader for lodge A could read
+    // lodge B's operational instructions.
+    if (!hasAdminAccess(guard.session.user)) {
+      const allowedLodgeIds = await getMemberInstructionLodgeIds(
+        guard.session.user.id,
+      );
+      if (!allowedLodgeIds.has(requestedLodgeId)) {
+        return NextResponse.json(
+          { error: "You are not assigned as a hut leader for that lodge" },
+          { status: 403 },
+        );
+      }
+    }
+    lodgeId = requestedLodgeId;
+  } else {
+    lodgeId = await resolveMemberInstructionLodgeId(guard.session.user.id);
+  }
+
+  // Reader surface: the member's lodge documents (club-wide fallback) with
+  // text tokens ({{club-name}} etc.) resolved for display.
   const documents = await getSanitizedLodgeInstructions({
+    lodgeId,
     resolveTokens: true,
   });
   return NextResponse.json({ documents });

@@ -31,6 +31,8 @@ const mockTx = {
   promoCodeAssignment: { findMany: vi.fn() },
   member: { findUnique: vi.fn() },
   memberSubscription: { findFirst: vi.fn() },
+  lodge: { findFirst: vi.fn() },
+  memberLodgeAccess: { findMany: vi.fn() },
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -82,6 +84,11 @@ vi.mock("@/lib/prisma", () => ({
     internetBankingPaymentSettings: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    // Multi-lodge phase 8: the booking route resolves the (default) lodge
+    // before the per-lodge capacity check.
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -132,6 +139,7 @@ vi.mock("@/lib/booking-policies", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
   checkCapacityForGuestRanges: vi.fn().mockResolvedValue({
     available: true,
@@ -282,6 +290,8 @@ beforeEach(() => {
   mockTx.season.findMany.mockResolvedValue([]);
   mockTx.promoRedemption.aggregate.mockResolvedValue({ _sum: { freeNightsUsed: 0 } });
   mockTx.promoCodeAssignment.findMany.mockResolvedValue([]);
+  mockTx.lodge.findFirst.mockResolvedValue({ id: "lodge-1" });
+  mockTx.memberLodgeAccess.findMany.mockResolvedValue([]);
   mockPrisma.bookingGuest.findMany.mockResolvedValue([]);
   mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-1" });
   mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
@@ -344,7 +354,9 @@ describe("Issue 7: Draft Booking Creation", () => {
     expect(res.status).toBe(201);
 
     expect(mockPrisma.$transaction).toHaveBeenCalled();
-    expect(mockTx.$executeRaw).toHaveBeenCalled();
+    // The capacity lock now goes through the mocked acquireLodgeCapacityLock.
+    const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
+    expect(acquireLodgeCapacityLock).toHaveBeenCalledWith(mockTx, "lodge-1");
     expect(mockTx.booking.create).toHaveBeenCalled();
     expect(mockPrisma.booking.create).not.toHaveBeenCalled();
   });
@@ -634,6 +646,7 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
       })
     );
     expect(checkCapacityForGuestRanges).toHaveBeenCalledWith(
+      "lodge-1",
       draftBooking.checkIn,
       draftBooking.checkOut,
       guestRanges,

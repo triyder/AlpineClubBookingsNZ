@@ -103,6 +103,7 @@ export const config = {
     "/api/admin/internet-banking-settings",
     "/api/admin/lockers/:path*",
     "/api/admin/lodge/:path*",
+    "/api/admin/lodges/:path*",
     "/api/admin/members/:id/xero-link",
     "/api/admin/members/:id/xero-push",
     "/api/admin/members/:id/xero-unlink",

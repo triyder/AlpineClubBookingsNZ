@@ -360,13 +360,16 @@ async function handlePaymentIntentSucceeded(
           booking.checkOut,
           booking.guests.length,
           booking.finalPriceCents,
-          booking.promoRedemption?.promoCode
-            ? {
-                discountCents: booking.discountCents,
-                promoAdjustmentCents: booking.promoAdjustmentCents,
-                promoCode: booking.promoRedemption.promoCode.code,
-              }
-            : undefined
+          {
+            lodgeId: booking.lodgeId,
+            ...(booking.promoRedemption?.promoCode
+              ? {
+                  discountCents: booking.discountCents,
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode: booking.promoRedemption.promoCode.code,
+                }
+              : {}),
+          }
         );
       }
     } catch (emailErr) {
@@ -711,6 +714,7 @@ async function handleSetupIntentFailed(
       firstName: booking.member.firstName,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
+      lodgeId: booking.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send setup intent failed email")
     );
