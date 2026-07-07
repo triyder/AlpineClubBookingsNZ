@@ -31,6 +31,7 @@ import {
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select";
+import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 interface DashboardBed {
   id: string;
@@ -106,8 +107,19 @@ function bedEditFromBed(bed: DashboardBed): BedDraft {
   };
 }
 
-export function RoomsBedsManager() {
+export function RoomsBedsManager({
+  permissionMatrix,
+}: {
+  permissionMatrix: AdminPermissionMatrix;
+}) {
   const { confirm, confirmDialog } = useConfirm();
+  // The bed-allocation APIs behind this manager enforce the bookings area even
+  // though the page route is lodge area. Gate the whole manager at bookings
+  // `view` so a narrow custom role (lodge without bookings) renders nothing
+  // rather than toasting a raw 403; seeded roles with lodge access all hold
+  // bookings, so they are unaffected.
+  const canManageBeds = permissionMatrix.bookings !== "none";
+  const [forbidden, setForbidden] = useState(false);
   const [payload, setPayload] = useState<RoomsBedsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -147,6 +159,19 @@ export function RoomsBedsManager() {
           signal,
         },
       );
+      // In-manager backstop: the page normally hides this manager by matrix, so
+      // a denial here means matrix↔enforcement drift or a mid-session
+      // revocation — render nothing quietly instead of toasting a raw 403.
+      // Genuine failures (5xx/network) keep the toast below.
+      if (response.status === 401 || response.status === 403) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            "RoomsBedsManager: bed-allocation fetch denied; hiding manager (matrix/enforcement drift or revoked session?)",
+          );
+        }
+        setForbidden(true);
+        return;
+      }
       if (!response.ok) {
         throw new Error(await readApiError(response, "Failed to load rooms and beds"));
       }
@@ -176,10 +201,13 @@ export function RoomsBedsManager() {
   }, [lodgeId]);
 
   useEffect(() => {
+    // Skip the bookings-area fetch entirely for a viewer who lacks bookings
+    // access; the manager renders nothing for them (below).
+    if (!canManageBeds) return;
     const controller = new AbortController();
     void loadRooms(controller.signal);
     return () => controller.abort();
-  }, [loadRooms]);
+  }, [loadRooms, canManageBeds]);
 
   async function mutate(
     label: string,
@@ -369,6 +397,13 @@ export function RoomsBedsManager() {
         }),
       "Rooms and beds imported",
     );
+  }
+
+  // Quiet render-nothing backstop: a viewer without bookings access (or a drift
+  // denial) sees nothing rather than a broken shell with a 403 toast. This
+  // manager owns the page's only heading, so the whole page is blank for them.
+  if (!canManageBeds || forbidden) {
+    return null;
   }
 
   return (

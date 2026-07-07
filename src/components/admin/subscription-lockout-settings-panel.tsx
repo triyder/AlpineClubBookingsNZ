@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 const MONTH_NAMES = [
   "January",
@@ -61,7 +62,18 @@ interface AgeTierRow {
   subscriptionRequiredForBooking?: boolean;
 }
 
-export function SubscriptionLockoutSettingsPanel() {
+export function SubscriptionLockoutSettingsPanel({
+  permissionMatrix,
+}: {
+  permissionMatrix: AdminPermissionMatrix;
+}) {
+  // This support-area panel fans out to three other areas. Each backing area is
+  // gated at `view` so a narrow custom role never fetches into a 403 (seeded
+  // roles that reach this page hold all three, so they are unaffected).
+  const canMembership = permissionMatrix.membership !== "none";
+  const canFinance = permissionMatrix.finance !== "none";
+  const canBookings = permissionMatrix.bookings !== "none";
+
   const [settings, setSettings] = useState<LockoutSettings | null>(null);
   const [subscriptionCode, setSubscriptionCode] = useState<string | null>(null);
   const [subscriptionItemCode, setSubscriptionItemCode] = useState<
@@ -73,36 +85,69 @@ export function SubscriptionLockoutSettingsPanel() {
   const [ageTiers, setAgeTiers] = useState<AgeTierRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
 
   useEffect(() => {
     async function load() {
       try {
+        // Only fetch an area's endpoints when the viewer holds it, so a narrow
+        // custom role never fires a request that would 403. A skipped fetch
+        // resolves to null and leaves its state at the default (same as today's
+        // non-ok handling), and the matrix hides the matching section below.
         const [lockoutRes, mappingsRes, accountsRes, itemsRes, orgRes, tiersRes] =
           await Promise.all([
-            fetch("/api/admin/membership-lockout-settings", {
-              credentials: "same-origin",
-            }),
-            fetch("/api/admin/xero/account-mappings", {
-              credentials: "same-origin",
-            }),
-            fetch("/api/admin/xero/chart-of-accounts", {
-              credentials: "same-origin",
-            }),
-            fetch("/api/admin/xero/items", { credentials: "same-origin" }),
-            fetch("/api/admin/xero/organisation", {
-              credentials: "same-origin",
-            }),
-            fetch("/api/admin/age-tier-settings", {
-              credentials: "same-origin",
-            }),
+            canMembership
+              ? fetch("/api/admin/membership-lockout-settings", {
+                  credentials: "same-origin",
+                })
+              : null,
+            canFinance
+              ? fetch("/api/admin/xero/account-mappings", {
+                  credentials: "same-origin",
+                })
+              : null,
+            canFinance
+              ? fetch("/api/admin/xero/chart-of-accounts", {
+                  credentials: "same-origin",
+                })
+              : null,
+            canFinance
+              ? fetch("/api/admin/xero/items", { credentials: "same-origin" })
+              : null,
+            canFinance
+              ? fetch("/api/admin/xero/organisation", {
+                  credentials: "same-origin",
+                })
+              : null,
+            canBookings
+              ? fetch("/api/admin/age-tier-settings", {
+                  credentials: "same-origin",
+                })
+              : null,
           ]);
 
-        const lockoutBody = lockoutRes.ok ? await lockoutRes.json() : null;
+        // In-panel backstop: the settings are the membership-area backbone, so a
+        // denial here (matrix↔enforcement drift or a mid-session revocation)
+        // hides the whole panel quietly rather than stalling on "Loading…".
+        if (
+          lockoutRes &&
+          (lockoutRes.status === 401 || lockoutRes.status === 403)
+        ) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "SubscriptionLockoutSettingsPanel: lockout-settings fetch denied; hiding panel (matrix/enforcement drift or revoked session?)",
+            );
+          }
+          setForbidden(true);
+          return;
+        }
+
+        const lockoutBody = lockoutRes?.ok ? await lockoutRes.json() : null;
         if (lockoutBody?.settings) {
           setSettings(lockoutBody.settings as LockoutSettings);
         }
 
-        const mappingsBody = mappingsRes.ok ? await mappingsRes.json() : null;
+        const mappingsBody = mappingsRes?.ok ? await mappingsRes.json() : null;
         if (mappingsBody?.subscriptionIncome) {
           setSubscriptionCode(mappingsBody.subscriptionIncome.code ?? null);
           setSubscriptionItemCode(
@@ -111,19 +156,19 @@ export function SubscriptionLockoutSettingsPanel() {
         }
 
         // Xero reference data is only available when Xero is connected.
-        if (accountsRes.ok) {
+        if (accountsRes?.ok) {
           const body = await accountsRes.json();
           setAccounts((body.accounts as XeroCode[]) ?? []);
         }
-        if (itemsRes.ok) {
+        if (itemsRes?.ok) {
           const body = await itemsRes.json();
           setItems((body.items as XeroCode[]) ?? []);
         }
-        if (orgRes.ok) {
+        if (orgRes?.ok) {
           const body = await orgRes.json();
           setXeroYearEndMonth(body.financialYearEndMonth ?? null);
         }
-        if (tiersRes.ok) {
+        if (tiersRes?.ok) {
           const body = await tiersRes.json();
           setAgeTiers((body.settings as AgeTierRow[]) ?? []);
         }
@@ -134,7 +179,7 @@ export function SubscriptionLockoutSettingsPanel() {
       }
     }
     load();
-  }, []);
+  }, [canMembership, canFinance, canBookings]);
 
   function update(patch: Partial<LockoutSettings>) {
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -165,22 +210,27 @@ export function SubscriptionLockoutSettingsPanel() {
 
       // Persist the detection codes via the shared Xero account-mappings row so
       // there is a single source of truth with the Xero mappings panel. Send
-      // only the subscriptionIncome key so other mappings are untouched.
-      const mappingsRes = await fetch("/api/admin/xero/account-mappings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          subscriptionIncome: {
-            code: subscriptionCode,
-            itemCode: subscriptionItemCode,
-          },
-        }),
-      });
-      if (!mappingsRes.ok) {
-        const body = await mappingsRes.json().catch(() => ({}));
-        toast.error(body.error ?? "Failed to save detection codes");
-        return;
+      // only the subscriptionIncome key so other mappings are untouched. Skipped
+      // for a viewer without finance access, whose detection card is hidden and
+      // whose codes were never loaded (writing them would 403 and — worse —
+      // attempt to null out a mapping they cannot see).
+      if (canFinance) {
+        const mappingsRes = await fetch("/api/admin/xero/account-mappings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            subscriptionIncome: {
+              code: subscriptionCode,
+              itemCode: subscriptionItemCode,
+            },
+          }),
+        });
+        if (!mappingsRes.ok) {
+          const body = await mappingsRes.json().catch(() => ({}));
+          toast.error(body.error ?? "Failed to save detection codes");
+          return;
+        }
       }
 
       toast.success("Settings saved");
@@ -189,6 +239,13 @@ export function SubscriptionLockoutSettingsPanel() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // The panel is membership-backed: without `settings` nothing can render, so a
+  // viewer lacking membership (or a drift denial) gets a quiet render-nothing
+  // rather than a stuck "Loading settings…". The page keeps its own heading.
+  if (forbidden || !canMembership) {
+    return null;
   }
 
   if (loading || !settings) {
@@ -238,24 +295,29 @@ export function SubscriptionLockoutSettingsPanel() {
             </span>
           </label>
 
-          {settings.enabled && !xeroConnected ? (
-            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-              <span className="font-medium">Heads up:</span> the lockout is on, but
-              Xero is not connected, so the system cannot read anyone&rsquo;s paid
-              status. While Xero is disconnected the lockout has no effect and all
-              members can book.{" "}
-              <Link href="/admin/xero/setup" className="font-medium underline">
-                Connect Xero
-              </Link>{" "}
-              to enforce it.
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              The lockout has no effect while Xero is disconnected, since a paid
-              status can only come from Xero. It also respects the per-age-tier rule
-              below.
-            </p>
-          )}
+          {/* Xero connection status is finance-area; only shown to a finance
+              viewer so we never assert "not connected" to someone who simply
+              cannot see finance (the Xero fetches were skipped for them). */}
+          {canFinance ? (
+            settings.enabled && !xeroConnected ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <span className="font-medium">Heads up:</span> the lockout is on,
+                but Xero is not connected, so the system cannot read anyone&rsquo;s
+                paid status. While Xero is disconnected the lockout has no effect
+                and all members can book.{" "}
+                <Link href="/admin/xero/setup" className="font-medium underline">
+                  Connect Xero
+                </Link>{" "}
+                to enforce it.
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                The lockout has no effect while Xero is disconnected, since a paid
+                status can only come from Xero. It also respects the per-age-tier
+                rule below.
+              </p>
+            )
+          ) : null}
         </CardContent>
       </Card>
 
@@ -268,13 +330,18 @@ export function SubscriptionLockoutSettingsPanel() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm">
-            {xeroYearEndMonth
-              ? `Your Xero organisation's financial year ends in ${monthName(
-                  xeroYearEndMonth,
-                )}.`
-              : "Could not read the financial year from Xero (not connected, or unavailable). The March default applies unless you set an override."}
-          </p>
+          {/* Reads the Xero organisation's year-end (finance area); hidden from a
+              non-finance viewer so we do not assert a Xero connection state they
+              cannot verify. The override control below is a membership setting. */}
+          {canFinance ? (
+            <p className="text-sm">
+              {xeroYearEndMonth
+                ? `Your Xero organisation's financial year ends in ${monthName(
+                    xeroYearEndMonth,
+                  )}.`
+                : "Could not read the financial year from Xero (not connected, or unavailable). The March default applies unless you set an override."}
+            </p>
+          ) : null}
 
           <div className="space-y-1.5">
             <Label htmlFor="fy-override">Financial year-end month</Label>
@@ -320,6 +387,9 @@ export function SubscriptionLockoutSettingsPanel() {
         </CardContent>
       </Card>
 
+      {/* Paid-subscription detection reads and writes Xero account/item codes —
+          finance area. Hidden from a viewer without finance access. */}
+      {canFinance ? (
       <Card>
         <CardHeader>
           <CardTitle>Paid-subscription detection</CardTitle>
@@ -414,7 +484,11 @@ export function SubscriptionLockoutSettingsPanel() {
           </label>
         </CardContent>
       </Card>
+      ) : null}
 
+      {/* Age tiers are a bookings-area setting. Hidden from a viewer without
+          bookings access. */}
+      {canBookings ? (
       <Card>
         <CardHeader>
           <CardTitle>Age tiers</CardTitle>
@@ -449,6 +523,7 @@ export function SubscriptionLockoutSettingsPanel() {
           </Button>
         </CardContent>
       </Card>
+      ) : null}
 
       <Button onClick={save} disabled={saving}>
         {saving ? "Saving…" : "Save settings"}
