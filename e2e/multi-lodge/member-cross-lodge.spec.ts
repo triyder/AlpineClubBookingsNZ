@@ -4,6 +4,7 @@ import {
   CAPACITY_ISOLATION_GUEST_COUNT,
   CAPACITY_ISOLATION_WINDOW,
   CROSS_LODGE_OFFER_BOOKING_ID,
+  CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID,
   SECOND_LODGE,
   SECOND_LODGE_BED_COUNT,
   WAITLIST_FULL_WINDOW,
@@ -173,5 +174,39 @@ test("(d) a cross-lodge waitlist offer confirms into a fresh lodge B booking", a
   );
   await expect(page.getByText("A Spot Has Opened Up!")).toHaveCount(0);
   await expect(page.getByText(/payment/i).first()).toBeVisible();
+  await page.close();
+});
+
+test("(e) #1609 tripwire: a member-guest cross-lodge confirm is blocked by the member-night guard", async () => {
+  // Runtime-confirmed defect (#1609): the Phase-2 member-night guard receives
+  // no exclude-id, so it trips on the entry's OWN still-live WAITLIST_OFFERED
+  // booking whenever the guest row is member-linked — the confirm fails with
+  // the generic error, the offer stays intact, and no lodge-B booking is
+  // created. test.fail() marks that as today's EXPECTED outcome: this test
+  // goes loud (unexpected pass) the moment the #1609 fix lands, at which point
+  // drop the marker and keep it as a plain regression test.
+  test.fail();
+
+  const page = await memberContext.newPage();
+  await page.goto(`/bookings/${CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID}`);
+
+  await expect(page.getByText("A Spot Has Opened Up!")).toBeVisible();
+  const confirm = page.getByRole("button", {
+    name: `Confirm at ${SECOND_LODGE.name}`,
+  });
+  await expect(confirm).toBeVisible();
+  await confirm.click();
+
+  // The single assertion mirrors (d)'s success criterion: navigation away from
+  // the offer to the fresh lodge-B booking. Today the confirm errors
+  // server-side, no navigation happens, and this times out — the expected
+  // failure. Shorter timeout than (d): we are waiting for something that is
+  // known not to happen.
+  await page.waitForURL(
+    (url) =>
+      /\/bookings\/[^/]+$/.test(url.pathname) &&
+      !url.pathname.endsWith(CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID),
+    { timeout: 15_000 },
+  );
   await page.close();
 });

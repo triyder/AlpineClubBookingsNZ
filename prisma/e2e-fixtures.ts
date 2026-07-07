@@ -239,3 +239,17 @@ export const CROSS_LODGE_OFFER_WINDOW = {
   checkOut: "2026-08-26",
   nights: ["2026-08-24", "2026-08-25"],
 };
+
+// #1609 tripwire: the same cross-lodge offer shape but with the guest row
+// member-linked (Wanda herself). Runtime-confirmed to be blocked today — the
+// Phase-2 member-night guard receives no exclude-id and trips on the entry's
+// own WAITLIST_OFFERED booking — so member-cross-lodge.spec.ts encodes its
+// confirm as test.fail(); the suite goes loud (unexpected pass) the moment
+// #1609 is fixed. Window is disjoint from every other lodge-B fixture.
+export const CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID =
+  "e2e-cross-lodge-offer-member-guest";
+export const CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW = {
+  checkIn: "2026-09-07",
+  checkOut: "2026-09-09",
+  nights: ["2026-09-07", "2026-09-08"],
+};

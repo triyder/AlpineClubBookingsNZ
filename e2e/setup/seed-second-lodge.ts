@@ -21,6 +21,8 @@ import {
   CAPACITY_ISOLATION_GUEST_COUNT,
   CAPACITY_ISOLATION_WINDOW,
   CROSS_LODGE_OFFER_BOOKING_ID,
+  CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID,
+  CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW,
   CROSS_LODGE_OFFER_WINDOW,
   ROLE_PERSONAS,
   ROSTER_GUEST_LODGE_A,
@@ -120,8 +122,14 @@ async function createBookingWithGuests(opts: {
 async function main() {
   const lodgeAId = await getDefaultLodgeId(prisma);
 
-  // 1. Lodge B. Created after lodge A (later createdAt) so getDefaultLodgeId()
-  //    still resolves lodge A — lodge B never becomes the club default.
+  // 1. Lodge B. Intended to sort after lodge A so getDefaultLodgeId() keeps
+  //    resolving lodge A — but createdAt ordering alone is NOT safe here: the
+  //    migration seeds lodge A's createdAt with the database's
+  //    CURRENT_TIMESTAMP, which under the staging stack's
+  //    PGTZ=Pacific/Auckland renders NZ local time (~12h ahead of the UTC
+  //    timestamps Prisma clients write), so lodge B would sort "earlier" and
+  //    silently become the club default for every runtime fallback (#1627).
+  //    Normalised right after the upsert, then asserted.
   const lodgeB = await prisma.lodge.upsert({
     where: { id: SECOND_LODGE.id },
     update: { name: SECOND_LODGE.name, slug: SECOND_LODGE.slug, active: true },
@@ -134,6 +142,25 @@ async function main() {
   });
   const lodgeBId = lodgeB.id;
 
+  const lodgeA = await prisma.lodge.findUniqueOrThrow({
+    where: { id: lodgeAId },
+    select: { createdAt: true },
+  });
+  if (lodgeA.createdAt >= lodgeB.createdAt) {
+    await prisma.lodge.update({
+      where: { id: lodgeAId },
+      data: { createdAt: new Date(lodgeB.createdAt.getTime() - 60_000) },
+    });
+    console.log(
+      "seed-second-lodge: normalised lodge A's TZ-skewed createdAt (#1627) so default-lodge resolution stays deterministic.",
+    );
+  }
+  if ((await getDefaultLodgeId(prisma)) !== lodgeAId) {
+    throw new Error(
+      "seed-second-lodge: lodge B resolved as the club default even after createdAt normalisation (#1627) — refusing to mis-seed.",
+    );
+  }
+
   // Clear prior fixtures so a standalone re-run is deterministic. Cascades drop
   // guests/nights. Lodge B's own bookings go by lodgeId; the cross-lodge offer
   // (kept on lodge A) and the lodge-A roster arrival go by their fixed ids.
@@ -142,7 +169,13 @@ async function main() {
       OR: [
         { lodgeId: lodgeBId },
         {
-          id: { in: [CROSS_LODGE_OFFER_BOOKING_ID, ROSTER_LODGE_A_BOOKING_ID] },
+          id: {
+            in: [
+              CROSS_LODGE_OFFER_BOOKING_ID,
+              CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID,
+              ROSTER_LODGE_A_BOOKING_ID,
+            ],
+          },
         },
       ],
     },
@@ -263,11 +296,59 @@ async function main() {
     })),
   });
 
+  // Re-read an offer entry with the exact include the confirm path uses, quote
+  // it at lodge B with the SAME helper the confirm re-checks with
+  // (quoteWaitlistEntryAtLodge), and stamp the offered lodge + price so the
+  // accept never trips OFFER_PRICE_CHANGED. Shared by both seeded offers.
+  async function stampCrossLodgeOffer(offerId: string): Promise<number> {
+    const entry = await prisma.booking.findUniqueOrThrow({
+      where: { id: offerId },
+      include: { guests: { include: { nights: true } } },
+    });
+    const quote = await quoteWaitlistEntryAtLodge(
+      prisma,
+      {
+        memberId: entry.memberId,
+        checkIn: entry.checkIn,
+        checkOut: entry.checkOut,
+        guests: entry.guests.map((guest) => ({
+          ageTier: guest.ageTier,
+          isMember: guest.isMember,
+          memberId: guest.memberId,
+          stayStart: guest.stayStart,
+          stayEnd: guest.stayEnd,
+          nights: guest.nights,
+        })),
+        hasPromoRedemption: false,
+      },
+      lodgeBId,
+    );
+    if (!quote.offerable) {
+      throw new Error(
+        `Cross-lodge offer ${offerId} is not priceable at lodge B (reason: ${quote.reason}) — check lodge B seasons/rates`,
+      );
+    }
+    await prisma.booking.update({
+      where: { id: offerId },
+      data: {
+        waitlistOfferedLodgeId: lodgeBId,
+        waitlistOfferedPriceCents: quote.finalPriceCents,
+        totalPriceCents: quote.finalPriceCents,
+        finalPriceCents: quote.finalPriceCents,
+      },
+    });
+    return quote.finalPriceCents;
+  }
+
   // 7. Cross-lodge waitlist offer (scenario d, ADR-004): Wanda's WAITLIST_OFFERED
-  //    entry stays on lodge A, but its active offer is for lodge B. The offered
-  //    price is computed here from lodge B's own rates using the SAME helper the
-  //    confirm path re-checks with (quoteWaitlistEntryAtLodge), so the accept
-  //    never trips OFFER_PRICE_CHANGED.
+  //    entry stays on lodge A, but its active offer is for lodge B. The guest
+  //    row deliberately carries NO memberId: a member-linked guest makes the
+  //    Phase-2 member-night guard trip on the entry's own WAITLIST_OFFERED
+  //    booking (issue #1609, runtime-confirmed), so the member-guest
+  //    composition can never confirm today — it is seeded separately below as
+  //    the #1609 expected-fail tripwire. A member booking on behalf of a
+  //    non-member guest is a standard domain shape, and it exercises the same
+  //    create-and-cancel accept path.
   const offer = await createBookingWithGuests({
     id: CROSS_LODGE_OFFER_BOOKING_ID,
     memberId: wanda.id,
@@ -279,8 +360,8 @@ async function main() {
       {
         firstName: WAITLISTER.firstName,
         lastName: WAITLISTER.lastName,
-        isMember: true,
-        memberId: wanda.id,
+        isMember: false,
+        memberId: null,
       },
     ],
     extra: {
@@ -290,45 +371,36 @@ async function main() {
       waitlistOfferExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   });
+  const offerPriceCents = await stampCrossLodgeOffer(offer.id);
 
-  // Re-read with the exact include the confirm path uses, then quote from THAT
-  // so the seed-time and confirm-time quotes are structurally identical.
-  const entry = await prisma.booking.findUniqueOrThrow({
-    where: { id: offer.id },
-    include: { guests: { include: { nights: true } } },
-  });
-  const quote = await quoteWaitlistEntryAtLodge(
-    prisma,
-    {
-      memberId: entry.memberId,
-      checkIn: entry.checkIn,
-      checkOut: entry.checkOut,
-      guests: entry.guests.map((guest) => ({
-        ageTier: guest.ageTier,
-        isMember: guest.isMember,
-        memberId: guest.memberId,
-        stayStart: guest.stayStart,
-        stayEnd: guest.stayEnd,
-        nights: guest.nights,
-      })),
-      hasPromoRedemption: false,
-    },
-    lodgeBId,
-  );
-  if (!quote.offerable) {
-    throw new Error(
-      `Cross-lodge offer is not priceable at lodge B (reason: ${quote.reason}) — check lodge B seasons/rates`,
-    );
-  }
-  await prisma.booking.update({
-    where: { id: offer.id },
-    data: {
-      waitlistOfferedLodgeId: lodgeBId,
-      waitlistOfferedPriceCents: quote.finalPriceCents,
-      totalPriceCents: quote.finalPriceCents,
-      finalPriceCents: quote.finalPriceCents,
+  // 7b. #1609 tripwire (expected-fail spec): the same offer shape but with the
+  //     guest row member-linked (Wanda herself). Runtime-confirmed to be
+  //     blocked by the Phase-2 member-night guard against the entry's own
+  //     WAITLIST_OFFERED booking; the spec encodes it as test.fail() so the
+  //     suite goes loud the moment #1609 is fixed. Disjoint window from every
+  //     other lodge-B fixture so it interacts with nothing else.
+  const memberGuestOffer = await createBookingWithGuests({
+    id: CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID,
+    memberId: wanda.id,
+    lodgeId: lodgeAId,
+    status: BookingStatus.WAITLIST_OFFERED,
+    checkIn: CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW.checkIn,
+    checkOut: CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW.checkOut,
+    guests: [
+      {
+        firstName: WAITLISTER.firstName,
+        lastName: WAITLISTER.lastName,
+        isMember: true,
+        memberId: wanda.id,
+      },
+    ],
+    extra: {
+      waitlistPosition: 2,
+      waitlistOfferedAt: new Date(),
+      waitlistOfferExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
   });
+  await stampCrossLodgeOffer(memberGuestOffer.id);
 
   // 8. Enable the multiLodge module (mirrors e2e/setup/enable-e2e-modules.ts).
   //    Kept out of that shared script so the single-lodge suite stays off it.
@@ -341,7 +413,8 @@ async function main() {
   console.log(
     `Second lodge seeded (E2E_MULTI_LODGE): "${SECOND_LODGE.name}" ` +
       `(${SECOND_LODGE_BED_COUNT} beds, ${lodgeASeasons.length} seasons), kiosk bound, ` +
-      `cross-lodge offer ${CROSS_LODGE_OFFER_BOOKING_ID} @ ${quote.finalPriceCents}c; multiLodge module enabled`,
+      `cross-lodge offer ${CROSS_LODGE_OFFER_BOOKING_ID} @ ${offerPriceCents}c ` +
+      `(+ #1609 member-guest tripwire ${CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID}); multiLodge module enabled`,
   );
 }
 
