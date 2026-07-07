@@ -268,7 +268,11 @@ export function FinanceDashboardClient({ model }: FinanceDashboardClientProps) {
 
             {!hideRangeControls ? (
               <>
-                <div className="space-y-1.5">
+                {/* Start a new grid row so Apply stays the last control on the
+                    first row and the month range inputs wrap beneath it (the
+                    5-column layout otherwise placed "From month" after Apply on
+                    the same row). */}
+                <div className="space-y-1.5 xl:col-start-1">
                   <Label htmlFor="finance-from">From month</Label>
                   <Input
                     id="finance-from"
