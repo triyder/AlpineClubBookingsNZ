@@ -14,7 +14,8 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { prisma } from "./prisma";
-import { checkCapacityForGuestRanges } from "./capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { chargePaymentMethod } from "./stripe";
 import {
   enqueueXeroBookingInvoiceOperation,
@@ -112,14 +113,15 @@ function savedPaymentMethodForBooking(
 }
 
 function promoEmailOptions(booking: PendingBooking) {
-  if (!booking.promoRedemption?.promoCode) {
-    return undefined;
-  }
-
   return {
-    discountCents: booking.discountCents,
-    promoAdjustmentCents: booking.promoAdjustmentCents,
-    promoCode: booking.promoRedemption.promoCode.code,
+    lodgeId: booking.lodgeId,
+    ...(booking.promoRedemption?.promoCode
+      ? {
+          discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          promoCode: booking.promoRedemption.promoCode.code,
+        }
+      : {}),
   };
 }
 
@@ -167,7 +169,8 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
         booking.member.email,
         booking.member.firstName,
         booking.checkIn,
-        booking.checkOut
+        booking.checkOut,
+        booking.lodgeId
       );
     } else {
       await sendBookingBumpedEmail(
@@ -175,7 +178,8 @@ async function sendBumpedEmail(booking: PendingBooking, flagged: boolean) {
         booking.member.firstName,
         booking.checkIn,
         booking.checkOut,
-        booking.guests.length
+        booking.guests.length,
+        booking.lodgeId
       );
     }
   } catch (emailErr) {
@@ -190,6 +194,7 @@ function triggerWaitlistProcessing(booking: PendingBooking) {
   processWaitlistForDates({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    lodgeId: booking.lodgeId,
   }).catch((err) =>
     logger.error(
       { err, bookingId: booking.id },
@@ -203,8 +208,34 @@ async function resolveHoldWindowUnderLock(
   now: Date
 ): Promise<HoldResolution> {
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Pre-lock read: only the fields the early bail and the lock key need.
+    // lodgeId is immutable, so keying the lock from this read is safe; every
+    // capacity-relevant field is taken from the post-lock re-read below.
+    const preLock = await tx.booking.findUnique({
+      where: { id: bookingId },
+      select: { lodgeId: true, status: true, nonMemberHoldUntil: true },
+    });
 
+    if (
+      !preLock ||
+      preLock.status !== BookingStatus.PENDING ||
+      !preLock.nonMemberHoldUntil ||
+      preLock.nonMemberHoldUntil > now
+    ) {
+      logger.info(
+        { bookingId, job: "confirmPendingBookings" },
+        "Booking already processed by another handler"
+      );
+      return { type: "already_processed" };
+    }
+
+    const bookingLodgeId = preLock.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
+    // Re-read the full booking under the lock; the capacity check, claims and
+    // reconcile below consume ONLY this post-lock snapshot. Re-validate the
+    // hold window: a concurrent handler may have resolved it between the
+    // pre-lock read and acquiring the lock.
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: pendingBookingInclude,
@@ -224,6 +255,7 @@ async function resolveHoldWindowUnderLock(
     }
 
     const capacityCheck = await checkCapacityForGuestRanges(
+      bookingLodgeId,
       booking.checkIn,
       booking.checkOut,
       booking.guests,
@@ -402,7 +434,8 @@ async function releaseChargeClaim(
   claim: Extract<HoldResolution, { type: "claimed_for_charge" }>
 ) {
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const claimLodgeId = claim.booking.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, claimLodgeId);
 
     const released = await tx.booking.updateMany({
       where: { id: claim.booking.id, status: BookingStatus.CONFIRMED },

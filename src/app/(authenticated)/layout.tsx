@@ -18,7 +18,7 @@ import { hasAccessRole } from "@/lib/access-roles";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   isOnboardingGateExemptPath,
@@ -133,7 +133,9 @@ export default async function AuthenticatedLayout({
     !isOnboardingGateExemptPath(requestedPath);
   const [effectiveModules, lodgeCapacity, siteBanners] = await Promise.all([
     loadEffectiveModuleFlags(),
-    getLodgeCapacity(),
+    // Default lodge: this layout's capacity feeds club identity copy
+    // (per-lodge figures come from lodge-scoped surfaces).
+    getDefaultLodgeCapacity(),
     getCurrentSiteBanners(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };

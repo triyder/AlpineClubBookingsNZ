@@ -96,8 +96,17 @@ describe("occupancy calendar page integration", () => {
     fireEvent.click(await screen.findByRole("button", { name: /pick single/i }));
 
     expect(screen.getByLabelText("Date")).toHaveValue("2099-07-11");
+    // Multi-lodge phase 8: the roster URL now carries `?lodgeId=` when a lodge
+    // is selected, but this test has no `?lodgeId=` in the page location and
+    // no lodges loaded (stubFetch does not stub /api/admin/lodges), so the
+    // page's lodgeId state stays null and the query string is empty. The
+    // fetch call also carries an AbortSignal (pre-existing abort-on-date-change
+    // pattern, unrelated to lodge scoping).
     await waitFor(() =>
-      expect(global.fetch).toHaveBeenCalledWith("/api/admin/roster/2099-07-11?"),
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/admin/roster/2099-07-11",
+        expect.anything(),
+      ),
     );
   });
 });

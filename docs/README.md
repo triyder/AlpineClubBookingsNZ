@@ -58,3 +58,9 @@ AlpineClubBookingsNZ.
 The `finance-dashboard/` directory contains the finance reporting contracts,
 architecture decisions, data-contract notes, and test plan. Start with
 `finance-dashboard/README.md`.
+
+## Multi-Lodge Support (In Progress)
+
+The `multi-lodge/` directory contains the design, scoping contract,
+implementation plan, and test plan for supporting more than one lodge
+property. Start with `multi-lodge/README.md`.

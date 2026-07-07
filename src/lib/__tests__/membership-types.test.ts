@@ -62,7 +62,7 @@ describe("seasonal membership type schema contract", () => {
     expect(schema).toContain("model MembershipType");
     expect(schema).toContain("key                  String");
     expect(schema).toContain("model SeasonalMembershipAssignment");
-    expect(schema).toContain("applyFrom          DateTime? @db.Date");
+    expect(schema).toContain("applyFrom          DateTime?                  @db.Date");
     expect(schema).toContain("model MembershipTypeAgeTier");
     expect(schema).toContain("model XeroContactGroupRule");
     expect(schema).toContain("@@unique([memberId, seasonYear])");

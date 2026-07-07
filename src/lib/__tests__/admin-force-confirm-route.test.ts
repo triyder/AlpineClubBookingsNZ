@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn().mockResolvedValue(undefined),
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: {
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -34,12 +38,16 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     $transaction: mocks.transaction,
   },
 }));
 
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacityForGuestRanges,
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/booking-review", () => ({

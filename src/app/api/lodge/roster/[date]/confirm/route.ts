@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { parseDateOnly } from "@/lib/date-only";
 import { validateRosterAllocationsForDate } from "@/lib/lodge-date-scoping";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -30,7 +31,8 @@ export async function POST(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr, { request: req });
+  const authResult = await checkLodgeAuth(dateStr, { request: req });
+  const { error, status, tier } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -64,6 +66,8 @@ export async function POST(
   }
 
   try {
+    const lodgeId = await resolveKioskLodgeId(authResult, prisma);
+
     const allocationsAreValid = await validateRosterAllocationsForDate(
       parsed.data.allocations,
       date
@@ -78,11 +82,32 @@ export async function POST(
       );
     }
 
+    // Every allocation's booking must belong to the resolved kiosk lodge.
+    const allocationBookingIds = Array.from(
+      new Set(parsed.data.allocations.map((a) => a.bookingId))
+    );
+    const lodgeBookingCount = await prisma.booking.count({
+      where: {
+        id: { in: allocationBookingIds },
+        ...lodgeNullTolerantScope(lodgeId),
+      },
+    });
+    if (lodgeBookingCount !== allocationBookingIds.length) {
+      return NextResponse.json(
+        {
+          error:
+            "Allocations must reference guests staying on this date for the matching booking",
+        },
+        { status: 400 }
+      );
+    }
+
     // Check for existing confirmed/completed assignments
     const existingConfirmed = await prisma.choreAssignment.count({
       where: {
         date,
         status: { in: ["CONFIRMED", "COMPLETED"] },
+        booking: lodgeNullTolerantScope(lodgeId),
       },
     });
 
@@ -96,11 +121,13 @@ export async function POST(
     // Transaction: delete old assignments, create new ones as CONFIRMED
     await prisma.$transaction(async (tx) => {
       if (parsed.data.overwrite) {
-        await tx.choreAssignment.deleteMany({ where: { date } });
+        await tx.choreAssignment.deleteMany({
+          where: { date, booking: lodgeNullTolerantScope(lodgeId) },
+        });
       } else {
         // Delete only SUGGESTED ones
         await tx.choreAssignment.deleteMany({
-          where: { date, status: "SUGGESTED" },
+          where: { date, status: "SUGGESTED", booking: lodgeNullTolerantScope(lodgeId) },
         });
       }
 
@@ -117,6 +144,8 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    const denied = kioskLodgeAuthErrorResponse(err);
+    if (denied) return denied;
     logger.error({ err }, "Error confirming roster");
     return NextResponse.json({ error: "Failed to confirm roster" }, { status: 500 });
   }

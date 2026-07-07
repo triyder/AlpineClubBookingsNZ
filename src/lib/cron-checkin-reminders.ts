@@ -100,7 +100,8 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
         booking.checkIn,
         booking.checkOut,
         guests,
-        chores
+        chores,
+        booking.lodgeId
       );
       sent++;
     } catch (err) {

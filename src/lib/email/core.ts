@@ -57,6 +57,7 @@ export async function sendEmail({
   templateData,
   attachments,
   logRecipient,
+  lodgeId,
 }: {
   to: string;
   subject: string;
@@ -66,12 +67,16 @@ export async function sendEmail({
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
   logRecipient?: string;
+  // Lodge whose identity this message carries (multi-lodge phase 8);
+  // omitted/null keeps the club-wide singleton values.
+  lodgeId?: string | null;
 }): Promise<EmailSendOutcome> {
   const prepared = await prepareEmailMessage({
     templateName,
     subject,
     html,
     templateData,
+    lodgeId,
   });
   const from = formatEmailFromAddressWithSettings(
     prepared.settings,

@@ -164,6 +164,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Blocking dead-code gate: fails the PR if any unused file, export, or
+      # dependency is introduced. Config and carve-outs live in knip.jsonc.
+      # Inherits the job-level DATABASE_URL so prisma.config.ts resolves.
+      - name: Dead-code check (knip)
+        run: npx knip
+
       - name: Test
         run: npm test
 

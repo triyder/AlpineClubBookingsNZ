@@ -32,12 +32,15 @@ const mocks = vi.hoisted(() => ({
   loadModuleFlags: vi.fn(),
   sendSettlementReceipt: vi.fn(),
   sendJoinSettled: vi.fn(),
+  lodgeFindFirst: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
 }));
 
 // The transaction client exposes the same nested method mocks; the callback runs
 // synchronously against it so assertions can inspect every write.
 const txClient = {
   $executeRaw: mocks.txExecuteRaw,
+  lodge: { findFirst: mocks.lodgeFindFirst },
   booking: {
     findUnique: mocks.bookingFindUnique,
     findMany: mocks.bookingFindMany,
@@ -75,6 +78,7 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacity,
+  acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBooking: mocks.reconcileBedAllocations,
@@ -135,6 +139,8 @@ beforeEach(() => {
     cb(txClient)
   );
   mocks.txExecuteRaw.mockResolvedValue(undefined);
+  mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+  mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.enqueueXeroInvoice.mockResolvedValue({ queueOperationId: null });
@@ -250,6 +256,52 @@ describe("createGroupSettlementIntent", () => {
           status: PaymentStatus.PENDING,
         }),
       })
+    );
+  });
+
+  it("locks the CHILD's lodge, not the default, when committing children (H1)", async () => {
+    // A group whose children live at a NON-default lodge. The capacity claim
+    // (PAYMENT_PENDING -> CONFIRMED) must serialise under hash(childLodge), so
+    // it contends with booking creators at that lodge; locking the default
+    // lodge would leave them unserialised (overbooking race).
+    const CHILD_LODGE = "lodge-child";
+    mocks.groupBookingFindUnique.mockResolvedValue(organiserPaysGroup());
+    mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" }); // default lodge
+    mocks.bookingFindMany
+      // 1) loadSettleableChildren
+      .mockResolvedValueOnce([
+        { id: "child-1", finalPriceCents: 4500, status: BookingStatus.PAYMENT_PENDING },
+      ])
+      // 2) commitChildrenToConfirmed's pre-lock lodge read
+      .mockResolvedValueOnce([{ lodgeId: CHILD_LODGE }]);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "child-1",
+      lodgeId: CHILD_LODGE,
+      status: BookingStatus.PAYMENT_PENDING,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      guests: [],
+    });
+    mocks.checkCapacity.mockResolvedValue({ available: true, nightDetails: [] });
+
+    const result = await createGroupSettlementIntent("ABCD2345", ORGANISER);
+
+    expect(result.outcome).toBe("ready");
+    // The lodge is read from a dedicated pre-lock query keyed only on lodgeId.
+    expect(mocks.bookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: { lodgeId: true } })
+    );
+    // The advisory lock is keyed to the CHILD's lodge, never the default.
+    expect(mocks.acquireLodgeCapacityLock).toHaveBeenCalledWith(txClient, CHILD_LODGE);
+    expect(mocks.acquireLodgeCapacityLock).not.toHaveBeenCalledWith(txClient, "lodge-1");
+    // ...and the capacity check itself is scoped to the child's lodge.
+    expect(mocks.checkCapacity).toHaveBeenCalledWith(
+      CHILD_LODGE,
+      new Date("2026-07-01"),
+      new Date("2026-07-03"),
+      [],
+      "child-1",
+      txClient
     );
   });
 

@@ -118,6 +118,42 @@ export async function loadEmailMessageSettings(): Promise<EmailMessageSettings> 
   return normalizeEmailMessageSettings(await loadPersistedEmailMessageSettings());
 }
 
+/**
+ * Per-booking lodge identity (multi-lodge phase 8): when the booking's lodge
+ * is known, its name, travel note, and door code replace the singleton's
+ * values so each lodge's emails carry the right identity. The door code is
+ * strictly the lodge's own — never another lodge's from the singleton. A
+ * missing/null lodgeId (expand-release tolerance) keeps the singleton
+ * behaviour, which `syncSoleActiveLodgeIdentity` keeps correct while exactly
+ * one active lodge exists.
+ */
+export async function loadEmailMessageSettingsForLodge(
+  lodgeId: string | null | undefined,
+): Promise<EmailMessageSettings> {
+  const settings = await loadEmailMessageSettings();
+  if (!lodgeId) return settings;
+
+  let lodge: { name: string; travelNote: string | null; doorCode: string | null } | null = null;
+  try {
+    lodge = await prisma.lodge.findUnique({
+      where: { id: lodgeId },
+      select: { name: true, travelNote: true, doorCode: true },
+    });
+  } catch {
+    lodge = null;
+  }
+  if (!lodge) return settings;
+
+  return {
+    ...settings,
+    lodgeName: trimOptional(lodge.name) ?? settings.lodgeName,
+    lodgeTravelNote:
+      trimOptional(lodge.travelNote) ??
+      getDefaultEmailMessageSettings().lodgeTravelNote,
+    doorCode: trimOptional(lodge.doorCode),
+  };
+}
+
 export function buildEmailTemplateGlobalData(settings: EmailMessageSettings) {
   return {
     CLUB_NAME: settings.clubName,

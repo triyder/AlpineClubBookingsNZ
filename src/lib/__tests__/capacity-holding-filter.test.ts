@@ -146,19 +146,19 @@ describe("capacity queries apply capacityHoldingBookingFilter (issue #1254)", ()
   const checkOut = parseDateOnly("2026-08-03");
 
   it("checkCapacity counts request-converted PENDING holds", async () => {
-    await checkCapacity(checkIn, checkOut, 1);
+    await checkCapacity("lodge-1", checkIn, checkOut, 1);
     expectsRequestConvertedPendingHold(whereOf());
   });
 
   it("checkCapacityForGuestRanges counts request-converted PENDING holds", async () => {
-    await checkCapacityForGuestRanges(checkIn, checkOut, [
+    await checkCapacityForGuestRanges("lodge-1", checkIn, checkOut, [
       { stayStart: checkIn, stayEnd: checkOut },
     ]);
     expectsRequestConvertedPendingHold(whereOf());
   });
 
   it("getMonthAvailability counts request-converted PENDING holds", async () => {
-    await getMonthAvailability(2026, 7);
+    await getMonthAvailability("lodge-1", 2026, 7);
     expectsRequestConvertedPendingHold(whereOf());
   });
 });

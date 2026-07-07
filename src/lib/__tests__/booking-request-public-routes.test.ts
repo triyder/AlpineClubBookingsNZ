@@ -27,6 +27,11 @@ vi.mock("@/lib/booking-request", async () => {
     parseBookingRequestGuests: vi.fn((raw: unknown) => raw),
     getBookingRequestSettings: vi.fn(),
     calculateIndicativeNonMemberPriceCents: vi.fn(),
+    // Pass-through default: a provided lodgeId is treated as active, an
+    // omitted one resolves to null (default-lodge semantics).
+    assertRequestedLodgeActive: vi.fn(async (lodgeId: unknown) => lodgeId ?? null),
+    getPublicBookingRequestLodges: vi.fn(async () => []),
+    resolvePublicRequestLodgeName: vi.fn(async () => null),
   };
 });
 
@@ -46,6 +51,10 @@ vi.mock("@/lib/payment-link", () => ({
 
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn().mockResolvedValue(20),
+  getDefaultLodgeCapacity: vi.fn().mockResolvedValue(20),
+}));
+vi.mock("@/lib/lodge-settings", () => ({
+  loadSchoolGroupSoftCap: vi.fn().mockResolvedValue(25),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -67,6 +76,9 @@ import {
   createBookingRequest,
   verifyBookingRequest,
   getBookingRequestSettings,
+  getPublicBookingRequestLodges,
+  assertRequestedLodgeActive,
+  resolvePublicRequestLodgeName,
   calculateIndicativeNonMemberPriceCents,
   BookingRequestError,
 } from "@/lib/booking-request";
@@ -87,6 +99,9 @@ import { POST as refreshPayLink } from "@/app/api/pay/[token]/refresh/route";
 const mockedCreateBookingRequest = vi.mocked(createBookingRequest);
 const mockedVerifyBookingRequest = vi.mocked(verifyBookingRequest);
 const mockedGetSettings = vi.mocked(getBookingRequestSettings);
+const mockedGetPublicLodges = vi.mocked(getPublicBookingRequestLodges);
+const mockedAssertLodgeActive = vi.mocked(assertRequestedLodgeActive);
+const mockedResolveLodgeName = vi.mocked(resolvePublicRequestLodgeName);
 const mockedCalculateIndicative = vi.mocked(calculateIndicativeNonMemberPriceCents);
 const mockedGetPaymentLinkContext = vi.mocked(getPaymentLinkContext);
 const mockedCreatePaymentIntentForLink = vi.mocked(createPaymentIntentForPaymentLink);
@@ -251,6 +266,51 @@ describe("POST /api/booking-requests", () => {
     expect(body).not.toHaveProperty("status");
   });
 
+  it("passes the validated lodgeId through to createBookingRequest", async () => {
+    mockedCreateBookingRequest.mockResolvedValue({ id: "req-2" } as never);
+
+    const req = jsonRequest("http://localhost/api/booking-requests", {
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      lodgeId: "lodge-2",
+      guests: [VALID_GUEST],
+    });
+
+    const res = await submitBookingRequest(req);
+
+    expect(res.status).toBe(201);
+    expect(mockedAssertLodgeActive).toHaveBeenCalledWith("lodge-2");
+    expect(mockedCreateBookingRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: "lodge-2" })
+    );
+  });
+
+  it("returns 400 for a lodgeId that is not an active lodge", async () => {
+    mockedAssertLodgeActive.mockRejectedValueOnce(
+      new BookingRequestError("Lodge not found or not active", 400)
+    );
+
+    const req = jsonRequest("http://localhost/api/booking-requests", {
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      lodgeId: "no-such-lodge",
+      guests: [VALID_GUEST],
+    });
+
+    const res = await submitBookingRequest(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ error: "Lodge not found or not active" });
+    expect(mockedCreateBookingRequest).not.toHaveBeenCalled();
+  });
+
   it("maps BookingRequestError to its declared status", async () => {
     mockedCreateBookingRequest.mockRejectedValue(new BookingRequestError("nope", 422));
 
@@ -336,6 +396,27 @@ describe("GET /api/booking-requests/verify/[token]", () => {
     expect(body).not.toHaveProperty("contactEmail");
     expect(body).not.toHaveProperty("contactPhone");
   });
+
+  it("includes the lodge name when the request names a lodge at a multi-lodge club", async () => {
+    mockedVerifyBookingRequest.mockResolvedValue({
+      outcome: "verified",
+      request: {
+        id: "req-1",
+        lodgeId: "lodge-2",
+        checkIn: new Date("2026-08-01T00:00:00.000Z"),
+        checkOut: new Date("2026-08-03T00:00:00.000Z"),
+        guests: [VALID_GUEST],
+      } as never,
+    });
+    mockedResolveLodgeName.mockResolvedValueOnce("Whakapapa Lodge");
+
+    const res = await verifyRequest(VALID_TOKEN);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockedResolveLodgeName).toHaveBeenCalledWith("lodge-2");
+    expect(body.lodgeName).toBe("Whakapapa Lodge");
+  });
 });
 
 describe("POST /api/booking-requests/quote", () => {
@@ -383,6 +464,56 @@ describe("POST /api/booking-requests/quote", () => {
     expect(res.status).toBe(400);
     expect(mockedCalculateIndicative).not.toHaveBeenCalled();
   });
+
+  it("prices against the requested lodge when a lodgeId is supplied", async () => {
+    mockedGetSettings.mockResolvedValue({
+      showPricingToNonMembers: true,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+      attendeeConfirmationLeadDays: 14,
+      attendeeConfirmationReminderDays: 3,
+    });
+    mockedCalculateIndicative.mockResolvedValue(18000);
+
+    const res = await quoteRequest({
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      lodgeId: "lodge-2",
+      guests: [VALID_GUEST],
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ showPricing: true, indicativePriceCents: 18000 });
+    expect(mockedCalculateIndicative).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: "lodge-2" })
+    );
+  });
+
+  it("returns 400 for a lodgeId that is not an active lodge", async () => {
+    mockedGetSettings.mockResolvedValue({
+      showPricingToNonMembers: true,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+      attendeeConfirmationLeadDays: 14,
+      attendeeConfirmationReminderDays: 3,
+    });
+    mockedAssertLodgeActive.mockRejectedValueOnce(
+      new BookingRequestError("Lodge not found or not active", 400)
+    );
+
+    const res = await quoteRequest({
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      lodgeId: "no-such-lodge",
+      guests: [VALID_GUEST],
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ error: "Lodge not found or not active" });
+    expect(mockedCalculateIndicative).not.toHaveBeenCalled();
+  });
 });
 
 describe("GET /api/booking-requests/settings", () => {
@@ -400,6 +531,7 @@ describe("GET /api/booking-requests/settings", () => {
 
   it("returns the public pricing visibility flag", async () => {
     mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3, attendeeConfirmationLeadDays: 14, attendeeConfirmationReminderDays: 3 });
+    mockedGetPublicLodges.mockResolvedValueOnce([]);
 
     const res = await getBookingRequestSettingsRoute(
       new NextRequest("http://localhost/api/booking-requests/settings")
@@ -413,7 +545,34 @@ describe("GET /api/booking-requests/settings", () => {
       quoteReminderLeadDays: 3,
       attendeeConfirmationLeadDays: 14,
       attendeeConfirmationReminderDays: 3,
+      lodges: [],
+      schoolGroupSoftCap: 25,
     });
+  });
+
+  it("lists active lodges (id and name only) for a multi-lodge club", async () => {
+    mockedGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+      attendeeConfirmationLeadDays: 14,
+      attendeeConfirmationReminderDays: 3,
+    });
+    mockedGetPublicLodges.mockResolvedValueOnce([
+      { id: "lodge-1", name: "Ruapehu Lodge", capacity: 30, schoolGroupSoftCap: 25 },
+      { id: "lodge-2", name: "Whakapapa Lodge", capacity: 40, schoolGroupSoftCap: 25 },
+    ]);
+
+    const res = await getBookingRequestSettingsRoute(
+      new NextRequest("http://localhost/api/booking-requests/settings")
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.lodges).toEqual([
+      { id: "lodge-1", name: "Ruapehu Lodge", capacity: 30, schoolGroupSoftCap: 25 },
+      { id: "lodge-2", name: "Whakapapa Lodge", capacity: 40, schoolGroupSoftCap: 25 },
+    ]);
   });
 });
 

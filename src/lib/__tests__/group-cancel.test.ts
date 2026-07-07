@@ -221,7 +221,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       CHECK_IN,
       CHECK_OUT,
       0,
-      "card"
+      "card",
+      0,
+      undefined
     );
     expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
       where: { id: GROUP_ID },
@@ -292,7 +294,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       CHECK_IN,
       CHECK_OUT,
       4500,
-      "card"
+      "card",
+      0,
+      undefined
     );
     expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
       where: { id: GROUP_ID },
@@ -362,7 +366,9 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
       CHECK_IN,
       CHECK_OUT,
       0,
-      "card"
+      "card",
+      0,
+      undefined
     );
   });
 
@@ -699,7 +705,9 @@ describe("settleGroupBookingOnOrganiserCancel re-drivability (#1236)", () => {
       CHECK_IN,
       CHECK_OUT,
       0,
-      "card"
+      "card",
+      0,
+      undefined
     );
   });
 

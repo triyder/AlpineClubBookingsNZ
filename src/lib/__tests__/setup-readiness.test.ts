@@ -60,6 +60,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     skifieldConditions: true,
     twoFactor: false,
     analytics: false,
+    multiLodge: false,
   },
   ageTierSettingCount: 4,
   seasonCount: 2,

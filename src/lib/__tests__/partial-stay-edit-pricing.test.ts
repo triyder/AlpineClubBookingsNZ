@@ -41,6 +41,8 @@ vi.mock("@/lib/capacity", () => ({
   checkCapacity: vi.fn(),
   checkCapacityForGuestRanges: vi.fn(),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
+  // Multi-lodge: edit-path repricing takes the per-lodge serialising lock.
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   LODGE_CAPACITY: 29,
 }));
 vi.mock("@/lib/booking-policies", () => ({
@@ -293,6 +295,9 @@ function makeTx(
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     payment: { update: vi.fn().mockResolvedValue({}) },
     season: { findMany: vi.fn().mockResolvedValue(CURRENT_SEASON) },
+    // Multi-lodge: edit-path repricing resolves the booking's lodge via
+    // getDefaultLodgeId when the booking carries none (single-lodge default).
+    lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     promoRedemption: { update: vi.fn().mockResolvedValue({}) },
     choreAssignment: {
       findMany: vi.fn().mockResolvedValue([]),

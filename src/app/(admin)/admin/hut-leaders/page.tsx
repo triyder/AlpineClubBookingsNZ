@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
 import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { OccupancyCalendar } from "@/components/admin/occupancy-calendar";
 
@@ -19,6 +20,8 @@ interface HutLeaderAssignment {
   startDate: string;
   endDate: string;
   createdAt: string;
+  lodgeId: string | null;
+  lodgeName: string | null;
 }
 
 interface EligibleMember {
@@ -65,6 +68,11 @@ export default function HutLeadersPage() {
     endDate: "",
   });
   const [error, setError] = useState<{ message: string; memberId: string | null } | null>(null);
+  // Lodge context for new assignments; LodgeSelect renders nothing (and
+  // reports the sole lodge) while fewer than two lodges exist (ADR-002).
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
+  const [lodgeId, setLodgeId] = useState<string | null>(null);
+  const showLodgeColumn = lodges.length > 1;
 
   const fetchAssignments = useCallback(async () => {
     try {
@@ -132,9 +140,12 @@ export default function HutLeadersPage() {
     setError(null);
     setCreating(true);
     try {
-      const submitData = editingMember
-        ? { memberId: editingMember, startDate: editDates.startDate, endDate: editDates.endDate }
-        : formData;
+      const submitData = {
+        ...(editingMember
+          ? { memberId: editingMember, startDate: editDates.startDate, endDate: editDates.endDate }
+          : formData),
+        ...(lodgeId ? { lodgeId } : {}),
+      };
       const res = await fetch("/api/admin/hut-leaders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -169,6 +180,7 @@ export default function HutLeadersPage() {
           memberId: member.id,
           startDate: member.suggestedStartDate,
           endDate: member.suggestedEndDate,
+          ...(lodgeId ? { lodgeId } : {}),
         }),
       });
       if (!res.ok) {
@@ -320,6 +332,14 @@ export default function HutLeadersPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-4">
+              <div className="max-w-xs">
+                <LodgeSelect
+                  lodges={lodges}
+                  value={lodgeId}
+                  onChange={setLodgeId}
+                  loading={lodgesLoading}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="startDate">Start Date</Label>
@@ -549,6 +569,9 @@ export default function HutLeadersPage() {
                 <thead>
                   <tr className="border-b bg-slate-50">
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Member</th>
+                    {showLodgeColumn && (
+                      <th className="text-left px-4 py-3 font-medium text-slate-600">Lodge</th>
+                    )}
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Start</th>
                     <th className="text-left px-4 py-3 font-medium text-slate-600">End</th>
                     <th className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
@@ -570,6 +593,9 @@ export default function HutLeadersPage() {
                             </div>
                           </div>
                         </td>
+                        {showLodgeColumn && (
+                          <td className="px-4 py-3">{a.lodgeName ?? "—"}</td>
+                        )}
                         <td className="px-4 py-3">{a.startDate}</td>
                         <td className="px-4 py-3">{a.endDate}</td>
                         <td className="px-4 py-3">

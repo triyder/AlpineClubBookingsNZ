@@ -14,6 +14,10 @@ const mockPrisma = {
   booking: {
     findMany: vi.fn(),
   },
+  lodge: {
+    findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    count: vi.fn().mockResolvedValue(1),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -21,6 +25,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   getMonthAvailability: vi.fn().mockResolvedValue(new Map()),
   getLodgeCapacity: vi.fn().mockResolvedValue(29),
   LODGE_CAPACITY: 29,
@@ -234,7 +239,7 @@ describe("#33: Admin Bookings Calendar API", () => {
     expect(data.bookings[0].status).toBe("COMPLETED");
     expect(data.bookings[0].guestCount).toBe(4);
     expect(data.availability["2026-04-10"]).toBe(25);
-    expect(getMonthAvailability).toHaveBeenCalledWith(2026, 3);
+    expect(getMonthAvailability).toHaveBeenCalledWith("lodge-1", 2026, 3);
   });
 
   it("returns the maximum active guest count for the visible month", async () => {

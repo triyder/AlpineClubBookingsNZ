@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   memberCreditCount: vi.fn(),
   isXeroConnected: vi.fn(),
   getRefundsMissingXeroCreditNotes: vi.fn(),
+  findOrphanedAppliedCredits: vi.fn(),
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -38,6 +39,10 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/xero-admin-health", () => ({
   REFUND_CREDIT_NOTE_GRACE_HOURS: 24,
   getRefundsMissingXeroCreditNotes: mocks.getRefundsMissingXeroCreditNotes,
+}));
+
+vi.mock("@/lib/orphaned-applied-credit-backfill", () => ({
+  findOrphanedAppliedCredits: mocks.findOrphanedAppliedCredits,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -74,6 +79,7 @@ beforeEach(() => {
     failed: 0,
     skipped: 0,
   });
+  mocks.findOrphanedAppliedCredits.mockResolvedValue({ scanned: 0, findings: [] });
 });
 
 describe("reconcileCreditBalances", () => {
@@ -99,6 +105,7 @@ describe("reconcileCreditBalances", () => {
       totalCreditCents: 0,
       discrepancies: 0,
       refundsMissingXeroCreditNotes: 2,
+      orphanedAppliedCredits: 0,
     });
     expect(mocks.getRefundsMissingXeroCreditNotes).toHaveBeenCalledWith({
       // #1354: raised so the self-heal pass re-enqueues a fuller set per tick.
@@ -250,6 +257,7 @@ describe("reconcileCreditBalances", () => {
       totalCreditCents: 2500,
       discrepancies: 1,
       refundsMissingXeroCreditNotes: 0,
+      orphanedAppliedCredits: 0,
     });
     expect(mocks.logger.error).toHaveBeenCalledWith(
       {
@@ -257,6 +265,53 @@ describe("reconcileCreditBalances", () => {
         memberIds: ["member-negative"],
       },
       "Members with negative credit balance detected"
+    );
+  });
+
+  it("alerts (alert-only, no auto-heal) when cancelled bookings hold orphaned applied credit (#1547)", async () => {
+    mocks.findOrphanedAppliedCredits.mockResolvedValue({
+      scanned: 3,
+      findings: [
+        { bookingId: "bk_1", memberId: "m_1", appliedCreditCents: 5000 },
+        { bookingId: "bk_2", memberId: "m_2", appliedCreditCents: 2000 },
+      ],
+    });
+
+    const result = await reconcileCreditBalances();
+
+    expect(result.orphanedAppliedCredits).toBe(2);
+    // The scoped cron bridge logs the alert at error AND pages Sentry with the
+    // fingerprint tag; the sample context carries no PII beyond ids + cents.
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      {
+        scope: "cron",
+        alert: "ORPHANED_APPLIED_CREDITS",
+        count: 2,
+        sample: [
+          { bookingId: "bk_1", memberId: "m_1", appliedCreditCents: 5000 },
+          { bookingId: "bk_2", memberId: "m_2", appliedCreditCents: 2000 },
+        ],
+      },
+      expect.stringContaining("a NEW credit-restore regression (#1547)")
+    );
+    expect(Sentry.captureMessage).toHaveBeenCalledWith(
+      expect.stringContaining("cancelled booking(s) hold applied account credit"),
+      expect.objectContaining({
+        level: "error",
+        fingerprint: ["cron", "credit-reconciliation:orphaned-applied-credits"],
+      })
+    );
+  });
+
+  it("does not alert on orphaned applied credit when there are none", async () => {
+    mocks.findOrphanedAppliedCredits.mockResolvedValue({ scanned: 5, findings: [] });
+
+    const result = await reconcileCreditBalances();
+
+    expect(result.orphanedAppliedCredits).toBe(0);
+    expect(Sentry.captureMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("cancelled booking(s) hold applied account credit"),
+      expect.anything()
     );
   });
 });

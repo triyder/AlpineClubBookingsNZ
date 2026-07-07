@@ -16,6 +16,9 @@ const autoAllocateSchema = z
   .object({
     from: z.string().optional(),
     to: z.string().optional(),
+    // Board lodge scope (ADR-003): suggestions only place guests of this
+    // lodge's bookings into this lodge's beds. Omitted = club-wide.
+    lodgeId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -36,7 +39,10 @@ export async function POST(request: Request) {
     }
 
     const range = parseBedAllocationDateRange(body.data);
-    const result = await runAutoBedAllocation({ range });
+    const result = await runAutoBedAllocation({
+      range,
+      lodgeId: body.data.lodgeId,
+    });
     logAudit({
       action: "BED_ALLOCATION_AUTO_RUN",
       memberId: guard.session.user.id,

@@ -35,6 +35,7 @@ import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-c
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -174,6 +175,8 @@ export default async function ProfilePage({
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
+  const modules = await loadEffectiveModuleFlags();
+  const showTwoFactorSecurityCard = modules.twoFactor || member.twoFactorEnabled;
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -316,10 +319,13 @@ export default async function ProfilePage({
               <Link href="/change-password">Change Password</Link>
             </Button>
           </div>
-          <TwoFactorSecurityCard
-            enabled={member.twoFactorEnabled}
-            method={member.twoFactorMethod}
-          />
+          {showTwoFactorSecurityCard ? (
+            <TwoFactorSecurityCard
+              enabled={member.twoFactorEnabled}
+              method={member.twoFactorMethod}
+              moduleEnabled={modules.twoFactor}
+            />
+          ) : null}
         </CardContent>
       </Card>
 

@@ -89,6 +89,7 @@ vi.mock("@/lib/capacity", () => ({
   checkCapacity: vi.fn(),
   checkCapacityForGuestRanges: vi.fn(),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   LODGE_CAPACITY: 29,
 }));
 vi.mock("@/lib/pricing", () => ({
@@ -272,6 +273,9 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
 function makeTx(booking: ReturnType<typeof makeBooking>) {
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: {
       findUnique: vi.fn().mockResolvedValue(booking),
       update: vi.fn().mockImplementation(({ data }) => {

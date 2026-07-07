@@ -14,6 +14,9 @@ interface VerifyResult {
   checkIn?: string;
   checkOut?: string;
   guestCount?: number;
+  // Present only when the request names a lodge and the club has two or
+  // more active lodges (ADR-002 presentation rule).
+  lodgeName?: string;
 }
 
 export default function BookingRequestVerifyPage() {
@@ -67,6 +70,7 @@ export default function BookingRequestVerifyPage() {
             </p>
             {result.checkIn && result.checkOut ? (
               <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700">
+                {result.lodgeName ? <p className="mb-1">Lodge: {result.lodgeName}</p> : null}
                 <p>
                   Dates: {formatNZDate(new Date(result.checkIn))} to{" "}
                   {formatNZDate(new Date(result.checkOut))}

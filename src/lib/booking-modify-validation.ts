@@ -129,6 +129,7 @@ function maxDate(values: Date[]): Date {
 export type LoadedPromoRedemption = PromoRedemption & {
   promoCode: PromoCode & {
     assignments: Array<{ memberId: string }>;
+    lodges?: Array<{ lodgeId: string }>;
   };
   guestTargets?: Array<{ bookingGuestId: string }>;
 };

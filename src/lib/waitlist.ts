@@ -1,6 +1,13 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
-import { checkCapacityForGuestRanges } from "./capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
+import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
+import {
+  confirmCrossLodgeWaitlistOffer,
+  getWaitlistCrossLodgeOrder,
+  quoteWaitlistEntryAtLodge,
+} from "@/lib/waitlist-cross-lodge";
 import { getNonMemberHoldPolicy } from "./cancellation";
 import {
   sendWaitlistOfferEmail,
@@ -32,7 +39,7 @@ export const WAITLIST_OFFER_HOURS =
 export async function getWaitlistPosition(bookingId: string): Promise<number> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    select: { checkIn: true, checkOut: true, createdAt: true, status: true },
+    select: { checkIn: true, checkOut: true, createdAt: true, status: true, lodgeId: true },
   });
 
   if (!booking || (booking.status !== BookingStatus.WAITLISTED && booking.status !== BookingStatus.WAITLIST_OFFERED)) {
@@ -42,6 +49,9 @@ export async function getWaitlistPosition(bookingId: string): Promise<number> {
   const ahead = await prisma.booking.count({
     where: {
       status: BookingStatus.WAITLISTED,
+      // Positions are per-lodge: each lodge runs its own FIFO queue, so only
+      // count entries waiting for the same lodge (multi-lodge).
+      lodgeId: booking.lodgeId,
       checkIn: { lt: booking.checkOut },
       checkOut: { gt: booking.checkIn },
       createdAt: { lt: booking.createdAt },
@@ -53,12 +63,19 @@ export async function getWaitlistPosition(bookingId: string): Promise<number> {
 
 // test seam
 /**
- * Get all WAITLISTED bookings overlapping a date range, ordered FIFO.
+ * Get all WAITLISTED bookings for one lodge overlapping a date range, ordered
+ * FIFO. Scoped to a single lodge because each lodge runs its own queue
+ * (multi-lodge).
  */
-export async function getWaitlistForDates(checkIn: Date, checkOut: Date) {
+export async function getWaitlistForDates(
+  checkIn: Date,
+  checkOut: Date,
+  lodgeId: string
+) {
   return prisma.booking.findMany({
     where: {
       status: BookingStatus.WAITLISTED,
+      lodgeId,
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
     },
@@ -91,10 +108,14 @@ type WaitlistCandidateForReprice = Prisma.BookingGetPayload<{
  */
 async function repriceWaitlistCandidate(
   tx: Prisma.TransactionClient,
-  candidate: WaitlistCandidateForReprice
+  candidate: WaitlistCandidateForReprice,
+  // Lodge whose seasons price this entry (multi-lodge): the candidate's
+  // own lodge. Upstream #1035 priced club-wide; per-lodge seasons make
+  // that a lodge-scoped read here.
+  lodgeId: string
 ): Promise<number> {
   try {
-    const seasonRateData = await loadSeasonRateData(tx);
+    const seasonRateData = await loadSeasonRateData(tx, lodgeId);
     const groupDiscountSetting = await tx.groupDiscountSetting.findUnique({
       where: { id: "default" },
     });
@@ -180,10 +201,18 @@ async function repriceWaitlistCandidate(
 /**
  * Main orchestrator: when capacity is freed, find the top FIFO candidate
  * whose full date range has capacity and offer them the spot.
+ *
+ * Cross-lodge pass (ADR-004): pass the lodge where capacity actually freed
+ * via `freedDates.lodgeId` and candidates from other lodges who opted into
+ * that lodge become eligible for a cross-lodge offer there — after that
+ * lodge's own queue under OWN_LODGE_FIRST, or purely by join order under
+ * MERGED. Same-lodge offers behave exactly as before; callers that omit
+ * lodgeId get the pre-ADR-004 behaviour against the default lodge.
  */
 export async function processWaitlistForDates(freedDates: {
   checkIn: Date;
   checkOut: Date;
+  lodgeId?: string | null;
 }): Promise<{ offeredBookingId: string | null }> {
   let offeredBookingId: string | null = null;
   type OfferDetails = {
@@ -197,13 +226,38 @@ export async function processWaitlistForDates(freedDates: {
     memberId: string;
     memberName: string;
     position: number;
+    lodgeId: string | null;
+    // Price the member pays on confirmation: the offer-time reprice
+    // (upstream #1035) for own-lodge offers, or the offered lodge's quote
+    // for cross-lodge offers (ADR-004).
     finalPriceCents: number;
+    // Set only for a cross-lodge offer: the alternate lodge being offered
+    // and the price quoted for it (ADR-004).
+    offeredLodgeId: string | null;
+    offeredLodgeName: string | null;
+    offeredPriceCents: number | null;
   };
   let offerDetails = null as OfferDetails | null;
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const defaultLodgeId = await getDefaultLodgeId(tx);
+      const freedLodgeId = freedDates.lodgeId ?? defaultLodgeId;
+      // Own-lodge checks span every candidate's lodge and the cross-lodge
+      // pass offers at the freed lodge, so hold every active lodge's
+      // capacity lock. Sorted order keeps concurrent processors
+      // deadlock-free; the club has a handful of lodges at most.
+      const activeLodges = await tx.lodge.findMany({
+        where: { active: true },
+        select: { id: true },
+        orderBy: { id: "asc" },
+      });
+      const lockLodgeIds = Array.from(
+        new Set([...activeLodges.map((lodge) => lodge.id), defaultLodgeId]),
+      ).sort();
+      for (const lockLodgeId of lockLodgeIds) {
+        await acquireLodgeCapacityLock(tx, lockLodgeId);
+      }
 
       const candidates = await tx.booking.findMany({
         where: {
@@ -214,6 +268,9 @@ export async function processWaitlistForDates(freedDates: {
         include: {
           guests: { include: { nights: true } }, // per-night sets (issue #713)
           member: { select: { id: true, email: true, firstName: true, lastName: true } },
+          waitlistAlternateLodges: { select: { lodgeId: true } },
+          // Full promo shape for the offer-time reprice (upstream #1035);
+          // the cross-lodge quote only needs its existence.
           promoRedemption: {
             include: {
               guestTargets: { select: { bookingGuestId: true } },
@@ -226,73 +283,167 @@ export async function processWaitlistForDates(freedDates: {
         orderBy: { createdAt: "asc" },
       });
 
-      for (const candidate of candidates) {
+      // One "opportunity" is a candidate considered at one lodge. Every
+      // candidate gets an own-lodge opportunity (pre-ADR-004 behaviour);
+      // candidates from other lodges who opted into the freed lodge also
+      // get a cross-lodge opportunity there.
+      type Opportunity = {
+        candidate: (typeof candidates)[number];
+        offerLodgeId: string;
+        cross: boolean;
+      };
+      const ownOpportunities: Opportunity[] = candidates.map((candidate) => ({
+        candidate,
+        offerLodgeId: candidate.lodgeId ?? defaultLodgeId,
+        cross: false,
+      }));
+      const crossOpportunities: Opportunity[] = candidates
+        .filter(
+          (candidate) =>
+            (candidate.lodgeId ?? defaultLodgeId) !== freedLodgeId &&
+            candidate.waitlistAlternateLodges.some(
+              (alternate) => alternate.lodgeId === freedLodgeId,
+            ),
+        )
+        .map((candidate) => ({
+          candidate,
+          offerLodgeId: freedLodgeId,
+          cross: true,
+        }));
+
+      let opportunities: Opportunity[];
+      if (crossOpportunities.length === 0) {
+        opportunities = ownOpportunities;
+      } else {
+        const order = await getWaitlistCrossLodgeOrder(tx);
+        opportunities =
+          order === "MERGED"
+            ? [...ownOpportunities, ...crossOpportunities].sort(
+                (a, b) =>
+                  a.candidate.createdAt.getTime() -
+                    b.candidate.createdAt.getTime() ||
+                  // Same entry considered at two lodges: its own lodge first.
+                  Number(a.cross) - Number(b.cross),
+              )
+            : [...ownOpportunities, ...crossOpportunities];
+      }
+
+      for (const { candidate, offerLodgeId, cross } of opportunities) {
         // Check if ALL nights in the candidate's range have capacity
         const { available } = await checkCapacityForGuestRanges(
+          offerLodgeId,
           candidate.checkIn,
           candidate.checkOut,
           candidate.guests,
           undefined,
           tx
         );
+        if (!available) continue;
 
-        if (available) {
-          const expiresAt = new Date(Date.now() + WAITLIST_OFFER_HOURS * 60 * 60 * 1000);
-
-          // Reprice at current rates when the offer is issued (#1035): the
-          // booking's price was snapshotted at creation, and season rates,
-          // membership types, or the promo's validity may have changed while
-          // it waited. The offer email shows the price the member will
-          // actually pay, and an identical booking made directly today pays
-          // the same. A repricing failure falls back to the stored snapshot
-          // rather than blocking the offer.
-          const offerPriceCents = await repriceWaitlistCandidate(tx, candidate);
-
-          await tx.booking.update({
-            where: { id: candidate.id },
-            data: {
-              status: BookingStatus.WAITLIST_OFFERED,
-              waitlistOfferedAt: new Date(),
-              waitlistOfferExpiresAt: expiresAt,
-            },
-          });
-          await reconcileBedAllocationsForBooking({
-            bookingId: candidate.id,
-            db: tx,
-            previousRange: {
+        let offeredLodgeId: string | null = null;
+        let offeredLodgeName: string | null = null;
+        let offeredPriceCents: number | null = null;
+        let offerPriceCents: number;
+        if (cross) {
+          // Cross-lodge gates (ADR-004): the member must still be eligible
+          // for the offered lodge and its seasons must price the dates. The
+          // entry itself is NOT repriced — the quote is what a fresh
+          // booking at the offered lodge costs, re-checked at confirm.
+          const eligible = await isMemberEligibleToBookLodge(
+            tx,
+            candidate.memberId,
+            offerLodgeId,
+          );
+          if (!eligible) continue;
+          const quote = await quoteWaitlistEntryAtLodge(
+            tx,
+            {
+              memberId: candidate.memberId,
               checkIn: candidate.checkIn,
               checkOut: candidate.checkOut,
+              guests: candidate.guests,
+              hasPromoRedemption: Boolean(candidate.promoRedemption),
             },
+            offerLodgeId,
+          );
+          if (!quote.offerable) continue;
+          const offeredLodge = await tx.lodge.findUnique({
+            where: { id: offerLodgeId },
+            select: { name: true },
           });
+          offeredLodgeId = offerLodgeId;
+          offeredLodgeName = offeredLodge?.name ?? null;
+          offeredPriceCents = quote.finalPriceCents;
+          offerPriceCents = quote.finalPriceCents;
+        } else {
+          // Reprice at current rates when the offer is issued (upstream
+          // #1035): the creation-time snapshot is not a price lock. Season
+          // rates, membership types, or the promo's validity may have
+          // changed while it waited; the offer email shows the price the
+          // member will actually pay. A repricing failure falls back to
+          // the stored snapshot rather than blocking the offer.
+          offerPriceCents = await repriceWaitlistCandidate(
+            tx,
+            candidate,
+            offerLodgeId,
+          );
+        }
 
-          offeredBookingId = candidate.id;
+        const expiresAt = new Date(Date.now() + WAITLIST_OFFER_HOURS * 60 * 60 * 1000);
 
-          // Count position (how many were ahead in queue)
-          const position = await tx.booking.count({
-            where: {
-              status: BookingStatus.WAITLISTED,
-              checkIn: { lt: candidate.checkOut },
-              checkOut: { gt: candidate.checkIn },
-              createdAt: { lt: candidate.createdAt },
-            },
-          });
-
-          offerDetails = {
-            email: candidate.member.email,
-            firstName: candidate.member.firstName,
+        await tx.booking.update({
+          where: { id: candidate.id },
+          data: {
+            status: BookingStatus.WAITLIST_OFFERED,
+            waitlistOfferedAt: new Date(),
+            waitlistOfferExpiresAt: expiresAt,
+            waitlistOfferedLodgeId: offeredLodgeId,
+            waitlistOfferedPriceCents: offeredPriceCents,
+          },
+        });
+        await reconcileBedAllocationsForBooking({
+          bookingId: candidate.id,
+          db: tx,
+          previousRange: {
             checkIn: candidate.checkIn,
             checkOut: candidate.checkOut,
-            guestCount: candidate.guests.length,
-            expiresAt,
-            bookingId: candidate.id,
-            memberId: candidate.memberId,
-            memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
-            position: position + 1,
-            finalPriceCents: offerPriceCents,
-          };
+          },
+        });
 
-          break; // Only offer to the top candidate
-        }
+                offeredBookingId = candidate.id;
+
+        // Count position (how many were ahead in queue). Per-lodge: the
+        // position shown to the member counts only entries waiting for their
+        // own lodge, matching the per-lodge FIFO queue (multi-lodge).
+        const position = await tx.booking.count({
+          where: {
+            status: BookingStatus.WAITLISTED,
+            lodgeId: candidate.lodgeId ?? defaultLodgeId,
+            checkIn: { lt: candidate.checkOut },
+            checkOut: { gt: candidate.checkIn },
+            createdAt: { lt: candidate.createdAt },
+          },
+        });
+
+        offerDetails = {
+          email: candidate.member.email,
+          firstName: candidate.member.firstName,
+          checkIn: candidate.checkIn,
+          checkOut: candidate.checkOut,
+          guestCount: candidate.guests.length,
+          expiresAt,
+          bookingId: candidate.id,
+          memberId: candidate.memberId,
+          memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
+          position: position + 1,
+          lodgeId: candidate.lodgeId,
+          finalPriceCents: offerPriceCents,
+          offeredLodgeId,
+          offeredLodgeName,
+          offeredPriceCents,
+        };
+
+        break; // Only offer to the top candidate
       }
     });
   } catch (err) {
@@ -310,7 +461,15 @@ export async function processWaitlistForDates(freedDates: {
       offerDetails.guestCount,
       offerDetails.expiresAt,
       offerDetails.bookingId,
-      offerDetails.finalPriceCents
+      // Price the member pays on confirmation (upstream #1035): the
+      // offer-time reprice, or the offered lodge's quote for cross offers.
+      offerDetails.finalPriceCents,
+      // A cross-lodge offer speaks with the offered lodge's identity and
+      // must name that lodge (ADR-004 owner decision 2).
+      offerDetails.offeredLodgeId ?? offerDetails.lodgeId,
+      offerDetails.offeredLodgeId
+        ? { lodgeName: offerDetails.offeredLodgeName }
+        : null
     ).catch((err) => logger.error({ err }, "Failed to send waitlist offer email"));
 
     sendAdminWaitlistOfferAlert({
@@ -338,6 +497,12 @@ export async function processWaitlistForDates(freedDates: {
         guestCount: offerDetails.guestCount,
         position: offerDetails.position,
         expiresAt: offerDetails.expiresAt.toISOString(),
+        ...(offerDetails.offeredLodgeId
+          ? {
+              offeredLodgeId: offerDetails.offeredLodgeId,
+              offeredPriceCents: offerDetails.offeredPriceCents,
+            }
+          : {}),
       },
     });
   }
@@ -348,6 +513,10 @@ export async function processWaitlistForDates(freedDates: {
 /**
  * Confirm a waitlist offer. Re-checks capacity and transitions to
  * PAYMENT_PENDING or PENDING based on member/non-member rules.
+ *
+ * A cross-lodge offer (ADR-004, waitlistOfferedLodgeId set) takes the
+ * create-and-cancel path instead: a fresh booking at the offered lodge and
+ * the entry cancelled, with `newBookingId` pointing at the replacement.
  */
 export async function confirmWaitlistOffer(
   bookingId: string,
@@ -356,13 +525,24 @@ export async function confirmWaitlistOffer(
   success: boolean;
   newStatus?: BookingStatus;
   error?: string;
+  newBookingId?: string;
+  updatedPriceCents?: number;
+  // Machine-readable rejection code forwarded from the cross-lodge path
+  // (e.g. "DUPLICATE_STAY") so the API route can surface it to the client.
+  code?: string;
 }> {
+  const offerKind = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: { waitlistOfferedLodgeId: true },
+  });
+  if (offerKind?.waitlistOfferedLodgeId) {
+    return confirmCrossLodgeWaitlistOffer(bookingId, memberId);
+  }
+
   let result: { success: boolean; newStatus?: BookingStatus; error?: string };
 
   try {
     result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
         include: { guests: { include: { nights: true } } }, // per-night sets (issue #713)
@@ -384,8 +564,12 @@ export async function confirmWaitlistOffer(
         return { success: false, error: "Waitlist offer has expired" };
       }
 
+      const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
       // Re-check capacity
       const { available } = await checkCapacityForGuestRanges(
+        bookingLodgeId,
         booking.checkIn,
         booking.checkOut,
         booking.guests,
@@ -401,6 +585,8 @@ export async function confirmWaitlistOffer(
             status: BookingStatus.WAITLISTED,
             waitlistOfferedAt: null,
             waitlistOfferExpiresAt: null,
+            waitlistOfferedLodgeId: null,
+            waitlistOfferedPriceCents: null,
           },
         });
         await reconcileBedAllocationsForBooking({
@@ -418,7 +604,7 @@ export async function confirmWaitlistOffer(
       // Math.ceil mirrors bookings/route.ts: fractional days over threshold → PENDING.
       const hasNonMembers = booking.guests.some((g) => !g.isMember);
       const holdPolicy = hasNonMembers
-        ? await getNonMemberHoldPolicy(booking.checkIn)
+        ? await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId)
         : { enabled: false, holdDays: 0, source: "default" as const };
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
@@ -492,7 +678,8 @@ export async function expireStaleOffers(): Promise<{
   reofferedCount: number;
 }> {
   const { staleOffers, affectedRanges } = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const defaultLodgeId = await getDefaultLodgeId(tx);
+    await acquireLodgeCapacityLock(tx, defaultLodgeId);
 
     const offers = await tx.booking.findMany({
       where: {
@@ -511,6 +698,8 @@ export async function expireStaleOffers(): Promise<{
           status: BookingStatus.WAITLISTED,
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
+          waitlistOfferedLodgeId: null,
+          waitlistOfferedPriceCents: null,
         },
       });
       await reconcileBedAllocationsForBooking({
@@ -529,6 +718,9 @@ export async function expireStaleOffers(): Promise<{
         newPosition:
           offers.filter(
             (entry) =>
+              // Per-lodge queue: only same-lodge expiring offers count toward
+              // the position quoted in the expiry email (same scoping as M6).
+              entry.lodgeId === offer.lodgeId &&
               entry.checkIn < offer.checkOut &&
               entry.checkOut > offer.checkIn &&
               entry.createdAt < offer.createdAt
@@ -536,13 +728,23 @@ export async function expireStaleOffers(): Promise<{
       })),
       affectedRanges: Array.from(
         new Map(
-          offers.map((offer) => [
-            `${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
-            {
-              checkIn: offer.checkIn,
-              checkOut: offer.checkOut,
-            },
-          ])
+          offers.map((offer) => {
+            // The freed spot is at the lodge whose place was being offered
+            // (the offered lodge for a cross-lodge offer, else the entry's
+            // own lodge). Read from the in-memory pre-revert snapshot: the
+            // revert above nulled these fields in the DB, not on this object.
+            const freedLodgeId = offer.waitlistOfferedLodgeId ?? offer.lodgeId;
+            return [
+              // Key by lodge as well as range so two lodges' same-range
+              // expiries do not collapse into one processing call.
+              `${freedLodgeId}_${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
+              {
+                checkIn: offer.checkIn,
+                checkOut: offer.checkOut,
+                lodgeId: freedLodgeId,
+              },
+            ];
+          })
         ).values()
       ),
     };
@@ -556,7 +758,8 @@ export async function expireStaleOffers(): Promise<{
       offer.member.firstName,
       offer.checkIn,
       offer.checkOut,
-      offer.newPosition
+      offer.newPosition,
+      offer.lodgeId
     ).catch((err) => logger.error({ err }, "Failed to send waitlist offer expired email"));
 
     logAudit({
@@ -591,7 +794,9 @@ export async function expireStaleOffers(): Promise<{
 // test seam
 /**
  * Recalculate and update waitlistPosition for all WAITLISTED bookings
- * overlapping the given date range.
+ * overlapping the given date range. Positions are numbered per-lodge: each
+ * lodge runs its own FIFO queue, so a booking's position counts only entries
+ * waiting for the same lodge (multi-lodge).
  */
 export async function updateWaitlistPositions(
   checkIn: Date,
@@ -604,13 +809,18 @@ export async function updateWaitlistPositions(
       checkOut: { gt: checkIn },
     },
     orderBy: { createdAt: "asc" },
-    select: { id: true },
+    select: { id: true, lodgeId: true },
   });
 
-  for (let i = 0; i < waitlisted.length; i++) {
+  // Number each lodge's queue independently, preserving the FIFO createdAt
+  // order the query already applied.
+  const positionByLodge = new Map<string, number>();
+  for (const booking of waitlisted) {
+    const nextPosition = (positionByLodge.get(booking.lodgeId) ?? 0) + 1;
+    positionByLodge.set(booking.lodgeId, nextPosition);
     await prisma.booking.update({
-      where: { id: waitlisted[i].id },
-      data: { waitlistPosition: i + 1 },
+      where: { id: booking.id },
+      data: { waitlistPosition: nextPosition },
     });
   }
 }

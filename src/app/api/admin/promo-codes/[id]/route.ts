@@ -36,6 +36,10 @@ const updatePromoCodeSchema = z.object({
   xeroAccountCode: z.string().trim().min(1).max(10).optional().nullable(),
   active: z.boolean().optional(),
   assignedMemberIds: z.array(z.string()).optional(),
+  // Optional per-lodge restriction (multi-lodge phase 6, ADR-001 resolved
+  // question 4). Empty/omitted clears the restriction (redeemable at every
+  // lodge); a non-empty list restricts redemption to those lodges.
+  lodgeIds: z.array(z.string()).max(20).optional(),
 });
 
 export async function GET(
@@ -59,6 +63,7 @@ export async function GET(
           member: { select: { id: true, firstName: true, lastName: true, email: true } },
         },
       },
+      lodges: { select: { lodgeId: true } },
     },
   });
 
@@ -68,10 +73,11 @@ export async function GET(
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
-  const { allocations, ...promoCodeResponse } = promoCode;
+  const { allocations, lodges, ...promoCodeResponse } = promoCode;
   return NextResponse.json({
     ...promoCodeResponse,
     redemptions: allocations,
+    lodgeIds: lodges.map((row) => row.lodgeId),
   });
 }
 
@@ -109,6 +115,22 @@ export async function PUT(
     if (duplicate) {
       return NextResponse.json(
         { error: `A promo code with code "${data.code}" already exists` },
+        { status: 400 }
+      );
+    }
+  }
+
+  const requestedLodgeIds = data.lodgeIds !== undefined
+    ? [...new Set(data.lodgeIds)]
+    : undefined;
+  if (requestedLodgeIds && requestedLodgeIds.length > 0) {
+    const foundLodges = await prisma.lodge.findMany({
+      where: { id: { in: requestedLodgeIds } },
+      select: { id: true },
+    });
+    if (foundLodges.length !== requestedLodgeIds.length) {
+      return NextResponse.json(
+        { error: "One or more lodgeIds do not exist" },
         { status: 400 }
       );
     }
@@ -283,7 +305,19 @@ export async function PUT(
       }
     }
 
-    return tx.promoCode.findUnique({
+    if (requestedLodgeIds !== undefined) {
+      await tx.promoCodeLodge.deleteMany({ where: { promoCodeId: id } });
+      if (requestedLodgeIds.length > 0) {
+        await tx.promoCodeLodge.createMany({
+          data: requestedLodgeIds.map((lodgeId) => ({
+            promoCodeId: id,
+            lodgeId,
+          })),
+        });
+      }
+    }
+
+    const withRelations = await tx.promoCode.findUnique({
       where: { id },
       include: {
         assignments: {
@@ -291,15 +325,19 @@ export async function PUT(
             member: { select: { id: true, firstName: true, lastName: true, email: true } },
           },
         },
+        lodges: { select: { lodgeId: true } },
       },
     });
+    if (!withRelations) return null;
+    const { lodges, ...rest } = withRelations;
+    return { ...rest, lodgeIds: lodges.map((row) => row.lodgeId) };
   });
 
   logAudit({
     action: "promo.update",
     memberId: session.user.id,
     targetId: id,
-    details: `Updated promo code: ${existing.code}`,
+    details: `Updated promo code: ${existing.code}${requestedLodgeIds !== undefined ? ` (lodge restriction: ${requestedLodgeIds.length ? `${requestedLodgeIds.length} lodge(s)` : "cleared"})` : ""}`,
   });
 
   return NextResponse.json(updated);

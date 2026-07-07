@@ -25,6 +25,9 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: { findUnique: mocks.findUnique, update: mocks.bookingUpdate },
     payment: { upsert: mocks.upsert },
     internetBankingPaymentSettings: { findUnique: mocks.settingsFindUnique },
@@ -113,6 +116,8 @@ beforeEach(() => {
     async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         $executeRaw: mocks.txExecuteRaw,
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
         payment: { upsert: mocks.upsert },
         booking: { update: mocks.bookingUpdate },
       })

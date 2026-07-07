@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import {
   addDaysDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -30,9 +31,10 @@ export async function GET(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr, {
+  const authResult = await checkLodgeAuth(dateStr, {
     request: req,
   });
+  const { error, status, tier } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -50,6 +52,14 @@ export async function GET(
   const scope = new URL(req.url).searchParams.get("scope");
   const isLodgeListScope = scope === LODGE_LIST_SCOPE;
   const canViewGuestContactDetails = tier !== "staying-guest";
+  let lodgeId: string;
+  try {
+    lodgeId = await resolveKioskLodgeId(authResult, prisma);
+  } catch (err) {
+    const denied = kioskLodgeAuthErrorResponse(err);
+    if (denied) return denied;
+    throw err;
+  }
 
   // Default scope is stay-night compatible for roster allocation.
   // Lodge-list scope also includes guests on their checkout/departure date.
@@ -58,6 +68,7 @@ export async function GET(
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: isLodgeListScope ? { gte: date } : { gt: date },
+      ...lodgeNullTolerantScope(lodgeId),
       guests: {
         some: {
           stayStart: { lte: date },

@@ -13,6 +13,10 @@ import {
   getWorkPartyNightWindowForPromo,
   restrictPerNightRatesToWindow,
 } from "@/lib/work-party";
+import { ApiError } from "@/lib/api-error";
+
+export const PROMO_LODGE_RESTRICTION_MESSAGE =
+  "This promo code cannot be used at this lodge.";
 
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 type PromoUsageClient = typeof prisma | Prisma.TransactionClient;
@@ -110,6 +114,8 @@ export interface BookingDetailsForPromo {
 
 export interface PromoApplicationSubject extends PromoRuleSubject {
   type: PromoCodeType;
+  // Optional per-lodge restriction (see PromoRuleSubject.lodges).
+  lodges?: { lodgeId: string }[];
   valueCents: number | null;
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
@@ -662,6 +668,10 @@ export interface PromoRuleSubject {
   freeNightsPerIndividual?: number | null;
   lifetimeFreeNightsCap?: number | null;
   assignedMembersOnlyOwnNights?: boolean | null;
+  // Optional per-lodge restriction (multi-lodge phase 6, ADR-001 resolved
+  // question 4). No rows = redeemable at every lodge; rows present = only
+  // the listed lodges. Omitted entirely by callers that never restrict.
+  lodges?: { lodgeId: string }[];
 }
 
 export interface PromoRuleCounts {
@@ -689,7 +699,8 @@ export function validatePromoCodeRules(
   bookingDetails: { memberId: string; bookingCheckIn?: Date },
   now: Date = new Date(),
   counts: PromoRuleCounts = {},
-  assignedMemberIds: string[] | null = null
+  assignedMemberIds: string[] | null = null,
+  lodgeId: string | null = null
 ): string | null {
   if (!promoCode) {
     return "Promo code not found";
@@ -697,6 +708,14 @@ export function validatePromoCodeRules(
 
   if (!promoCode.active) {
     return "This promo code is no longer active";
+  }
+
+  if (
+    promoCode.lodges &&
+    promoCode.lodges.length > 0 &&
+    (!lodgeId || !promoCode.lodges.some((row) => row.lodgeId === lodgeId))
+  ) {
+    return PROMO_LODGE_RESTRICTION_MESSAGE;
   }
 
   const currentDateKey = nzDateKey(now);
@@ -804,11 +823,31 @@ export async function validateAndCalculatePromoDiscount(
     db?: PromoUsageClient;
     now?: Date;
     selectedGuestIndexes?: number[];
+    // The booking's/quote's lodge. Required to enforce an optional per-lodge
+    // promo restriction (PromoCodeLodge junction, ADR-001 resolved question
+    // 4); omitted only by callers that cannot yet resolve a lodge (fail-open
+    // to unrestricted, matching "no rows = every lodge").
+    lodgeId?: string | null;
   } = {}
 ): Promise<PromoApplicationResult> {
   if (!promoCode) {
     return {
       error: "Promo code not found",
+      beneficiaryMemberIds: [],
+    };
+  }
+
+  // Optional per-lodge restriction (PromoCodeLodge junction, ADR-001 resolved
+  // question 4): no rows means redeemable at every lodge; rows present
+  // restrict redemption to the listed lodges. Checked up front, before any
+  // usage lookups, so a lodge-restricted code fails fast.
+  if (
+    promoCode.lodges &&
+    promoCode.lodges.length > 0 &&
+    (!options.lodgeId || !promoCode.lodges.some((row) => row.lodgeId === options.lodgeId))
+  ) {
+    return {
+      error: PROMO_LODGE_RESTRICTION_MESSAGE,
       beneficiaryMemberIds: [],
     };
   }
@@ -996,7 +1035,8 @@ export async function validateAndCalculatePromoDiscount(
       requestedNewUniqueMemberCount,
       allBeneficiariesExhausted,
     },
-    requiresAssignedBooker ? assignedMemberIds : null
+    requiresAssignedBooker ? assignedMemberIds : null,
+    options.lodgeId ?? null
   );
 
   if (validationError) {
@@ -1074,13 +1114,17 @@ export async function validateAndCalculatePromoDiscount(
 export async function validatePromoCodeFull(
   code: string,
   bookingDetails: BookingDetailsForPromo,
-  excludeBookingId?: string
+  excludeBookingId?: string,
+  lodgeId?: string | null
 ): Promise<PromoValidationResult> {
   const normalizedCode = code.toUpperCase().trim();
 
   const promoCode = await prisma.promoCode.findUnique({
     where: { code: normalizedCode },
-    include: { assignments: { select: { memberId: true } } },
+    include: {
+      assignments: { select: { memberId: true } },
+      lodges: { select: { lodgeId: true } },
+    },
   });
 
   // Internal promos (work party events) are system-applied only; treat a
@@ -1097,7 +1141,7 @@ export async function validatePromoCodeFull(
     promoCode,
     bookingDetails,
     assignedMemberIds,
-    { excludeBookingId }
+    { excludeBookingId, lodgeId }
   );
 
   if (application.error || !application.discount) {
@@ -1138,6 +1182,28 @@ export async function validatePromoCodeFull(
  * Create a PromoRedemption record and increment the promo code's currentRedemptions.
  * Should be called within a Prisma transaction.
  */
+/**
+ * Re-check the promo's optional per-lodge restriction against the booking's
+ * lodge, inside the same transaction that creates the redemption row. Belt
+ * and braces alongside the upstream validateAndCalculatePromoDiscount check:
+ * quotes and redemption can race an admin edit to a promo's lodge list, so
+ * this closes that window rather than trusting the earlier read.
+ */
+async function assertPromoRedeemableAtLodge(
+  tx: PrismaTx,
+  promoCodeId: string,
+  lodgeId: string | null | undefined
+): Promise<void> {
+  const restrictionRows = await tx.promoCodeLodge.findMany({
+    where: { promoCodeId },
+    select: { lodgeId: true },
+  });
+  if (restrictionRows.length === 0) return;
+  if (!lodgeId || !restrictionRows.some((row) => row.lodgeId === lodgeId)) {
+    throw new ApiError(PROMO_LODGE_RESTRICTION_MESSAGE, 400);
+  }
+}
+
 export async function redeemPromoCode(
   tx: PrismaTx,
   promoCodeId: string,
@@ -1148,8 +1214,10 @@ export async function redeemPromoCode(
   freeNightsUsed?: number,
   eligibleGuestCount?: number,
   allocations?: PromoBeneficiaryAllocation[],
-  targetBookingGuestIds?: string[]
+  targetBookingGuestIds?: string[],
+  lodgeId?: string | null
 ): Promise<void> {
+  await assertPromoRedeemableAtLodge(tx, promoCodeId, lodgeId);
   const redemption = await tx.promoRedemption.create({
     data: {
       promoCodeId,

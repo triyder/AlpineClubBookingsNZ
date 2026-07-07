@@ -67,6 +67,7 @@ import {
   normalizeDateOnlyForTimeZone,
 } from "@/lib/date-only";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getSeasonYear } from "@/lib/utils";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
@@ -414,7 +415,8 @@ export async function prepareGuestPlan(
   ];
 
   const totalGuestCount = guestsForPricing.length;
-  const lodgeCapacity = await getLodgeCapacity(tx);
+  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
   if (totalGuestCount > lodgeCapacity) {
     throw new ApiError(
       `A booking cannot exceed ${lodgeCapacity} guests`,
@@ -556,9 +558,10 @@ function resolveModifyReviewUpdate({
 
 export async function loadActiveSeasonRates(
   tx: Prisma.TransactionClient,
+  lodgeId: string,
 ): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
-    where: { active: true },
+    where: { active: true, ...lodgeNullTolerantScope(lodgeId) },
     include: { rates: true },
   });
   return seasons.map((s) => ({
@@ -701,10 +704,12 @@ export async function calculateModifiedPricing(
     });
   }
 
+  const pricingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   const capacity = skipBookingLifecycleRules
     ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
     : inProgressPlan && editableFrom
       ? await checkCapacityForGuestRanges(
+          pricingLodgeId,
           editableFrom,
           newCheckOut,
           inProgressPlan.capacityGuestRanges,
@@ -712,6 +717,7 @@ export async function calculateModifiedPricing(
           tx,
         )
       : await checkCapacityForGuestRanges(
+          pricingLodgeId,
           newCheckIn,
           newCheckOut,
           policyAdjustedGuestsForPricing,
@@ -859,6 +865,7 @@ export async function applyPromoCodeChanges(
   let newPromoAdjustmentCents = 0;
   let promoRemoved = false;
   let promoChanged = false;
+  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
 
   if (input.removePromoCode && booking.promoRedemption) {
     await deletePromoRedemptionAndAdjustCount(tx, booking.promoRedemption);
@@ -873,7 +880,10 @@ export async function applyPromoCodeChanges(
 
     const promoCode = await tx.promoCode.findUnique({
       where: { code: input.promoCode.toUpperCase().trim() },
-      include: { assignments: { select: { memberId: true } } },
+      include: {
+        assignments: { select: { memberId: true } },
+        lodges: { select: { lodgeId: true } },
+      },
     });
 
     // Internal promos (work party events) cannot be entered as codes.
@@ -897,6 +907,7 @@ export async function applyPromoCodeChanges(
         excludeBookingId: bookingId,
         db: tx,
         selectedGuestIndexes: input.promoGuestIndexes,
+        lodgeId: bookingLodgeId,
       },
     );
     if (application.error || !application.discount) {
@@ -922,6 +933,7 @@ export async function applyPromoCodeChanges(
           guestNightRates,
           application.selectedGuestIndexes
         ),
+        bookingLodgeId,
       );
     }
     promoChanged = true;
@@ -946,7 +958,7 @@ export async function applyPromoCodeChanges(
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      { excludeBookingId: bookingId, db: tx, selectedGuestIndexes },
+      { excludeBookingId: bookingId, db: tx, selectedGuestIndexes, lodgeId: bookingLodgeId },
     );
 
     if (application.error || !application.discount) {
@@ -991,7 +1003,7 @@ export async function calculateModificationChangeFee({
     return 0;
   }
   const now = new Date();
-  const policy = await loadCancellationPolicy(booking.checkIn);
+  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
   const feeResult = calculateChangeFee({
     daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
     daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),

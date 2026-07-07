@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getLodgeCapacity, getMonthAvailability } from "@/lib/capacity";
+import { countActiveLodges, getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
@@ -86,11 +87,24 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Multi-lodge (#9): scope the calendar to the selected lodge, matching the
+    // list. A specific lodge shows its own bookings + bed count. With no lodge
+    // filter, a single-lodge club still shows its sole lodge's beds (ADR-002);
+    // a multi-lodge "All lodges" view hides the per-day count for now, since a
+    // single summed figure across non-fungible lodges would mislead (see the
+    // "All lodges bed display" discussion). Bookings stay unfiltered across all.
+    const lodgeParam = request.nextUrl.searchParams.get("lodgeId");
+    const specificLodge = lodgeParam && lodgeParam !== "all" ? lodgeParam : null;
+    const bedsLodgeId =
+      specificLodge ??
+      ((await countActiveLodges(prisma)) > 1 ? null : await getDefaultLodgeId(prisma));
+
     const [bookings, occupancyMap, lodgeCapacity] = await Promise.all([
       prisma.booking.findMany({
         where: {
           ...statusFilter,
           ...buildBookingDeletedWhere(deletedVisibility),
+          ...(specificLodge ? lodgeNullTolerantScope(specificLodge) : {}),
           checkIn: { lt: nextMonthStart },
           checkOut: { gt: monthStart },
         },
@@ -105,8 +119,10 @@ export async function GET(request: NextRequest) {
         },
         orderBy: { checkIn: "asc" },
       }),
-      getMonthAvailability(year, month - 1), // month is 0-indexed in getMonthAvailability
-      getLodgeCapacity(),
+      bedsLodgeId
+        ? getMonthAvailability(bedsLodgeId, year, month - 1) // month is 0-indexed
+        : Promise.resolve(null),
+      bedsLodgeId ? getLodgeCapacity(bedsLodgeId) : Promise.resolve(null),
     ]);
 
     const result = bookings.map((b) => ({
@@ -124,9 +140,13 @@ export async function GET(request: NextRequest) {
     }));
 
     // Convert occupancy map to availability object: { "2026-04-01": 25, ... }
+    // Empty when beds are hidden (multi-lodge "All lodges"); the calendar then
+    // renders no per-day count.
     const availability: Record<string, number> = {};
-    for (const [date, occupied] of occupancyMap.entries()) {
-      availability[date] = lodgeCapacity - occupied;
+    if (occupancyMap && lodgeCapacity !== null) {
+      for (const [date, occupied] of occupancyMap.entries()) {
+        availability[date] = lodgeCapacity - occupied;
+      }
     }
 
     return NextResponse.json({ bookings: result, availability });

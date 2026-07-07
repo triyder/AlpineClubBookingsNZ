@@ -17,10 +17,36 @@ Future reviews and issues should cite this file when proposing changes.
   unless a feature explicitly requires time-of-day semantics.
 - `BookingGuest.stayStart` and `BookingGuest.stayEnd` represent each guest's
   date-only occupancy inside the booking envelope.
+- Capacity is per lodge. A booking belongs to exactly one lodge
+  (`Booking.lodgeId`); capacity is "beds available on date D at lodge L", and
+  no code path may sum beds across lodges into a single club-wide number. Two
+  bookings at different lodges never contend for the same beds. The one
+  deliberate, documented exception is a reporting-layer occupancy denominator
+  that intentionally aggregates active lodges; any such aggregate must be
+  recorded in `docs/multi-lodge/lodge-scoping-contract.md` and labelled as
+  cross-lodge in the surface that shows it. A single-lodge club is simply a
+  club whose `Lodge` table has one active row — the same per-lodge rules apply
+  with the lodge dimension hidden by the ADR-002 presentation rule.
+- `lodgeId` is **`NOT NULL`** on the six entity tables (`LodgeRoom`, `Locker`,
+  `Season`, `Booking`, `ChoreTemplate`, `HutLeaderAssignment`), enforced
+  **without an outage** via a `default_lodge_id()` column default: an old
+  (pre-lodge) colour's insert omits `lodgeId` and auto-fills the default lodge,
+  so no null is written even mid-blue/green-cutover. `lodgeNullTolerantScope`
+  is now a strict `{ lodgeId }`. Policy/settings tables keep a **nullable**
+  `lodgeId` (null = club-wide default), scoped via `resolvePolicyRowsForLodge`.
+  See `docs/multi-lodge/contract-release.md`.
+- Each lodge's capacity resolves through `getLodgeCapacityStatus`: active
+  configured beds when the Bed Allocation module is on, else the per-lodge
+  `LodgeSettings.capacity` override, else the club-config bed total for the
+  default lodge only. An additional lodge with neither configured beds nor a
+  capacity override resolves to capacity 0 (`unconfigured_lodge`), so a
+  freshly created lodge is unbookable rather than overbookable until it is set
+  up.
 - A booking consumes beds when it is capacity-holding. The implementation
   source of truth is `capacityHoldingBookingFilter()` in
-  `src/lib/booking-status.ts`, which every occupancy/availability query uses.
-  A booking holds capacity when either (a) its status is in
+  `src/lib/booking-status.ts`, which every occupancy/availability query uses
+  (composed under `AND` with the per-lodge scope, since both are `OR`
+  fragments). A booking holds capacity when either (a) its status is in
   `CAPACITY_HOLDING_BOOKING_STATUSES` (PAID, COMPLETED, CONFIRMED,
   AWAITING_REVIEW), or (b) it is PENDING **and** is the converted booking of a
   `BookingRequest` — i.e. an accepted-but-unpaid quote or a directly-approved
@@ -141,6 +167,34 @@ Future reviews and issues should cite this file when proposing changes.
   `--apply --apply-action <key>` (#1491). Rows already flattened by the old
   defect are not backfilled (the repair pass synthesizes captured state from
   the STRIPE mirror).
+- Applied account credit is conserved across cancellation (#1547): EVERY
+  `cancelBooking` branch — and the Internet-Banking hold-expiry release
+  (`internet-banking-payment-cron.ts`), the one automatic cancel outside
+  `cancelBooking` — reverses the negative `BOOKING_APPLIED` ledger rows a
+  member applied to the booking. The never-captured / no-refund branches and the
+  `PENDING` / no-payment branches restore at **100%** (nothing was captured, so
+  no cancellation-policy tiering — the same capacity-failure system-void
+  precedent); the paid path restores the applied slice at the cancellation tier
+  (#1164 / D7). Because `restoreCreditFromBooking` has no internal replay guard,
+  restore runs ONLY inside each branch's claim/lock, whose atomic status flip is
+  the exactly-once guarantee — so the never-captured and `PENDING` branches are
+  now status-guarded claim-first under the booking advisory lock too. A CANCELLED
+  booking may legitimately hold consumed credit with NO restore row only when its
+  payment captured money (0%-tier paid cancels write no restore row;
+  held-as-credit refunds keep the applied rows) or settled without cash (the
+  fully-credit-covered $0 SUCCEEDED payment — its cancel takes the paid path,
+  where a 0%-tier / fee-swallowed restore of 0 is the policy retaining the
+  credit). The daily credit-reconciliation
+  cron alerts (alert-only, no auto-heal — post-fix, any hit is a new regression)
+  on any CANCELLED booking still holding orphaned applied credit, and
+  `scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans. The
+  cancelled-booking delete guard mirrors this: fully-reversed applied credit
+  (net-zero, only `BOOKING_APPLIED`/`CANCELLATION_REFUND` rows, no Xero
+  credit-note id) no longer blocks deletion — and the coincident
+  `payment.creditAppliedCents` mirror is waived with it — while any
+  `ADMIN_ADJUSTMENT`/`BOOKING_MODIFICATION_REFUND` row, net-non-zero ledger,
+  Xero-linked note, or independently captured/refunded payment still blocks
+  (owner decision 2026-07-07, FINAL).
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357) — but a PAID invoice event alone proves
   nothing: Xero also reports PAID when OUR OWN clearing credit note is

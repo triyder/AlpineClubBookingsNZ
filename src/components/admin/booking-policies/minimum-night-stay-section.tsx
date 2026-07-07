@@ -8,9 +8,15 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { PolicyFeedback } from "./policy-feedback"
+import { PolicyScopeSelect, usePolicyScopeLodgeName } from "./policy-scope-select"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
 
 export function MinimumNightStaySection() {
+  // Per-lodge override scope (ADR-001 resolved question 3): null lists the
+  // club-wide policies; a lodge lists its override set, which replaces the
+  // club-wide set entirely at runtime. Hidden with fewer than two lodges.
+  const [scopeLodgeId, setScopeLodgeId] = useState<string | null>(null)
+  const scopeLodgeName = usePolicyScopeLodgeName(scopeLodgeId)
   const [minStayPolicies, setMinStayPolicies] = useState<MinStayPolicy[]>([])
   const [loadingMinStay, setLoadingMinStay] = useState(true)
   const [showMinStayForm, setShowMinStayForm] = useState(false)
@@ -24,21 +30,29 @@ export function MinimumNightStaySection() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
-  const fetchMinStay = useCallback(async () => {
+  const fetchMinStay = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/admin/booking-policies/minimum-stay")
+      const res = await fetch(
+        scopeLodgeId
+          ? `/api/admin/booking-policies/minimum-stay?lodgeId=${encodeURIComponent(scopeLodgeId)}`
+          : "/api/admin/booking-policies/minimum-stay",
+        { signal }
+      )
       if (!res.ok) throw new Error("Failed to fetch minimum stay policies")
       const data = await res.json()
       setMinStayPolicies(data)
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setLoadingMinStay(false)
     }
-  }, [])
+  }, [scopeLodgeId])
 
   useEffect(() => {
-    fetchMinStay()
+    const controller = new AbortController()
+    fetchMinStay(controller.signal)
+    return () => controller.abort()
   }, [fetchMinStay])
 
   function resetMinStayForm() {
@@ -86,6 +100,8 @@ export function MinimumNightStaySection() {
           endDate: msEnd,
           triggerDays: msTriggerDays,
           minimumNights: msMinNights,
+          // Partition is set at creation; edits keep the row's partition.
+          ...(editingMinStayId ? {} : scopeLodgeId ? { lodgeId: scopeLodgeId } : {}),
         }),
       })
       if (!res.ok) {
@@ -141,14 +157,32 @@ export function MinimumNightStaySection() {
         onClearSuccess={() => setSuccess("")}
       />
 
+      <PolicyScopeSelect
+        value={scopeLodgeId}
+        onChange={setScopeLodgeId}
+        id="min-stay-scope"
+      />
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Minimum Night Stay</CardTitle>
+              <CardTitle>
+                {scopeLodgeName
+                  ? `Minimum Night Stay — ${scopeLodgeName}`
+                  : "Minimum Night Stay"}
+              </CardTitle>
               <CardDescription>
                 Require a minimum number of nights when a booking touches specific days of the week
                 within a date range. Admins can override these rules.
+                {scopeLodgeName ? (
+                  <>
+                    {" "}
+                    Policies listed here belong to {scopeLodgeName} and replace
+                    the club-wide set for that lodge; if the list is empty the
+                    lodge uses the club-wide policies.
+                  </>
+                ) : null}
               </CardDescription>
             </div>
             {!showMinStayForm && (

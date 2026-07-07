@@ -101,6 +101,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
     id: "b1",
     memberId: "m1",
+    lodgeId: "lodge-1",
     status: "PENDING",
     hasNonMembers: true,
     nonMemberHoldUntil: new Date("2026-07-08"),
@@ -173,6 +174,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(body).toMatchObject({ success: true, status: "PAID", charged: true });
     // The pre-charge capacity re-check runs under the advisory lock.
     expect(mocks.checkCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       expect.any(Date),
       expect.any(Date),
       expect.any(Array),
@@ -406,6 +408,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     expect(res.status).toBe(200);
     expect(body).toMatchObject({ status: "PAID", charged: false });
     expect(mocks.checkCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       expect.any(Date),
       expect.any(Date),
       expect.any(Array),

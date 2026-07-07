@@ -109,6 +109,8 @@ function confirmedChild(id: string) {
     id,
     checkIn: new Date(NOW.getTime() + 14 * 24 * HOUR),
     checkOut: new Date(NOW.getTime() + 16 * 24 * HOUR),
+    // A non-default lodge, so the waitlist pass must use this lodge's queue.
+    lodgeId: "lodge-remote",
     member: { email: `${id}@example.com`, firstName: "Jo" },
   };
 }
@@ -196,6 +198,23 @@ describe("reapStaleGroupSettlements", () => {
     expect(mocks.processWaitlistForDates).toHaveBeenCalledTimes(2);
     expect(mocks.sendSettlementExpired).toHaveBeenCalledTimes(1);
     expect(mocks.sendJoinReleased).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-processes the freed child's own lodge queue, not the default lodge (M1)", async () => {
+    mocks.settlementFindMany.mockResolvedValue([staleSettlement()]);
+    mocks.bookingFindMany.mockResolvedValue([confirmedChild("child-1")]);
+
+    await reapStaleGroupSettlements(NOW);
+
+    // The waitlist pass for freed beds must target the child booking's own
+    // lodge; omitting lodgeId would run it against the default lodge.
+    expect(mocks.processWaitlistForDates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        checkIn: new Date(NOW.getTime() + 14 * 24 * HOUR),
+        checkOut: new Date(NOW.getTime() + 16 * 24 * HOUR),
+        lodgeId: "lodge-remote",
+      }),
+    );
   });
 
   it("releases an Internet Banking settlement without touching Stripe", async () => {

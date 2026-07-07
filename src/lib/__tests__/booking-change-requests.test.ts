@@ -30,6 +30,9 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: {
       findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     },

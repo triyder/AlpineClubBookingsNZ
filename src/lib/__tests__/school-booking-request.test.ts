@@ -27,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({
     hutLeaderAssignment: { create: vi.fn() },
     season: { findMany: vi.fn() },
     groupDiscountSetting: { findUnique: vi.fn() },
+    lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -45,11 +46,13 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: vi.fn(),
 }));
 
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn().mockResolvedValue(40),
+  getDefaultLodgeCapacity: vi.fn().mockResolvedValue(40),
 }));
 
 vi.mock("@/lib/lodge-pin-session", () => ({
@@ -95,6 +98,7 @@ import {
 } from "@/lib/email";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
   enqueueXeroBookingInvoiceOperation,
@@ -307,6 +311,51 @@ describe("createSchoolBookingRequest", () => {
       })
     ).rejects.toThrow(/lodge capacity/);
   });
+
+  it("stores null lodgeId (default-lodge semantics) when no lodge is requested", async () => {
+    await createSchoolBookingRequest({
+      schoolName: "New Plymouth Primary School",
+      contactFirstName: "Carol",
+      contactLastName: "Contact",
+      contactEmail: "office@school.test",
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+      childCounts: { CHILD: 2 },
+      cateringPreference: "NON_CATERED" as const,
+    });
+
+    const data = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.lodgeId).toBeNull();
+  });
+
+  it("persists an explicit lodgeId, checks that lodge's capacity, and prices at its seasons", async () => {
+    await createSchoolBookingRequest({
+      schoolName: "New Plymouth Primary School",
+      contactFirstName: "Carol",
+      contactLastName: "Contact",
+      contactEmail: "office@school.test",
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      teachers: [{ firstName: "Tana", lastName: "Teacher" }],
+      childCounts: { CHILD: 2 },
+      cateringPreference: "NON_CATERED" as const,
+      lodgeId: "lodge-2",
+    });
+
+    expect(vi.mocked(getLodgeCapacity)).toHaveBeenCalledWith("lodge-2");
+    // Season lookup is scoped strictly to the requested lodge, never the
+    // default lodge.
+    const seasonWhere = mockedSeasonFindMany.mock.calls[0][0]!.where as Record<
+      string,
+      unknown
+    >;
+    expect(seasonWhere.lodgeId).toBe("lodge-2");
+    expect(vi.mocked(prisma.lodge.findFirst)).not.toHaveBeenCalled();
+
+    const data = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.lodgeId).toBe("lodge-2");
+  });
 });
 
 describe("approveSchoolBookingRequest", () => {
@@ -324,6 +373,7 @@ describe("approveSchoolBookingRequest", () => {
     mockedModuleEnabled.mockResolvedValue(true);
     mockedSeasonFindMany.mockResolvedValue(seasonWithRates() as never);
     mockedGroupDiscount.mockResolvedValue(null as never);
+    vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 
     let memberCalls = 0;
     vi.mocked(prisma.member.create).mockImplementation((async () => {
@@ -444,6 +494,43 @@ describe("approveSchoolBookingRequest", () => {
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
     // No substitution on a normal conversion → no owner-substitution alert (#1377).
     expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
+  });
+
+  it("creates the booking at the request's lodge instead of the default lodge", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ lodgeId: "lodge-2" }) as never
+    );
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ type: "approved", bookingId: "booking-1" });
+    // The default-lodge resolver must not run when the request names a lodge.
+    expect(vi.mocked(prisma.lodge.findFirst)).not.toHaveBeenCalled();
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "lodge-2",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      expect.anything()
+    );
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.lodgeId).toBe("lodge-2");
+    // The teacher's hut-leader assignment inherits the booking's lodge, so a
+    // multi-lodge club never gets a lodge-less hut leader from a school booking.
+    const hutLeaderArgs = vi.mocked(prisma.hutLeaderAssignment.create).mock
+      .calls[0][0].data as Record<string, unknown>;
+    expect(hutLeaderArgs.lodgeId).toBe("lodge-2");
+    // Approval repricing is scoped strictly to the request's lodge too.
+    const seasonWhere = mockedSeasonFindMany.mock.calls[0][0]!.where as Record<
+      string,
+      unknown
+    >;
+    expect(seasonWhere.lodgeId).toBe("lodge-2");
   });
 
   it("maps the school owner to an existing non-login SCHOOL contact instead of creating one (#1255)", async () => {
@@ -664,13 +751,14 @@ describe("approveSchoolBookingRequest", () => {
     // guards against a future regression gating the check behind the
     // override. (Adopted from the independent implementation in PR #1402.)
     expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       CHECK_IN,
       CHECK_OUT,
       expect.any(Array),
       "held-1",
       expect.anything()
     );
-    expect(mockedCheckCapacity.mock.calls[0][2]).toHaveLength(3);
+    expect(mockedCheckCapacity.mock.calls[0][3]).toHaveLength(3);
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking_request.owner_substituted",
@@ -740,13 +828,14 @@ describe("approveSchoolBookingRequest", () => {
     // The re-check runs against the NEW (regenerated) guest list, excludes
     // the held booking's own guests, and uses the locked transaction client.
     expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       CHECK_IN,
       CHECK_OUT,
       expect.any(Array),
       "held-1",
       prisma
     );
-    expect(mockedCheckCapacity.mock.calls[0][2]).toHaveLength(7); // 1 teacher + 6 children
+    expect(mockedCheckCapacity.mock.calls[0][3]).toHaveLength(7); // 1 teacher + 6 children
     // Nothing was swapped or confirmed: the guest swap, the CONFIRMED flip,
     // and the payment row must all be absent (the tx rolled back).
     expect(prisma.bookingGuest.deleteMany).not.toHaveBeenCalled();
@@ -787,6 +876,7 @@ describe("approveSchoolBookingRequest", () => {
 
     expect(result).toMatchObject({ type: "approved", bookingId: "held-1" });
     expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       CHECK_IN,
       CHECK_OUT,
       expect.any(Array),

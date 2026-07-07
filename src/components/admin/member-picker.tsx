@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { isOperationalRole } from "@/lib/member-roles";
+import { isLodgeKioskAccount } from "@/lib/member-roles";
 
 interface PickedMember {
   id: string;
@@ -23,6 +23,11 @@ interface MemberPickerProps {
 export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PickedMember[]>([]);
+  // True when the search matched only lodge kiosk accounts, which are
+  // filtered out — the empty state must say so rather than claiming
+  // nothing matched. Members holding the admin role are real people and
+  // stay selectable (the server only rejects booking for yourself).
+  const [onlyKioskMatches, setOnlyKioskMatches] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,10 +51,14 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
         const res = await fetch(`/api/admin/members?${params}`);
         if (res.ok) {
           const data = await res.json();
-          // Filter out operational accounts — they are not bookable members.
-          const members = (data.members || []).filter(
-            (m: PickedMember & { role?: string }) => !isOperationalRole(m.role)
+          // Filter out shared lodge kiosk logins — a device account never
+          // holds a booking. Admin-role members are bookable people.
+          const allMatches = data.members || [];
+          const members = allMatches.filter(
+            (m: PickedMember & { role?: string; accessRoles?: string[] }) =>
+              !isLodgeKioskAccount(m.role, m.accessRoles)
           );
+          setOnlyKioskMatches(allMatches.length > 0 && members.length === 0);
           setResults(members);
           setShowDropdown(true);
         }
@@ -76,12 +85,14 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
     return (
       <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
         <div className="flex-1">
-          <p className="font-medium text-sm">
+          {/* Explicit dark text: the card keeps its light background in dark
+              mode, where inherited text is near-white and unreadable. */}
+          <p className="font-medium text-sm text-slate-900">
             Booking on behalf of: {selected.firstName} {selected.lastName}
           </p>
           <p className="text-xs text-slate-500">{selected.email}</p>
         </div>
-        <Badge variant="outline" className="text-xs">{selected.ageTier}</Badge>
+        <Badge variant="outline" className="text-xs text-slate-700">{selected.ageTier}</Badge>
         {onClear && (
           <Button variant="outline" size="sm" onClick={onClear}>
             Change
@@ -117,10 +128,12 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
                 setQuery("");
               }}
             >
-              <p className="text-sm font-medium">
+              {/* Badge renders a div, which HTML forbids inside <p> (React
+                  hydration error), so the row wrapper must be a div too. */}
+              <div className="text-sm font-medium">
                 {m.firstName} {m.lastName}
                 <Badge variant="outline" className="ml-2 text-[10px]">{m.ageTier}</Badge>
-              </p>
+              </div>
               <p className="text-xs text-slate-500">{m.email}</p>
             </button>
           ))}
@@ -128,7 +141,11 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
       )}
       {showDropdown && results.length === 0 && query.trim().length >= 2 && !loading && (
         <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-lg p-3">
-          <p className="text-sm text-slate-500">No members found</p>
+          <p className="text-sm text-slate-500">
+            {onlyKioskMatches
+              ? "Only the shared lodge kiosk login matched — it cannot hold bookings. Search for a member instead."
+              : "No members found"}
+          </p>
         </div>
       )}
     </div>

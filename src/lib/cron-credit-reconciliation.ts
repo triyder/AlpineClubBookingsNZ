@@ -6,6 +6,7 @@ import {
   REFUND_CREDIT_NOTE_GRACE_HOURS,
   getRefundsMissingXeroCreditNotes,
 } from "@/lib/xero-admin-health";
+import { findOrphanedAppliedCredits } from "@/lib/orphaned-applied-credit-backfill";
 import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -25,6 +26,7 @@ export async function reconcileCreditBalances(): Promise<{
   totalCreditCents: number;
   discrepancies: number;
   refundsMissingXeroCreditNotes: number;
+  orphanedAppliedCredits: number;
 }> {
   // Get per-member credit balances from local ledger
   const balances = await prisma.memberCredit.groupBy({
@@ -128,6 +130,34 @@ export async function reconcileCreditBalances(): Promise<{
     });
   }
 
+  // #1547 detection (alert-only, NO auto-heal): a CANCELLED booking holding a
+  // never-restored BOOKING_APPLIED credit is money silently lost. Pre-fix
+  // orphans are healed by scripts/backfill-orphaned-applied-credits.ts; AFTER
+  // the fix any hit means a NEW credit-restore regression, so paying it out
+  // here would mask the bug (owner decision). Alert and stop.
+  const orphaned = await findOrphanedAppliedCredits();
+  if (orphaned.findings.length > 0) {
+    const count = orphaned.findings.length;
+    const bookingIds = orphaned.findings.map((f) => f.bookingId);
+    logger.error(
+      { count, bookingIds },
+      "Cancelled bookings with orphaned applied credit detected"
+    );
+    reportCronError({
+      tag: "credit-reconciliation:orphaned-applied-credits",
+      message: `${count} cancelled booking(s) hold applied account credit that was never restored — a NEW credit-restore regression (#1547); diagnose before healing with scripts/backfill-orphaned-applied-credits.ts`,
+      context: {
+        alert: "ORPHANED_APPLIED_CREDITS",
+        count,
+        sample: orphaned.findings.slice(0, 10).map((f) => ({
+          bookingId: f.bookingId,
+          memberId: f.memberId,
+          appliedCreditCents: f.appliedCreditCents,
+        })),
+      },
+    });
+  }
+
   // If Xero is connected, log basic stats for manual reconciliation
   try {
     if (await isXeroConnected()) {
@@ -158,6 +188,7 @@ export async function reconcileCreditBalances(): Promise<{
       totalCreditCents,
       discrepancies,
       refundsMissingXeroCreditNotes: refundsMissingCreditNotes.count,
+      orphanedAppliedCredits: orphaned.findings.length,
     },
     "Credit reconciliation complete"
   );
@@ -167,5 +198,6 @@ export async function reconcileCreditBalances(): Promise<{
     totalCreditCents,
     discrepancies,
     refundsMissingXeroCreditNotes: refundsMissingCreditNotes.count,
+    orphanedAppliedCredits: orphaned.findings.length,
   };
 }

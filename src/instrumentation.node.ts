@@ -610,19 +610,43 @@ export async function register() {
         sentryCronMonitorConfig("0 4 * * *", { checkinMargin: 10, maxRuntime: 30 })
       );
       try {
+        const { acquireLodgeCapacityLock } = await import("./lib/capacity");
+        const { getDefaultLodgeId } = await import("./lib/lodges");
         const expiredBefore = new Date();
         const cleanup = await prisma.$transaction(async (tx) => {
-          await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
-
           const expiredDrafts = await tx.booking.findMany({
             where: { status: "DRAFT", draftExpiresAt: { lt: expiredBefore } },
             select: {
               id: true,
+              lodgeId: true,
               promoRedemption: { select: { id: true, promoCodeId: true } },
             },
           });
 
-          const dependents = await deleteDraftBookingDependents(tx, expiredDrafts);
+          // Expired drafts can span multiple lodges: lock every affected
+          // lodge, in sorted order, before deleting anything so concurrent
+          // cleanup/booking transactions can never deadlock against each other.
+          const defaultLodgeId = await getDefaultLodgeId(tx);
+          const affectedLodgeIds = Array.from(
+            new Set(expiredDrafts.map((draft) => draft.lodgeId ?? defaultLodgeId))
+          ).sort();
+          for (const lodgeId of affectedLodgeIds) {
+            await acquireLodgeCapacityLock(tx, lodgeId);
+          }
+
+          // Re-scan under the locks: a draft found by the unlocked scan above
+          // may have been confirmed by a concurrent booking transaction before
+          // the locks were acquired, and must not have its dependents deleted.
+          const lockedExpiredDrafts = await tx.booking.findMany({
+            where: { status: "DRAFT", draftExpiresAt: { lt: expiredBefore } },
+            select: {
+              id: true,
+              lodgeId: true,
+              promoRedemption: { select: { id: true, promoCodeId: true } },
+            },
+          });
+
+          const dependents = await deleteDraftBookingDependents(tx, lockedExpiredDrafts);
           const deleted = dependents.bookingIds.length
             ? await tx.booking.deleteMany({
                 where: {

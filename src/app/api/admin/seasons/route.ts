@@ -5,6 +5,10 @@ import { z } from "zod"
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import {
+  lodgeNullTolerantScope,
+  resolveOptionalActiveLodgeId,
+} from "@/lib/lodges"
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -23,12 +27,17 @@ const seasonSchema = z.object({
       pricePerNightCents: z.number().int().min(0),
     })
   ).min(1, "Must provide at least one rate"),
+  lodgeId: z.string().min(1).optional(),
 })
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  // Null-tolerant filter: rows without a lodgeId (pre-backfill or written by
+  // a draining old colour during the expand deploy) show under every lodge.
+  const lodgeId = req.nextUrl.searchParams.get("lodgeId")
   const seasons = await prisma.season.findMany({
+    where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
     include: { rates: true },
     orderBy: { startDate: "desc" },
   })
@@ -62,12 +71,23 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Check for overlapping seasons
+  const lodgeId = await resolveOptionalActiveLodgeId(prisma, parsed.data.lodgeId)
+  if (!lodgeId) {
+    return NextResponse.json(
+      { error: "Lodge not found or not active" },
+      { status: 400 }
+    )
+  }
+
+  // Check for overlapping seasons at this lodge. Lodges may run different
+  // season windows, so the check is per lodge; rows with a null lodgeId
+  // (expand-release tolerance) conservatively overlap every lodge.
   const overlapping = await prisma.season.findFirst({
     where: {
       AND: [
         { startDate: { lte: parsedEndDate } },
         { endDate: { gte: parsedStartDate } },
+        lodgeNullTolerantScope(lodgeId),
       ],
     },
   })
@@ -86,6 +106,7 @@ export async function POST(req: NextRequest) {
       startDate: parsedStartDate,
       endDate: parsedEndDate,
       active,
+      lodgeId,
       rates: {
         create: rates.map((rate) => ({
           ageTier: rate.ageTier,

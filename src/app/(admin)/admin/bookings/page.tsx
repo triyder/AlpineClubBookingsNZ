@@ -18,6 +18,8 @@ import { formatDateOnly } from "@/lib/date-only";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { lodgeOrderBy } from "@/lib/lodges";
+import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { APP_TIME_ZONE } from "@/config/operational";
@@ -54,6 +56,7 @@ export default async function AdminBookingsPage({
     xeroState?: string;
     bedState?: string;
     changeState?: string;
+    lodgeId?: string;
   }>;
 }) {
   const params = await searchParams;
@@ -65,6 +68,14 @@ export default async function AdminBookingsPage({
     : false;
   const effectiveModules = await loadEffectiveModuleFlags();
   const showBedAllocation = effectiveModules.bedAllocation;
+  // Lodge filter and column appear only once a second active lodge exists
+  // (ADR-002 presentation rule).
+  const activeLodges = await prisma.lodge.findMany({
+    where: { active: true },
+    orderBy: lodgeOrderBy(),
+    select: { id: true, name: true },
+  });
+  const showLodge = activeLodges.length > 1;
   const { bookings, total, sortBy, sortDir } = await listAdminBookings(query, {
     bedAllocationEnabled: showBedAllocation,
   });
@@ -223,7 +234,10 @@ export default async function AdminBookingsPage({
         )}
       </div>
 
-      <BookingFilters showBedAllocation={showBedAllocation} />
+      <BookingFilters
+        showBedAllocation={showBedAllocation}
+        lodgeOptions={activeLodges}
+      />
 
       <AdminBookingCalendar />
 
@@ -243,6 +257,9 @@ export default async function AdminBookingsPage({
               <thead className="bg-gray-50">
                 <tr>
                   <SortHeader column="member">Member</SortHeader>
+                  {showLodge ? (
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lodge</th>
+                  ) : null}
                   <SortHeader column="lastUpdated">Last Updated</SortHeader>
                   <SortHeader column="checkIn">Check In</SortHeader>
                   <SortHeader column="guests">Guests</SortHeader>
@@ -273,6 +290,11 @@ export default async function AdminBookingsPage({
                           <p className="text-xs text-gray-500">{booking.member.email}</p>
                         </Link>
                       </td>
+                      {showLodge ? (
+                        <td className="px-4 py-3 text-sm">
+                          {booking.lodge?.name ?? "—"}
+                        </td>
+                      ) : null}
                       <td className="px-4 py-3 text-sm">{formatDate(booking.updatedAt)}</td>
                       <td className="px-4 py-3 text-sm">
                         <p>{formatDate(booking.checkIn)}</p>

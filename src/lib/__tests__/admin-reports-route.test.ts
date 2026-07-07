@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+const mockLodgeFindUnique = vi.fn();
 const mockPrisma = {
   booking: {
     findMany: vi.fn(),
@@ -10,6 +11,11 @@ const mockPrisma = {
   },
   memberSubscription: {
     count: vi.fn(),
+  },
+  // findUnique only (no findMany), so resolveMetricsCapacityAndScope keeps
+  // taking its structural-mock branch while lodge validation can be exercised.
+  lodge: {
+    findUnique: mockLodgeFindUnique,
   },
 };
 
@@ -29,6 +35,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   getLodgeCapacity: vi.fn().mockResolvedValue(29),
   getOccupiedBedsForNight: vi.fn((date: Date, bookings: Array<{ guests?: unknown[] }>) =>
     bookings.reduce((total, booking) => total + (booking.guests?.length ?? 0), 0)
@@ -148,4 +155,19 @@ describe("admin reports route", () => {
       },
     });
   }, 15_000);
+
+  it("rejects an unknown or inactive lodgeId with 400 (Low 2)", async () => {
+    mockLodgeFindUnique.mockResolvedValue({ id: "lodge-2", active: false });
+
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/admin/reports?from=2026-04-01&to=2026-04-14&lodgeId=lodge-2"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    // Rejected before any report query runs.
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
 });

@@ -19,7 +19,8 @@ import {
   type BookingNarrativeState,
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
 import { sendBookingRequestApprovedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -314,6 +315,7 @@ export async function reissuePaymentLinkForToken(
   await sendBookingRequestApprovedEmail({
     email: booking.member.email,
     firstName: booking.member.firstName,
+    lodgeId: booking.lodgeId ?? null,
     token: freshToken,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
@@ -417,7 +419,15 @@ export async function createPaymentIntentForPaymentLink(
   // Capacity/status revalidation under the shared booking advisory lock,
   // mirroring the session path's preflight before charging.
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
+    // lock from this read is safe; the status re-validation and capacity check
+    // consume ONLY the post-lock re-read below.
+    const lockTarget = await tx.booking.findUnique({
+      where: { id: booking.id },
+      select: { lodgeId: true },
+    });
+    const bookingLodgeId = lockTarget?.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
     const freshBooking = await tx.booking.findUnique({
       where: { id: booking.id },
@@ -436,6 +446,7 @@ export async function createPaymentIntentForPaymentLink(
     }
 
     const capacity = await checkCapacityForGuestRanges(
+      bookingLodgeId,
       freshBooking.checkIn,
       freshBooking.checkOut,
       freshBooking.guests,

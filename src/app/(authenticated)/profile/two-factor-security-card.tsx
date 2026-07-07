@@ -8,9 +8,11 @@ import { Badge } from "@/components/ui/badge";
 export function TwoFactorSecurityCard({
   enabled,
   method,
+  moduleEnabled,
 }: {
   enabled: boolean;
   method: "TOTP" | "EMAIL" | null;
+  moduleEnabled: boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -52,6 +54,18 @@ export function TwoFactorSecurityCard({
     setCopied(true);
   }
 
+  const methodLabel =
+    method === "TOTP"
+      ? "Authenticator app"
+      : method === "EMAIL"
+        ? "Email code"
+        : "Not set";
+  const statusDescription = enabled
+    ? moduleEnabled
+      ? `Method: ${methodLabel}`
+      : `Method: ${methodLabel}. The club currently has two-factor sign-in disabled, but your account remains enrolled.`
+    : "Enrollment is required the next time the club enables two-factor authentication.";
+
   return (
     <div className="space-y-3 border-t pt-3">
       <div className="flex items-center justify-between gap-3">
@@ -63,9 +77,7 @@ export function TwoFactorSecurityCard({
             </Badge>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {enabled
-              ? `Method: ${method === "TOTP" ? "Authenticator app" : "Email code"}`
-              : "Enrollment is required the next time the club enables two-factor authentication."}
+            {statusDescription}
           </p>
         </div>
         {enabled ? (

@@ -27,6 +27,7 @@ import {
   parseDateOnly,
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 
 export type BookingSortBy = "member" | "lastUpdated" | "checkIn" | "guests" | "total" | "status";
@@ -63,6 +64,9 @@ export const adminBookingsQuerySchema = z.object({
   sortDir: z.enum(["asc", "desc"]).optional(),
   month: z.string().optional(),
   deleted: z.string().optional(),
+  // Lodge filter (multi-lodge phase 8); the UI only offers it once a second
+  // active lodge exists.
+  lodgeId: z.string().min(1).optional(),
   paymentSource: z.enum(paymentSourceFilters).optional().default("all"),
   xeroState: z.enum(xeroStateFilters).optional().default("all"),
   bedState: z.enum(["all", "unallocated", "partial", "complete", "warning"]).optional().default("all"),
@@ -255,6 +259,12 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   if (Object.keys(checkOutFilter).length > 0) where.checkOut = checkOutFilter;
   if (Object.keys(updatedAtFilter).length > 0) where.updatedAt = updatedAtFilter;
 
+  if (query.lodgeId) {
+    // Null-tolerant: bookings still missing a lodgeId (expand-release
+    // tolerance) show under every lodge rather than disappearing.
+    Object.assign(where, lodgeNullTolerantScope(query.lodgeId));
+  }
+
   return where;
 }
 
@@ -307,6 +317,7 @@ async function loadBookingCandidates(where: Prisma.BookingWhereInput) {
   return prisma.booking.findMany({
     where,
     include: {
+      lodge: { select: { id: true, name: true } },
       member: { select: { id: true, firstName: true, lastName: true, email: true } },
       guests: {
         select: {

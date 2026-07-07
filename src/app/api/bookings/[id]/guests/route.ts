@@ -6,8 +6,15 @@ import {
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
+import {
+  getDefaultLodgeCapacity,
+  getLodgeCapacity,
+} from "@/lib/lodge-capacity";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   type SeasonRateData,
 } from "@/lib/pricing";
@@ -85,6 +92,7 @@ type PromoRedemptionWithTargets = {
   promoCode: {
     assignedMembersOnlyOwnNights?: boolean | null;
     assignments: Array<{ memberId: string }>;
+    lodges?: Array<{ lodgeId: string }>;
   };
   guestTargets?: Array<{ bookingGuestId: string }>;
 };
@@ -154,7 +162,7 @@ export async function POST(
   }
 
   const { guests: newGuests } = parsed.data;
-  const payloadCapacity = await getLodgeCapacity();
+  const payloadCapacity = await getDefaultLodgeCapacity();
   if (newGuests.length > payloadCapacity) {
     return NextResponse.json(
       {
@@ -175,7 +183,16 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+      // Lock the booking's lodge before re-reading it; the booking's lodge
+      // cannot change, so the pre-read outside the lock is safe for key
+      // selection.
+      const lockTarget = await tx.booking.findUnique({
+        where: { id: bookingId },
+        select: { lodgeId: true },
+      });
+      const bookingLodgeId =
+        lockTarget?.lodgeId ?? (await getDefaultLodgeId(tx));
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
@@ -191,7 +208,10 @@ export async function POST(
             include: {
               guestTargets: { select: { bookingGuestId: true } },
               promoCode: {
-                include: { assignments: { select: { memberId: true } } },
+                include: {
+                  assignments: { select: { memberId: true } },
+                  lodges: { select: { lodgeId: true } },
+                },
               },
             },
           },
@@ -236,7 +256,7 @@ export async function POST(
         );
       }
 
-      const lodgeCapacity = await getLodgeCapacity(tx);
+      const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
       if (booking.guests.length + newGuests.length > lodgeCapacity) {
         throw new ApiError(
           `A booking cannot exceed ${lodgeCapacity} guests`,
@@ -313,6 +333,7 @@ export async function POST(
 
       // Capacity check excluding this booking (using tx to participate in advisory lock)
       const capacity = await checkCapacityForGuestRanges(
+        bookingLodgeId,
         booking.checkIn,
         booking.checkOut,
         [
@@ -335,7 +356,7 @@ export async function POST(
 
       // Load seasons for pricing
       const seasons = await tx.season.findMany({
-        where: { active: true },
+        where: { active: true, ...lodgeNullTolerantScope(bookingLodgeId) },
         include: { rates: true },
       });
 
@@ -481,7 +502,7 @@ export async function POST(
           promo.assignments.length > 0
             ? promo.assignments.map((assignment) => assignment.memberId)
             : null,
-          { excludeBookingId: bookingId, db: tx, selectedGuestIndexes }
+          { excludeBookingId: bookingId, db: tx, selectedGuestIndexes, lodgeId: bookingLodgeId }
         );
 
         if (application.error || !application.discount) {
@@ -523,7 +544,10 @@ export async function POST(
         hasNonMembers &&
         (booking.status === "PENDING" || booking.status === "PAYMENT_PENDING")
       ) {
-        const holdPolicy = await getNonMemberHoldPolicy(booking.checkIn);
+        const holdPolicy = await getNonMemberHoldPolicy(
+          booking.checkIn,
+          booking.lodgeId,
+        );
         const holdDecision = calculateBookingHoldDecision({
           hasNonMembers,
           checkIn: booking.checkIn,
@@ -748,6 +772,7 @@ export async function POST(
               : undefined,
         paymentReference: result.paymentReference,
         xeroInvoiceNumber: result.xeroInvoiceNumber,
+        lodgeId: result.booking.lodgeId,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
       );

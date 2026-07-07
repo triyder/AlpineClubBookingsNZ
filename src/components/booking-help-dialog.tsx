@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { CircleHelp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,12 @@ import {
 } from "@/components/ui/dialog";
 import { BOOKING_STATUS_GLOSSARY } from "@/lib/contextual-help";
 import type { CancellationScheduleRow } from "@/lib/cancellation-schedule";
+import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
+
+const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
+  "/book",
+  "family-group",
+);
 
 /**
  * Member-facing booking help. Surfaces two things that previously only existed
@@ -71,6 +78,22 @@ export function BookingHelpDialog({
                   <li key={item}>{item}</li>
                 ))}
               </ul>
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold">Family members on bookings</h3>
+              <p className="text-sm text-muted-foreground">
+                Family member missing from the quick-add list? Add or invite
+                them in your User Profile &gt; Family Group, then return to the
+                booking flow.{" "}
+                <Link
+                  href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
+                  className="font-medium text-foreground underline underline-offset-4 hover:text-primary"
+                >
+                  Open Family Group in your profile
+                </Link>
+                .
+              </p>
             </section>
 
             {hasSchedule ? (
