@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   clubModuleSettingsFindUnique: vi.fn(),
   clubModuleSettingsUpsert: vi.fn(),
+  lodgeCount: vi.fn(),
   auditLogCreate: vi.fn(),
   transaction: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
@@ -43,6 +44,9 @@ vi.mock("@/lib/prisma", () => ({
     clubModuleSettings: {
       findUnique: mocks.clubModuleSettingsFindUnique,
       upsert: mocks.clubModuleSettingsUpsert,
+    },
+    lodge: {
+      count: mocks.lodgeCount,
     },
     auditLog: {
       create: mocks.auditLogCreate,
@@ -324,6 +328,42 @@ describe("Admin modules API", () => {
         }),
       }),
     );
+  });
+
+  it("rejects disabling multiLodge while more than one active lodge exists", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({
+      id: "default",
+      ...allEnabled,
+      updatedAt: new Date("2026-05-18T10:00:00.000Z"),
+      updatedByMemberId: "admin-0",
+    });
+    mocks.lodgeCount.mockResolvedValue(2);
+
+    const response = await PUT(
+      request({ settings: { ...allEnabled, multiLodge: false } }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(mocks.clubModuleSettingsUpsert).not.toHaveBeenCalled();
+  });
+
+  it("allows disabling multiLodge while at most one active lodge exists", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({
+      id: "default",
+      ...allEnabled,
+      updatedAt: new Date("2026-05-18T10:00:00.000Z"),
+      updatedByMemberId: "admin-0",
+    });
+    mocks.lodgeCount.mockResolvedValue(1);
+
+    const response = await PUT(
+      request({ settings: { ...allEnabled, multiLodge: false } }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.clubModuleSettingsUpsert).toHaveBeenCalledTimes(1);
   });
 });
 

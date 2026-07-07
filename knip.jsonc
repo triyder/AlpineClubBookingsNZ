@@ -1,0 +1,52 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // Keep exports that are referenced only within their own file (e.g. a constant
+  // or function exported for a sibling test but also used internally). This
+  // collapses the bulk of the "unused type-only export" surface that #1129/#1178
+  // deliberately kept, leaving only exports with genuinely zero references.
+  "ignoreExportsUsedInFile": true,
+  "entry": [
+    // Framework / tooling entry points knip's plugins cannot trace to their caller.
+    // Playwright reaches this only via `testMatch: /auth\.setup\.ts/` in playwright.config.ts.
+    "e2e/auth.setup.ts",
+    // Invoked from scripts/e2e-stack.sh (shell), never imported.
+    "e2e/setup/enable-e2e-modules.ts",
+    // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
+    "scripts/codex/create-review-issues.mjs",
+    "scripts/codex/issue-to-prompt.mjs",
+    // Documented operator CLI (docs/MAINTENANCE.md, docs/xero/ARCHITECTURE.md).
+    "scripts/xero-booking-repair.ts",
+    // Documented operator CLI (docs/MAINTENANCE.md, docs/DOMAIN_INVARIANTS.md,
+    // docs/STATE_MACHINES.md; invoked via `npx tsx`, never imported).
+    "scripts/backfill-orphaned-applied-credits.ts",
+    // Next.js runtime entry: register() and the onRequestError convention hook are
+    // invoked by the framework, not imported by app code (#1178 kept onRequestError).
+    "src/instrumentation.node.ts"
+  ],
+  "ignoreBinaries": [
+    // Runtime shell-outs; these binaries live on the host/container, not node_modules.
+    "psql", // src/lib/backup.ts + scripts/audit-access-role-membership-cleanup.ts
+    "pg_dump", // src/lib/backup.ts logical backups
+    "gunzip" // src/lib/backup.ts restore path
+  ],
+  "ignoreIssues": {
+    // shadcn/ui vendored primitives keep the full Radix-parity export/type surface
+    // by design; unused idiom exports are expected (#1129/#1178 kept class).
+    "src/components/ui/**": ["exports", "types"],
+    // e2e 2FA test-seam helpers retained for #1134 (#1178 kept class).
+    "e2e/helpers/auth.ts": ["exports"],
+    // Type-only export TwoFactorStatus kept as documented shape (#1178 kept class).
+    "src/lib/two-factor.ts": ["types"],
+    // Type-only exports kept (#1178) + intentional backward-compat alias
+    // getMemberProfileCompleteness = evaluateMemberProfileCompleteness.
+    "src/lib/member-profile-completeness.ts": ["types", "duplicates"],
+    // Intentional backward-compat alias FALLBACK_LODGE_CAPACITY = CLUB_CONFIG_LODGE_CAPACITY.
+    "src/lib/lodge-capacity.ts": ["duplicates"],
+    // Intentional documented alias SCHOOL_GROUP_SOFT_CAP = DEFAULT_SCHOOL_GROUP_SOFT_CAP
+    // (both names live; landed 2026-07-08 school-bookings work).
+    "src/lib/school-booking-constants.ts": ["duplicates"],
+    // WhakapapaChairlift type alias landed 2026-07-08 (snow-conditions refactor)
+    // with zero refs; kept pending owner triage at the #1526 PR — see PR body.
+    "src/lib/whakapapa-report.ts": ["types"]
+  }
+}

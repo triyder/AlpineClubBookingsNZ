@@ -21,11 +21,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
-import { SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
+import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
 import {
   BookingRequestContactPicker,
   type OwnerContactChoice,
@@ -117,6 +118,10 @@ interface PublicBookingRequestData {
     | "CANCELLED"
     | "CONVERTED";
   schoolName: string | null;
+  // Null lodgeId means the club's default lodge (pre-multi-lodge rows and
+  // single-lodge submissions).
+  lodgeId: string | null;
+  lodgeName: string | null;
   cateringPreference: "CATERED" | "NON_CATERED" | "QUOTE_BOTH" | null;
   teachers: Array<{ firstName: string; lastName: string; email: string | null }>;
   linkedGuestMembers: Array<{ guestIndex: number; memberId: string }>;
@@ -282,6 +287,10 @@ export function PublicBookingRequestsPanel({
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get("status");
   const requestId = searchParams.get("requestId");
+  // Lodge badge only renders for multi-lodge clubs (ADR-002 presentation
+  // rule); a single-lodge club sees no lodge copy in the queue.
+  const { lodges: activeLodges } = useLodgeOptions("admin");
+  const showLodgeContext = activeLodges.length >= 2;
   const [requests, setRequests] = useState<PublicBookingRequestData[]>([]);
   const [filter, setFilter] = useState<PublicRequestFilter>(
     isPublicRequestFilter(initialFilter) ? initialFilter : "QUEUE"
@@ -919,6 +928,14 @@ export function PublicBookingRequestsPanel({
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
+                      {showLodgeContext && request.lodgeName ? (
+                        <Badge
+                          variant="outline"
+                          className="border-sky-200 bg-sky-50 text-sky-800"
+                        >
+                          {request.lodgeName}
+                        </Badge>
+                      ) : null}
                       {request.type === "SCHOOL" ? (
                         <Badge
                           variant="outline"
@@ -1132,9 +1149,9 @@ export function PublicBookingRequestsPanel({
                             can&apos;t be changed here. Decline and ask the school to resubmit if
                             those change.
                           </p>
-                          {plannedGuestTotal(request) > SCHOOL_GROUP_SOFT_CAP ? (
+                          {plannedGuestTotal(request) > DEFAULT_SCHOOL_GROUP_SOFT_CAP ? (
                             <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                              Over {SCHOOL_GROUP_SOFT_CAP}: confirm a club member is staying with the
+                              Over {DEFAULT_SCHOOL_GROUP_SOFT_CAP}: confirm a club member is staying with the
                               group before approving.
                             </p>
                           ) : null}

@@ -32,6 +32,8 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
   createModificationAdditionalPaymentIntent,
@@ -147,8 +149,18 @@ export async function modifyBookingBatch({
   ipAddress: string;
 }): Promise<BatchModificationResponse> {
   const result = await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+    // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
+    // lock from this read is safe; the eligibility checks, pricing, capacity
+    // check and claim below all run against the post-lock re-read.
+    const lockTarget = await tx.booking.findUnique({
+      where: { id: bookingId },
+      select: { lodgeId: true },
+    });
+    const bookingLodgeId = lockTarget?.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
+    // Re-read the full booking under the lock; everything below consumes ONLY
+    // this post-lock snapshot.
     const booking = (await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
@@ -160,7 +172,10 @@ export async function modifyBookingBatch({
         promoRedemption: {
           include: {
             promoCode: {
-              include: { assignments: { select: { memberId: true } } },
+              include: {
+                assignments: { select: { memberId: true } },
+                lodges: { select: { lodgeId: true } },
+              },
             },
             guestTargets: { select: { bookingGuestId: true } },
           },
@@ -248,7 +263,8 @@ export async function modifyBookingBatch({
           removeGuestIds: input.removeGuestIds,
           guestsForPricing: guestPlan.guestsForPricing,
           skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
-          seasonRateData: await loadActiveSeasonRates(tx),
+          // Multi-lodge: season rates are resolved for the booking's lodge.
+          seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
         });
 
     const promo = identityOnlyModification
@@ -647,6 +663,7 @@ async function dispatchBatchPostTransactionSideEffects({
           : undefined,
     paymentReference: result.paymentReference,
     xeroInvoiceNumber: result.xeroInvoiceNumber,
+    lodgeId: result.booking.lodgeId,
   }).catch((err) =>
     logger.error(
       { err, bookingId },

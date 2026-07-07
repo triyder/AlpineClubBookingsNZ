@@ -14,6 +14,7 @@ import {
   formatDateOnly,
 } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -58,6 +59,11 @@ interface ReconcileBedAllocationsForBookingInput {
 interface AutoAllocateMissingBedNightsInput {
   db: BedAllocationLifecycleDb;
   range: BedAllocationLifecycleRange;
+  // Lodge of the booking being reconciled. Auto-fill must never place a
+  // guest into another lodge's bed (lodge-scoping contract); null (booking
+  // missing/pre-backfill) keeps the club-wide behaviour, which is exact
+  // while one lodge exists.
+  lodgeId?: string | null;
 }
 
 type BookingForBedAllocation = Awaited<
@@ -120,6 +126,7 @@ async function loadBookingForBedAllocation(
       deletedAt: true,
       checkIn: true,
       checkOut: true,
+      lodgeId: true,
       guests: {
         select: {
           id: true,
@@ -219,20 +226,51 @@ async function pruneAllocationsForBooking(
   return deleted.count;
 }
 
+/**
+ * Per-lodge auto-allocation switch (lodge-scoping contract): a lodge's own
+ * settings row (id = lodgeId) wins; otherwise the legacy "default" row
+ * applies when it is unlinked or soft-linked to this lodge; missing rows
+ * default to enabled. Exported for the admin settings surface.
+ */
+export async function resolveAutoAllocationEnabled(
+  db: {
+    bedAllocationSettings: {
+      findUnique: (args: {
+        where: { id: string };
+      }) => Promise<{ autoAllocationEnabled: boolean; lodgeId?: string | null } | null>;
+    };
+  },
+  lodgeId?: string | null,
+): Promise<boolean> {
+  if (lodgeId && lodgeId !== "default") {
+    const ownRow = await db.bedAllocationSettings.findUnique({
+      where: { id: lodgeId },
+    });
+    if (ownRow) return ownRow.autoAllocationEnabled;
+  }
+  const legacy = await db.bedAllocationSettings.findUnique({
+    where: { id: "default" },
+  });
+  if (!legacy) return true;
+  if (lodgeId && legacy.lodgeId && legacy.lodgeId !== lodgeId) {
+    return true;
+  }
+  return legacy.autoAllocationEnabled;
+}
+
 async function autoAllocateMissingBedNights({
   db,
   range,
+  lodgeId,
 }: AutoAllocateMissingBedNightsInput): Promise<number> {
-  const settings = await db.bedAllocationSettings.findUnique({
-    where: { id: "default" },
-  });
-
-  if (settings?.autoAllocationEnabled === false) {
+  const enabled = await resolveAutoAllocationEnabled(db, lodgeId);
+  if (!enabled) {
     return 0;
   }
 
   const [rooms, bookings, existingAllocations] = await Promise.all([
     db.lodgeRoom.findMany({
+      where: lodgeId ? lodgeNullTolerantScope(lodgeId) : undefined,
       include: { beds: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { id: "asc" }],
     }),
@@ -248,6 +286,7 @@ async function autoAllocateMissingBedNights({
             stayEnd: { gt: range.checkIn },
           },
         },
+        ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}),
       },
       select: {
         id: true,
@@ -281,6 +320,7 @@ async function autoAllocateMissingBedNights({
           gte: range.checkIn,
           lt: range.checkOut,
         },
+        ...(lodgeId ? { room: lodgeNullTolerantScope(lodgeId) } : {}),
       },
       select: {
         bedId: true,
@@ -535,6 +575,7 @@ export async function reconcileBedAllocationsForBooking({
     ? await autoAllocateMissingBedNights({
         db,
         range: autoAllocationRange,
+        lodgeId: booking?.lodgeId ?? null,
       })
     : 0;
 

@@ -10,6 +10,11 @@ import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { APP_CURRENCY } from "@/config/operational"
 import { formatCents } from "@/lib/pricing"
+import {
+  LodgeSelect,
+  initialLodgeIdFromLocation,
+  useLodgeOptions,
+} from "@/components/lodge-select"
 
 interface SeasonRate {
   id: string
@@ -67,6 +72,12 @@ export default function SeasonsPage() {
   const [error, setError] = useState("")
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Lodge context for the page; LodgeSelect renders nothing (and reports the
+  // sole lodge) while fewer than two lodges exist (ADR-002).
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("admin")
+  // Hub links (ADR-003) land pre-filtered; read synchronously so the first
+  // fetch is already lodge-filtered.
+  const [lodgeId, setLodgeId] = useState<string | null>(initialLodgeIdFromLocation)
 
   // Form state
   const [name, setName] = useState("")
@@ -90,23 +101,36 @@ export default function SeasonsPage() {
     }
   }, [])
 
-  const fetchSeasons = useCallback(async () => {
+  const fetchSeasons = useCallback(async (signal?: AbortSignal) => {
     try {
-      const res = await fetch("/api/admin/seasons")
+      const res = await fetch(
+        lodgeId
+          ? `/api/admin/seasons?lodgeId=${encodeURIComponent(lodgeId)}`
+          : "/api/admin/seasons",
+        { signal }
+      )
       if (!res.ok) throw new Error("Failed to fetch seasons")
       const data = await res.json()
       setSeasons(data)
     } catch (err) {
+      // An aborted request means the lodge changed (or the page unmounted);
+      // a newer request owns the list now.
+      if (err instanceof DOMException && err.name === "AbortError") return
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [lodgeId])
 
   useEffect(() => {
     fetchAgeTiers()
-    fetchSeasons()
-  }, [fetchAgeTiers, fetchSeasons])
+  }, [fetchAgeTiers])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchSeasons(controller.signal)
+    return () => controller.abort()
+  }, [fetchSeasons])
 
   function resetForm() {
     setName("")
@@ -145,7 +169,17 @@ export default function SeasonsPage() {
       }
     })
 
-    const payload = { name, type, startDate, endDate, active, rates: ratesArray }
+    const payload = {
+      name,
+      type,
+      startDate,
+      endDate,
+      active,
+      rates: ratesArray,
+      // Lodge is set at creation from the page's lodge context and cannot be
+      // changed by an update.
+      ...(editingId ? {} : { lodgeId: lodgeId ?? undefined }),
+    }
 
     try {
       const url = editingId
@@ -231,6 +265,10 @@ export default function SeasonsPage() {
         {!showForm && (
           <Button onClick={() => setShowForm(true)}>Add Season</Button>
         )}
+      </div>
+
+      <div className="max-w-xs">
+        <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
       </div>
 
       {error && (

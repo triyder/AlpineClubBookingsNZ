@@ -12,16 +12,23 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 interface LodgeSettingsResponse {
   capacity: number | null;
   hutLeaderLookaheadDays: number;
+  schoolGroupSoftCap: number;
   clubConfigCapacity: number;
 }
 
 export function LodgeCapacityCard() {
+  // Per-lodge capacity override scope (lodge-scoping contract); the picker
+  // renders nothing while fewer than two lodges exist (ADR-002). The
+  // hut-leader lookahead stays club-wide whichever lodge is selected.
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
+  const [lodgeId, setLodgeId] = useState<string | null>(null);
   const { hutLeaderLabel } = useClubIdentity();
   // This card writes the label as a hyphenated compound adjective ("hut-leader"),
   // so hyphenate the lowercased label to keep the default render byte-identical.
@@ -33,6 +40,9 @@ export function LodgeCapacityCard() {
   );
   const [capacityValue, setCapacityValue] = useState("");
   const [hutLeaderLookaheadValue, setHutLeaderLookaheadValue] = useState("14");
+  // Per-lodge school-group soft cap (a warning threshold on the public
+  // school request form). Blank shows the resolved default.
+  const [softCapValue, setSoftCapValue] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -46,9 +56,12 @@ export function LodgeCapacityCard() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/admin/lodge-settings", {
-        credentials: "same-origin",
-      });
+      const response = await fetch(
+        lodgeId
+          ? `/api/admin/lodge-settings?lodgeId=${encodeURIComponent(lodgeId)}`
+          : "/api/admin/lodge-settings",
+        { credentials: "same-origin" },
+      );
       // The embedding page normally hides this card by permission matrix; this
       // in-card backstop keeps a future cross-area embedding degrading quietly
       // (render nothing) instead of showing the error box for a viewer who
@@ -69,6 +82,7 @@ export function LodgeCapacityCard() {
       setClubConfigCapacity(body.clubConfigCapacity);
       setCapacityValue(body.capacity === null ? "" : String(body.capacity));
       setHutLeaderLookaheadValue(String(body.hutLeaderLookaheadDays));
+      setSoftCapValue(String(body.schoolGroupSoftCap));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load lodge settings");
     } finally {
@@ -78,7 +92,8 @@ export function LodgeCapacityCard() {
 
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lodgeId]);
 
   useEffect(() => {
     if (error) scrollToError(feedbackRef);
@@ -116,18 +131,36 @@ export function LodgeCapacityCard() {
       return;
     }
 
+    const softCapTrimmed = softCapValue.trim();
+    let schoolGroupSoftCap: number | null = null;
+    if (softCapTrimmed !== "") {
+      const parsedSoftCap = Number(softCapTrimmed);
+      if (!Number.isInteger(parsedSoftCap) || parsedSoftCap <= 0) {
+        setError("Enter a whole number greater than zero for the school-group cap, or leave blank for the default.");
+        setSaving(false);
+        return;
+      }
+      schoolGroupSoftCap = parsedSoftCap;
+    }
+
     try {
       const response = await fetch("/api/admin/lodge-settings", {
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ capacity, hutLeaderLookaheadDays }),
+        body: JSON.stringify({
+          capacity,
+          hutLeaderLookaheadDays,
+          schoolGroupSoftCap,
+          ...(lodgeId ? { lodgeId } : {}),
+        }),
       });
       if (!response.ok) throw new Error("Failed to save lodge settings");
       const body = (await response.json()) as LodgeSettingsResponse;
       setClubConfigCapacity(body.clubConfigCapacity);
       setCapacityValue(body.capacity === null ? "" : String(body.capacity));
       setHutLeaderLookaheadValue(String(body.hutLeaderLookaheadDays));
+      setSoftCapValue(String(body.schoolGroupSoftCap));
       setSavedMessage("Lodge settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save lodge settings");
@@ -148,6 +181,12 @@ export function LodgeCapacityCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <LodgeSelect
+          lodges={lodges}
+          value={lodgeId}
+          onChange={setLodgeId}
+          loading={lodgesLoading}
+        />
         {(error || savedMessage) && (
           <div
             ref={feedbackRef}
@@ -203,6 +242,30 @@ export function LodgeCapacityCard() {
               }}
               disabled={loading || saving}
             />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="school-group-soft-cap">
+              School-group soft cap (beds)
+            </Label>
+            <Input
+              id="school-group-soft-cap"
+              type="number"
+              min={1}
+              inputMode="numeric"
+              className="w-44"
+              placeholder="Default"
+              value={softCapValue}
+              onChange={(event) => {
+                setSoftCapValue(event.target.value);
+                setSavedMessage("");
+              }}
+              disabled={loading || saving}
+            />
+            <p className="text-xs text-slate-500">
+              School groups above this many beds are warned they need a club
+              member to host. Blank uses the default. Warning only — the hard
+              limit stays the capacity above.
+            </p>
           </div>
           <Button type="button" onClick={() => void save()} disabled={loading || saving}>
             {saving ? (

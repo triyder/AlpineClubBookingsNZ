@@ -75,10 +75,18 @@ vi.mock("../promo", () => ({
 
 // Mock capacity
 const mockCheckCapacityForGuestRanges = vi.fn();
+const mockAcquireLodgeCapacityLock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../capacity", () => ({
   checkCapacityForGuestRanges: (...args: unknown[]) =>
     mockCheckCapacityForGuestRanges(...args),
+  acquireLodgeCapacityLock: (...args: unknown[]) =>
+    mockAcquireLodgeCapacityLock(...args),
   LODGE_CAPACITY: 29,
+}));
+
+const mockLodgeFindFirst = vi.fn().mockResolvedValue({ id: "lodge-1" });
+vi.mock("../lodges", () => ({
+  getDefaultLodgeId: (...args: unknown[]) => mockLodgeFindFirst(...args).then((l: { id: string }) => l.id),
 }));
 
 // Mock Prisma
@@ -242,6 +250,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       if (typeof arg === "function") {
         return arg({
           $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
+          lodge: {
+            findFirst: (...args: unknown[]) => mockLodgeFindFirst(...args),
+          },
           booking: {
             findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
             update: (...args: unknown[]) => mockBookingUpdate(...args),
@@ -286,6 +297,50 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
+  it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {
+    // Pre-lock read is now a minimal key/eligibility select; the buggy order
+    // consumed its stale dates/guests. Make the two reads differ and prove the
+    // capacity check ran against the POST-lock snapshot.
+    const preLock = makePendingBooking("b1", {
+      checkIn: "2026-01-01",
+      checkOut: "2026-01-03",
+      guestCount: 1,
+    });
+    const postLock = makePendingBooking("b1", {
+      checkIn: "2026-05-20",
+      checkOut: "2026-05-22",
+      guestCount: 3,
+    });
+    mockBookingFindMany.mockResolvedValue([preLock]);
+    let readCount = 0;
+    mockBookingFindUnique.mockImplementation(async () =>
+      readCount++ === 0 ? preLock : postLock
+    );
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: -1,
+      nightDetails: [],
+    });
+
+    await confirmPendingBookings();
+
+    // The pre-lock read selects only the lock key + early-bail fields.
+    expect(mockBookingFindUnique).toHaveBeenNthCalledWith(1, {
+      where: { id: "b1" },
+      select: { lodgeId: true, status: true, nonMemberHoldUntil: true },
+    });
+    // The capacity check ran against the POST-lock dates + guest set (May),
+    // never the January data that only the pre-lock read carried.
+    expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
+      "lodge-1",
+      postLock.checkIn,
+      postLock.checkOut,
+      postLock.guests,
+      "b1",
+      expect.anything()
+    );
+  });
+
   it("confirms a booking when capacity is available and payment succeeds", async () => {
     const booking = makePendingBooking("b1");
     const expectedIdempotencyKey = ["pending", "charge", "b1"].join("_");
@@ -324,7 +379,10 @@ describe("Cron: Confirm Pending Bookings", () => {
       booking.checkOut,
       2,
       10000,
-      undefined
+      // Multi-lodge phase 8: the options now carry the booking's lodge so
+      // the email renders that lodge's identity (undefined here because the
+      // fixture booking has no lodgeId).
+      { lodgeId: undefined }
     );
   });
 
@@ -602,6 +660,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     await confirmPendingBookings();
 
     expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
+      "lodge-1",
       booking.checkIn,
       booking.checkOut,
       booking.guests,

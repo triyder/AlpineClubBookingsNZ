@@ -5,10 +5,12 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 
 const updateSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  lodgeId: z.string().min(1).optional(),
 });
 
 /**
@@ -43,7 +45,7 @@ export async function PUT(
     return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
   }
 
-  const updateData: Record<string, Date> = {};
+  const updateData: { startDate?: Date; endDate?: Date; lodgeId?: string } = {};
   if (parsed.data.startDate) {
     if (!isDateOnlyString(parsed.data.startDate)) {
       return NextResponse.json({ error: "Invalid startDate" }, { status: 400 });
@@ -56,6 +58,19 @@ export async function PUT(
     }
     updateData.endDate = parseDateOnly(parsed.data.endDate);
   }
+  if (parsed.data.lodgeId) {
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: parsed.data.lodgeId },
+      select: { id: true, active: true },
+    });
+    if (!lodge || !lodge.active) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 }
+      );
+    }
+    updateData.lodgeId = lodge.id;
+  }
 
   // Validate start <= end
   const finalStart = updateData.startDate ?? existing.startDate;
@@ -67,12 +82,17 @@ export async function PUT(
     );
   }
 
-  // Check for overlapping assignments (excluding self) — 1 day overlap allowed, 2+ rejected
+  // Check for overlapping assignments (excluding self) — 1 day overlap
+  // allowed, 2+ rejected. Each lodge has its own hut leader, so the check is
+  // per lodge; an assignment still missing a lodgeId (expand-release
+  // tolerance) conservatively conflicts at every lodge.
+  const finalLodgeId = updateData.lodgeId ?? existing.lodgeId;
   const potentialOverlaps = await prisma.hutLeaderAssignment.findMany({
     where: {
       id: { not: id },
       startDate: { lte: finalEnd },
       endDate: { gte: finalStart },
+      ...(finalLodgeId ? lodgeNullTolerantScope(finalLodgeId) : {}),
     },
     include: {
       member: { select: { firstName: true, lastName: true } },

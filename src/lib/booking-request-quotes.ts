@@ -30,9 +30,13 @@ import {
   findBookingMemberNightConflicts,
   type BookingMemberNightConflict,
 } from "@/lib/booking-member-night-conflicts";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
 import { sendBookingRequestQuoteEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
 
@@ -648,6 +652,7 @@ export async function sendBookingRequestQuote(input: {
     await sendBookingRequestQuoteEmail({
       email: quote.bookingRequest.contactEmail,
       firstName: quote.bookingRequest.contactFirstName,
+      lodgeId: quote.bookingRequest.lodgeId ?? null,
       token,
       checkIn: quote.bookingRequest.checkIn,
       checkOut: quote.bookingRequest.checkOut,
@@ -693,7 +698,11 @@ async function loadSentQuoteByToken(token: string) {
   const tokenHash = hashActionToken(token);
   const quote = await prisma.bookingRequestQuote.findUnique({
     where: { responseTokenHash: tokenHash },
-    include: { bookingRequest: true },
+    include: {
+      bookingRequest: {
+        include: { lodge: { select: { name: true } } },
+      },
+    },
   });
 
   if (!quote) {
@@ -716,8 +725,16 @@ export async function getBookingRequestQuoteContext(token: string) {
   const options = parseBookingRequestQuoteOptions(quote.options);
   const request = quote.bookingRequest;
 
+  // Presentation-only lodge context (ADR-002): single-lodge clubs, and
+  // requests without an explicit lodge, surface no lodge copy.
+  const lodgeName =
+    request.lodgeId && request.lodge && (await countActiveLodges(prisma)) >= 2
+      ? request.lodge.name
+      : null;
+
   return {
     requestId: request.id,
+    lodgeName,
     quoteId: quote.id,
     version: quote.version,
     status: quote.status,
@@ -1167,7 +1184,9 @@ export async function holdBookingRequestSlots(input: {
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // A null lodgeId means the club's default lodge.
+      const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
       const claimed = await tx.bookingRequest.updateMany({
         where: {
@@ -1193,6 +1212,7 @@ export async function holdBookingRequestSlots(input: {
         stayEnd: request.checkOut,
       }));
       const capacity = await checkCapacityForGuestRanges(
+        bookingLodgeId,
         request.checkIn,
         request.checkOut,
         capacityRanges,
@@ -1260,6 +1280,7 @@ export async function holdBookingRequestSlots(input: {
       const held = await tx.booking.create({
         data: {
           memberId: member.id,
+          lodgeId: bookingLodgeId,
           checkIn: request.checkIn,
           checkOut: request.checkOut,
           status: BookingStatus.AWAITING_REVIEW,

@@ -111,6 +111,14 @@ export default function BookPage() {
     wizardSteps,
     activeStepIndex,
     lodgeCapacity,
+    lodges,
+    lodgeId,
+    lodgesLoading,
+    handleLodgeChange,
+    selectedLodge,
+    lodgeLabel,
+    waitlistAlternateLodgeIds,
+    setWaitlistAlternateLodgeIds,
   } = useBookingWizard();
 
   return (
@@ -292,9 +300,13 @@ export default function BookPage() {
                 </svg>
               </div>
               <div>
-                <h2 className="font-semibold text-purple-900">Lodge is fully booked</h2>
+                <h2 className="font-semibold text-purple-900">
+                  {lodges.length > 1 && selectedLodge
+                    ? `${selectedLodge.name} is fully booked`
+                    : "Lodge is fully booked"}
+                </h2>
                 <p className="text-sm text-purple-700 mt-1">
-                  The lodge is at capacity on{" "}
+                  {lodgeLabel} is at capacity on{" "}
                   {waitlistFullNights.length === 1
                     ? waitlistFullNights[0]
                     : `${waitlistFullNights.length} nights`}
@@ -302,6 +314,41 @@ export default function BookPage() {
                 </p>
               </div>
             </div>
+            {lodges.length > 1 && lodges.some((lodge) => lodge.id !== lodgeId) && (
+              <div className="rounded-md border border-purple-200 bg-white p-4 space-y-2">
+                <p className="text-sm font-medium text-purple-900">
+                  Happy to stay at another lodge if a spot opens there first?
+                </p>
+                {lodges
+                  .filter((lodge) => lodge.id !== lodgeId)
+                  .map((lodge) => (
+                    <label
+                      key={lodge.id}
+                      className="flex items-center gap-2 text-sm text-purple-800 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={waitlistAlternateLodgeIds.includes(lodge.id)}
+                        onChange={(e) =>
+                          setWaitlistAlternateLodgeIds((current) =>
+                            e.target.checked
+                              ? [...current, lodge.id]
+                              : current.filter((id) => id !== lodge.id)
+                          )
+                        }
+                        className="rounded border-purple-300"
+                        disabled={joiningWaitlist}
+                      />
+                      Also waitlist me for {lodge.name}
+                    </label>
+                  ))}
+                <p className="text-xs text-purple-700">
+                  Prices can differ between lodges. If a spot opens at one of
+                  these, we&apos;ll email you that lodge&apos;s price for your
+                  stay — nothing is booked until you confirm it.
+                </p>
+              </div>
+            )}
             <div className="flex gap-3 justify-end">
               <Button
                 variant="outline"
@@ -360,6 +407,11 @@ export default function BookPage() {
           handleDateSelect={handleDateSelect}
           checkIn={checkIn}
           checkOut={checkOut}
+          lodges={lodges}
+          lodgeId={lodgeId}
+          lodgesLoading={lodgesLoading}
+          handleLodgeChange={handleLodgeChange}
+          selectedLodge={selectedLodge}
         />
       )}
 
@@ -399,6 +451,9 @@ export default function BookPage() {
           nights={nights}
           guests={guests}
           priceQuote={priceQuote}
+          lodges={lodges}
+          lodgeId={lodgeId}
+          selectedLodge={selectedLodge}
           reviewGuestPayload={reviewGuestPayload}
           bookingDateStrings={bookingDateStrings}
           perGuestDatesEnabled={perGuestDatesEnabled}

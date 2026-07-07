@@ -24,6 +24,7 @@ const modulesOn: FeatureFlags = {
   skifieldConditions: true,
   twoFactor: false,
   analytics: false,
+  multiLodge: false,
 };
 
 function emptyEmailResponses() {

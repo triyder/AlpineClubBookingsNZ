@@ -37,6 +37,10 @@ const mocks = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       findMany: vi.fn(),
     },
+    lodge: {
+      findFirst: vi.fn(),
+      count: vi.fn(),
+    },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -142,6 +146,7 @@ vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBooking: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: vi.fn().mockResolvedValue({ available: true, nightDetails: [] }),
 }));
 vi.mock("@/lib/logger", () => ({
@@ -236,6 +241,7 @@ beforeEach(() => {
   vi.mocked(prisma.$transaction).mockImplementation((async (callback: never) =>
     (callback as (tx: typeof prisma) => Promise<unknown>)(prisma)) as never
   );
+  vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
 });
 
 describe("createBookingRequestQuote", () => {
@@ -1265,6 +1271,25 @@ describe("holdBookingRequestSlots owner role", () => {
     expect(memberArgs.firstName).toBe("New Plymouth Primary School");
   });
 
+  it("holds the booking at the request's lodge instead of the default lodge", async () => {
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({
+        type: BookingRequestType.GENERAL,
+        lodgeId: "lodge-2",
+        priceCents: 12000,
+        quotes: [],
+      }) as never
+    );
+
+    await holdBookingRequestSlots({ requestId: "req-1", adminMemberId: "admin-1" });
+
+    // The default-lodge resolver must not run when the request names a lodge.
+    expect(vi.mocked(prisma.lodge.findFirst)).not.toHaveBeenCalled();
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.lodgeId).toBe("lodge-2");
+  });
+
   it("maps the hold owner to an existing non-login contact instead of creating one (#1255)", async () => {
     vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
       baseRequest({
@@ -1435,6 +1460,67 @@ describe("holdBookingRequestSlots owner role", () => {
       bookingId: "held-1",
       reused: false,
     });
+  });
+});
+
+describe("quote context lodge presentation (ADR-002)", () => {
+  function sentQuote(bookingRequestOverrides: Record<string, unknown>) {
+    return {
+      id: "quote-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      responseTokenExpiresAt: new Date(Date.now() + 60_000),
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 1000,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      bookingRequest: baseRequest(bookingRequestOverrides),
+    };
+  }
+
+  it("exposes the lodge name when the request names a lodge at a multi-lodge club", async () => {
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue(
+      sentQuote({
+        lodgeId: "lodge-2",
+        lodge: { name: "Whakapapa Lodge" },
+      }) as never
+    );
+    vi.mocked(prisma.lodge.count).mockResolvedValue(2 as never);
+
+    const context = await getBookingRequestQuoteContext("a".repeat(64));
+
+    expect(context.lodgeName).toBe("Whakapapa Lodge");
+  });
+
+  it("suppresses the lodge name for a single-lodge club", async () => {
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue(
+      sentQuote({
+        lodgeId: "lodge-2",
+        lodge: { name: "Whakapapa Lodge" },
+      }) as never
+    );
+    vi.mocked(prisma.lodge.count).mockResolvedValue(1 as never);
+
+    const context = await getBookingRequestQuoteContext("a".repeat(64));
+
+    expect(context.lodgeName).toBeNull();
+  });
+
+  it("returns a null lodge name for requests without an explicit lodge", async () => {
+    vi.mocked(prisma.bookingRequestQuote.findUnique).mockResolvedValue(
+      sentQuote({ lodgeId: null, lodge: null }) as never
+    );
+
+    const context = await getBookingRequestQuoteContext("a".repeat(64));
+
+    expect(context.lodgeName).toBeNull();
+    expect(vi.mocked(prisma.lodge.count)).not.toHaveBeenCalled();
   });
 });
 

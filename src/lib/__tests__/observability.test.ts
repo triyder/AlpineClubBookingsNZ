@@ -12,6 +12,10 @@ const mockPrisma = vi.hoisted(() => ({
   $queryRawUnsafe: vi.fn(),
   $transaction: vi.fn(),
   $executeRawUnsafe: vi.fn(),
+  $queryRaw: vi.fn().mockResolvedValue([]),
+  // Advisory locks (acquireLodgeCapacityLock) go through $executeRaw.
+  $executeRaw: vi.fn().mockResolvedValue(0),
+  lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
   member: { count: vi.fn() },
   booking: {
     findMany: vi.fn(),
@@ -397,7 +401,11 @@ describe("OBS-03: cron job run recording", () => {
 
   it("records draft cleanup zero-delete successes and failures", async () => {
     const draftCleanup = await registerCronJobs();
-    vi.mocked(prisma.booking.findMany).mockResolvedValueOnce([] as any);
+    // Draft cleanup scans once for lock-key selection and re-scans under the
+    // per-lodge locks; both scans see zero expired drafts.
+    vi.mocked(prisma.booking.findMany)
+      .mockResolvedValueOnce([] as any)
+      .mockResolvedValueOnce([] as any);
 
     await draftCleanup.callback();
 

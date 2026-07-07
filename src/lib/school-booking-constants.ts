@@ -13,4 +13,4 @@
  * with the group. Surfaced only as a warning on the public form; the hard
  * limit stays the lodge capacity.
  */
-export const SCHOOL_GROUP_SOFT_CAP = 25;
+export const DEFAULT_SCHOOL_GROUP_SOFT_CAP = 25;

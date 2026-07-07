@@ -96,6 +96,19 @@ export async function PUT(
 
   // Deactivating only stops new applications; existing redemptions and
   // bookings are never altered.
+  if (parsed.data.lodgeId) {
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: parsed.data.lodgeId },
+      select: { active: true },
+    });
+    if (!lodge?.active) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 }
+      );
+    }
+  }
+
   const event = await updateWorkPartyEventAndPromo(id, {
     name: parsed.data.name,
     description: parsed.data.description ?? null,
@@ -103,6 +116,7 @@ export async function PUT(
     endDate: parsed.data.endDate,
     discountPercent: parsed.data.discountPercent,
     active: parsed.data.active,
+    lodgeId: parsed.data.lodgeId ?? null,
   });
 
   logAudit({

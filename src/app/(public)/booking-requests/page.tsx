@@ -37,6 +37,12 @@ export default function BookingRequestPage() {
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [guests, setGuests] = useState<RequestGuest[]>([emptyGuest()]);
+  // Active lodges from the public settings endpoint; empty for a
+  // single-lodge club, so no lodge copy renders (ADR-002).
+  const [lodges, setLodges] = useState<
+    Array<{ id: string; name: string; capacity: number }>
+  >([]);
+  const [lodgeId, setLodgeId] = useState("");
   const [showPricing, setShowPricing] = useState<boolean | null>(null);
   const [indicativePriceCents, setIndicativePriceCents] = useState<number | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -47,12 +53,21 @@ export default function BookingRequestPage() {
   useEffect(() => {
     fetch("/api/booking-requests/settings")
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setShowPricing(Boolean(data?.showPricingToNonMembers)))
+      .then((data) => {
+        setShowPricing(Boolean(data?.showPricingToNonMembers));
+        setLodges(Array.isArray(data?.lodges) ? data.lodges : []);
+      })
       .catch(() => setShowPricing(false));
   }, []);
 
   const validGuests = guests.filter((g) => g.firstName.trim() && g.lastName.trim());
   const datesValid = Boolean(checkIn && checkOut && checkOut > checkIn);
+  const lodgeChoiceRequired = lodges.length >= 2;
+  // Cap guests against the chosen lodge; fall back to the club/default
+  // lodge for single-lodge clubs. The server re-validates per lodge.
+  const selectedLodge = lodges.find((lodge) => lodge.id === lodgeId) ?? null;
+  const effectiveCapacity = selectedLodge?.capacity ?? club.lodgeCapacity;
+
   // The quote refetch is keyed on the serialized guest list, not the array
   // identity: `validGuests` is a fresh filter result every render, so using it
   // directly would re-arm the debounce timer on unrelated re-renders.
@@ -60,7 +75,12 @@ export default function BookingRequestPage() {
 
   const fetchQuote = useCallback(async () => {
     const quoteGuests = JSON.parse(validGuestsJson) as RequestGuest[];
-    if (!showPricing || !datesValid || quoteGuests.length === 0) {
+    if (
+      !showPricing ||
+      !datesValid ||
+      quoteGuests.length === 0 ||
+      (lodgeChoiceRequired && !lodgeId)
+    ) {
       setIndicativePriceCents(null);
       return;
     }
@@ -69,7 +89,12 @@ export default function BookingRequestPage() {
       const res = await fetch("/api/booking-requests/quote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ checkIn, checkOut, guests: quoteGuests }),
+        body: JSON.stringify({
+          checkIn,
+          checkOut,
+          guests: quoteGuests,
+          lodgeId: lodgeChoiceRequired ? lodgeId : undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -82,7 +107,7 @@ export default function BookingRequestPage() {
     } finally {
       setQuoteLoading(false);
     }
-  }, [showPricing, datesValid, checkIn, checkOut, validGuestsJson]);
+  }, [showPricing, datesValid, checkIn, checkOut, lodgeChoiceRequired, lodgeId, validGuestsJson]);
 
   useEffect(() => {
     const timer = setTimeout(fetchQuote, 400);
@@ -94,7 +119,7 @@ export default function BookingRequestPage() {
   }
 
   function addGuest() {
-    if (guests.length >= club.lodgeCapacity) return;
+    if (guests.length >= effectiveCapacity) return;
     setGuests((prev) => [...prev, emptyGuest()]);
   }
 
@@ -106,6 +131,10 @@ export default function BookingRequestPage() {
     e.preventDefault();
     setError("");
 
+    if (lodgeChoiceRequired && !lodgeId) {
+      setError("Please choose a lodge.");
+      return;
+    }
     if (!datesValid) {
       setError("Check-out must be after check-in.");
       return;
@@ -127,6 +156,7 @@ export default function BookingRequestPage() {
           contactPhone: contactPhone || undefined,
           checkIn,
           checkOut,
+          lodgeId: lodgeChoiceRequired ? lodgeId : undefined,
           guests: validGuests,
           message: message || undefined,
         }),
@@ -226,6 +256,28 @@ export default function BookingRequestPage() {
             </div>
           </div>
 
+          {lodgeChoiceRequired ? (
+            <div className="space-y-1">
+              <Label htmlFor="lodgeId">Which lodge?</Label>
+              <select
+                id="lodgeId"
+                value={lodgeId}
+                onChange={(e) => setLodgeId(e.target.value)}
+                required
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+              >
+                <option value="" disabled>
+                  Choose a lodge
+                </option>
+                {lodges.map((lodge) => (
+                  <option key={lodge.id} value={lodge.id}>
+                    {lodge.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="checkIn">Check-in</Label>
@@ -254,14 +306,14 @@ export default function BookingRequestPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">
-                Guests ({guests.length}/{club.lodgeCapacity} max)
+                Guests ({guests.length}/{effectiveCapacity} max)
               </h3>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={addGuest}
-                disabled={guests.length >= club.lodgeCapacity}
+                disabled={guests.length >= effectiveCapacity}
               >
                 + Add Guest
               </Button>

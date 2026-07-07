@@ -22,7 +22,7 @@ import {
 } from "@/lib/admin-permissions";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
 import { isClubThemeComplete } from "@/lib/club-theme";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
@@ -107,7 +107,7 @@ export default async function AdminLayout({
     await Promise.all([
       loadEffectiveModuleFlags(),
       isClubThemeComplete(),
-      getLodgeCapacity(),
+      getDefaultLodgeCapacity(),
     ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;

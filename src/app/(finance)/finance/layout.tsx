@@ -6,7 +6,7 @@ import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { CLUB_NAME, clubIdentity } from "@/config/club-identity";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   hasFinanceManagerAccess,
@@ -24,7 +24,7 @@ export default async function FinanceLayout({
   const isManager = hasFinanceManagerAccess(member);
   const [effectiveModules, lodgeCapacity] = await Promise.all([
     loadEffectiveModuleFlags(),
-    getLodgeCapacity(),
+    getDefaultLodgeCapacity(),
   ]);
   const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;

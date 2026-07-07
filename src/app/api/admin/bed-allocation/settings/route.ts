@@ -12,6 +12,9 @@ import { createAuditLog } from "@/lib/audit";
 const settingsSchema = z
   .object({
     autoAllocationEnabled: z.boolean(),
+    // Lodge whose auto-allocation switch is edited; omitted keeps the
+    // legacy club-wide row (lodge-scoping contract).
+    lodgeId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -34,13 +37,14 @@ export async function PUT(request: Request) {
     const settings = await updateBedAllocationSettings({
       autoAllocationEnabled: body.data.autoAllocationEnabled,
       updatedByMemberId: guard.session.user.id,
+      lodgeId: body.data.lodgeId,
     });
 
     await createAuditLog({
       action: "BED_ALLOCATION_SETTINGS_UPDATED",
       memberId: guard.session.user.id,
       entityType: "BedAllocationSettings",
-      entityId: "default",
+      entityId: body.data.lodgeId ?? "default",
       category: "admin",
       severity: "important",
       outcome: "success",

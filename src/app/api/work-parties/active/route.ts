@@ -13,6 +13,9 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
 const querySchema = z.object({
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  // Lodge being booked (multi-lodge): events bound to another lodge are
+  // filtered out; lodge-less events are club-wide and always listed.
+  lodgeId: z.string().min(1).optional(),
 });
 
 /**
@@ -36,6 +39,7 @@ export async function GET(req: NextRequest) {
   const parsed = querySchema.safeParse({
     checkIn: searchParams.get("checkIn"),
     checkOut: searchParams.get("checkOut"),
+    lodgeId: searchParams.get("lodgeId") ?? undefined,
   });
   if (!parsed.success) {
     return NextResponse.json(
@@ -52,7 +56,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const events = await findActiveWorkPartyEventsForRange(checkIn, checkOut);
+  const events = await findActiveWorkPartyEventsForRange(
+    checkIn,
+    checkOut,
+    undefined,
+    parsed.data.lodgeId,
+  );
 
   return NextResponse.json({
     events: events.map((event) => ({
@@ -62,6 +71,7 @@ export async function GET(req: NextRequest) {
       startDate: formatDateOnly(event.startDate),
       endDate: formatDateOnly(event.endDate),
       discountPercent: event.discountPercent,
+      lodgeName: event.lodge?.name ?? null,
     })),
   });
 }

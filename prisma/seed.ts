@@ -8,8 +8,10 @@ import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
 import {
   CLUB_CONTACT_EMAIL,
+  CLUB_LODGE_NAME,
   clubDomainEmail,
 } from "../src/config/club-identity";
+import { slugifyLodgeName } from "../src/lib/lodges";
 import {
   CLUB_THEME_ID,
   DEFAULT_CLUB_THEME_VALUES,
@@ -288,6 +290,46 @@ async function main() {
   const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
   const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
 
+  // Ensure the club's lodge exists (create-if-missing). The migration that
+  // introduced the Lodge table seeds a 'Lodge' placeholder row when
+  // EmailMessageSetting has no configured lodge name; on a first-run seed,
+  // upgrade that placeholder to the club-config lodge name. Rows with any
+  // other name are club data and are never touched.
+  const existingLodges = await prisma.lodge.findMany({
+    select: { id: true, name: true },
+    // Deterministic order so the else-branch below stamps the oldest lodge
+    // (matching getDefaultLodgeId), not whatever the engine returns first.
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: 2,
+  });
+  let seedLodgeId: string;
+  if (existingLodges.length === 0) {
+    const createdLodge = await prisma.lodge.create({
+      data: {
+        name: CLUB_LODGE_NAME,
+        slug: slugifyLodgeName(CLUB_LODGE_NAME),
+        active: true,
+      },
+    });
+    seedLodgeId = createdLodge.id;
+    console.log(`Lodge seeded: ${CLUB_LODGE_NAME}`);
+  } else if (
+    existingLodges.length === 1 &&
+    existingLodges[0].name === "Lodge"
+  ) {
+    const updatedLodge = await prisma.lodge.update({
+      where: { id: existingLodges[0].id },
+      data: {
+        name: CLUB_LODGE_NAME,
+        slug: slugifyLodgeName(CLUB_LODGE_NAME),
+      },
+    });
+    seedLodgeId = updatedLodge.id;
+    console.log(`Lodge placeholder renamed to: ${CLUB_LODGE_NAME}`);
+  } else {
+    seedLodgeId = existingLodges[0].id;
+  }
+
   // Seed default cancellation policy tiers (create-if-missing).
   const policies = [
     { daysBeforeStay: 14, refundPercentage: 100 },
@@ -296,11 +338,16 @@ async function main() {
   ];
 
   for (const policy of policies) {
-    await prisma.cancellationPolicy.upsert({
-      where: { daysBeforeStay: policy.daysBeforeStay },
-      update: {},
-      create: policy,
+    // Tier uniqueness is per partition ([lodgeId, daysBeforeStay]) and the
+    // club-wide partition is the null lodgeId, which a compound-unique
+    // upsert cannot address — so create-if-missing by lookup instead.
+    const existing = await prisma.cancellationPolicy.findFirst({
+      where: { daysBeforeStay: policy.daysBeforeStay, lodgeId: null },
+      select: { id: true },
     });
+    if (!existing) {
+      await prisma.cancellationPolicy.create({ data: policy });
+    }
   }
 
   console.log("Cancellation policies seeded");
@@ -311,7 +358,9 @@ async function main() {
   if (choreTemplateCount === 0) {
     const choreTemplates = buildSeedChoreTemplates();
     for (const chore of choreTemplates) {
-      await prisma.choreTemplate.create({ data: chore });
+      await prisma.choreTemplate.create({
+        data: { ...chore, lodgeId: seedLodgeId },
+      });
     }
     console.log(
       `Chore templates seeded: ${choreTemplates.length} example templates`,
@@ -412,6 +461,7 @@ async function main() {
       startDate: new Date("2026-06-01"),
       endDate: new Date("2026-09-30"),
       active: true,
+      lodgeId: seedLodgeId,
     },
   });
   await createMissingSeasonRates(winter2026.id, "winter");
@@ -428,6 +478,7 @@ async function main() {
       startDate: new Date("2026-11-01"),
       endDate: new Date("2027-03-31"),
       active: true,
+      lodgeId: seedLodgeId,
     },
   });
   await createMissingSeasonRates(summer2026.id, "summer");

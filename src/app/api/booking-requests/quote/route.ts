@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  assertRequestedLodgeActive,
   bookingRequestGuestSchema,
+  BookingRequestError,
   calculateIndicativeNonMemberPriceCents,
   getBookingRequestSettings,
 } from "@/lib/booking-request";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 
@@ -16,6 +18,8 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
 const quoteSchema = z.object({
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  // Lodge the stay is requested at; omitted prices the club's default lodge.
+  lodgeId: z.string().min(1).optional(),
   guests: z.array(bookingRequestGuestSchema).min(1).max(200),
 });
 
@@ -54,19 +58,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
-    return NextResponse.json(
-      { error: `A booking request cannot exceed ${lodgeCapacity} guests` },
-      { status: 400 }
-    );
+  try {
+    // A provided lodgeId must name an ACTIVE lodge (400 otherwise); omitted
+    // prices against the club's default lodge.
+    const lodgeId = await assertRequestedLodgeActive(parsed.data.lodgeId);
+
+    const lodgeCapacity = lodgeId
+      ? await getLodgeCapacity(lodgeId)
+      : await getDefaultLodgeCapacity();
+    if (guests.length > lodgeCapacity) {
+      return NextResponse.json(
+        { error: `A booking request cannot exceed ${lodgeCapacity} guests` },
+        { status: 400 }
+      );
+    }
+
+    const indicativePriceCents = await calculateIndicativeNonMemberPriceCents({
+      checkIn,
+      checkOut,
+      guests,
+      lodgeId,
+    });
+
+    return NextResponse.json({ showPricing: true, indicativePriceCents });
+  } catch (err) {
+    if (err instanceof BookingRequestError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
   }
-
-  const indicativePriceCents = await calculateIndicativeNonMemberPriceCents({
-    checkIn,
-    checkOut,
-    guests,
-  });
-
-  return NextResponse.json({ showPricing: true, indicativePriceCents });
 }

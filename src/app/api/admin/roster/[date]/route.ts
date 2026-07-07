@@ -6,6 +6,8 @@ import {
   updateAdminRosterForDate,
 } from "@/lib/admin-roster-service"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
+import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
+import { prisma } from "@/lib/prisma"
 import { requireAdmin } from "@/lib/session-guards"
 
 const paramsSchema = z.object({
@@ -29,6 +31,24 @@ function unauthorizedResponse() {
 
 const adminGuardOptions = {
   forbiddenResponse: unauthorizedResponse,
+}
+
+// Lodge scope for the roster (multi-lodge phase 7 retrofit): an explicit
+// ?lodgeId= must name an active lodge; omitted falls back to the club's
+// default lodge, preserving single-lodge behaviour.
+async function resolveRosterLodgeId(req: NextRequest) {
+  const requested = req.nextUrl.searchParams.get("lodgeId") ?? undefined
+  const lodgeId = await resolveOptionalActiveLodgeId(prisma, requested)
+  if (!lodgeId) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 },
+      ),
+    }
+  }
+  return { ok: true as const, lodgeId }
 }
 
 function parseRosterDate(dateStr: string) {
@@ -79,11 +99,15 @@ export async function GET(
     )
   }
 
+  const lodge = await resolveRosterLodgeId(req)
+  if (!lodge.ok) return lodge.response
+
   const result = await getAdminRosterForDate({
     date: parsedDate.date,
     dateString: parsedParams.data.date,
     regenerate: parsedQuery.data.regenerate,
     includeNonEssential: parsedQuery.data.includeNonEssential,
+    lodgeId: lodge.lodgeId,
   })
   return NextResponse.json(result.body, result.init)
 }
@@ -125,10 +149,14 @@ export async function PUT(
     )
   }
 
+  const lodge = await resolveRosterLodgeId(req)
+  if (!lodge.ok) return lodge.response
+
   const result = await updateAdminRosterForDate({
     date: parsedDate.date,
     dateString: parsedParams.data.date,
     data: parsedBody.data,
+    lodgeId: lodge.lodgeId,
   })
   return NextResponse.json(result.body, result.init)
 }

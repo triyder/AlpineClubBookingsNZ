@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BookingStatus, AgeTier } from "@prisma/client";
+import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 
 const h = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -19,12 +20,15 @@ const h = vi.hoisted(() => ({
   bookingUpdate: vi.fn(),
   paymentCreate: vi.fn(),
   memberFindUnique: vi.fn(),
+  lodgeFindFirst: vi.fn(),
+  memberLodgeAccessFindMany: vi.fn(),
   checkCapacityForGuestRanges: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   logAudit: vi.fn(),
   groupJoinFindUnique: vi.fn(),
   groupJoinCreate: vi.fn(),
   groupJoinUpdate: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -35,6 +39,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: (...a: unknown[]) => h.acquireLodgeCapacityLock(...a),
   checkCapacityForGuestRanges: (...a: unknown[]) => h.checkCapacityForGuestRanges(...a),
 }));
 
@@ -134,6 +139,10 @@ const tx = {
     update: (...a: unknown[]) => h.bookingUpdate(...a),
   },
   payment: { create: (...a: unknown[]) => h.paymentCreate(...a) },
+  lodge: { findFirst: (...a: unknown[]) => h.lodgeFindFirst(...a) },
+  memberLodgeAccess: {
+    findMany: (...a: unknown[]) => h.memberLodgeAccessFindMany(...a),
+  },
   groupBookingJoin: {
     findUnique: (...a: unknown[]) => h.groupJoinFindUnique(...a),
     create: (...a: unknown[]) => h.groupJoinCreate(...a),
@@ -187,6 +196,8 @@ describe("createConfirmedBooking split bookings (#738)", () => {
     h.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     h.bookingUpdate.mockResolvedValue({});
     h.memberFindUnique.mockResolvedValue({ id: "member-1", firstName: "Mem", lastName: "Ber", email: "m@example.com" });
+    h.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+    h.memberLodgeAccessFindMany.mockResolvedValue([]);
     h.bookingCreate.mockImplementation((args: { data: Record<string, unknown> }) => {
       createdCount += 1;
       const id = `booking-${createdCount}`;
@@ -266,6 +277,28 @@ describe("createConfirmedBooking split bookings (#738)", () => {
     expect(h.paymentCreate).not.toHaveBeenCalled();
   });
 
+  it("rejects the booking when the member is restricted to a different lodge", async () => {
+    h.memberLodgeAccessFindMany.mockResolvedValue([{ lodgeId: "other-lodge" }]);
+    const guests = [guest(true, "Alice"), guest(true, "Carol")];
+
+    await expect(createConfirmedBooking(baseInput(guests))).rejects.toBeInstanceOf(
+      LodgeBookingEligibilityError
+    );
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows an on-behalf booking despite a lodge restriction for a different lodge", async () => {
+    h.memberLodgeAccessFindMany.mockResolvedValue([{ lodgeId: "other-lodge" }]);
+    const guests = [guest(true, "Alice"), guest(true, "Carol")];
+
+    const outcome = await createConfirmedBooking(
+      baseInput(guests, { isOnBehalf: true })
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a mixed party inside the hold window as one normal booking", async () => {
     const guests = [guest(true, "Alice"), guest(false, "Bob")];
     await createConfirmedBooking(
@@ -323,6 +356,12 @@ describe("group join roster writes (#1039 items 2 and 3)", () => {
       );
       return Promise.resolve({ ...args.data, id, guests: guestRows });
     });
+    // Multi-lodge merge: createConfirmedBooking now resolves the booking lodge
+    // and checks booking eligibility at the top of the transaction. Provide the
+    // default lodge row and an unrestricted member so these group-join tests
+    // reach the roster logic under test (single-lodge default behaviour).
+    h.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+    h.memberLodgeAccessFindMany.mockResolvedValue([]);
     h.groupJoinFindUnique.mockResolvedValue(null);
     h.groupJoinCreate.mockResolvedValue({ id: "join-1" });
     h.groupJoinUpdate.mockResolvedValue({ id: "join-1" });
@@ -380,11 +419,13 @@ describe("group join roster writes (#1039 items 2 and 3)", () => {
 
   it("takes the serialising advisory lock before any duplicate checks (#1039 item 3)", async () => {
     // The person-night guard and the roster duplicate check are app-level
-    // enforcement; they are race-free because every creation transaction
-    // first takes pg_advisory_xact_lock(1). Freeze that ordering.
+    // enforcement; they are race-free because every creation transaction first
+    // takes the serialising advisory lock. Multi-lodge scopes that lock per
+    // lodge via acquireLodgeCapacityLock (replacing the old global
+    // pg_advisory_xact_lock(1)); it must still run before any duplicate check.
     await createConfirmedBooking(baseInput([guest(true, "Alice")], { groupJoin }));
 
-    const lockOrder = h.executeRaw.mock.invocationCallOrder[0];
+    const lockOrder = h.acquireLodgeCapacityLock.mock.invocationCallOrder[0];
     const rosterCheckOrder = h.groupJoinFindUnique.mock.invocationCallOrder[0];
     const bookingCreateOrder = h.bookingCreate.mock.invocationCallOrder[0];
     expect(lockOrder).toBeLessThan(bookingCreateOrder);

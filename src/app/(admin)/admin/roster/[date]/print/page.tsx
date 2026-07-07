@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
 
 interface Assignment {
@@ -27,7 +27,11 @@ interface RosterData {
 export default function PrintRosterPage() {
   const club = useClubIdentity()
   const params = useParams()
+  const searchParams = useSearchParams()
   const dateStr = params.date as string
+  // Lodge context carried from the roster page's print link (multi-lodge
+  // phase 7 retrofit); absent falls back to the default lodge server-side.
+  const lodgeId = searchParams.get("lodgeId")
   const [roster, setRoster] = useState<RosterData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -35,7 +39,11 @@ export default function PrintRosterPage() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`/api/admin/roster/${dateStr}`)
+        const res = await fetch(
+          `/api/admin/roster/${encodeURIComponent(dateStr)}${
+            lodgeId ? `?lodgeId=${encodeURIComponent(lodgeId)}` : ""
+          }`
+        )
         if (!res.ok) throw new Error("Failed to load roster")
         const data = await res.json()
         setRoster(data)
@@ -46,7 +54,7 @@ export default function PrintRosterPage() {
       }
     }
     if (dateStr) load()
-  }, [dateStr])
+  }, [dateStr, lodgeId])
 
   if (loading) return <div className="p-8 text-center">Loading...</div>
   if (error) return <div className="p-8 text-center text-red-600">{error}</div>
@@ -101,7 +109,14 @@ export default function PrintRosterPage() {
           >
             Print Roster
           </button>
-          <Link href="/admin/roster" className="font-medium text-brand-charcoal hover:underline">
+          <Link
+            href={
+              lodgeId
+                ? `/admin/roster?lodgeId=${encodeURIComponent(lodgeId)}`
+                : "/admin/roster"
+            }
+            className="font-medium text-brand-charcoal hover:underline"
+          >
             Back to Roster
           </Link>
         </div>

@@ -74,6 +74,8 @@ const GLOBAL_EMAIL_TEMPLATE_TOKENS = [
 ] as const;
 
 const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  // Lodge the warning is about; empty for single-lodge clubs (ADR-002).
+  "admin-capacity-warning": ["lodgeName"],
   "booking-modified": [
     "additionalPaymentMethod",
     "paymentReference",
@@ -357,6 +359,7 @@ function sampleValue(token: string): string {
   if (token === "s") return "s";
   if (token === "token") return "sample-token";
   if (token === "recipientName") return "Sam Parent";
+  if (token === "lodgeName") return "Example Mountain Club Lodge";
   if (token === "targetAgeTier") return "ADULT";
   if (token === "targetAgeTierLabel") return "Adult (18+)";
   if (token === "targetAgeTierMinAge") return "18";

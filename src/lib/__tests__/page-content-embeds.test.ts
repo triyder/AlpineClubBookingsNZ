@@ -20,10 +20,21 @@ vi.mock("@/config/club-identity", () => ({
 }));
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD & GST" }));
 vi.mock("@/lib/lodge-capacity", () => ({
-  getLodgeCapacity: vi.fn(async () => 42),
+  getDefaultLodgeCapacity: vi.fn(async () => 42),
+  getLodgeCapacity: vi.fn(async (lodgeId: string) =>
+    lodgeId === "lodge-2" ? 18 : 0,
+  ),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    lodge: {
+      findUnique: vi.fn(async ({ where }: { where: { slug: string } }) =>
+        where.slug === "river-lodge" ? { id: "lodge-2" } : null,
+      ),
+    },
+  },
 }));
 // sanitizePageContentHtml is pure but its module imports the prisma client.
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 import { buildEmbeddedBody, resolveTextTokens } from "../page-content-embeds";
 import { sanitizePageContentHtml } from "../page-content-html";
@@ -129,6 +140,24 @@ describe("buildEmbeddedBody", () => {
         value: "<p>Club &lt;Name&gt; sleeps 42 and charges NZD &amp; GST.</p>",
       },
     ]);
+  });
+
+  it("resolves {{lodge-capacity:slug}} against the named lodge", async () => {
+    const parts = await buildEmbeddedBody(
+      "<p>River sleeps {{lodge-capacity:river-lodge}}; main lodge {{lodge-capacity}}.</p>",
+    );
+
+    expect(parts).toEqual([
+      { type: "html", value: "<p>River sleeps 18; main lodge 42.</p>" },
+    ]);
+  });
+
+  it("falls back to the default lodge for an unknown slug", async () => {
+    const parts = await buildEmbeddedBody(
+      "<p>Sleeps {{lodge-capacity:no-such-lodge}}.</p>",
+    );
+
+    expect(parts).toEqual([{ type: "html", value: "<p>Sleeps 42.</p>" }]);
   });
 });
 

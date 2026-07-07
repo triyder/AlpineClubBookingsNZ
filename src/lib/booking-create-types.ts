@@ -58,6 +58,10 @@ interface BaseInput {
   // pay it themselves; the organiser settles the group total. Only the
   // group-join path sets this; everyone else leaves it undefined (false).
   organiserSettled?: boolean;
+  // Lodge the booking is for (multi-lodge phase 8). Must name an active
+  // lodge when set; omitted resolves to the club's default lodge, so
+  // single-lodge callers keep working unchanged.
+  lodgeId?: string;
 }
 
 export type DraftBookingInput = BaseInput;
@@ -94,7 +98,12 @@ export type ConfirmedBookingOutcome =
   | { type: "created"; booking: BookingWithGuests; bumpedBookingIds: string[]; isZeroDollarConfirmed: boolean }
   | { type: "capacityExceeded"; fullNights: string[] };
 
-export type WaitlistedBookingInput = BaseInput;
+export type WaitlistedBookingInput = BaseInput & {
+  // Cross-lodge waitlist opt-in (ADR-004): other lodges the member would
+  // also accept a bed at. Each must name an active lodge the member is
+  // eligible to book; the primary lodge and duplicates are dropped.
+  alternateLodgeIds?: string[];
+};
 
 export interface WaitlistedBookingResult {
   booking: BookingWithGuests;
@@ -124,5 +133,16 @@ export class BookingReviewJustificationRequiredError extends Error {
       "A reason is required when booking minors without an adult guest. Please explain so an admin can review."
     );
     this.name = "BookingReviewJustificationRequiredError";
+  }
+}
+
+/**
+ * Thrown when the requested lodge is unknown/inactive or the requested room
+ * belongs to a different lodge. The route handler turns this into a 400.
+ */
+export class BookingLodgeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BookingLodgeError";
   }
 }

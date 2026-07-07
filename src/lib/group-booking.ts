@@ -35,6 +35,7 @@ import {
   PaymentStatus,
   Prisma,
 } from "@prisma/client";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import {
@@ -70,7 +71,7 @@ import {
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
 import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
@@ -399,7 +400,7 @@ export async function resolveGroupBookingByCode(
       paymentMode: true,
       joinDeadline: true,
       organiserBooking: {
-        select: { checkIn: true, checkOut: true, status: true, deletedAt: true },
+        select: { checkIn: true, checkOut: true, status: true, deletedAt: true, lodgeId: true },
       },
       organiserMember: { select: { firstName: true } },
     },
@@ -469,6 +470,7 @@ export async function joinGroupBookingAsMember(
           organiserBooking: {
             select: {
               id: true,
+              lodgeId: true,
               checkIn: true,
               checkOut: true,
               status: true,
@@ -561,7 +563,9 @@ export async function joinGroupBookingAsMember(
     );
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const groupLodgeId =
+    group.organiserBooking.lodgeId ?? (await getDefaultLodgeId(prisma));
+  const lodgeCapacity = await getLodgeCapacity(groupLodgeId);
   if (guests.length > lodgeCapacity) {
     throw new GroupBookingError(
       `A booking cannot exceed ${lodgeCapacity} guests`,
@@ -782,7 +786,7 @@ export async function createNonMemberJoinRequest(
           joinDeadline: true,
           paymentMode: true,
           organiserBooking: {
-            select: { checkIn: true, checkOut: true, status: true, deletedAt: true },
+            select: { checkIn: true, checkOut: true, status: true, deletedAt: true, lodgeId: true },
           },
         },
       })
@@ -826,7 +830,9 @@ export async function createNonMemberJoinRequest(
     throw new GroupBookingError("At least one guest is required", 422);
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const groupLodgeId =
+    group.organiserBooking.lodgeId ?? (await getDefaultLodgeId(prisma));
+  const lodgeCapacity = await getLodgeCapacity(groupLodgeId);
   if (input.guests.length > lodgeCapacity) {
     throw new GroupBookingError(
       `A booking cannot exceed ${lodgeCapacity} guests`,
@@ -989,6 +995,7 @@ export async function verifyAndCreateNonMemberJoin(
               checkOut: true,
               status: true,
               deletedAt: true,
+              lodgeId: true,
             },
           },
         },
@@ -1037,6 +1044,11 @@ export async function verifyAndCreateNonMemberJoin(
   }
 
   const { id: organiserBookingId, checkIn, checkOut } = organiserBooking;
+  // A group booking lives at one lodge (ADR-001): the joiner's booking,
+  // pricing seasons, hold policy, lock, and capacity check all use the
+  // organiser's lodge.
+  const groupLodgeId =
+    organiserBooking.lodgeId ?? (await getDefaultLodgeId(prisma));
 
   // All joiner guests are non-members; price them from the live season rates.
   const guests: PricedGuestInput[] = snapshotGuests.map((g) => ({
@@ -1047,7 +1059,12 @@ export async function verifyAndCreateNonMemberJoin(
   }));
 
   const seasons = await prisma.season.findMany({
-    where: { active: true, startDate: { lte: checkOut }, endDate: { gte: checkIn } },
+    where: {
+      active: true,
+      startDate: { lte: checkOut },
+      endDate: { gte: checkIn },
+      ...lodgeNullTolerantScope(groupLodgeId),
+    },
     include: { rates: true },
   });
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
@@ -1064,7 +1081,7 @@ export async function verifyAndCreateNonMemberJoin(
   // schema without any usable credential (mirrors approveBookingRequest).
   const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const reviewedAt = new Date();
-  const holdDays = await getNonMemberHoldDays(checkIn);
+  const holdDays = await getNonMemberHoldDays(checkIn, groupLodgeId);
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(
     checkIn,
     holdDays,
@@ -1080,8 +1097,8 @@ export async function verifyAndCreateNonMemberJoin(
 
   try {
     created = await prisma.$transaction(async (tx) => {
-      // Shared advisory lock serialises every booking-creation path.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // Per-lodge advisory lock serialises booking creation at this lodge.
+      await acquireLodgeCapacityLock(tx, groupLodgeId);
 
       // Status-claim so a concurrent verify (or a double-submit) cannot create
       // two bookings from one token. Only the row that is still unconsumed wins.
@@ -1095,6 +1112,7 @@ export async function verifyAndCreateNonMemberJoin(
 
       const ranges = guests.map(() => ({ stayStart: checkIn, stayEnd: checkOut }));
       const capacity = await checkCapacityForGuestRanges(
+        groupLodgeId,
         checkIn,
         checkOut,
         ranges,
@@ -1127,6 +1145,7 @@ export async function verifyAndCreateNonMemberJoin(
       const booking = await tx.booking.create({
         data: {
           memberId: member.id,
+          lodgeId: groupLodgeId,
           checkIn,
           checkOut,
           status: BookingStatus.PENDING,
@@ -1197,6 +1216,7 @@ export async function verifyAndCreateNonMemberJoin(
     await sendBookingRequestApprovedEmail({
       email: join.contactEmail,
       firstName: join.contactFirstName,
+      lodgeId: groupLodgeId,
       token: payToken,
       checkIn,
       checkOut,

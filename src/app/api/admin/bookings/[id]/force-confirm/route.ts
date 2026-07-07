@@ -4,9 +4,11 @@ import { prisma } from "@/lib/prisma";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
 import {
+  acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -46,8 +48,6 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
         include: { guests: { include: { nights: true } }, member: true, promoRedemption: { include: { promoCode: true } } },
@@ -61,8 +61,12 @@ export async function POST(
         return { error: "Booking is not waitlisted", status: 400 };
       }
 
+      const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
       // Check capacity
       const { available, nightDetails } = await checkCapacityForGuestRanges(
+        bookingLodgeId,
         booking.checkIn,
         booking.checkOut,
         booking.guests,
@@ -220,13 +224,16 @@ export async function POST(
         booking.checkOut,
         booking.guests.length,
         booking.finalPriceCents,
-        booking.promoRedemption?.promoCode
-          ? {
-              discountCents: booking.discountCents,
-              promoAdjustmentCents: booking.promoAdjustmentCents,
-              promoCode: booking.promoRedemption.promoCode.code,
-            }
-          : undefined,
+        {
+          lodgeId: booking.lodgeId,
+          ...(booking.promoRedemption?.promoCode
+            ? {
+                discountCents: booking.discountCents,
+                promoAdjustmentCents: booking.promoAdjustmentCents,
+                promoCode: booking.promoRedemption.promoCode.code,
+              }
+            : {}),
+        },
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation after force-confirm"));
     }
 

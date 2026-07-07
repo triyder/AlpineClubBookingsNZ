@@ -5,7 +5,10 @@ import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert, sendBookingCancelledEmail, sendBookingConfirmedEmail } from "@/lib/email";
 import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { enqueueXeroAccountCreditNoteOperation } from "@/lib/xero-operation-outbox";
@@ -661,13 +664,46 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         fresh.booking.status === BookingStatus.PAYMENT_PENDING &&
         !fresh.internetBankingHoldSlots
       ) {
-        const capacity = await checkCapacityForGuestRanges(
-          fresh.booking.checkIn,
-          fresh.booking.checkOut,
-          fresh.booking.guests,
-          fresh.booking.id,
-          tx,
-        );
+        // Two-lock composition (multi-lodge). The outer pg_advisory_xact_lock(1)
+        // above sequences Internet Banking webhook/reconciliation processing;
+        // it no longer excludes per-lodge booking creators, who serialize on
+        // hash(lodge) instead. Flipping an unheld PAYMENT_PENDING booking to
+        // PAID here is a net-new capacity claim, so it must ALSO take the
+        // booking's per-lodge lock to serialize against those creators. lodgeId
+        // is immutable, so keying the lock from the pre-lock read is safe.
+        await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
+
+        // Re-read under the lodge lock before claiming: a concurrent holder of
+        // that lock (a date/guest modification, or a switch-to-Internet-Banking
+        // that sets internetBankingHoldSlots) may have changed the branch
+        // inputs since the pre-lock read, which was taken under lock(1) only.
+        // The capacity check consumes ONLY this post-lock snapshot.
+        const locked = await tx.payment.findUnique({
+          where: { id: fresh.id },
+          include: {
+            booking: { include: { guests: { include: { nights: true } } } },
+          },
+        });
+
+        // Only an unheld PAYMENT_PENDING booking still needs the capacity gate.
+        // If the post-lock read shows it moved on (already CONFIRMED/PAID by a
+        // concurrent path, or a switch-to-Internet-Banking now holds its
+        // slots), skip the gate and fall through to the PAID flip below: those
+        // states already hold their beds, so there is no net-new claim to
+        // serialize.
+        const capacity =
+          locked &&
+          locked.booking.status === BookingStatus.PAYMENT_PENDING &&
+          !locked.internetBankingHoldSlots
+            ? await checkCapacityForGuestRanges(
+                locked.booking.lodgeId,
+                locked.booking.checkIn,
+                locked.booking.checkOut,
+                locked.booking.guests,
+                locked.booking.id,
+                tx,
+              )
+            : { available: true };
 
         if (!capacity.available) {
           await tx.booking.update({
@@ -810,6 +846,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           outcome.payment.booking.checkOut,
           outcome.creditedCents,
           "credit",
+          0,
+          outcome.payment.booking.lodgeId,
         ).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
@@ -918,6 +956,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         outcome.payment.booking.checkOut,
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
         "credit",
+        0,
+        outcome.payment.booking.lodgeId,
       ).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
@@ -927,6 +967,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       processWaitlistForDates({
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
+        lodgeId: outcome.payment.booking.lodgeId,
       }).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId },
@@ -991,13 +1032,18 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       outcome.payment.booking.checkOut,
       outcome.payment.booking.guests.length,
       outcome.payment.booking.finalPriceCents,
-      outcome.payment.booking.promoRedemption?.promoCode
-        ? {
-            discountCents: outcome.payment.booking.discountCents,
-            promoAdjustmentCents: outcome.payment.booking.promoAdjustmentCents,
-            promoCode: outcome.payment.booking.promoRedemption.promoCode.code,
-          }
-        : undefined
+      {
+        // Always thread the booking's lodge so the confirmation email carries
+        // that lodge's name/travel note/door code, promo or not (multi-lodge).
+        lodgeId: outcome.payment.booking.lodgeId,
+        ...(outcome.payment.booking.promoRedemption?.promoCode
+          ? {
+              discountCents: outcome.payment.booking.discountCents,
+              promoAdjustmentCents: outcome.payment.booking.promoAdjustmentCents,
+              promoCode: outcome.payment.booking.promoRedemption.promoCode.code,
+            }
+          : {}),
+      }
     ).catch((err) =>
       logger.error(
         { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },

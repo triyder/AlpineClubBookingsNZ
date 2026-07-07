@@ -10,12 +10,13 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { getDefaultLodgeId } from "@/lib/lodges";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -82,8 +83,24 @@ export async function markBookingPaymentSucceeded({
   paymentMethodId: string | null;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const reconciliation = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
+    // lock from this read is safe; every status/capacity-relevant field is
+    // taken from the post-lock re-read below.
+    const lockTarget = await tx.booking.findUnique({
+      where: { id: bookingId },
+      select: { lodgeId: true },
+    });
 
+    if (!lockTarget) {
+      throw new Error("Booking not found");
+    }
+
+    const bookingLodgeId = lockTarget.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
+    // Re-read the full booking under the lock; the status/amount checks, the
+    // capacity check and the PAID/CANCELLED claim below consume ONLY this
+    // post-lock snapshot.
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
@@ -142,6 +159,7 @@ export async function markBookingPaymentSucceeded({
     }
 
     const capacity = await checkCapacityForGuestRanges(
+      bookingLodgeId,
       booking.checkIn,
       booking.checkOut,
       booking.guests,

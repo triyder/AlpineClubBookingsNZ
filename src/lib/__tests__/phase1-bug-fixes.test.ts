@@ -92,6 +92,10 @@ describe("P1.4: Admin calendar status colors include waitlist statuses", () => {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+      count: vi.fn().mockResolvedValue(1),
+    },
     booking: { findMany: vi.fn() },
     member: { count: vi.fn() },
   },
@@ -106,6 +110,7 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   getMonthAvailability: vi.fn().mockResolvedValue(new Map()),
   getLodgeCapacity: vi.fn().mockResolvedValue(29),
   LODGE_CAPACITY: 29,

@@ -44,6 +44,7 @@ import {
   ChevronRight,
   Landmark,
   BadgeCheck,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -254,6 +255,7 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
+      { href: "/admin/lodges", label: "Lodges", icon: Building2 },
       {
         href: "/admin/membership-setup",
         label: "Membership & Members",

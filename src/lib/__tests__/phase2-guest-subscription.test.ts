@@ -28,6 +28,9 @@ const mockTx = {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
@@ -110,6 +113,7 @@ vi.mock("@/lib/booking-policies", () => ({
   formatViolationsDetail: vi.fn().mockReturnValue(""),
 }));
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacity: vi.fn().mockResolvedValue({ available: true, minAvailable: 29, nightDetails: [] }),
   checkCapacityForGuestRanges: vi.fn().mockResolvedValue({ available: true, minAvailable: 29, nightDetails: [] }),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
@@ -735,6 +739,7 @@ describe("P2.3: Guest subscription check", () => {
     const body = await res.json();
     expect(body.newTotalPriceCents).toBe(7500);
     expect(mockedRangeCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       new Date("2026-12-01T00:00:00.000Z"),
       new Date("2026-12-04T00:00:00.000Z"),
       [

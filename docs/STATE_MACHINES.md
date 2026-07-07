@@ -510,6 +510,15 @@ offer accepted -> confirmed or paid booking
 offer expires/declined -> WAITLISTED or CANCELLED
 ```
 
+Cross-lodge offers (ADR-004, `waitlistOfferedLodgeId` set) accept
+differently: the entry never changes lodge. Confirming re-checks the
+quoted price, creates a fresh booking at the offered lodge through the
+standard creation path, and cancels the waitlist entry with audit links
+between the two (`WAITLIST_OFFERED -> CANCELLED` + new booking). Price
+drift at confirm refreshes the stored quote and asks the member to
+confirm the updated figure; every revert to `WAITLISTED` clears the
+offered-lodge fields.
+
 The admin waitlist view decorates active `WAITLIST_OFFERED` rows with the latest
 `waitlist-offer` EmailLog status. Failed, exhausted, bounced, or missing delivery
 records are surfaced beside the offer with a link to email-deliverability
