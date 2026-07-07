@@ -13,9 +13,9 @@ export const SITE_CONTENT_KEYS = [
   "FOOTER_AFFILIATIONS",
 ] as const;
 
-export type SiteContentKeyValue = (typeof SITE_CONTENT_KEYS)[number];
+type SiteContentKeyValue = (typeof SITE_CONTENT_KEYS)[number];
 
-export const SITE_CONTENT_LABELS: Record<
+const SITE_CONTENT_LABELS: Record<
   SiteContentKeyValue,
   { title: string; description: string }
 > = {

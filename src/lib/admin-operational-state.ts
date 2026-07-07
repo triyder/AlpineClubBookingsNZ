@@ -4,7 +4,6 @@ export const paymentSourceFilters = ["all", "STRIPE", "INTERNET_BANKING", "NONE"
 export type PaymentSourceFilter = (typeof paymentSourceFilters)[number];
 
 export const paymentApiSourceFilters = ["all", "STRIPE", "INTERNET_BANKING"] as const;
-export type PaymentApiSourceFilter = (typeof paymentApiSourceFilters)[number];
 
 export const xeroStateFilters = [
   "all",
@@ -56,7 +55,7 @@ export function emptyXeroActivitySummary(): XeroActivitySummary {
   };
 }
 
-export function summarizeXeroActivity(
+function summarizeXeroActivity(
   operations: XeroActivityOperationLike[]
 ): XeroActivitySummary {
   const summary = emptyXeroActivitySummary();

@@ -18,7 +18,7 @@ export const ageTierEnum = z.nativeEnum(AgeTier);
  * classification (#1440) and is never valid for booking guests or
  * per-tier season rates — those are always people with an age.
  */
-export const BOOKABLE_AGE_TIER_VALUES = [
+const BOOKABLE_AGE_TIER_VALUES = [
   "INFANT",
   "CHILD",
   "YOUTH",

@@ -1,4 +1,4 @@
-export function hasPrismaErrorCode(
+function hasPrismaErrorCode(
   error: unknown,
   code: string
 ): error is { code: string } {

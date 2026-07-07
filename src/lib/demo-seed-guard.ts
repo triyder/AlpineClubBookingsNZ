@@ -1,6 +1,6 @@
 export const DEMO_SEED_DOMAIN = "demo.alpineclub.test";
 
-export type DemoSeedEnvironment = {
+type DemoSeedEnvironment = {
   ALLOW_DEMO_SEED?: string;
   DATABASE_URL?: string;
   NODE_ENV?: string;
