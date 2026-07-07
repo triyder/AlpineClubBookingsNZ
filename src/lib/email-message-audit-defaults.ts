@@ -14,10 +14,6 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Set up your {{CLUB_NAME}} account (7-day link)",
     "defaultBody": "Set Up Your Account\n\nHi {{firstName}},\n\nAn administrator has created your {{CLUB_NAME}} booking account.\n\nUse the button below to set your password and activate your login. This link expires in 7 days.\n\nSet Up My Password: {{BASE_URL}}/reset-password?token={{token}}\n\nIf you were not expecting this invite, you can safely ignore it or contact the club."
   },
-  "welcome": {
-    "defaultSubject": "Welcome to {{CLUB_BOOKINGS_NAME}}",
-    "defaultBody": "Welcome, {{firstName}}!\n\nYour {{CLUB_NAME}} booking account has been created successfully.\n\nYou can now log in to book stays at the lodge, manage your bookings, and view your upcoming trips.\n\nLog In to Your Account: {{BASE_URL}}/login\n\nIf you did not create this account, please ignore this email."
-  },
   "email-verification": {
     "defaultSubject": "Verify your email — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Verify Your Email\n\nHi {{firstName}}, thanks for creating your {{CLUB_NAME}} booking account!\n\nPlease verify your email address by clicking the button below.\n\nVerify Email: {{BASE_URL}}/verify-email?token={{token}}\n\nThis link expires on {{expiresAt}}. If you did not create this account, please ignore this email."
@@ -41,10 +37,6 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "booking-bumped": {
     "defaultSubject": "Booking Update - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Booking Update\n\nHi {{firstName}}, unfortunately your pending lodge booking has been bumped due to member demand.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYour card has not been charged.\n\nAs a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.\n\nBook Again: {{BASE_URL}}/book\n\nWe apologise for the inconvenience."
-  },
-  "booking-guests-removed": {
-    "defaultSubject": "Booking Update - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Update\n\nHi {{firstName}}, the lodge filled up with member bookings, so we couldn't keep the non-member guests on your booking. The rest of your booking continues.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nNew Total: {{newTotal}}\n\nOnly your non-member guests were removed — your booking has not been cancelled. Your updated total reflects the remaining guests. You're welcome to rebook the non-member guests for different dates where availability exists.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "booking-guests-cancelled": {
     "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
