@@ -36,6 +36,9 @@ AlpineClubBookingsNZ.
 ## Operators
 
 - `DEPLOYMENT.md` is the bootstrap and blue/green deployment reference.
+- `PRODUCTION_UPGRADE_RUNBOOK.md` is the owner-driven runbook for upgrading a
+  live deployment across a release (pre-flight backup, blue/green migrate,
+  post-upgrade checklist, and rollback).
 - `BLUE_GREEN_MIGRATION_POLICY.md` defines how migrations must be structured
   for safe cutover.
 - `ACCESS_ROLE_MEMBERSHIP_CLEANUP_AUDIT.md` rehearses and audits the
