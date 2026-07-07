@@ -14,10 +14,3 @@
  * limit stays the lodge capacity.
  */
 export const DEFAULT_SCHOOL_GROUP_SOFT_CAP = 25;
-
-/**
- * @deprecated Prefer the per-lodge value resolved from LodgeSettings
- * (loadLodgeSettings().schoolGroupSoftCap). This constant is the fallback
- * when a lodge has no configured cap.
- */
-export const SCHOOL_GROUP_SOFT_CAP = DEFAULT_SCHOOL_GROUP_SOFT_CAP;
