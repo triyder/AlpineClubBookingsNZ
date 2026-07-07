@@ -238,7 +238,7 @@ CI should run in both repositories. Public CI should use
 `config/club.example.json` and placeholder assets; private CI should use the
 private fork's real `config/club.json`, private assets, and private CI secrets.
 
-See `docs/ONGOING-DEVELOPMENT-WORKFLOW.md` for the full maintainer workflow.
+See `docs/ONGOING_DEVELOPMENT_WORKFLOW.md` for the full maintainer workflow.
 
 ## Docker
 
@@ -302,9 +302,9 @@ forks or public CI. Configure your own service accounts and secrets.
   recovery guide
 - `docs/MAINTENANCE.md` - public maintenance, validation, CI, and release
   checklist
-- `docs/cancellations.md` - membership cancellation refund, credit-note, and
+- `docs/CANCELLATIONS.md` - membership cancellation refund, credit-note, and
   GST policy
-- `docs/ONGOING-DEVELOPMENT-WORKFLOW.md` - public upstream and private fork
+- `docs/ONGOING_DEVELOPMENT_WORKFLOW.md` - public upstream and private fork
   development workflow
 - `docs/STAGING_ACCESSIBILITY.md` - non-production staging and accessibility
   verification workflow
