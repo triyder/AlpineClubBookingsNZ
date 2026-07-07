@@ -4,7 +4,7 @@ export interface HealthCheck {
   error?: string;
 }
 
-export interface CronRun {
+interface CronRun {
   id: string;
   jobName: string;
   startedAt: string;
@@ -15,7 +15,7 @@ export interface CronRun {
   error: string | null;
 }
 
-export interface WebhookLogEntry {
+interface WebhookLogEntry {
   id: string;
   source: string;
   eventType: string;
@@ -26,7 +26,7 @@ export interface WebhookLogEntry {
   createdAt: string;
 }
 
-export type CronHealthStatus =
+type CronHealthStatus =
   | "current"
   | "stale"
   | "failed"
@@ -36,7 +36,7 @@ export type CronHealthStatus =
   | "untracked"
   | "unknown";
 
-export interface CronHealthJob {
+interface CronHealthJob {
   jobName: string;
   label: string;
   schedule: string;
@@ -57,14 +57,14 @@ export interface CronHealthJob {
   latestFailureAt: string | null;
 }
 
-export interface CronHealthReport {
+interface CronHealthReport {
   generatedAt: string;
   cronEnabled: boolean;
   defaultTimezone: string;
   jobs: CronHealthJob[];
 }
 
-export interface EmailSuppressionEntry {
+interface EmailSuppressionEntry {
   id: string;
   email: string;
   reason: "BOUNCE" | "COMPLAINT";
@@ -78,7 +78,7 @@ export interface EmailSuppressionEntry {
   lastSesMessageId: string | null;
 }
 
-export interface ExhaustedEmailFailure {
+interface ExhaustedEmailFailure {
   id: string;
   to: string;
   subject: string;
@@ -92,7 +92,7 @@ export interface ExhaustedEmailFailure {
   reviewNote: string | null;
 }
 
-export interface AdminAlertDeliveryEscalation {
+interface AdminAlertDeliveryEscalation {
   id: string;
   templateName: string;
   preferenceKey: string;
@@ -102,7 +102,7 @@ export interface AdminAlertDeliveryEscalation {
   createdAt: string;
 }
 
-export interface TokenEmailRecoveryFailure {
+interface TokenEmailRecoveryFailure {
   id: string;
   to: string;
   subject: string;
