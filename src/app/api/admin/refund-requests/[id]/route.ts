@@ -17,6 +17,7 @@ import {
   refundPaymentTransactions,
 } from "@/lib/payment-transactions";
 import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
+import { buildRefundRequestRefundMetadata } from "@/lib/payment-recovery-keys";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatNZDate } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
@@ -119,11 +120,11 @@ export async function PUT(
       await refundPaymentTransactions({
         paymentId: payment.id,
         amountCents: approvedAmountCents,
-        metadata: {
-          bookingId: booking.id,
-          reason: "refund_appeal_approved",
-          refundRequestId: id,
-        },
+        // #1507: build the Stripe metadata from the shared helper so the
+        // recovery cron's replay (under the same refund_request_<id> key) sends
+        // a byte-identical body and Stripe replays the original refund instead
+        // of rejecting the reused idempotency key with idempotency_error.
+        metadata: buildRefundRequestRefundMetadata(booking.id, id),
         idempotencyKeyPrefix: `refund_request_${id}`,
       });
     } catch (err) {

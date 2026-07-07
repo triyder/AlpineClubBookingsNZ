@@ -537,7 +537,14 @@ recovery row also carries the originating route's Stripe key prefix
 (`stripeKeyPrefix`, #1152), so even a refund that succeeded on Stripe but was
 never recorded locally is replayed under its original keys rather than
 re-minted — the same guarantee refund-request recoveries have had since
-#1039.
+#1039. The replay also sends a **byte-identical request body** (#1507, the
+refund-request and booking-modification counterpart of the booking-cancellation
+convergence #1494): the cron rebuilds the Stripe metadata from the same shared
+helpers the inline paths use (`buildRefundRequestRefundMetadata`; and for
+modification refunds `buildBookingModificationRefundMetadata`, whose per-path
+`reason` is reconstructed from the persisted key prefix), so a reused idempotency
+key replays the original refund instead of being rejected as an
+`idempotency_error` for mismatched parameters.
 
 Additional PaymentIntent creation has the same durable safety net (#1096):
 every price-increasing edit path (batch modify, date change, guest add,

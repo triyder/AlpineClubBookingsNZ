@@ -338,10 +338,16 @@ export async function enqueueRefundRequestRefundRecovery({
 import {
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
+  buildBookingModificationRefundMetadata,
+  buildRefundRequestRefundMetadata,
+  bookingModificationRefundReasonForKeyPrefix,
 } from "./payment-recovery-keys";
 export {
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
+  buildBookingModificationRefundMetadata,
+  buildRefundRequestRefundMetadata,
+  bookingModificationRefundReasonForKeyPrefix,
 };
 
 /**
@@ -1083,11 +1089,20 @@ async function processBookingModificationRefundOperation(
   let metadata: Record<string, string>;
   let idempotencyKeyPrefix: string;
   if (refundRequestId) {
-    metadata = {
-      bookingId: operation.bookingId,
-      reason: "refund_request_refund_recovery",
+    // #1507: replay the inline appeal-refund body VERBATIM. The admin approve
+    // route and this branch both build the metadata from
+    // buildRefundRequestRefundMetadata, so under the shared
+    // `refund_request_<id>` idempotency key Stripe replays the original refund
+    // rather than rejecting the reused key with idempotency_error (which
+    // previously sent the inline-succeeded-but-unrecorded scenario to
+    // retry-exhaustion). The shape reconstructs purely from the persisted
+    // bookingId + refundRequestId, so pre-fix rows replay through this same path
+    // (the inline body — reason:"refund_appeal_approved" — is unchanged, so no
+    // pre-deploy sliver).
+    metadata = buildRefundRequestRefundMetadata(
+      operation.bookingId,
       refundRequestId,
-    };
+    );
     idempotencyKeyPrefix = `refund_request_${refundRequestId}`;
   } else if (isBookingCancellationRecovery) {
     // #1494: replay the inline cancel body VERBATIM. Both callers build the
@@ -1104,13 +1119,23 @@ async function processBookingModificationRefundOperation(
     metadata = buildBookingCancellationRefundMetadata(operation.bookingId);
     idempotencyKeyPrefix = `booking_cancel_refund_${operation.bookingId}`;
   } else {
-    metadata = {
-      bookingId: operation.bookingId,
-      reason: "booking_modification_refund_recovery",
-    };
+    // #1507: replay the inline modification-refund body VERBATIM. The inline
+    // settlement helper stamps a per-path reason (date change / batch / guest
+    // removal); this branch reconstructs that exact reason from the persisted
+    // Stripe key prefix (#1152) via bookingModificationRefundReasonForKeyPrefix
+    // and builds the body from the same buildBookingModificationRefundMetadata
+    // helper the inline path uses, so under the shared stored prefix Stripe
+    // replays the original refund instead of rejecting the reused key with
+    // idempotency_error. Legacy rows without a stored prefix fall back to the
+    // historical recovery reason + operation-scoped key (they were never
+    // shared-key with the inline refund).
     idempotencyKeyPrefix =
       operation.stripeKeyPrefix ??
       `payment_recovery_modification_refund_${operation.id}`;
+    metadata = buildBookingModificationRefundMetadata(
+      operation.bookingId,
+      bookingModificationRefundReasonForKeyPrefix(operation.stripeKeyPrefix),
+    );
   }
 
   await refundPaymentTransactions({

@@ -152,6 +152,9 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   buildBookingCancellationRefundMetadata,
+  buildBookingModificationRefundMetadata,
+  buildRefundRequestRefundMetadata,
+  bookingModificationRefundReasonForKeyPrefix,
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueGroupSettlementRefundRecovery,
@@ -728,11 +731,144 @@ describe("payment recovery worker", () => {
     expect(result.succeeded).toBe(1);
     // The route's exact prefix is replayed: a refund Stripe already holds
     // under these keys is returned, not re-minted.
+    // #1507: the metadata reason is ALSO reconstructed from that stored prefix
+    // (mod_dates_refund_* -> "date_change_price_decrease"), so the body is
+    // byte-identical to the inline date-change refund and Stripe replays the
+    // original instead of rejecting the reused key.
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKeyPrefix: "mod_dates_refund_bk1_mod-3",
+        metadata: {
+          bookingId: "booking-1",
+          reason: "date_change_price_decrease",
+        },
       }),
     );
+  });
+
+  it("replays a byte-identical modification-refund Stripe body from the stored key prefix, so it converges instead of hitting idempotency_error (#1507)", async () => {
+    // Regression for #1507 (booking_modification half of the #1494 pattern). The
+    // inline settlement helper stamps a per-path reason (here guest removal) and
+    // stores the Stripe key prefix on the recovery row (#1152). If the inline
+    // Stripe refund succeeded but the local recording was lost, the cron replays
+    // under that same prefix — which only converges if the request BODY matches
+    // byte-for-byte. Before #1507 the cron sent
+    // reason:"booking_modification_refund_recovery" while the inline path sent
+    // reason:"guest_removed_price_decrease", so Stripe rejected the reused key
+    // with idempotency_error and the operation retried to exhaustion. The cron
+    // now reconstructs the inline reason from the persisted prefix.
+    const crashed = makeOperation({
+      id: "recovery-mod-lost-recording",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+      idempotencyKey: "payment_recovery_modification_refund_mod-9",
+      stripeKeyPrefix: "guest_remove_refund_bk1_mod-9",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // Exact-object assertion: the body is byte-identical to what the inline
+    // guest-removal path sent (asserted against the real shared builder).
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    expect(refundArgs.metadata).toEqual(
+      buildBookingModificationRefundMetadata(
+        "booking-1",
+        "guest_removed_price_decrease",
+      ),
+    );
+    expect(refundArgs.metadata).toEqual({
+      bookingId: "booking-1",
+      reason: "guest_removed_price_decrease",
+    });
+    expect(refundArgs.idempotencyKeyPrefix).toBe("guest_remove_refund_bk1_mod-9");
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-1", amountCents: 4000 },
+    ]);
+  });
+
+  it("replays a byte-identical refund-request Stripe body after a lost inline recording, so it converges instead of hitting idempotency_error (#1507)", async () => {
+    // Regression for #1507 (refund_request half of the #1494 pattern). The admin
+    // approve route creates the appeal refund under refund_request_<id>; if it
+    // fails the cron replays under the same prefix (#1039). Before #1507 the cron
+    // sent reason:"refund_request_refund_recovery" while the route sent
+    // reason:"refund_appeal_approved", so a Stripe-succeeded-but-unrecorded
+    // refund hit idempotency_error on replay. Both now build from the shared
+    // buildRefundRequestRefundMetadata helper.
+    const crashed = makeOperation({
+      id: "recovery-refund-request-lost-recording",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+      idempotencyKey: "refund_request_refund_refund-7",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    // Byte-identical to the inline appeal body asserted in
+    // admin-refund-request-review-route.test.ts.
+    expect(refundArgs.metadata).toEqual(
+      buildRefundRequestRefundMetadata("booking-1", "refund-7"),
+    );
+    expect(refundArgs.metadata).toEqual({
+      bookingId: "booking-1",
+      reason: "refund_appeal_approved",
+      refundRequestId: "refund-7",
+    });
+    expect(refundArgs.idempotencyKeyPrefix).toBe("refund_request_refund-7");
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-1", amountCents: 4000 },
+    ]);
+  });
+
+  it("derives every inline modification-refund reason from its stored key prefix (#1507 freeze)", () => {
+    // Freezes the derivation against the exact (idempotencyKeyPrefix, reason)
+    // pairs the three inline callers pass to executeBookingModificationRefund. A
+    // new modification refund path (or a renamed prefix/reason) breaks this until
+    // its prefix is added to bookingModificationRefundReasonForKeyPrefix, keeping
+    // the recovery replay byte-identical to the inline refund.
+    expect(
+      bookingModificationRefundReasonForKeyPrefix("mod_dates_refund_bk_mod"),
+    ).toBe("date_change_price_decrease");
+    expect(
+      bookingModificationRefundReasonForKeyPrefix("mod_batch_refund_bk_mod"),
+    ).toBe("batch_modification");
+    expect(
+      bookingModificationRefundReasonForKeyPrefix("guest_remove_refund_bk_mod"),
+    ).toBe("guest_removed_price_decrease");
+    // Legacy rows (pre-#1152, no stored prefix) keep the historical recovery
+    // reason — they were never shared-key with the inline refund.
+    expect(bookingModificationRefundReasonForKeyPrefix(null)).toBe(
+      "booking_modification_refund_recovery",
+    );
+    expect(
+      bookingModificationRefundReasonForKeyPrefix(
+        "payment_recovery_modification_refund_op-1",
+      ),
+    ).toBe("booking_modification_refund_recovery");
   });
 
   it("replays a refund-request recovery with the route's original Stripe key prefix (#1039)", async () => {
@@ -768,13 +904,17 @@ describe("payment recovery worker", () => {
     expect(result.succeeded).toBe(1);
     // Reusing refund_request_<id> means a refund that succeeded on Stripe but
     // was never recorded locally is replayed by Stripe, not issued again.
+    // #1507: the metadata is ALSO byte-identical to the inline appeal body
+    // (reason "refund_appeal_approved", built from the shared helper), so the
+    // reused key replays the original refund instead of being rejected as an
+    // idempotency_error.
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentId: "payment-1",
         amountCents: 4000,
         metadata: {
           bookingId: "booking-1",
-          reason: "refund_request_refund_recovery",
+          reason: "refund_appeal_approved",
           refundRequestId: "refund-1",
         },
         idempotencyKeyPrefix: "refund_request_refund-1",
