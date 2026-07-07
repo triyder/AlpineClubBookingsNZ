@@ -10,7 +10,7 @@ import {
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
-import { BookingEventType, type Prisma } from "@prisma/client";
+import { BookingEventType, CreditType, type Prisma } from "@prisma/client";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
@@ -127,9 +127,14 @@ type CancelBookingResponse =
  * finds any other status — e.g. a concurrent quote-accept already flipped the
  * hold AWAITING_REVIEW -> PENDING — cancel refuses with a 409 BEFORE branch
  * dispatch and takes no side effect, so a just-accepted booking is never routed
- * into the unlocked generic PENDING branch and clobbered (its brand-new payment
- * links revoked). Defaults to `false`, so callers cancelling genuine PENDING
- * bookings (member self-cancel, deletion cleanup) are unaffected.
+ * into the generic PENDING branch and clobbered (its brand-new payment links
+ * revoked). This guard stays ESSENTIAL even though the PENDING branch is now
+ * itself status-guarded claim-first under lock(1) (#1547): that branch only
+ * refuses a booking that has LEFT PENDING, but a just-accepted booking genuinely
+ * IS PENDING, so it would pass the branch's own guard — the pre-dispatch 409
+ * here is the only protection for that scenario. Defaults to `false`, so callers
+ * cancelling genuine PENDING bookings (member self-cancel, deletion cleanup) are
+ * unaffected.
  */
 export async function cancelBooking(
   bookingId: string,
@@ -206,6 +211,11 @@ async function cancelLinkedProvisionalChildBookings(
       });
       await reconcileCancelledBookingBedAllocations(child, tx);
       await revokePaymentLinksForBooking(child.id, tx);
+      // Split children carry no promo/credit by construction (booking-create),
+      // so this is the same auditable-invariant no-op (#1547). This tx has no
+      // advisory lock, but children are PENDING no-payment rows cancelled once,
+      // together with the parent.
+      await restoreCreditFromBooking(child.memberId, child.id, tx);
     });
     await cleanupPromoRedemption(child.id);
 
@@ -297,17 +307,21 @@ async function performBookingCancellation(
   // read is UN-locked, so a concurrent quote-accept
   // (`convertBookingRequestToBooking`) can flip the hold AWAITING_REVIEW ->
   // PENDING before it runs. Without this guard the PENDING snapshot would be
-  // dispatched straight into the generic PENDING branch below — which is
-  // UNLOCKED and has NO status re-guard — and that branch would clobber the
+  // dispatched straight into the generic PENDING branch below and clobber the
   // just-accepted booking to CANCELLED and revoke its brand-new payment links.
-  // Refuse with a 409 loser (NO side effect) BEFORE branch dispatch so a
-  // now-PENDING booking is never cancelled by a hold-release. An accept that
-  // commits AFTER this read but BEFORE the AWAITING_REVIEW branch takes
-  // pg_advisory_xact_lock(1) is caught by that branch's under-lock re-read
-  // (the NO_PAYMENT_CANCELLABLE_STATUSES guard) — the two together fully close
-  // the race. Opt-in only: callers cancelling genuine member-created PENDING
-  // bookings (member self-cancel, deletion cleanup) never pass this option and
-  // reach the generic PENDING branch exactly as before.
+  // The PENDING branch is now itself status-guarded claim-first under lock(1)
+  // (#1547), but that only rejects a booking that has LEFT PENDING; a
+  // just-accepted booking genuinely IS PENDING, so it passes the branch's own
+  // under-lock guard. This pre-dispatch check therefore remains the ONLY
+  // protection for the accept-then-release race. Refuse with a 409 loser (NO
+  // side effect) BEFORE branch dispatch so a now-PENDING booking is never
+  // cancelled by a hold-release. An accept that commits AFTER this read but
+  // BEFORE the AWAITING_REVIEW branch takes pg_advisory_xact_lock(1) is caught
+  // by that branch's under-lock re-read (the NO_PAYMENT_CANCELLABLE_STATUSES
+  // guard) — the two together fully close the race. Opt-in only: callers
+  // cancelling genuine member-created PENDING bookings (member self-cancel,
+  // deletion cleanup) never pass this option and reach the generic PENDING
+  // branch exactly as before.
   if (requireRequestHold && booking.status !== "AWAITING_REVIEW") {
     return {
       status: 409,
@@ -387,12 +401,23 @@ async function performBookingCancellation(
       // from the under-lock `fresh` read.
       await reconcileCancelledBookingBedAllocations(fresh, tx);
 
+      // No-op today for these statuses — kept so "every cancel branch restores
+      // applied credit" is an auditable invariant (#1547). Runs inside the
+      // existing claim tx, so the claim's atomic status flip remains the
+      // exactly-once guarantee for the (guardless) restore.
+      const creditRestoredCents = await restoreCreditFromBooking(
+        fresh.memberId,
+        bookingId,
+        tx
+      );
+
       return {
         claimed: true as const,
         fresh,
         wasOffered,
         wasAwaitingReview,
         priorStatus: fresh.status,
+        creditRestoredCents,
       };
     });
 
@@ -410,7 +435,8 @@ async function performBookingCancellation(
       };
     }
 
-    const { fresh, wasOffered, wasAwaitingReview, priorStatus } = claim;
+    const { fresh, wasOffered, wasAwaitingReview, priorStatus, creditRestoredCents } =
+      claim;
 
     // cleanupPromoRedemption opens its own $transaction, so it runs AFTER the
     // claim commits — never nested under the advisory lock.
@@ -428,7 +454,7 @@ async function performBookingCancellation(
         ? "Booking awaiting admin review cancelled"
         : `Waitlisted booking cancelled (was ${wasOffered ? "WAITLIST_OFFERED" : "WAITLISTED"})`,
       ipAddress,
-      metadata: { wasOffered, priorStatus },
+      metadata: { wasOffered, priorStatus, creditRestoredCents },
     });
 
     await recordBookingEvent({
@@ -451,7 +477,8 @@ async function performBookingCancellation(
         fresh.checkIn,
         fresh.checkOut,
         0,
-        "card"
+        "card",
+        creditRestoredCents
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for no-payment booking"));
     }
 
@@ -468,6 +495,7 @@ async function performBookingCancellation(
         refundAmountCents: 0,
         refundPercentage: 0,
         refundMethod: "card" as const,
+        creditRestoredCents: creditRestoredCents || undefined,
         message: wasAwaitingReview
           ? "Booking awaiting review cancelled successfully"
           : "Waitlisted booking cancelled successfully",
@@ -488,32 +516,66 @@ async function performBookingCancellation(
       }
     }
 
-    await prisma.$transaction(async (tx) => {
-      if (booking.payment) {
+    // ── #1547: status-guarded claim-first under the booking advisory lock ──
+    const claim = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const fresh = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { payment: true, member: true },
+      });
+      // A capture (markBookingPaymentSucceeded pays PENDING bookings) or a
+      // concurrent cancel can transition the row before the lock is taken; the
+      // loser must not clobber it. Closes the "PENDING branch is UNLOCKED, no
+      // status re-guard" caveat documented in the #1406 comment.
+      if (!fresh || fresh.status !== "PENDING") {
+        return { claimed: false as const };
+      }
+      if (fresh.payment) {
         await tx.payment.update({
-          where: { id: booking.payment.id },
+          where: { id: fresh.payment.id },
           data: { stripeSetupIntentId: null },
         });
       }
-
       await tx.booking.update({
         where: { id: bookingId },
         data: { status: "CANCELLED" },
       });
-      await reconcileCancelledBookingBedAllocations(booking, tx);
+      await reconcileCancelledBookingBedAllocations(fresh, tx);
       await revokePaymentLinksForBooking(bookingId, tx);
+      // No-op today (credit is only applied at PAYMENT_PENDING create) — kept
+      // so "every cancel branch restores applied credit" is an auditable
+      // invariant (#1547). restoreCreditFromBooking has no internal replay
+      // guard; this claim's atomic status flip is its exactly-once guarantee.
+      const creditRestoredCents = await restoreCreditFromBooking(
+        fresh.memberId,
+        bookingId,
+        tx
+      );
+      return { claimed: true as const, fresh, creditRestoredCents };
     });
+
+    if (!claim.claimed) {
+      return {
+        status: 409,
+        error:
+          "This booking was concurrently paid or cancelled and can no longer be cancelled",
+      };
+    }
+
+    const { fresh, creditRestoredCents } = claim;
+
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
-      booking,
+      booking: fresh,
       bookingId,
       sessionUserId,
       details: "Pending booking cancelled, no payment taken",
       ipAddress,
       metadata: {
         paymentTaken: false,
-        setupIntentCancelled: Boolean(booking.payment?.stripeSetupIntentId),
+        setupIntentCancelled: Boolean(fresh.payment?.stripeSetupIntentId),
+        creditRestoredCents,
       },
     });
 
@@ -521,19 +583,24 @@ async function performBookingCancellation(
       bookingId,
       type: BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
-      reason: "Cancelled before payment. No payment was taken.",
+      reason: appendReturnedCreditSentence(
+        "Cancelled before payment. No payment was taken.",
+        creditRestoredCents
+      ),
     });
 
     sendBookingCancelledEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
-      0
+      fresh.member.email,
+      fresh.member.firstName,
+      fresh.checkIn,
+      fresh.checkOut,
+      0,
+      "card",
+      creditRestoredCents
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after pending cancellation"));
 
     return {
@@ -543,6 +610,7 @@ async function performBookingCancellation(
         refundAmountCents: 0,
         refundPercentage: 0,
         refundMethod: "card",
+        creditRestoredCents: creditRestoredCents || undefined,
         message: "Pending booking cancelled. No payment was taken.",
       },
     };
@@ -582,38 +650,125 @@ async function performBookingCancellation(
       });
     }
 
-    const paymentUpdateData: {
-      status?: "FAILED";
-      additionalPaymentStatus?: string;
-    } = {};
+    // ── #1547: claim-first restore under the booking advisory lock ─────
+    //
+    // Mirrors the paid path (tx1) below: take pg_advisory_xact_lock(1),
+    // re-read the booking under the lock, gate out the race losers, then do
+    // ALL DB writes — including the applied-credit restore — inside the tx.
+    // Capture (markBookingPaymentSucceeded) and the inbound Xero reconcile
+    // both take lock(1), so this serializes cancel-vs-capture and
+    // cancel-vs-reconcile. restoreCreditFromBooking has no internal replay
+    // guard, so it MUST only run inside a claim that guarantees exactly-once;
+    // the atomic status flip is that claim.
+    const claim = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-    if (!paymentCaptured) {
-      paymentUpdateData.status = "FAILED";
-    }
+      const fresh = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { payment: true, member: true },
+      });
+      // Loser gates. Statuses: this branch is only dispatched for
+      // PAYMENT_PENDING/CONFIRMED/PAID; anything else under the lock means a
+      // concurrent transition already claimed the booking.
+      if (
+        !fresh ||
+        !["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(fresh.status)
+      ) {
+        return { claimed: false as const };
+      }
+      // A capture landed between the outer read and this lock: refuse with the
+      // standard 409 so a retry routes into the paid path and gets the tiered
+      // refund (never flatten a now-captured payment here).
+      if (await paymentEligibleForPaidCancelPath(fresh.payment, tx)) {
+        return { claimed: false as const };
+      }
 
-    if (hasOutstandingAdditionalPaymentIntent(booking.payment)) {
-      paymentUpdateData.additionalPaymentStatus = "FAILED";
-    }
+      const freshPaymentCaptured = fresh.payment
+        ? await paymentHasCaptureEvidence(fresh.payment, tx)
+        : false;
 
-    if (booking.payment && Object.keys(paymentUpdateData).length > 0) {
-      await prisma.$transaction([
-        prisma.payment.update({
-          where: { id: booking.payment.id },
+      const paymentUpdateData: {
+        status?: "FAILED";
+        additionalPaymentStatus?: string;
+      } = {};
+      if (!freshPaymentCaptured) {
+        paymentUpdateData.status = "FAILED";
+      }
+      if (hasOutstandingAdditionalPaymentIntent(fresh.payment)) {
+        paymentUpdateData.additionalPaymentStatus = "FAILED";
+      }
+      if (fresh.payment && Object.keys(paymentUpdateData).length > 0) {
+        await tx.payment.update({
+          where: { id: fresh.payment.id },
           data: paymentUpdateData,
-        }),
-        prisma.booking.update({
-          where: { id: bookingId },
-          data: { status: "CANCELLED" },
-        }),
-      ]);
-      await reconcileCancelledBookingBedAllocations(booking);
-    } else {
-      await prisma.booking.update({
+        });
+      }
+      await tx.booking.update({
         where: { id: bookingId },
         data: { status: "CANCELLED" },
       });
-      await reconcileCancelledBookingBedAllocations(booking);
+      await reconcileCancelledBookingBedAllocations(fresh, tx);
+
+      // 100% restore — ledger truth, NO override argument (owner decision:
+      // nothing was captured, so no cancellation-policy tiering).
+      const creditRestoredCents = await restoreCreditFromBooking(
+        fresh.memberId,
+        bookingId,
+        tx
+      );
+
+      // Applied-credit rows the inbound reconcile linked to a real Xero
+      // credit-note allocation against this booking's invoice: the invoice's
+      // outstanding balance in Xero is already reduced by these, so the
+      // clearing note below must not re-credit them (Xero rejects
+      // over-allocation and the outbox op would poison). Read under lock(1) —
+      // the inbound reconcile serializes on the same lock.
+      const xeroAllocated = await tx.memberCredit.aggregate({
+        where: {
+          appliedToBookingId: bookingId,
+          type: CreditType.BOOKING_APPLIED,
+          xeroCreditNoteId: { not: null },
+        },
+        _sum: { amountCents: true },
+      });
+      const xeroAllocatedAppliedCreditCents = Math.max(
+        0,
+        -(xeroAllocated._sum.amountCents ?? 0)
+      );
+
+      return {
+        claimed: true as const,
+        fresh,
+        freshPaymentCaptured,
+        creditRestoredCents,
+        xeroAllocatedAppliedCreditCents,
+      };
+    });
+
+    // Loser contract (mirrors the paid single-flight path, #1160): a
+    // concurrent capture / cancel that transitioned the row gets a real 409,
+    // never a false 200. A capture win routes the retry into the paid path.
+    if (!claim.claimed) {
+      return {
+        status: 409,
+        error: "This booking is already being cancelled or has been cancelled",
+      };
     }
+
+    const {
+      fresh,
+      freshPaymentCaptured,
+      creditRestoredCents,
+      xeroAllocatedAppliedCreditCents,
+    } = claim;
+
+    if (creditRestoredCents > 0) {
+      logger.info(
+        { bookingId, creditRestoredCents },
+        "Restored previously applied credit on never-captured cancellation"
+      );
+    }
+
     await cleanupPromoRedemption(bookingId);
 
     // Clear the outstanding balance on an unpaid issued invoice. The true
@@ -636,12 +791,27 @@ async function performBookingCancellation(
     // permanently poison it — recording the payment then fails against a
     // zeroed invoice. Enqueue nothing; the op retry stack owns the recording,
     // and the operator repair pass owns anything else.
+    // #1547 (verified): the booking invoice is issued at the FULL
+    // finalPriceCents (guest line items + promo adjustment line — see
+    // createXeroInvoiceForBooking / buildInvoiceLineItems in
+    // src/lib/xero-booking-invoices.ts), NEVER at the credit-reduced
+    // effectivePriceCents, so finalPrice + changeFee matches the invoice's
+    // nominal outstanding. The only reduction needed is any credit-note
+    // allocations already applied to the invoice in Xero, mirrored locally as
+    // BOOKING_APPLIED rows carrying xeroCreditNoteId (see
+    // src/lib/xero-inbound/credit-note-repairs.ts). Subtract exactly those
+    // (floored at 0) so the clearing note never over-allocates the invoice.
     const xeroClearingAmountCents =
-      booking.payment?.xeroInvoiceId && !paymentCaptured
-        ? booking.finalPriceCents + booking.payment.changeFeeCents
+      fresh.payment?.xeroInvoiceId && !freshPaymentCaptured
+        ? Math.max(
+            0,
+            fresh.finalPriceCents +
+              fresh.payment.changeFeeCents -
+              xeroAllocatedAppliedCreditCents
+          )
         : 0;
 
-    if (booking.payment?.id && xeroClearingAmountCents > 0) {
+    if (fresh.payment?.id && xeroClearingAmountCents > 0) {
       try {
         const queuedCreditNote = await enqueueXeroModificationCreditNoteOperation(
           {
@@ -656,7 +826,7 @@ async function performBookingCancellation(
         if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
           void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
             logger.error(
-              { err: xeroErr, bookingId, paymentId: booking.payment?.id },
+              { err: xeroErr, bookingId, paymentId: fresh.payment?.id },
               "Failed to kick Xero invoice-clearing credit note outbox worker"
             );
           });
@@ -666,7 +836,7 @@ async function performBookingCancellation(
           {
             err: xeroErr,
             bookingId,
-            paymentId: booking.payment.id,
+            paymentId: fresh.payment.id,
             xeroClearingAmountCents,
           },
           "Failed to queue Xero invoice-clearing credit note for cancelled unpaid booking"
@@ -675,20 +845,22 @@ async function performBookingCancellation(
     }
 
     logBookingCancellationAudit({
-      booking,
+      booking: fresh,
       bookingId,
       sessionUserId,
-      details: paymentCaptured
+      details: freshPaymentCaptured
         ? "Confirmed booking cancelled; previously captured payment keeps its refund history (status preserved, no Xero clearing note queued)"
         : xeroClearingAmountCents > 0
           ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
       metadata: {
-        paymentTaken: paymentCaptured,
-        capturedPaymentStatusPreserved: paymentCaptured,
+        paymentTaken: freshPaymentCaptured,
+        capturedPaymentStatusPreserved: freshPaymentCaptured,
         xeroClearingAmountCents,
+        xeroAllocatedAppliedCreditCents,
         queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
+        creditRestoredCents,
       },
     });
 
@@ -696,21 +868,26 @@ async function performBookingCancellation(
       bookingId,
       type: BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
-      reason: paymentCaptured
-        ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
-        : "Cancelled before payment was captured. Nothing was charged.",
+      reason: appendReturnedCreditSentence(
+        freshPaymentCaptured
+          ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
+          : "Cancelled before payment was captured. Nothing was charged.",
+        creditRestoredCents
+      ),
     });
 
     sendBookingCancelledEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
-      0
+      fresh.member.email,
+      fresh.member.firstName,
+      fresh.checkIn,
+      fresh.checkOut,
+      0,
+      "card",
+      creditRestoredCents
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after confirmed cancellation"));
 
     return {
@@ -720,7 +897,8 @@ async function performBookingCancellation(
         refundAmountCents: 0,
         refundPercentage: 0,
         refundMethod: "card",
-        message: paymentCaptured
+        creditRestoredCents: creditRestoredCents || undefined,
+        message: freshPaymentCaptured
           ? "Booking cancelled. The payment's existing refund history is unchanged; no additional refund was issued."
           : xeroClearingAmountCents > 0
             ? "Booking cancelled. Any outstanding Xero invoice balance is being cleared."
@@ -763,6 +941,13 @@ async function performBookingCancellation(
   // CANCELLATION_REFUND/sourceBookingId for one booking, so no
   // (sourceBookingId,type) unique key is possible, and a description match
   // would be fragile in money code.
+  //
+  // #1547: restoreCreditFromBooking is NOT paid-path-only anymore. Every cancel
+  // branch now restores applied credit inside its own lock(1) claim — this paid
+  // path at the cancellation tier (#1164/D7), and the never-captured / PENDING /
+  // no-payment branches above at 100% (nothing was captured). Each claim's
+  // atomic status flip is that branch's exactly-once guarantee for the
+  // (guardless) restore writer.
   const claim = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
@@ -1550,6 +1735,19 @@ async function paymentHasCaptureEvidence(
           payment.status === "PARTIALLY_REFUNDED" ||
           payment.refundedAmountCents > 0))
   );
+}
+
+// #1547: every cancel branch that restores applied credit appends this line to
+// the CANCELLED narrative event when a positive amount was returned, so the
+// member/admin story reflects the restore. Money stays in cents internally; the
+// sentence renders NZ dollars for humans.
+function appendReturnedCreditSentence(
+  reason: string,
+  creditRestoredCents: number
+): string {
+  return creditRestoredCents > 0
+    ? `${reason} NZ$${(creditRestoredCents / 100).toFixed(2)} of applied account credit was returned.`
+    : reason;
 }
 
 function hasOutstandingAdditionalPaymentIntent(

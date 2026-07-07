@@ -3312,6 +3312,12 @@ model CommitteeRole {
   @@index([sortOrder])
 }
 
+enum ContactEmailMode {
+  ROLE
+  MEMBER
+  CUSTOM
+}
+
 model CommitteeAssignment {
   id                 String   @id @default(cuid())
   memberId           String
@@ -3321,6 +3327,8 @@ model CommitteeAssignment {
   published          Boolean  @default(false)
   showPhone          Boolean  @default(false)
   contactable        Boolean  @default(false)
+  contactEmailMode     ContactEmailMode @default(ROLE)
+  contactEmailOverride String?
   isActive           Boolean  @default(true)
   assignedByMemberId String?
   createdAt          DateTime @default(now())

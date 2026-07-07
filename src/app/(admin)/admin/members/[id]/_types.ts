@@ -147,6 +147,8 @@ export interface CommitteeAssignmentSummary {
   published: boolean;
   showPhone: boolean;
   contactable: boolean;
+  contactEmailMode: "ROLE" | "MEMBER" | "CUSTOM";
+  contactEmailOverride: string | null;
   isActive: boolean;
   assignedByMemberId: string | null;
   createdAt: string;

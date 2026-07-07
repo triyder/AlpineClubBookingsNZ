@@ -44,9 +44,15 @@ export function buildXeroCreditNoteUrl(
  * report runs (Profit and Loss, Balance Sheet) need a per-organisation report
  * GUID or the org short code, neither of which we store, so dashboard "open
  * in Xero" links land on the hub — both reports are one click away.
+ *
+ * Uses the session-scoped classic path `/Reports/`, which resolves against the
+ * user's currently logged-in organisation. The new-app path `/app/reports`
+ * 404s: the new app requires the org short code in the URL
+ * (`/app/!{shortCode}/…`), and the finance dashboard deliberately avoids the
+ * live Xero call that fetching the short code would need on every page load.
  */
 export function buildXeroReportsUrl(options?: XeroUrlOptions): string {
-  return buildXeroUrl("/app/reports", options);
+  return buildXeroUrl("/Reports/", options);
 }
 
 export function buildXeroObjectUrl(

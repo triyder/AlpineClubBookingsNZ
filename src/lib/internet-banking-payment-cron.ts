@@ -9,6 +9,7 @@ import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycl
 import { recordBookingEvent } from "@/lib/booking-events";
 import { sendBookingCancelledEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
 import { processWaitlistForDates } from "@/lib/waitlist";
@@ -76,6 +77,20 @@ function releaseOneHold(paymentId: string, now: Date) {
         db: tx,
       });
 
+      // #1547: a hold-expiry release IS a cancel, and an IB booking can be
+      // partly (or fully) credit-covered — booking-create applies credit for
+      // every IB shape. Restore it at 100% inside this claim, exactly like the
+      // never-captured cancel branch: nothing was captured, so no
+      // cancellation-policy tiering. restoreCreditFromBooking has no internal
+      // replay guard; this transaction's guard set (payment still PENDING,
+      // hold not yet released, booking still CONFIRMED) is its exactly-once
+      // guarantee — re-runs skip released holds before reaching this line.
+      const creditRestoredCents = await restoreCreditFromBooking(
+        fresh.booking.memberId,
+        fresh.bookingId,
+        tx,
+      );
+
       // Enqueue the invoice-clearing credit note INSIDE the release
       // transaction (#1357, the #1233 in-tx pattern): the outbox row commits
       // atomically with `internetBankingHoldReleasedAt`, so no crash point can
@@ -91,6 +106,7 @@ function releaseOneHold(paymentId: string, now: Date) {
       return {
         type: "released" as const,
         payment: fresh,
+        creditRestoredCents,
         queueOperationId: queued.queueOperationId,
       };
     },
@@ -153,7 +169,7 @@ export async function releaseExpiredInternetBankingHolds(
       continue;
     }
 
-    const { payment } = transition;
+    const { payment, creditRestoredCents } = transition;
     result.released += 1;
     result.bookingIds.push(payment.bookingId);
     result.paymentIds.push(payment.id);
@@ -162,10 +178,16 @@ export async function releaseExpiredInternetBankingHolds(
       bookingId: payment.bookingId,
       type: BookingEventType.CANCELLED,
       amountCents: payment.amountCents,
-      reason: "Internet Banking payment hold expired before reconciliation.",
+      // #1547: surface the restored applied credit in the narrative, matching
+      // the cancel branches.
+      reason:
+        creditRestoredCents > 0
+          ? `Internet Banking payment hold expired before reconciliation. NZ$${(creditRestoredCents / 100).toFixed(2)} of applied account credit was returned.`
+          : "Internet Banking payment hold expired before reconciliation.",
       snapshot: {
         paymentId: payment.id,
         holdUntil: payment.internetBankingHoldUntil?.toISOString() ?? null,
+        creditRestoredCents,
       },
     });
 
@@ -189,6 +211,7 @@ export async function releaseExpiredInternetBankingHolds(
         paymentSource: PaymentSource.INTERNET_BANKING,
         holdUntil: payment.internetBankingHoldUntil?.toISOString() ?? null,
         amountCents: payment.amountCents,
+        creditRestoredCents,
       },
     }).catch((err) =>
       logger.error(
@@ -215,6 +238,7 @@ export async function releaseExpiredInternetBankingHolds(
       payment.booking.checkOut,
       0,
       "credit",
+      creditRestoredCents,
     ).catch((err) =>
       logger.error(
         { err, bookingId: payment.bookingId, paymentId: payment.id },

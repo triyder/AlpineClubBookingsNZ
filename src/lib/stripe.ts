@@ -32,7 +32,7 @@ export const stripe = new Proxy({} as Stripe, {
  * Create a PaymentIntent for confirmed bookings (immediate charge).
  * Used when all guests are members OR check-in is <= 7 days away.
  */
-export const STRIPE_MINIMUM_AMOUNT_CENTS = 50; // Stripe NZD minimum charge
+const STRIPE_MINIMUM_AMOUNT_CENTS = 50; // Stripe NZD minimum charge
 
 export async function createPaymentIntent({
   amountCents,

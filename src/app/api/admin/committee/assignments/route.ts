@@ -7,6 +7,7 @@ import {
 import {
   committeeAssignmentOrderBy,
   committeeAssignmentSelect,
+  normalizeCommitteeEmail,
   normalizeCommitteeText,
   serializeCommitteeAssignment,
 } from "@/lib/committee";
@@ -22,9 +23,30 @@ const assignmentSchema = z
     published: z.boolean().optional().default(false),
     showPhone: z.boolean().optional().default(false),
     contactable: z.boolean().optional().default(false),
+    contactEmailMode: z
+      .enum(["ROLE", "MEMBER", "CUSTOM"])
+      .optional()
+      .default("ROLE"),
+    contactEmailOverride: z
+      .string()
+      .trim()
+      .max(320)
+      .email("Invalid committee email")
+      .nullable()
+      .optional(),
     isActive: z.boolean().optional().default(true),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.contactEmailMode === "CUSTOM" && !value.contactEmailOverride) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["contactEmailOverride"],
+        message:
+          "A custom committee email is required when contact email mode is CUSTOM",
+      });
+    }
+  });
 
 export async function GET(request: Request) {
   const guard = await requireAdmin();
@@ -102,6 +124,11 @@ export async function POST(request: Request) {
     published: parsed.data.published,
     showPhone: parsed.data.showPhone,
     contactable: parsed.data.contactable,
+    contactEmailMode: parsed.data.contactEmailMode,
+    contactEmailOverride:
+      parsed.data.contactEmailMode === "CUSTOM"
+        ? normalizeCommitteeEmail(parsed.data.contactEmailOverride)
+        : null,
     isActive: parsed.data.isActive,
     assignedByMemberId: session.user.id,
   };

@@ -17,6 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useConfirm } from "@/components/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -363,7 +364,7 @@ interface MembershipTypeEditorDialogProps {
   onRemoveRule: (draftRuleId: string) => void;
   onRefreshXeroGroups: () => void;
   onSave: () => void;
-  onClose: () => void;
+  onCancel: () => void;
   onSetActive: (isActive: boolean) => void;
 }
 
@@ -382,9 +383,10 @@ function MembershipTypeEditorDialog({
   onRemoveRule,
   onRefreshXeroGroups,
   onSave,
-  onClose,
+  onCancel,
   onSetActive,
 }: MembershipTypeEditorDialogProps) {
+  const { confirm, confirmDialog } = useConfirm();
   const validationError = validateDraft(draft);
   const dirty =
     target?.mode === "edit" && membershipType
@@ -396,6 +398,24 @@ function MembershipTypeEditorDialog({
       ? "New membership type"
       : `Edit ${membershipType?.name ?? "membership type"}`;
 
+  async function requestDismiss() {
+    if (!dirty) {
+      onCancel();
+      return;
+    }
+
+    const discard = await confirm({
+      title: "Discard unsaved changes?",
+      description: "Your membership type changes have not been saved.",
+      confirmLabel: "Discard changes",
+      cancelLabel: "Keep editing",
+      destructive: true,
+    });
+    if (discard) {
+      onCancel();
+    }
+  }
+
   function toggleAgeTier(ageTier: AgeTier, checked: boolean) {
     onDraftChange({
       allowedAgeTiers: checked
@@ -405,22 +425,42 @@ function MembershipTypeEditorDialog({
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-5xl">
-        <DialogHeader>
-          <div className="flex flex-wrap items-center gap-2 pr-8">
-            <DialogTitle>{title}</DialogTitle>
-            {dirty && (
-              <Badge variant="secondary" className="text-xs">
-                Unsaved changes
-              </Badge>
-            )}
-          </div>
-          <DialogDescription>
-            Configure identity, booking policy, allowed tiers, and Xero group
-            rules for this seasonal membership type.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            void requestDismiss();
+          }
+        }}
+      >
+        <DialogContent
+          className="max-h-[92vh] overflow-y-auto sm:max-w-5xl"
+          showCloseButton={false}
+          onEscapeKeyDown={(event) => {
+            if (dirty) {
+              event.preventDefault();
+              void requestDismiss();
+            }
+          }}
+          onInteractOutside={(event) => {
+            event.preventDefault();
+          }}
+        >
+          <DialogHeader>
+            <div className="flex flex-wrap items-center gap-2 pr-8">
+              <DialogTitle>{title}</DialogTitle>
+              {dirty && (
+                <Badge variant="secondary" className="text-xs">
+                  Unsaved changes
+                </Badge>
+              )}
+            </div>
+            <DialogDescription>
+              Configure identity, booking policy, allowed tiers, and Xero group
+              rules for this seasonal membership type.
+            </DialogDescription>
+          </DialogHeader>
 
         {validationError && dirty && (
           <div
@@ -774,46 +814,48 @@ function MembershipTypeEditorDialog({
           </aside>
         </div>
 
-        <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
-          <div>
-            {target?.mode === "edit" && membershipType ? (
+          <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
+            <div>
+              {target?.mode === "edit" && membershipType ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onSetActive(!membershipType.isActive)}
+                  disabled={saving}
+                >
+                  {membershipType.isActive ? (
+                    <Archive className="mr-2 h-4 w-4" />
+                  ) : (
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                  )}
+                  {membershipType.isActive ? "Archive" : "Reactivate"}
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button type="button" variant="outline" onClick={onCancel}>
+                Cancel
+              </Button>
               <Button
                 type="button"
-                variant="outline"
-                onClick={() => onSetActive(!membershipType.isActive)}
-                disabled={saving}
+                onClick={onSave}
+                disabled={saving || Boolean(validationError) || !dirty}
               >
-                {membershipType.isActive ? (
-                  <Archive className="mr-2 h-4 w-4" />
+                {saving ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : target?.mode === "new" ? (
+                  <Plus className="mr-2 h-4 w-4" />
                 ) : (
-                  <RotateCcw className="mr-2 h-4 w-4" />
+                  <Save className="mr-2 h-4 w-4" />
                 )}
-                {membershipType.isActive ? "Archive" : "Reactivate"}
+                {target?.mode === "new" ? "Create type" : "Save changes"}
               </Button>
-            ) : null}
-          </div>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button type="button" variant="outline" onClick={onClose}>
-              Close
-            </Button>
-            <Button
-              type="button"
-              onClick={onSave}
-              disabled={saving || Boolean(validationError) || !dirty}
-            >
-              {saving ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : target?.mode === "new" ? (
-                <Plus className="mr-2 h-4 w-4" />
-              ) : (
-                <Save className="mr-2 h-4 w-4" />
-              )}
-              {target?.mode === "new" ? "Create type" : "Save changes"}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {confirmDialog}
+    </>
   );
 }
 
@@ -1186,6 +1228,15 @@ export default function AdminMembershipTypesPage() {
     setEditorTarget({ mode: "edit", membershipTypeId: type.id });
     setError("");
     setSavedMessage("");
+  }
+
+  function cancelEditor() {
+    if (editorTarget?.mode === "edit" && editingType) {
+      setDrafts((current) => replaceOrAppendDraft(current, editingType));
+    } else {
+      setNewDraft(createEmptyDraft(availableAgeTiers));
+    }
+    setEditorTarget(null);
   }
 
   async function createMembershipType() {
@@ -1655,7 +1706,7 @@ export default function AdminMembershipTypesPage() {
             void saveMembershipType(editingType);
           }
         }}
-        onClose={() => setEditorTarget(null)}
+        onCancel={cancelEditor}
         onSetActive={(isActive) => {
           if (editingType) void setActive(editingType, isActive);
         }}

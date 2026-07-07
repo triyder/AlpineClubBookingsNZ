@@ -135,7 +135,7 @@ describe("AdminMembershipTypesPage", () => {
     );
   });
 
-  it("keeps editor dirty state when the dialog is closed and reopened", async () => {
+  it("keeps dirty editor state when outside pointer dismissal is attempted", async () => {
     await renderPage();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
@@ -151,8 +151,7 @@ describe("AdminMembershipTypesPage", () => {
       screen.getByRole("button", { name: "Save changes" }).hasAttribute("disabled"),
     ).toBe(false);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.pointerDown(document.body, { pointerType: "touch" });
 
     expect(screen.getByLabelText("Description")).toHaveProperty(
       "value",
@@ -161,30 +160,98 @@ describe("AdminMembershipTypesPage", () => {
     expect(screen.getByText("Unsaved changes")).not.toBeNull();
   });
 
-  it("keeps editor dirty state after another type is reordered", async () => {
+  it("confirms before discarding dirty editor state from Escape", async () => {
     await renderPage();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
     fireEvent.change(screen.getByLabelText("Description"), {
       target: { value: "Updated description" },
     });
-    fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Move Associate up" }));
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Edit Full" }), {
+      key: "Escape",
+      code: "Escape",
+    });
+
+    expect(screen.getByText("Discard unsaved changes?")).not.toBeNull();
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Updated description",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByText("Discard unsaved changes?")).toBeNull();
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Updated description",
+    );
+
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Edit Full" }), {
+      key: "Escape",
+      code: "Escape",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Edit Full" })).toBeNull(),
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Default full club membership.",
+    );
+  });
+
+  it("discards dirty editor state when Cancel is clicked", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Updated description" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Default full club membership.",
+    );
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+  });
+
+  it("persists saved editor state before Cancel closes the dialog", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Updated description" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/admin/membership-types/reorder",
-        expect.objectContaining({ method: "POST" }),
+        "/api/admin/membership-types/type-full",
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.stringContaining("Updated description"),
+        }),
       ),
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
+    expect(screen.getByText("Membership type saved.")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
 
     expect(screen.getByLabelText("Description")).toHaveProperty(
       "value",
       "Updated description",
     );
-    expect(screen.getByText("Unsaved changes")).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save changes" }).hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it(

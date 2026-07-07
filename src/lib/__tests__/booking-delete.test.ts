@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   paymentTransactionCount: vi.fn(),
   paymentRefundCount: vi.fn(),
   refundRequestCount: vi.fn(),
-  memberCreditCount: vi.fn(),
+  memberCreditFindMany: vi.fn(),
   paymentRecoveryOperationCount: vi.fn(),
   xeroObjectLinkCount: vi.fn(),
   xeroSyncOperationCount: vi.fn(),
@@ -55,7 +55,7 @@ const mockTx = {
     count: mocks.refundRequestCount,
   },
   memberCredit: {
-    count: mocks.memberCreditCount,
+    findMany: mocks.memberCreditFindMany,
   },
   paymentRecoveryOperation: {
     count: mocks.paymentRecoveryOperationCount,
@@ -100,7 +100,7 @@ vi.mock("@/lib/prisma", () => ({
       count: mocks.refundRequestCount,
     },
     memberCredit: {
-      count: mocks.memberCreditCount,
+      findMany: mocks.memberCreditFindMany,
     },
     paymentRecoveryOperation: {
       count: mocks.paymentRecoveryOperationCount,
@@ -170,7 +170,7 @@ describe("deleteBooking", () => {
     mocks.paymentTransactionCount.mockResolvedValue(0);
     mocks.paymentRefundCount.mockResolvedValue(0);
     mocks.refundRequestCount.mockResolvedValue(0);
-    mocks.memberCreditCount.mockResolvedValue(0);
+    mocks.memberCreditFindMany.mockResolvedValue([]);
     mocks.paymentRecoveryOperationCount.mockResolvedValue(0);
     mocks.xeroObjectLinkCount.mockResolvedValue(0);
     mocks.xeroSyncOperationCount.mockResolvedValue(0);
@@ -468,7 +468,10 @@ describe("deleteBooking", () => {
       })
     );
     mocks.paymentTransactionCount.mockResolvedValue(1);
-    mocks.memberCreditCount.mockResolvedValue(1);
+    // A single un-reversed applied-credit row (net negative) still blocks.
+    mocks.memberCreditFindMany.mockResolvedValue([
+      { amountCents: -5000, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+    ]);
     mocks.xeroSyncOperationCount.mockResolvedValue(1);
 
     const result = await deleteBooking({
@@ -520,5 +523,152 @@ describe("deleteBooking", () => {
 
     expect(result).toEqual({ status: 403, error: "Forbidden" });
     expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+  });
+
+  // ── #1547: net-zero applied-credit unblock ──────────────────────────────
+  describe("#1547 delete-guard net-zero credit unblock", () => {
+    function cancelledWithCreditAppliedPayment(
+      paymentOverrides: Record<string, unknown> = {}
+    ) {
+      return makeBooking({
+        status: "CANCELLED",
+        draftExpiresAt: null,
+        payment: {
+          id: "payment-1",
+          status: "FAILED",
+          amountCents: 5000,
+          refundedAmountCents: 0,
+          changeFeeCents: 0,
+          additionalAmountCents: 0,
+          additionalPaymentStatus: null,
+          creditAppliedCents: 5000,
+          stripePaymentIntentId: "pi_x",
+          additionalPaymentIntentId: null,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          xeroRefundCreditNoteId: null,
+          ...paymentOverrides,
+        },
+      });
+    }
+
+    it("deletes a cancelled booking whose applied credit was fully reversed (net-zero, reversal-only, no Xero note)", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(cancelledWithCreditAppliedPayment());
+      mocks.memberCreditFindMany.mockResolvedValue([
+        { amountCents: -5000, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+        { amountCents: 5000, type: "CANCELLATION_REFUND", xeroCreditNoteId: null },
+      ]);
+
+      const result = await deleteBooking({
+        bookingId: "booking-1",
+        actor: { memberId: "admin-1", role: "ADMIN", ipAddress: "127.0.0.1" },
+        reason: "Fully-restored credit, no other history",
+      });
+
+      // No member_credit blocker, and the creditAppliedCents mirror is waived,
+      // so the soft-delete succeeds.
+      expect(result.status).toBe(200);
+      expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+        where: { id: "booking-1" },
+        data: {
+          deletedAt: expect.any(Date),
+          deletedById: "admin-1",
+          deletedReason: "Fully-restored credit, no other history",
+        },
+      });
+    });
+
+    it("blocks when the applied credit was never reversed (net-negative), with a signed-net label", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(cancelledWithCreditAppliedPayment());
+      mocks.memberCreditFindMany.mockResolvedValue([
+        { amountCents: -5000, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+      ]);
+
+      const result = await deleteBooking({
+        bookingId: "booking-1",
+        actor: { memberId: "admin-1", role: "ADMIN" },
+        reason: "Should block",
+      });
+
+      expect(result.status).toBe(409);
+      expect(result).toMatchObject({
+        blockers: expect.arrayContaining([
+          {
+            code: "member_credit",
+            label: "Member credit history exists (1 row, net -$50.00)",
+            count: 1,
+          },
+        ]),
+      });
+      expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    });
+
+    it("blocks a coincidental net-zero that includes an ADMIN_ADJUSTMENT row (real financial history)", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(cancelledWithCreditAppliedPayment());
+      mocks.memberCreditFindMany.mockResolvedValue([
+        { amountCents: -5000, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+        { amountCents: 5000, type: "ADMIN_ADJUSTMENT", xeroCreditNoteId: null },
+      ]);
+
+      const result = await deleteBooking({
+        bookingId: "booking-1",
+        actor: { memberId: "admin-1", role: "ADMIN" },
+        reason: "Should block",
+      });
+
+      expect(result.status).toBe(409);
+      expect(result).toMatchObject({
+        blockers: expect.arrayContaining([
+          expect.objectContaining({ code: "member_credit", count: 2 }),
+        ]),
+      });
+    });
+
+    it("blocks a net-zero when any credit row carries an external Xero credit note", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(cancelledWithCreditAppliedPayment());
+      mocks.memberCreditFindMany.mockResolvedValue([
+        { amountCents: -5000, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+        { amountCents: 5000, type: "CANCELLATION_REFUND", xeroCreditNoteId: "cn_1" },
+      ]);
+
+      const result = await deleteBooking({
+        bookingId: "booking-1",
+        actor: { memberId: "admin-1", role: "ADMIN" },
+        reason: "Should block",
+      });
+
+      expect(result.status).toBe(409);
+      expect(result).toMatchObject({
+        blockers: expect.arrayContaining([
+          expect.objectContaining({ code: "member_credit" }),
+        ]),
+      });
+    });
+
+    it("still blocks on captured money even when the credit ledger is net-zero (waiver is creditAppliedCents-only)", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(
+        cancelledWithCreditAppliedPayment({ status: "SUCCEEDED" })
+      );
+      mocks.memberCreditFindMany.mockResolvedValue([
+        { amountCents: -5000, type: "BOOKING_APPLIED", xeroCreditNoteId: null },
+        { amountCents: 5000, type: "CANCELLATION_REFUND", xeroCreditNoteId: null },
+      ]);
+
+      const result = await deleteBooking({
+        bookingId: "booking-1",
+        actor: { memberId: "admin-1", role: "ADMIN" },
+        reason: "Should block on captured money",
+      });
+
+      expect(result.status).toBe(409);
+      expect(result).toMatchObject({
+        blockers: expect.arrayContaining([
+          expect.objectContaining({ code: "captured_payment" }),
+        ]),
+      });
+      // The member_credit blocker is ABSENT (ledger is net-zero reversal-only).
+      const blockers = "blockers" in result ? result.blockers ?? [] : [];
+      expect(blockers.some((b) => b.code === "member_credit")).toBe(false);
+    });
   });
 });
