@@ -9,6 +9,8 @@ vi.mock("@/config/club-identity", () => ({
 vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
 vi.mock("@/lib/lodge-capacity", () => ({
   getLodgeCapacity: vi.fn(async () => 42),
+  // The parameterised {{lodge-capacity:slug}} fallback path (multi-lodge).
+  getDefaultLodgeCapacity: vi.fn(async () => 42),
 }));
 
 import {

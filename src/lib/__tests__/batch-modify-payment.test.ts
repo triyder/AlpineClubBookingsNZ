@@ -84,6 +84,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/capacity", () => ({
   checkCapacity: mockCheckCapacity,
   checkCapacityForGuestRanges: mockCheckCapacity,
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/pricing", () => ({
@@ -292,6 +293,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
 
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     booking: {
       findUnique: vi.fn().mockResolvedValue(booking),
       update: vi.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
@@ -2560,6 +2564,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
     expect(response.status).toBe(200);
     expect(mockCheckCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       new Date("2026-08-20T00:00:00.000Z"),
       new Date("2026-08-24T00:00:00.000Z"),
       [

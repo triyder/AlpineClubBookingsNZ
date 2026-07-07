@@ -6,6 +6,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
     booking: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+    lodge: { findFirst: vi.fn() },
+    memberLodgeAccess: { findMany: vi.fn() },
     bookingGuest: { findMany: vi.fn().mockResolvedValue([]) },
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn() },
@@ -183,6 +185,8 @@ describe("Admin Book on Behalf", () => {
       _sum: { freeNightsUsed: 0 },
     });
     (mockedPrisma.promoCodeAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.lodge.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "lodge-1" });
+    (mockedPrisma.memberLodgeAccess.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockedPrisma.bookingGuest.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
@@ -220,7 +224,9 @@ describe("Admin Book on Behalf", () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain("cannot book for themselves");
+    expect(body.error).toContain(
+      "Booking managers cannot book for themselves — book your own stay through the member booking page",
+    );
   });
 
   it("rejects booking for inactive target member", async () => {
@@ -654,6 +660,8 @@ describe("Create booking guest normalization", () => {
       _sum: { freeNightsUsed: 0 },
     });
     (mockedPrisma.promoCodeAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.lodge.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "lodge-1" });
+    (mockedPrisma.memberLodgeAccess.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
   it("forces manually typed guests to non-member pricing on create", async () => {

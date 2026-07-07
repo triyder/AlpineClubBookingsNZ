@@ -34,6 +34,10 @@ findUnique: vi.fn(),
     findMany: vi.fn(),
     count: vi.fn(),
   },
+  lodge: {
+    findFirst: vi.fn(),
+    findUnique: vi.fn(),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -104,6 +108,7 @@ describe("F8: Hut Leader Role Assignment", () => {
       forcePasswordChange: false,
       accessRoles: [{ role: "ADMIN" }],
     });
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "lodge-1" });
   });
 
   describe("isHutLeader helper", () => {
@@ -192,6 +197,35 @@ describe("F8: Hut Leader Role Assignment", () => {
       expect(data.assignments).toHaveLength(1);
       expect(data.assignments[0].memberName).toBe("Alice Smith");
       expect(data.assignments[0].startDate).toBe("2026-07-10");
+    });
+
+    it("returns each assignment's lodge for the admin lodge column", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
+        {
+          id: "a1",
+          memberId: "m1",
+          startDate: new Date("2026-07-10"),
+          endDate: new Date("2026-07-17"),
+          createdAt: new Date("2026-07-01"),
+          lodgeId: "lodge-2",
+          member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+          lodge: { id: "lodge-2", name: "River Lodge" },
+        },
+      ]);
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/route"
+      );
+      const res = await GET();
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.assignments[0].lodgeId).toBe("lodge-2");
+      expect(data.assignments[0].lodgeName).toBe("River Lodge");
     });
   });
 
@@ -289,6 +323,68 @@ describe("F8: Hut Leader Role Assignment", () => {
         makeRequest({ memberId: "m1", startDate: "2026-07-10", endDate: "2026-07-17" }) as any
       );
       expect(res.status).toBe(201);
+    });
+
+    it("scopes the overlap check to the requested lodge", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
+      mockPrisma.lodge.findUnique.mockResolvedValue({ id: "lodge-2", active: true });
+      // The other lodge's leader for the same week is not returned by a
+      // lodge-scoped query, so the assignment is allowed.
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+      mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
+
+      const { POST } = await import(
+        "@/app/api/admin/hut-leaders/route"
+      );
+      const res = await POST(
+        makeRequest({ memberId: "m1", startDate: "2026-07-10", endDate: "2026-07-17", lodgeId: "lodge-2" }) as any
+      );
+      expect(res.status).toBe(201);
+
+      expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            lodgeId: "lodge-2",
+          }),
+        })
+      );
+      expect(mockPrisma.hutLeaderAssignment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ lodgeId: "lodge-2" }),
+        })
+      );
+    });
+
+    it("rejects an assignment at an unknown or inactive lodge", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+
+      mockPrisma.member.findUnique.mockResolvedValue({
+        id: "m1",
+        active: true,
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+      });
+      mockPrisma.lodge.findUnique.mockResolvedValue(null);
+
+      const { POST } = await import(
+        "@/app/api/admin/hut-leaders/route"
+      );
+      const res = await POST(
+        makeRequest({ memberId: "m1", startDate: "2026-07-10", endDate: "2026-07-17", lodgeId: "lodge-missing" }) as any
+      );
+      expect(res.status).toBe(400);
+      expect(mockPrisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
     });
 
     it("rejects operational accounts for hut leader assignments", async () => {

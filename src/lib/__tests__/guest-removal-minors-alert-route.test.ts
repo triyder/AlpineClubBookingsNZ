@@ -127,6 +127,7 @@ function preEditBooking(guests: Guest[]) {
   return {
     id: "b1",
     memberId: "m1",
+    lodgeId: "lodge-1",
     status: BookingStatus.PAID,
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
@@ -166,6 +167,10 @@ function preEditBooking(guests: Guest[]) {
 function buildTx(guests: Guest[]) {
   return {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    // Per-lodge advisory capacity lock (acquireLodgeCapacityLock) uses
+    // $executeRaw, not $executeRawUnsafe — pg_advisory_xact_lock returns void
+    // so $queryRaw can't deserialize it; every advisory lock uses $executeRaw.
+    $executeRaw: vi.fn().mockResolvedValue(undefined),
     booking: {
       findUnique: vi.fn().mockResolvedValue(preEditBooking(guests)),
       // Echo the written review fields + status so the service's real
@@ -192,6 +197,9 @@ function buildTx(guests: Guest[]) {
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod_1" }),
+    },
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
     },
   };
 }

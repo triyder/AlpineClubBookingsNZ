@@ -18,6 +18,9 @@ vi.mock("@/lib/prisma", () => ({
     bookingEvent: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -47,6 +50,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { loadEffectiveModuleFlagsMock, queueXeroInvoiceForPaidBookingMock } = vi.hoisted(() => ({

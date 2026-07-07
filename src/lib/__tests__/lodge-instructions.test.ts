@@ -7,10 +7,16 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   checkLodgeAuth: vi.fn(),
+  resolveKioskLodgeId: vi.fn(),
   lodgeInstructionFindMany: vi.fn(),
-  lodgeInstructionFindUnique: vi.fn(),
-  lodgeInstructionUpsert: vi.fn(),
+  lodgeInstructionFindFirst: vi.fn(),
+  lodgeInstructionCreate: vi.fn(),
+  lodgeInstructionUpdate: vi.fn(),
+  lodgeInstructionDeleteMany: vi.fn(),
   hutLeaderAssignmentCount: vi.fn(),
+  hutLeaderAssignmentFindMany: vi.fn(),
+  lodgeFindUnique: vi.fn(),
+  lodgeFindFirst: vi.fn(),
   auditLogCreate: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
   getAuditRequestContext: vi.fn(() => ({
@@ -54,6 +60,7 @@ vi.mock("@/lib/audit", () => ({
 
 vi.mock("@/lib/lodge-auth", () => ({
   checkLodgeAuth: mocks.checkLodgeAuth,
+  resolveKioskLodgeId: mocks.resolveKioskLodgeId,
 }));
 
 // Deterministic values for text-token resolution; importOriginal keeps the
@@ -65,17 +72,26 @@ vi.mock("@/config/club-identity", async (importOriginal) => ({
 vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/lodge-capacity")>()),
   getLodgeCapacity: vi.fn(async () => 32),
+  // The bare {{lodge-capacity}} token resolves the default lodge.
+  getDefaultLodgeCapacity: vi.fn(async () => 32),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     lodgeInstruction: {
       findMany: mocks.lodgeInstructionFindMany,
-      findUnique: mocks.lodgeInstructionFindUnique,
-      upsert: mocks.lodgeInstructionUpsert,
+      findFirst: mocks.lodgeInstructionFindFirst,
+      create: mocks.lodgeInstructionCreate,
+      update: mocks.lodgeInstructionUpdate,
+      deleteMany: mocks.lodgeInstructionDeleteMany,
     },
     hutLeaderAssignment: {
       count: mocks.hutLeaderAssignmentCount,
+      findMany: mocks.hutLeaderAssignmentFindMany,
+    },
+    lodge: {
+      findUnique: mocks.lodgeFindUnique,
+      findFirst: mocks.lodgeFindFirst,
     },
     auditLog: {
       create: mocks.auditLogCreate,
@@ -137,13 +153,19 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireActiveSessionUser.mockResolvedValue(null);
   mocks.lodgeInstructionFindMany.mockResolvedValue(storedDocuments);
+  mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
+  mocks.resolveKioskLodgeId.mockResolvedValue("lodge-1");
   mocks.auditLogCreate.mockResolvedValue({});
 });
+
+function readerRequest(query = "") {
+  return new NextRequest(`http://localhost/api/lodge-instructions${query}`);
+}
 
 describe("GET /api/lodge-instructions (reader access control)", () => {
   it("denies an unauthenticated request", async () => {
     mocks.auth.mockResolvedValue(null);
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(401);
   });
 
@@ -151,7 +173,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
     mocks.auth.mockResolvedValue(memberSession);
     useAssignments([]);
 
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(403);
     const body = await response.json();
     expect(body.error).toContain("not currently assigned");
@@ -162,7 +184,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
     mocks.auth.mockResolvedValue(memberSession);
     useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
 
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.documents.map((doc: { key: string }) => doc.key)).toEqual([
@@ -178,7 +200,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
       { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(), 14) },
     ]);
 
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(200);
   });
 
@@ -188,7 +210,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
       { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(), -1) },
     ]);
 
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(403);
     expect(mocks.lodgeInstructionFindMany).not.toHaveBeenCalled();
   });
@@ -199,7 +221,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
       { memberId: "member-2", endDate: addDaysDateOnly(getTodayDateOnly(), 14) },
     ]);
 
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(403);
   });
 
@@ -207,9 +229,55 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
     mocks.auth.mockResolvedValue(adminSession);
     useAssignments([]);
 
-    const response = await readerGET();
+    const response = await readerGET(readerRequest());
     expect(response.status).toBe(200);
     expect(mocks.hutLeaderAssignmentCount).not.toHaveBeenCalled();
+  });
+
+  it("scopes the documents to the member's sole assignment lodge", async () => {
+    mocks.auth.mockResolvedValue(memberSession);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
+      { lodgeId: "lodge-2" },
+      { lodgeId: "lodge-2" },
+    ]);
+
+    const response = await readerGET(readerRequest());
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeInstructionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { OR: [{ lodgeId: null }, { lodgeId: "lodge-2" }] },
+      }),
+    );
+  });
+
+  it("falls back to the club-wide documents when assignments span lodges", async () => {
+    mocks.auth.mockResolvedValue(memberSession);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
+      { lodgeId: "lodge-2" },
+      { lodgeId: "lodge-3" },
+    ]);
+
+    const response = await readerGET(readerRequest());
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeInstructionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { lodgeId: null } }),
+    );
+  });
+
+  it("honours an explicit lodgeId query parameter", async () => {
+    mocks.auth.mockResolvedValue(adminSession);
+
+    const response = await readerGET(readerRequest("?lodgeId=lodge-9"));
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeInstructionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { OR: [{ lodgeId: null }, { lodgeId: "lodge-9" }] },
+      }),
+    );
+    // No inference query needed when the lodge is named explicitly.
+    expect(mocks.hutLeaderAssignmentFindMany).not.toHaveBeenCalled();
   });
 });
 
@@ -223,25 +291,33 @@ describe("admin lodge-instructions route", () => {
   }
 
   beforeEach(() => {
-    mocks.lodgeInstructionFindUnique.mockResolvedValue({
+    mocks.lodgeInstructionFindFirst.mockResolvedValue({
+      id: "lodge-instruction-1",
       contentHtml: "<p>Old</p>",
     });
-    mocks.lodgeInstructionUpsert.mockImplementation(
-      async ({ update, where }: { update: { contentHtml: string }; where: { key: string } }) => ({
-        id: `lodge-instruction-${where.key.toLowerCase()}`,
-        key: where.key,
-        contentHtml: update.contentHtml,
+    mocks.lodgeInstructionUpdate.mockImplementation(
+      async ({ where, data }: { where: { id: string }; data: { contentHtml: string } }) => ({
+        id: where.id,
+        key: "OPEN",
+        contentHtml: data.contentHtml,
         updatedAt: new Date("2026-06-11T00:00:00Z"),
+        lodgeId: null,
       }),
     );
   });
 
   it("lists the three documents for admins", async () => {
     mocks.auth.mockResolvedValue(adminSession);
-    const response = await adminGET();
+    const response = await adminGET(
+      new NextRequest("http://localhost/api/admin/lodge-instructions"),
+    );
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.documents).toHaveLength(3);
+    // The admin editor lists the club-wide partition by default.
+    expect(mocks.lodgeInstructionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { lodgeId: null } }),
+    );
   });
 
   it("rejects non-admin members", async () => {
@@ -250,7 +326,8 @@ describe("admin lodge-instructions route", () => {
       putRequest({ key: "OPEN", contentHtml: "<p>Hi</p>" }),
     );
     expect(response.status).toBe(403);
-    expect(mocks.lodgeInstructionUpsert).not.toHaveBeenCalled();
+    expect(mocks.lodgeInstructionUpdate).not.toHaveBeenCalled();
+    expect(mocks.lodgeInstructionCreate).not.toHaveBeenCalled();
   });
 
   it("sanitises content on write and writes an audit entry", async () => {
@@ -263,10 +340,13 @@ describe("admin lodge-instructions route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.lodgeInstructionUpsert).toHaveBeenCalledWith(
+    expect(mocks.lodgeInstructionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { key: "OPEN", lodgeId: null } }),
+    );
+    expect(mocks.lodgeInstructionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { key: "OPEN" },
-        update: expect.objectContaining({
+        where: { id: "lodge-instruction-1" },
+        data: expect.objectContaining({
           contentHtml: "<p>Open the shutters</p>",
         }),
       }),
@@ -287,9 +367,9 @@ describe("admin lodge-instructions route", () => {
       }),
     );
 
-    expect(mocks.lodgeInstructionUpsert).toHaveBeenCalledWith(
+    expect(mocks.lodgeInstructionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: expect.objectContaining({ contentHtml: "<p>Lock up</p>" }),
+        data: expect.objectContaining({ contentHtml: "<p>Lock up</p>" }),
       }),
     );
   });
@@ -300,7 +380,8 @@ describe("admin lodge-instructions route", () => {
       putRequest({ key: "SOMETHING_ELSE", contentHtml: "<p>Hi</p>" }),
     );
     expect(response.status).toBe(400);
-    expect(mocks.lodgeInstructionUpsert).not.toHaveBeenCalled();
+    expect(mocks.lodgeInstructionUpdate).not.toHaveBeenCalled();
+    expect(mocks.lodgeInstructionCreate).not.toHaveBeenCalled();
   });
 });
 
@@ -326,16 +407,17 @@ describe("sanitiser round-trip", () => {
 
   it("round-trips save and render without altering safe content", async () => {
     mocks.auth.mockResolvedValue(adminSession);
-    mocks.lodgeInstructionFindUnique.mockResolvedValue(null);
+    mocks.lodgeInstructionFindFirst.mockResolvedValue(null);
     let stored = "";
-    mocks.lodgeInstructionUpsert.mockImplementation(
-      async ({ create }: { create: { key: string; contentHtml: string } }) => {
-        stored = create.contentHtml;
+    mocks.lodgeInstructionCreate.mockImplementation(
+      async ({ data }: { data: { key: string; contentHtml: string } }) => {
+        stored = data.contentHtml;
         return {
           id: "lodge-instruction-open",
-          key: create.key,
-          contentHtml: create.contentHtml,
+          key: data.key,
+          contentHtml: data.contentHtml,
           updatedAt: new Date("2026-06-11T00:00:00Z"),
+          lodgeId: null,
         };
       },
     );
@@ -455,7 +537,9 @@ describe("text token resolution", () => {
   it("resolves tokens on the member reader route", async () => {
     mocks.auth.mockResolvedValue(adminSession);
 
-    const response = await readerGET();
+    const response = await readerGET(
+      new NextRequest("http://localhost/api/lodge-instructions"),
+    );
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.documents[0].contentHtml).toBe(
@@ -484,7 +568,9 @@ describe("text token resolution", () => {
   it("returns raw tokens on the admin editor route", async () => {
     mocks.auth.mockResolvedValue(adminSession);
 
-    const response = await adminGET();
+    const response = await adminGET(
+      new NextRequest("http://localhost/api/admin/lodge-instructions"),
+    );
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.documents[0].contentHtml).toBe(

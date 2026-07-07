@@ -34,7 +34,14 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
 // each writer was separately confirmed to run both markers under one
 // prisma.$transaction, so source order reflects execution order.
 function assertLockBeforeGuard(block: string, label: string) {
-  const lockIdx = block.indexOf("pg_advisory_xact_lock(1)");
+  // The lock is either the per-lodge capacity lock (multi-lodge:
+  // acquireLodgeCapacityLock, which runs pg_advisory_xact_lock on a per-lodge
+  // key) or a raw advisory lock. Either satisfies the lock-before-guard
+  // contract; take whichever appears first.
+  const lockMarkers = ["acquireLodgeCapacityLock", "pg_advisory_xact_lock"]
+    .map((marker) => block.indexOf(marker))
+    .filter((idx) => idx >= 0);
+  const lockIdx = lockMarkers.length > 0 ? Math.min(...lockMarkers) : -1;
   const guardIdx = block.indexOf("assertNoBookingMemberNightConflicts");
   expect(lockIdx, `${label}: advisory lock present`).toBeGreaterThanOrEqual(0);
   expect(
@@ -130,7 +137,9 @@ describe("review finding source/schema contracts", () => {
     );
 
     expect(draftBlock).toContain("prisma.$transaction");
-    expect(draftBlock).toContain("pg_advisory_xact_lock(1)");
+    // The capacity lock is per-lodge since multi-lodge phase 3; the contract
+    // is that draft creation stays serialized under the capacity lock.
+    expect(draftBlock).toContain("acquireLodgeCapacityLock(tx,");
     expect(draftBlock).toContain("tx.booking.create");
     expect(draftBlock).toMatch(/redeemPromoCode\(\s*tx,/);
     expect(draftBlock).not.toContain("prisma.booking.create");
@@ -145,7 +154,7 @@ describe("review finding source/schema contracts", () => {
     );
 
     expect(createWaitlistedBookingBlock).toContain("prisma.$transaction");
-    expect(createWaitlistedBookingBlock).toContain("pg_advisory_xact_lock(1)");
+    expect(createWaitlistedBookingBlock).toContain("acquireLodgeCapacityLock(tx,");
   });
 
   it("takes the booking advisory lock before the person-night guard in every same-transaction member-linked guest writer", () => {
@@ -232,7 +241,10 @@ describe("review finding source/schema contracts", () => {
       batchService,
       "export async function modifyBookingBatch"
     );
-    const lockIdx = modifyBlock.indexOf("pg_advisory_xact_lock(1)");
+    const lockMarkers = ["acquireLodgeCapacityLock", "pg_advisory_xact_lock"]
+      .map((marker) => modifyBlock.indexOf(marker))
+      .filter((idx) => idx >= 0);
+    const lockIdx = lockMarkers.length > 0 ? Math.min(...lockMarkers) : -1;
     const delegateIdx = modifyBlock.indexOf("prepareGuestPlan(");
     expect(lockIdx, "modifyBookingBatch: advisory lock present").toBeGreaterThanOrEqual(0);
     expect(
@@ -388,21 +400,33 @@ describe("review finding source/schema contracts", () => {
   it("keeps financial-history relations from cascading deletes off Member and Booking", () => {
     const schema = readRepoFile("prisma/schema.prisma");
 
-    expect(schema).not.toContain(
-      'booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)'
-    );
-    expect(schema).not.toContain(
-      'member           Member                        @relation(fields: [memberId], references: [id], onDelete: Cascade)'
-    );
-    expect(schema).not.toContain(
-      'member         Member        @relation("AdminCreditAdjustmentTarget", fields: [memberId], references: [id], onDelete: Cascade)'
-    );
-    expect(schema).not.toContain(
-      'booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)'
-    );
-    expect(schema).not.toContain(
-      'member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)'
-    );
+    // The original finding banned exact relation lines, which broke on any
+    // unrelated model whose formatting coincided (e.g. the ADR-004 waitlist
+    // opt-in junction, which legitimately cascades with its booking). Assert
+    // the actual invariant instead: within each financial-history model, no
+    // relation to Booking or Member may cascade, regardless of formatting.
+    const FINANCIAL_HISTORY_MODELS = [
+      "BookingEvent",
+      "Payment",
+      "PaymentTransaction",
+      "PaymentRefund",
+      "RefundRequest",
+      "MemberCredit",
+      "AdminCreditAdjustmentRequest",
+      "PaymentRecoveryOperation",
+    ];
+    for (const model of FINANCIAL_HISTORY_MODELS) {
+      const block = schema.match(
+        new RegExp(`^model ${model} \\{[\\s\\S]*?^\\}`, "m")
+      );
+      expect(block, `model ${model} missing from schema`).not.toBeNull();
+      const offending = (block![0].match(/^.*@relation.*$/gm) ?? []).filter(
+        (line) =>
+          /\b(Booking|Member)\b\s+@relation/.test(line) &&
+          line.includes("onDelete: Cascade")
+      );
+      expect(offending, `${model} cascades off Booking/Member`).toEqual([]);
+    }
   });
 
   it("serializes stale waitlist-offer expiry and re-offer selection behind a transaction", () => {
@@ -414,7 +438,7 @@ describe("review finding source/schema contracts", () => {
     );
 
     expect(expireStaleOffersBlock).toContain("prisma.$transaction");
-    expect(expireStaleOffersBlock).toContain("pg_advisory_xact_lock");
+    expect(expireStaleOffersBlock).toContain("acquireLodgeCapacityLock");
   });
 
   it("adds SES bounce and complaint ingestion instead of retry-only email recovery", () => {

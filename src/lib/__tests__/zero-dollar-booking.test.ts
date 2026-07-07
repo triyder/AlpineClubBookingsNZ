@@ -42,6 +42,8 @@ const mockPaymentUpdate = vi.fn();
 const mockPaymentCreate = vi.fn();
 const mockPaymentUpsert = vi.fn();
 const mockExecuteRaw = vi.fn().mockResolvedValue(undefined);
+const mockTxLodgeFindFirst = vi.fn().mockResolvedValue({ id: "lodge-1" });
+const mockTxMemberLodgeAccessFindMany = vi.fn().mockResolvedValue([]);
 
 // Shared tx mock used by booking route
 const mockTx = {
@@ -56,11 +58,14 @@ const mockTx = {
   season: { findMany: mockTxSeasonFindMany },
   payment: { create: mockTxPaymentCreate, upsert: mockPaymentUpsert },
   promoRedemption: { findUnique: vi.fn().mockResolvedValue(null) },
+  lodge: { findFirst: mockTxLodgeFindFirst },
+  memberLodgeAccess: { findMany: mockTxMemberLodgeAccessFindMany },
 };
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
+    lodge: { findFirst: mockTxLodgeFindFirst },
     member: {
       count: (...args: unknown[]) => mockMemberCount(...args),
       findUnique: (...args: unknown[]) => mockMemberFindUnique(...args),
@@ -115,6 +120,7 @@ vi.mock("@/lib/booking-policies", () => ({
 
 const mockCheckCapacity = vi.fn();
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacity: (...args: unknown[]) => mockCheckCapacity(...args),
   checkCapacityForGuestRanges: (...args: unknown[]) => mockCheckCapacity(...args),
   getOccupiedBedsForNight: vi.fn().mockReturnValue(0),
@@ -276,6 +282,8 @@ describe("Booking Creation Route: zero-dollar handling", () => {
     mockMemberCount.mockResolvedValue(1);
     mockTxBookingFindMany.mockResolvedValue([]);
     mockTxSeasonFindMany.mockResolvedValue([]);
+    mockTxLodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+    mockTxMemberLodgeAccessFindMany.mockResolvedValue([]);
     mockCheckCapacity.mockResolvedValue({
       available: true,
       minAvailable: 29,

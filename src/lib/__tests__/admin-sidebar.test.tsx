@@ -111,6 +111,7 @@ describe("AdminSidebar", () => {
     expect(section?.items.map((item) => item.label)).toEqual([
       "Setup",
       "Modules",
+      "Lodges",
       "Membership & Members",
       "Site Appearance & Content",
       "Bookings Setup",

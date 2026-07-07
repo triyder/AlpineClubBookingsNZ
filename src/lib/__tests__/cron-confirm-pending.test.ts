@@ -75,10 +75,18 @@ vi.mock("../promo", () => ({
 
 // Mock capacity
 const mockCheckCapacityForGuestRanges = vi.fn();
+const mockAcquireLodgeCapacityLock = vi.fn().mockResolvedValue(undefined);
 vi.mock("../capacity", () => ({
   checkCapacityForGuestRanges: (...args: unknown[]) =>
     mockCheckCapacityForGuestRanges(...args),
+  acquireLodgeCapacityLock: (...args: unknown[]) =>
+    mockAcquireLodgeCapacityLock(...args),
   LODGE_CAPACITY: 29,
+}));
+
+const mockLodgeFindFirst = vi.fn().mockResolvedValue({ id: "lodge-1" });
+vi.mock("../lodges", () => ({
+  getDefaultLodgeId: (...args: unknown[]) => mockLodgeFindFirst(...args).then((l: { id: string }) => l.id),
 }));
 
 // Mock Prisma
@@ -242,6 +250,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       if (typeof arg === "function") {
         return arg({
           $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
+          lodge: {
+            findFirst: (...args: unknown[]) => mockLodgeFindFirst(...args),
+          },
           booking: {
             findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
             update: (...args: unknown[]) => mockBookingUpdate(...args),
@@ -324,7 +335,10 @@ describe("Cron: Confirm Pending Bookings", () => {
       booking.checkOut,
       2,
       10000,
-      undefined
+      // Multi-lodge phase 8: the options now carry the booking's lodge so
+      // the email renders that lodge's identity (undefined here because the
+      // fixture booking has no lodgeId).
+      { lodgeId: undefined }
     );
   });
 
@@ -602,6 +616,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     await confirmPendingBookings();
 
     expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
+      "lodge-1",
       booking.checkIn,
       booking.checkOut,
       booking.guests,

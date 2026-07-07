@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   restoreCreditFromBooking: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
+  lodgeFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -58,6 +59,10 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
+  $queryRaw: (...args: unknown[]) => mocks.executeRaw(...args),
+  lodge: {
+    findFirst: (...args: unknown[]) => mocks.lodgeFindFirst(...args),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
@@ -105,6 +110,7 @@ describe("markBookingPaymentSucceeded", () => {
       fn(tx)
     );
     mocks.executeRaw.mockResolvedValue(undefined);
+    mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
     mocks.paymentUpsert.mockResolvedValue({ id: "payment-1" });
     mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);

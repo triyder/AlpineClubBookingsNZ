@@ -81,9 +81,13 @@ describe("booking policy check route", () => {
       violations: [],
       message: null,
     });
+    // No lodgeId in the query resolves the club-wide/default lodge rules
+    // (multi-lodge phase 8 threads an explicit lodge through as a third
+    // argument when the booking flow supplies one).
     expect(mockValidateMinimumStay).toHaveBeenCalledWith(
       new Date("2026-07-01"),
-      new Date("2026-07-03")
+      new Date("2026-07-03"),
+      null
     );
   });
 });

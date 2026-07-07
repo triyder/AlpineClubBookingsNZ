@@ -1641,7 +1641,8 @@ describe("cancelBooking credit refunds", () => {
       expect.anything(),
       5000,
       "card",
-      1500
+      1500,
+      undefined
     );
   });
 
@@ -1905,12 +1906,17 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
     finalPriceCents: 1000,
     checkIn: new Date("2026-08-01"),
     checkOut: new Date("2026-08-03"),
+    lodgeId: "lodge-1",
     member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
     payment: null,
   };
 
   it("sends the cancellation email for a held booking when notification is NOT suppressed", async () => {
     mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    // The email/audit/waitlist all source from the under-lock `fresh` read
+    // (#1311 follow-up to #1334), so the tx re-read must carry the same
+    // lodgeId as the outer snapshot for this assertion to be meaningful.
+    mocks.txBookingFindUnique.mockResolvedValue({ ...heldBooking });
 
     const result = await cancelBooking("held-1", "admin-1", "ADMIN", "127.0.0.1");
 
@@ -1922,6 +1928,8 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
       heldBooking.checkOut,
       0,
       "card",
+      0,
+      "lodge-1",
     );
   });
 
@@ -2094,6 +2102,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       finalPriceCents: 1000,
       checkIn: staleCheckIn,
       checkOut: staleCheckOut,
+      lodgeId: "lodge-stale",
       member: { id: "owner-1", email: "stale@example.com", firstName: "Stale" },
       payment: null,
     });
@@ -2105,6 +2114,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       finalPriceCents: 1000,
       checkIn: freshCheckIn,
       checkOut: freshCheckOut,
+      lodgeId: "lodge-fresh",
       member: { id: "owner-1", email: "fresh@example.com", firstName: "Fresh" },
       payment: null,
     });
@@ -2123,6 +2133,8 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       freshCheckOut,
       0,
       "card",
+      0,
+      "lodge-fresh",
     );
     expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalledWith(
       "stale@example.com",
@@ -2131,12 +2143,15 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
 
-    // Waitlist re-process (WAITLIST_OFFERED) uses the under-lock dates.
+    // Waitlist re-process (WAITLIST_OFFERED) uses the under-lock dates + lodge.
     expect(mocks.processWaitlistForDates).toHaveBeenCalledWith({
       checkIn: freshCheckIn,
       checkOut: freshCheckOut,
+      lodgeId: "lodge-fresh",
     });
 
     // Audit metadata (checkIn/checkOut/statusBefore) is derived from the

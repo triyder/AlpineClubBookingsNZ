@@ -32,12 +32,15 @@ const mocks = vi.hoisted(() => ({
   loadModuleFlags: vi.fn(),
   sendSettlementReceipt: vi.fn(),
   sendJoinSettled: vi.fn(),
+  lodgeFindFirst: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn(),
 }));
 
 // The transaction client exposes the same nested method mocks; the callback runs
 // synchronously against it so assertions can inspect every write.
 const txClient = {
   $executeRaw: mocks.txExecuteRaw,
+  lodge: { findFirst: mocks.lodgeFindFirst },
   booking: {
     findUnique: mocks.bookingFindUnique,
     findMany: mocks.bookingFindMany,
@@ -75,6 +78,7 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: mocks.checkCapacity,
+  acquireLodgeCapacityLock: mocks.acquireLodgeCapacityLock,
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBooking: mocks.reconcileBedAllocations,
@@ -135,6 +139,8 @@ beforeEach(() => {
     cb(txClient)
   );
   mocks.txExecuteRaw.mockResolvedValue(undefined);
+  mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+  mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.recordBookingEvent.mockResolvedValue(undefined);
   mocks.enqueueXeroInvoice.mockResolvedValue({ queueOperationId: null });

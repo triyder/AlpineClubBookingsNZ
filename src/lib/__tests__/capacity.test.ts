@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "fs";
+import path from "path";
 import { BookingStatus } from "@prisma/client";
 import { parseDateOnly } from "@/lib/date-only";
+import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 
 const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
@@ -23,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import {
+  acquireLodgeCapacityLock,
   checkCapacity,
   checkCapacityForGuestRanges,
   getMonthAvailability,
@@ -33,6 +37,32 @@ import {
 } from "@/lib/lodge-capacity";
 
 const TEST_LODGE_CAPACITY = FALLBACK_LODGE_CAPACITY;
+const LODGE_A = "lodge-a";
+const LODGE_B = "lodge-b";
+
+// db without a lodge delegate: the requested lodge is treated as the default
+// lodge, preserving legacy single-lodge behaviour (club-config fallback).
+function singleLodgeDb(overrides: Record<string, unknown> = {}) {
+  return {
+    clubModuleSettings: {
+      findUnique: mocks.clubModuleSettingsFindUnique,
+    },
+    lodgeBed: {
+      count: mocks.lodgeBedCount,
+    },
+    ...overrides,
+  } as never;
+}
+
+// db where LODGE_A is the default (oldest active) lodge.
+function twoLodgeDb(overrides: Record<string, unknown> = {}) {
+  return singleLodgeDb({
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: LODGE_A }),
+    },
+    ...overrides,
+  });
+}
 
 describe("capacity calendar availability", () => {
   beforeEach(() => {
@@ -45,14 +75,7 @@ describe("capacity calendar availability", () => {
   it("uses club config capacity when the bed allocation module is off", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
 
-    const status = await getLodgeCapacityStatus({
-      clubModuleSettings: {
-        findUnique: mocks.clubModuleSettingsFindUnique,
-      },
-      lodgeBed: {
-        count: mocks.lodgeBedCount,
-      },
-    } as never);
+    const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
 
     expect(status).toMatchObject({
       capacity: TEST_LODGE_CAPACITY,
@@ -67,14 +90,7 @@ describe("capacity calendar availability", () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(17);
 
-    const status = await getLodgeCapacityStatus({
-      clubModuleSettings: {
-        findUnique: mocks.clubModuleSettingsFindUnique,
-      },
-      lodgeBed: {
-        count: mocks.lodgeBedCount,
-      },
-    } as never);
+    const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
 
     expect(status).toMatchObject({
       capacity: 17,
@@ -84,18 +100,22 @@ describe("capacity calendar availability", () => {
     });
   });
 
+  it("scopes the active bed count to the requested lodge's rooms", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(6);
+
+    await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
+
+    expect(mocks.lodgeBedCount).toHaveBeenCalledWith({
+      where: { active: true, room: { lodgeId: LODGE_A } },
+    });
+  });
+
   it("falls back to club config when the bed allocation module is on with zero active beds", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(0);
 
-    const status = await getLodgeCapacityStatus({
-      clubModuleSettings: {
-        findUnique: mocks.clubModuleSettingsFindUnique,
-      },
-      lodgeBed: {
-        count: mocks.lodgeBedCount,
-      },
-    } as never);
+    const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
 
     expect(status).toMatchObject({
       capacity: TEST_LODGE_CAPACITY,
@@ -108,21 +128,18 @@ describe("capacity calendar availability", () => {
   it("uses the admin lodge capacity override as the fallback", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
 
-    const status = await getLodgeCapacityStatus({
-      clubModuleSettings: {
-        findUnique: mocks.clubModuleSettingsFindUnique,
-      },
-      lodgeSettings: {
-        findUnique: vi.fn().mockResolvedValue({ capacity: 42 }),
-      },
-      lodgeBed: {
-        count: mocks.lodgeBedCount,
-      },
-    } as never);
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 42 }),
+        },
+      }),
+    );
 
     expect(status).toMatchObject({
       capacity: 42,
-      source: "club_config",
+      source: "capacity_override",
       bedAllocationEnabled: false,
       activeBedCount: 0,
       fallbackCapacity: 42,
@@ -133,17 +150,14 @@ describe("capacity calendar availability", () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(20);
 
-    const status = await getLodgeCapacityStatus({
-      clubModuleSettings: {
-        findUnique: mocks.clubModuleSettingsFindUnique,
-      },
-      lodgeSettings: {
-        findUnique: vi.fn().mockResolvedValue({ capacity: 42 }),
-      },
-      lodgeBed: {
-        count: mocks.lodgeBedCount,
-      },
-    } as never);
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 42 }),
+        },
+      }),
+    );
 
     expect(status).toMatchObject({
       capacity: 20,
@@ -155,7 +169,7 @@ describe("capacity calendar availability", () => {
   });
 
   it("emits one key for each date-only day in the requested month", async () => {
-    const availability = await getMonthAvailability(2026, 3);
+    const availability = await getMonthAvailability(LODGE_A, 2026, 3);
     const keys = [...availability.keys()];
 
     expect(keys).toHaveLength(30);
@@ -166,7 +180,7 @@ describe("capacity calendar availability", () => {
   });
 
   it("queries the full month using date-only exclusive end boundaries", async () => {
-    await getMonthAvailability(2026, 3);
+    await getMonthAvailability(LODGE_A, 2026, 3);
 
     const call = mocks.bookingFindMany.mock.calls[0][0];
     expect(call.where.checkIn.lt).toEqual(parseDateOnly("2026-05-01"));
@@ -182,14 +196,14 @@ describe("capacity calendar availability", () => {
       },
     ]);
 
-    const availability = await getMonthAvailability(2026, 3);
+    const availability = await getMonthAvailability(LODGE_A, 2026, 3);
 
     expect(availability.get("2026-04-29")).toBe(0);
     expect(availability.get("2026-04-30")).toBe(2);
   });
 
   it("queries completed bookings as capacity-holding bookings", async () => {
-    await getMonthAvailability(2026, 3);
+    await getMonthAvailability(LODGE_A, 2026, 3);
 
     // Capacity-holding is now an OR of the holding-status set plus
     // request-converted PENDING holds (issue #1254, refining #737).
@@ -217,7 +231,7 @@ describe("capacity calendar availability", () => {
       },
     ]);
 
-    const availability = await getMonthAvailability(2026, 3);
+    const availability = await getMonthAvailability(LODGE_A, 2026, 3);
 
     expect(availability.get("2026-04-09")).toBe(0);
     expect(availability.get("2026-04-10")).toBe(4);
@@ -236,6 +250,7 @@ describe("capacity calendar availability", () => {
     ]);
 
     const result = await checkCapacity(
+      LODGE_A,
       parseDateOnly("2026-04-10"),
       parseDateOnly("2026-04-12"),
       TEST_LODGE_CAPACITY - 4
@@ -281,7 +296,7 @@ describe("capacity calendar availability", () => {
       },
     ]);
 
-    const availability = await getMonthAvailability(2026, 3);
+    const availability = await getMonthAvailability(LODGE_A, 2026, 3);
 
     expect(availability.get("2026-04-09")).toBe(0);
     expect(availability.get("2026-04-10")).toBe(2);
@@ -307,6 +322,7 @@ describe("capacity calendar availability", () => {
     ]);
 
     const result = await checkCapacityForGuestRanges(
+      LODGE_A,
       parseDateOnly("2026-04-10"),
       parseDateOnly("2026-04-12"),
       [
@@ -340,6 +356,7 @@ describe("capacity calendar availability", () => {
     ]);
 
     const result = await checkCapacityForGuestRanges(
+      LODGE_A,
       parseDateOnly("2026-04-10"),
       parseDateOnly("2026-04-12"),
       [{}, {}]
@@ -347,5 +364,147 @@ describe("capacity calendar availability", () => {
 
     expect(result.available).toBe(false);
     expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([-1, -1]);
+  });
+});
+
+describe("multi-lodge capacity scoping", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.bookingFindMany.mockResolvedValue([]);
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue(null);
+    mocks.lodgeBedCount.mockResolvedValue(0);
+  });
+
+  it("filters capacity queries strictly to the requested lodge", async () => {
+    await checkCapacity(
+      LODGE_B,
+      parseDateOnly("2026-04-10"),
+      parseDateOnly("2026-04-12"),
+      2
+    );
+
+    const call = mocks.bookingFindMany.mock.calls[0][0];
+    // lodgeId is NOT NULL on Booking, so the scope is a strict per-lodge
+    // match at the top level; the only where.OR is the capacity-holding filter.
+    expect(call.where.lodgeId).toBe(LODGE_B);
+    expect(call.where.OR).toEqual(capacityHoldingBookingFilter().OR);
+  });
+
+  it("applies the same lodge filter to month availability queries", async () => {
+    await getMonthAvailability(LODGE_A, 2026, 3);
+
+    const call = mocks.bookingFindMany.mock.calls[0][0];
+    expect(call.where.lodgeId).toBe(LODGE_A);
+    expect(call.where.OR).toEqual(capacityHoldingBookingFilter().OR);
+  });
+
+  it("resolves zero capacity for an unconfigured additional lodge", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(0);
+
+    const status = await getLodgeCapacityStatus(LODGE_B, twoLodgeDb());
+
+    expect(status).toMatchObject({
+      capacity: 0,
+      source: "unconfigured_lodge",
+      activeBedCount: 0,
+      fallbackCapacity: 0,
+    });
+  });
+
+  it("keeps the club-config fallback for the default lodge", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(0);
+
+    const status = await getLodgeCapacityStatus(LODGE_A, twoLodgeDb());
+
+    expect(status).toMatchObject({
+      capacity: TEST_LODGE_CAPACITY,
+      source: "club_config",
+    });
+  });
+
+  it("uses configured beds for an additional lodge once its rooms have beds", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(8);
+
+    const status = await getLodgeCapacityStatus(LODGE_B, twoLodgeDb());
+
+    expect(status).toMatchObject({
+      capacity: 8,
+      source: "configured_beds",
+      activeBedCount: 8,
+    });
+    expect(mocks.lodgeBedCount).toHaveBeenCalledWith({
+      where: { active: true, room: { lodgeId: LODGE_B } },
+    });
+  });
+
+  it("does not apply another lodge's capacity override", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_B,
+      twoLodgeDb({
+        lodgeSettings: {
+          // Id-keyed like the per-lodge read path: LODGE_B has no row of
+          // its own; the legacy "default" row is linked to LODGE_A.
+          findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+            where.id === "default"
+              ? { capacity: 42, lodgeId: LODGE_A }
+              : null,
+          ),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 0,
+      source: "unconfigured_lodge",
+    });
+  });
+
+  it("applies an unlinked (legacy) capacity override to any lodge", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: false });
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 42, lodgeId: null }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({ capacity: 42, source: "capacity_override" });
+  });
+
+  it("acquires a per-lodge advisory lock keyed by the lodge id", async () => {
+    // $executeRaw, never $queryRaw: pg_advisory_xact_lock returns void and
+    // the driver adapter fails to deserialize it as a result row.
+    const executeRaw = vi.fn().mockResolvedValue(0);
+
+    await acquireLodgeCapacityLock({ $executeRaw: executeRaw } as never, LODGE_A);
+
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = executeRaw.mock.calls[0];
+    expect(strings.join("?")).toContain("pg_advisory_xact_lock(hashtextextended(");
+    expect(values).toEqual([LODGE_A]);
+  });
+
+  it("never acquires the capacity lock through $queryRaw", () => {
+    // Regression pin for the runtime failure this caused: every booking
+    // transaction died with a void-deserialization error under the pg
+    // driver adapter.
+    const source = readFileSync(
+      path.join(process.cwd(), "src/lib/capacity.ts"),
+      "utf8",
+    );
+    const lockFn = source.slice(
+      source.indexOf("export async function acquireLodgeCapacityLock"),
+      source.indexOf("}", source.indexOf("export async function acquireLodgeCapacityLock")) + 1,
+    );
+    expect(lockFn).toContain("$executeRaw");
+    expect(lockFn).not.toContain("$queryRaw");
   });
 });
