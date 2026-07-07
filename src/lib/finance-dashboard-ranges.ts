@@ -142,7 +142,7 @@ export interface FinanceDashboardDateWindow {
   label: string;
 }
 
-export interface FinanceDashboardForwardWindow {
+interface FinanceDashboardForwardWindow {
   from: string | null;
   to: string | null;
   label: string;
@@ -415,7 +415,7 @@ export function resolveComparisonFinanceRange(input: {
 }
 
 // test seam
-export function resolveForwardFinanceWindow(input: {
+function resolveForwardFinanceWindow(input: {
   option: FinanceDashboardForwardOption;
   searchParams?: SearchParams;
   today?: Date;

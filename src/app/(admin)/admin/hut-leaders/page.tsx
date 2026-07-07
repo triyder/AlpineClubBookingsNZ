@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { OccupancyCalendar } from "@/components/admin/occupancy-calendar";
 
@@ -32,6 +32,8 @@ interface EligibleMember {
   bookingCheckOut: string;
   suggestedStartDate: string;
   suggestedEndDate: string;
+  uncoveredNightCount: number;
+  fullyCovered: boolean;
 }
 
 interface UnassignedDate {
@@ -62,7 +64,7 @@ export default function HutLeadersPage() {
     startDate: "",
     endDate: "",
   });
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; memberId: string | null } | null>(null);
 
   const fetchAssignments = useCallback(async () => {
     try {
@@ -127,7 +129,7 @@ export default function HutLeadersPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
+    setError(null);
     setCreating(true);
     try {
       const submitData = editingMember
@@ -140,7 +142,10 @@ export default function HutLeadersPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to create");
+        setError({
+          message: data.error || "Failed to create",
+          memberId: editingMember ?? formData.memberId ?? null,
+        });
         return;
       }
       setFormData({ memberId: "", startDate: "", endDate: "" });
@@ -154,7 +159,7 @@ export default function HutLeadersPage() {
   }
 
   async function handleQuickAssign(member: EligibleMember) {
-    setError("");
+    setError(null);
     setCreating(true);
     try {
       const res = await fetch("/api/admin/hut-leaders", {
@@ -168,7 +173,7 @@ export default function HutLeadersPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to create");
+        setError({ message: data.error || "Failed to create", memberId: member.id });
         return;
       }
       // Don't reset form or close it — only re-fetch data so remaining
@@ -207,7 +212,7 @@ export default function HutLeadersPage() {
       return;
     }
 
-    setError("");
+    setError(null);
     setPinMessage(null);
     setResettingPinId(assignment.id);
     try {
@@ -216,7 +221,7 @@ export default function HutLeadersPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "Failed to reset PIN");
+        setError({ message: data.error || "Failed to reset PIN", memberId: null });
         return;
       }
 
@@ -254,6 +259,23 @@ export default function HutLeadersPage() {
           New Assignment
         </Button>
       </div>
+
+      {/*
+        Intentionally page-level (more prominent than the spec's "top of the
+        form"): reset-PIN errors originate in the assignments table, where the
+        form may be closed, so a form-scoped banner would never show them. This
+        guarantees every error — create, quick-assign, reset-PIN — is visible
+        without scrolling regardless of form/table position.
+      */}
+      {error && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          {error.message}
+        </div>
+      )}
 
       {unassignedDates.length > 0 && (
         <Card className="border-amber-200 bg-amber-50">
@@ -346,10 +368,20 @@ export default function HutLeadersPage() {
                   </p>
                 ) : (
                   <div className="mt-2 space-y-3">
-                    {eligibleMembers.map((m) => (
+                    {eligibleMembers.map((m) => {
+                      // Nights covered by the suggested range (inclusive day count).
+                      const suggestedNightCount =
+                        Math.round(
+                          (parseDateOnly(m.suggestedEndDate).getTime() -
+                            parseDateOnly(m.suggestedStartDate).getTime()) /
+                            86_400_000,
+                        ) + 1;
+                      return (
                       <div
                         key={m.id}
                         className={`rounded-lg border p-4 ${
+                          m.fullyCovered ? "opacity-60 " : ""
+                        }${
                           editingMember === m.id ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-white"
                         }`}
                       >
@@ -379,12 +411,23 @@ export default function HutLeadersPage() {
                             <p className="text-xs text-slate-500 mt-0.5">
                               Suggested: {m.suggestedStartDate} — {m.suggestedEndDate}
                             </p>
+                            {suggestedNightCount < m.uncoveredNightCount && (
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                covers {suggestedNightCount} of {m.uncoveredNightCount} uncovered night
+                                {m.uncoveredNightCount !== 1 ? "s" : ""} (an existing {hutLeaderLabel.toLowerCase()} splits this stay)
+                              </p>
+                            )}
+                            {m.fullyCovered && (
+                              <p className="text-xs text-amber-600 mt-1">
+                                These dates already have a {hutLeaderLabel.toLowerCase()}.
+                              </p>
+                            )}
                           </div>
                           <div className="flex gap-2 flex-shrink-0">
                             <Button
                               type="button"
                               size="sm"
-                              disabled={creating}
+                              disabled={creating || m.fullyCovered}
                               onClick={() => handleQuickAssign(m)}
                             >
                               <Check className="h-3.5 w-3.5 mr-1" />
@@ -394,7 +437,7 @@ export default function HutLeadersPage() {
                               type="button"
                               size="sm"
                               variant="outline"
-                              disabled={creating}
+                              disabled={creating || m.fullyCovered}
                               onClick={() => handleEditAndAssign(m)}
                             >
                               <Pencil className="h-3.5 w-3.5 mr-1" />
@@ -402,6 +445,9 @@ export default function HutLeadersPage() {
                             </Button>
                           </div>
                         </div>
+                        {error?.memberId === m.id && (
+                          <p className="mt-2 text-sm text-red-600">{error.message}</p>
+                        )}
                         {editingMember === m.id && (
                           <div className="mt-3 pt-3 border-t border-blue-200">
                             <div className="grid grid-cols-2 gap-3">
@@ -446,11 +492,11 @@ export default function HutLeadersPage() {
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
-              {error && <p className="text-sm text-red-600">{error}</p>}
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={() => { setShowForm(false); setEditingMember(null); }}>
                   Close

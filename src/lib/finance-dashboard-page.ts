@@ -26,7 +26,6 @@ import {
 import { buildFinanceMonthlyBalanceSeries } from "@/lib/finance-monthly-balance";
 import {
   buildFinanceMonthlyPnlSummary,
-  type FinanceMonthlyPnlSummary,
 } from "@/lib/finance-monthly-pnl";
 import {
   buildFinanceFinancialYearsPanelItems,
@@ -66,14 +65,14 @@ type FinanceDashboardViewModel = Pick<
   | "exportSections"
 > & { warnings: string[] };
 
-export interface FinanceDashboardKpiCard {
+interface FinanceDashboardKpiCard {
   title: string;
   value: string;
   description: string;
   footnote?: string;
 }
 
-export interface FinanceDashboardTrend {
+interface FinanceDashboardTrend {
   title: string;
   description: string;
   variant: "bar" | "area" | "line";
@@ -88,14 +87,14 @@ export interface FinanceDashboardTrend {
   }>;
 }
 
-export interface FinanceDashboardMix {
+interface FinanceDashboardMix {
   title: string;
   description: string;
   valueType: "currency" | "count" | "percent" | "ratio";
   data: Array<{ name: string; value: number }>;
 }
 
-export interface FinanceDashboardStatusPanel {
+interface FinanceDashboardStatusPanel {
   title: string;
   description: string;
   badgeLabel?: string;
@@ -111,24 +110,24 @@ export interface FinanceDashboardStatusPanel {
   }>;
 }
 
-export interface FinanceDashboardExportSection {
+interface FinanceDashboardExportSection {
   title: string;
   rows: Array<Record<string, string | number>>;
 }
 
-export interface FinanceDashboardCostFilters {
+interface FinanceDashboardCostFilters {
   categories: Array<{ id: string; label: string }>;
   lines: Array<{ value: string; label: string; categoryId: string }>;
 }
 
-export interface FinanceDashboardSyncStatus {
+interface FinanceDashboardSyncStatus {
   label: string;
   tone: "success" | "warning" | "destructive" | "secondary";
   detail: string;
   lastSyncedAt: string | null;
 }
 
-export interface FinanceDashboardRatioExplorerModel {
+interface FinanceDashboardRatioExplorerModel {
   matrix: FinanceRatioMatrix;
   initialNumeratorId: string | null;
   initialDenominatorId: string | null;
@@ -1513,5 +1512,3 @@ export async function buildFinanceDashboardPageModel(input: {
     ],
   };
 }
-
-export type { FinanceMonthlyPnlSummary };

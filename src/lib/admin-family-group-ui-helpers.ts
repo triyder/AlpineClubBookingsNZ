@@ -105,7 +105,7 @@ export const AGE_TIER_COLORS: Record<string, string> = {
   ADULT: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
-export const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
+const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
 
 export function normalizeFamilyEmail(email: string) {
   return email.trim().toLowerCase();

@@ -12,13 +12,13 @@ export interface ManualFinanceSyncInput {
   requestedByMemberId: string;
 }
 
-export interface ManualFinanceSyncAlreadyRunningResult {
+interface ManualFinanceSyncAlreadyRunningResult {
   outcome: "already-running";
   runId: string;
   startedAt: Date;
 }
 
-export interface ManualFinanceSyncFinishedResult {
+interface ManualFinanceSyncFinishedResult {
   outcome: "finished";
   execution: FinanceSyncExecutionResult;
 }

@@ -28,7 +28,7 @@ type LegacyDashboardBookingExportRecord = Prisma.BookingGetPayload<{
   select: typeof legacyDashboardBookingExportSelect;
 }>;
 
-export interface LegacyDashboardBookingRow {
+interface LegacyDashboardBookingRow {
   booking_id: string;
   start_date: string;
   end_date: string;
@@ -40,7 +40,7 @@ export interface LegacyDashboardBookingRow {
   total: number;
 }
 
-export interface LegacyDashboardForwardBookingRow
+interface LegacyDashboardForwardBookingRow
   extends LegacyDashboardBookingRow {
   pipeline_bucket: "COMMITTED" | "AT_RISK";
   days_until_arrival: number;

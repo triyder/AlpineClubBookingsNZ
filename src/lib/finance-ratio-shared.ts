@@ -39,7 +39,7 @@ export interface FinanceFinancialYearBucket {
   isYearToDate: boolean;
 }
 
-export function financialYearStartMonth(
+function financialYearStartMonth(
   monthKey: string,
   yearEndMonth: number
 ): string {
@@ -49,7 +49,7 @@ export function financialYearStartMonth(
   return `${startYear}-${String(startMonth).padStart(2, "0")}`;
 }
 
-export function financialYearName(fyStartMonth: string): string {
+function financialYearName(fyStartMonth: string): string {
   return `FY${shiftMonthKey(fyStartMonth, 11).slice(0, 4)}`;
 }
 

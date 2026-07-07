@@ -53,7 +53,7 @@ export type AdminCancellationStatusFilter =
   | MembershipCancellationRequestStatus
   | "ALL";
 
-export type AdminSerializedMembershipCancellationParticipant = {
+type AdminSerializedMembershipCancellationParticipant = {
   id: string;
   memberId: string;
   name: string;
