@@ -10,12 +10,13 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { getDefaultLodgeId } from "@/lib/lodges";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -82,8 +83,6 @@ export async function markBookingPaymentSucceeded({
   paymentMethodId: string | null;
 }): Promise<MarkBookingPaymentSucceededResult> {
   const reconciliation = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
@@ -95,6 +94,9 @@ export async function markBookingPaymentSucceeded({
     if (!booking) {
       throw new Error("Booking not found");
     }
+
+    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
     const payment = await tx.payment.upsert({
       where: { bookingId },
@@ -142,6 +144,7 @@ export async function markBookingPaymentSucceeded({
     }
 
     const capacity = await checkCapacityForGuestRanges(
+      bookingLodgeId,
       booking.checkIn,
       booking.checkOut,
       booking.guests,

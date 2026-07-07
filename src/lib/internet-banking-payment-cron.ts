@@ -215,6 +215,8 @@ export async function releaseExpiredInternetBankingHolds(
       payment.booking.checkOut,
       0,
       "credit",
+      0,
+      payment.booking.lodgeId,
     ).catch((err) =>
       logger.error(
         { err, bookingId: payment.bookingId, paymentId: payment.id },
@@ -225,6 +227,7 @@ export async function releaseExpiredInternetBankingHolds(
     processWaitlistForDates({
       checkIn: payment.booking.checkIn,
       checkOut: payment.booking.checkOut,
+      lodgeId: payment.booking.lodgeId,
     }).catch((err) =>
       logger.error(
         { err, bookingId: payment.bookingId },

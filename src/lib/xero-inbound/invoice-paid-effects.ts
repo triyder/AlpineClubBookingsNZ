@@ -662,6 +662,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         !fresh.internetBankingHoldSlots
       ) {
         const capacity = await checkCapacityForGuestRanges(
+          fresh.booking.lodgeId,
           fresh.booking.checkIn,
           fresh.booking.checkOut,
           fresh.booking.guests,
@@ -810,6 +811,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           outcome.payment.booking.checkOut,
           outcome.creditedCents,
           "credit",
+          0,
+          outcome.payment.booking.lodgeId,
         ).catch((err) =>
           logger.error(
             { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
@@ -918,6 +921,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         outcome.payment.booking.checkOut,
         outcome.credited ? outcome.creditedCents : outcome.payment.amountCents,
         "credit",
+        0,
+        outcome.payment.booking.lodgeId,
       ).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },
@@ -927,6 +932,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       processWaitlistForDates({
         checkIn: outcome.payment.booking.checkIn,
         checkOut: outcome.payment.booking.checkOut,
+        lodgeId: outcome.payment.booking.lodgeId,
       }).catch((err) =>
         logger.error(
           { err, bookingId: outcome.payment.bookingId },
@@ -991,13 +997,18 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
       outcome.payment.booking.checkOut,
       outcome.payment.booking.guests.length,
       outcome.payment.booking.finalPriceCents,
-      outcome.payment.booking.promoRedemption?.promoCode
-        ? {
-            discountCents: outcome.payment.booking.discountCents,
-            promoAdjustmentCents: outcome.payment.booking.promoAdjustmentCents,
-            promoCode: outcome.payment.booking.promoRedemption.promoCode.code,
-          }
-        : undefined
+      {
+        // Always thread the booking's lodge so the confirmation email carries
+        // that lodge's name/travel note/door code, promo or not (multi-lodge).
+        lodgeId: outcome.payment.booking.lodgeId,
+        ...(outcome.payment.booking.promoRedemption?.promoCode
+          ? {
+              discountCents: outcome.payment.booking.discountCents,
+              promoAdjustmentCents: outcome.payment.booking.promoAdjustmentCents,
+              promoCode: outcome.payment.booking.promoRedemption.promoCode.code,
+            }
+          : {}),
+      }
     ).catch((err) =>
       logger.error(
         { err, bookingId: outcome.payment.bookingId, paymentId: outcome.payment.id },

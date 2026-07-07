@@ -22,6 +22,7 @@ import {
 import { APP_CURRENCY, APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { formatCents } from "@/lib/pricing";
+import { useLodgeOptions } from "@/components/lodge-select";
 
 interface MemberOption {
   id: string;
@@ -88,6 +89,7 @@ interface PromoCode {
   createdAt: string;
   redemptions: PromoRedemptionRow[];
   assignments: PromoAssignment[];
+  lodgeIds: string[];
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -144,6 +146,12 @@ export default function PromoCodesPage() {
   const [xeroItemCode, setXeroItemCode] = useState("");
   const [xeroAccountCode, setXeroAccountCode] = useState("");
   const [active, setActive] = useState(true);
+  // Optional per-lodge restriction (no selection = redeemable at every
+  // lodge). The whole control is hidden while fewer than two lodges exist
+  // (ADR-002 presentation rule).
+  const { lodges } = useLodgeOptions("admin");
+  const multiLodge = lodges.length > 1;
+  const [restrictedLodgeIds, setRestrictedLodgeIds] = useState<string[]>([]);
 
   const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
   const [assignedMembers, setAssignedMembers] = useState<MemberOption[]>([]);
@@ -308,6 +316,7 @@ export default function PromoCodesPage() {
     setXeroItemCode("");
     setXeroAccountCode("");
     setActive(true);
+    setRestrictedLodgeIds([]);
     setEditingId(null);
     setShowForm(false);
     setError("");
@@ -367,6 +376,7 @@ export default function PromoCodesPage() {
     setXeroItemCode(promo.xeroItemCode ?? "");
     setXeroAccountCode(promo.xeroAccountCode ?? "");
     setActive(promo.active);
+    setRestrictedLodgeIds(promo.lodgeIds ?? []);
     setAssignedMemberIds(promo.assignments?.map((a) => a.member.id) || []);
     setAssignedMembers(promo.assignments?.map((a) => a.member) || []);
     setShowForm(true);
@@ -396,6 +406,10 @@ export default function PromoCodesPage() {
       maxUniqueMembersTotal: maxUniqueMembersTotal ? parseInt(maxUniqueMembersTotal) : null,
       maxUsesPerMember: maxUsesPerMember ? parseInt(maxUsesPerMember) : null,
       assignedMemberIds,
+      // Only send the lodge restriction when the control is visible; a
+      // single-lodge admin editing a promo must not clear a restriction
+      // configured elsewhere (omitted = left unchanged by the API).
+      ...(multiLodge ? { lodgeIds: restrictedLodgeIds } : {}),
     };
 
     if (type === "PERCENTAGE") {
@@ -673,6 +687,16 @@ export default function PromoCodesPage() {
             )}
             {promo.memberGuestsOnly && (
               <Badge variant="outline">Member guests only</Badge>
+            )}
+            {multiLodge && (promo.lodgeIds?.length ?? 0) > 0 && (
+              <Badge variant="outline">
+                Lodges:{" "}
+                {promo.lodgeIds
+                  .map(
+                    (id) => lodges.find((lodge) => lodge.id === id)?.name ?? id
+                  )
+                  .join(", ")}
+              </Badge>
             )}
             {promo.xeroItemCode && (
               <Badge variant="outline">Xero Item: {promo.xeroItemCode}</Badge>
@@ -1188,6 +1212,41 @@ export default function PromoCodesPage() {
                   </div>
                 </div>
               </div>
+
+              {multiLodge && (
+                <div className="space-y-3 border rounded-md p-4">
+                  <div>
+                    <Label>Restrict to Lodges (optional)</Label>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      If lodges are selected, the code is redeemable only on
+                      bookings at those lodges. Leave all unticked for every
+                      lodge, including lodges added later.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-4">
+                    {lodges.map((lodge) => (
+                      <label
+                        key={lodge.id}
+                        className="flex items-center space-x-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={restrictedLodgeIds.includes(lodge.id)}
+                          onChange={(e) => {
+                            setRestrictedLodgeIds((current) =>
+                              e.target.checked
+                                ? [...current, lodge.id]
+                                : current.filter((id) => id !== lodge.id)
+                            );
+                          }}
+                          className="rounded border-input"
+                        />
+                        <span className="text-sm">{lodge.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-3 border rounded-md p-4">
                 <div>

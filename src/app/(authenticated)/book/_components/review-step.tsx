@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { type LodgeOption } from "@/components/lodge-select";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { CreditCard, Landmark } from "lucide-react";
@@ -41,6 +42,9 @@ export function ReviewStep({
   nights,
   guests,
   priceQuote,
+  lodges,
+  lodgeId,
+  selectedLodge,
   reviewGuestPayload,
   bookingDateStrings,
   perGuestDatesEnabled,
@@ -100,6 +104,9 @@ export function ReviewStep({
   nights: number;
   guests: GuestData[];
   priceQuote: PriceQuote;
+  lodges: LodgeOption[];
+  lodgeId: string | null;
+  selectedLodge: LodgeOption | null;
   reviewGuestPayload: GuestData[];
   bookingDateStrings: { checkIn: string; checkOut: string } | null;
   perGuestDatesEnabled: boolean;
@@ -171,6 +178,12 @@ export function ReviewStep({
           <CardTitle>Booking Summary</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {lodges.length > 1 && selectedLodge ? (
+            <div className="text-sm">
+              <span className="text-gray-500">Lodge:</span>{" "}
+              <span className="font-medium">{selectedLodge.name}</span>
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <span className="text-gray-500">Check-in:</span>{" "}
@@ -468,7 +481,9 @@ export function ReviewStep({
                       <option value="">Select an event…</option>
                       {activeWorkPartyEvents.map((event) => (
                         <option key={event.id} value={event.id}>
-                          {event.name} ({event.startDate} – {event.endDate})
+                          {event.name}
+                          {event.lodgeName ? ` — held at ${event.lodgeName}` : ""}{" "}
+                          ({event.startDate} – {event.endDate})
                         </option>
                       ))}
                     </select>
@@ -533,6 +548,7 @@ export function ReviewStep({
               guests={reviewGuestPayload}
               onPromoApplied={setAppliedPromo}
               appliedPromo={appliedPromo}
+              lodgeId={lodgeId}
               prefillCode={prefillPromoCode}
               disabled={attendingWorkParty}
               disabledReason="A promo code cannot be combined with a working bee discount. Untick 'I am attending a working bee' to enter a code instead."

@@ -1,5 +1,6 @@
 import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
-import { getLodgeCapacity } from "@/lib/capacity";
+import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import {
@@ -112,6 +113,12 @@ export interface FinanceForwardBookingMetricsQuery
 export interface FinanceBookingMetricsQuery {
   realized?: FinanceRealizedStayMetricsQuery;
   forward?: FinanceForwardBookingMetricsQuery;
+  // Reporting lodge scope (multi-lodge). When set, metrics cover only that
+  // lodge (its bookings, its capacity). When omitted, metrics cover ALL active
+  // lodges and the occupancy denominator is the SUM of their capacities — a
+  // deliberate, reporting-only exception to the "never sum across lodges"
+  // scoping rule (see docs/multi-lodge/scoping-contract).
+  lodgeId?: string | null;
 }
 
 export interface FinanceBookingMetricsWindow {
@@ -979,6 +986,51 @@ function getStatusFilter(query: FinanceBookingMetricsQuery): BookingStatus[] {
   return [...statuses];
 }
 
+/**
+ * Resolve the occupancy capacity denominator and the booking lodge filter for a
+ * metrics query. A specific lodge uses that lodge's capacity and its bookings
+ * (tolerating legacy null-lodge rows only when it is the default lodge); the
+ * all-lodges view sums active-lodge capacity (the reporting-only exception to
+ * the no-cross-lodge-sum rule) and counts every lodge's bookings.
+ */
+export async function resolveMetricsCapacityAndScope(
+  lodgeId: string | null | undefined,
+): Promise<{ capacity: number; bookingLodgeWhere: Prisma.BookingWhereInput }> {
+  // Structural test mocks may omit the lodge delegate; fall back to the
+  // default-lodge capacity (single-lodge behaviour), mirroring
+  // getDefaultLodgeCapacity. In production the delegate is always present.
+  const lodgeClient = prisma as { lodge?: { findMany?: unknown } };
+  if (!lodgeClient.lodge?.findMany) {
+    return {
+      capacity: await getDefaultLodgeCapacity(),
+      bookingLodgeWhere: lodgeId ? { lodgeId } : {},
+    };
+  }
+  if (lodgeId) {
+    const [capacity, defaultLodgeId] = await Promise.all([
+      getLodgeCapacity(lodgeId),
+      getDefaultLodgeId(prisma),
+    ]);
+    const bookingLodgeWhere: Prisma.BookingWhereInput =
+      lodgeId === defaultLodgeId ? lodgeNullTolerantScope(lodgeId) : { lodgeId };
+    return { capacity, bookingLodgeWhere };
+  }
+  const activeLodges = await prisma.lodge.findMany({
+    where: { active: true },
+    select: { id: true },
+  });
+  if (activeLodges.length === 0) {
+    return { capacity: await getDefaultLodgeCapacity(), bookingLodgeWhere: {} };
+  }
+  const capacities = await Promise.all(
+    activeLodges.map((lodge) => getLodgeCapacity(lodge.id)),
+  );
+  return {
+    capacity: capacities.reduce((sum, value) => sum + value, 0),
+    bookingLodgeWhere: {},
+  };
+}
+
 export async function getFinanceBookingMetrics(
   query: FinanceBookingMetricsQuery
 ): Promise<FinanceBookingMetricsResult> {
@@ -1015,10 +1067,13 @@ export async function getFinanceBookingMetrics(
     } => Boolean(value)
   );
 
-  const [bookings, lodgeCapacity] = await Promise.all([
+  const { capacity: lodgeCapacity, bookingLodgeWhere } =
+    await resolveMetricsCapacityAndScope(query.lodgeId);
+  const bookings =
     activeWindows.length > 0
-      ? prisma.booking.findMany({
+      ? await prisma.booking.findMany({
           where: {
+            ...bookingLodgeWhere,
             checkIn: {
               lte: maxDateFromList(
                 activeWindows.map((window) => window.toDate)
@@ -1036,9 +1091,7 @@ export async function getFinanceBookingMetrics(
           orderBy: [{ checkIn: "asc" }, { id: "asc" }],
           select: bookingMetricsSelect,
         })
-      : Promise.resolve([]),
-    getLodgeCapacity(),
-  ]);
+      : [];
   const contributingBookingIds = new Set<string>();
   const realized = realizedWindow
     ? buildRealizedMetrics(

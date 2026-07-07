@@ -15,9 +15,12 @@ interface BookingCalendarProps {
   onDateSelect: (checkIn: Date, checkOut: Date) => void;
   selectedCheckIn?: Date | null;
   selectedCheckOut?: Date | null;
+  // Lodge whose availability and seasons the calendar shows (multi-lodge
+  // phase 8). Omitted/null = the club's default lodge.
+  lodgeId?: string | null;
 }
 
-export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut }: BookingCalendarProps) {
+export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId }: BookingCalendarProps) {
   const { lodgeCapacity } = useClubIdentity();
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
@@ -34,7 +37,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
     async function loadAvailability() {
       const res = await fetch(
-        `/api/availability?year=${currentMonth.year}&month=${currentMonth.month}`
+        `/api/availability?year=${currentMonth.year}&month=${currentMonth.month}${
+          lodgeId ? `&lodgeId=${encodeURIComponent(lodgeId)}` : ""
+        }`
       );
       if (!res.ok || cancelled) {
         return;
@@ -52,7 +57,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     return () => {
       cancelled = true;
     };
-  }, [currentMonth.month, currentMonth.year]);
+  }, [currentMonth.month, currentMonth.year, lodgeId]);
 
   const daysInMonth = new Date(currentMonth.year, currentMonth.month + 1, 0).getDate();
   const firstDay = new Date(currentMonth.year, currentMonth.month, 1).getDay();

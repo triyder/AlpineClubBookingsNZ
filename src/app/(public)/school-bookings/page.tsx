@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -17,7 +17,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
-import { SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
+import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
 
 // Schools request counts of children per age tier; teachers and parent helpers
 // are the named adults.
@@ -48,6 +48,14 @@ export default function SchoolBookingRequestPage() {
   const [message, setMessage] = useState("");
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
+  // Active lodges from the public settings endpoint; empty for a
+  // single-lodge club, so no lodge copy renders (ADR-002).
+  const [lodges, setLodges] = useState<
+    Array<{ id: string; name: string; capacity: number; schoolGroupSoftCap: number }>
+  >([]);
+  const [lodgeId, setLodgeId] = useState("");
+  // Default-lodge soft cap for the single-lodge case (no selector).
+  const [defaultSoftCap, setDefaultSoftCap] = useState(DEFAULT_SCHOOL_GROUP_SOFT_CAP);
   const [cateringPreference, setCateringPreference] = useState<
     "CATERED" | "NON_CATERED" | "QUOTE_BOTH"
   >("QUOTE_BOTH");
@@ -61,6 +69,26 @@ export default function SchoolBookingRequestPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    fetch("/api/booking-requests/settings")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        setLodges(Array.isArray(data?.lodges) ? data.lodges : []);
+        if (typeof data?.schoolGroupSoftCap === "number") {
+          setDefaultSoftCap(data.schoolGroupSoftCap);
+        }
+      })
+      .catch(() => setLodges([]));
+  }, []);
+
+  const lodgeChoiceRequired = lodges.length >= 2;
+  // Cap guests against the chosen lodge; fall back to the club/default
+  // lodge capacity for single-lodge clubs where no selector renders. The
+  // server re-validates against the requested lodge regardless.
+  const selectedLodge = lodges.find((lodge) => lodge.id === lodgeId) ?? null;
+  const effectiveCapacity = selectedLodge?.capacity ?? club.lodgeCapacity;
+  const effectiveSoftCap = selectedLodge?.schoolGroupSoftCap ?? defaultSoftCap;
+
   const childTierLabel = (tier: AgeTier) =>
     ageTierOptions.find((option) => option.tier === tier)?.label ?? tier;
 
@@ -70,7 +98,7 @@ export default function SchoolBookingRequestPage() {
   const datesValid = Boolean(checkIn && checkOut && checkOut > checkIn);
   // Soft cap: a club member must host, so groups over 25 may be declined. We
   // warn but still allow submission up to the lodge capacity.
-  const overSoftCap = totalGuests > SCHOOL_GROUP_SOFT_CAP;
+  const overSoftCap = totalGuests > effectiveSoftCap;
 
   function updateTeacher(index: number, field: keyof TeacherInput, value: string) {
     setTeachers((prev) => prev.map((t, i) => (i === index ? { ...t, [field]: value } : t)));
@@ -97,6 +125,10 @@ export default function SchoolBookingRequestPage() {
       setError("Please enter the school name.");
       return;
     }
+    if (lodgeChoiceRequired && !lodgeId) {
+      setError("Please choose a lodge.");
+      return;
+    }
     if (!datesValid) {
       setError("Check-out must be after check-in.");
       return;
@@ -109,8 +141,8 @@ export default function SchoolBookingRequestPage() {
       setError("Please enter the number of children attending.");
       return;
     }
-    if (totalGuests > club.lodgeCapacity) {
-      setError(`Total guests (${totalGuests}) exceeds the lodge capacity of ${club.lodgeCapacity}.`);
+    if (totalGuests > effectiveCapacity) {
+      setError(`Total guests (${totalGuests}) exceeds the lodge capacity of ${effectiveCapacity}.`);
       return;
     }
 
@@ -127,6 +159,7 @@ export default function SchoolBookingRequestPage() {
           contactPhone: contactPhone || undefined,
           checkIn,
           checkOut,
+          lodgeId: lodgeChoiceRequired ? lodgeId : undefined,
           cateringPreference,
           teachers: validTeachers.map((t) => ({
             firstName: t.firstName,
@@ -247,6 +280,24 @@ export default function SchoolBookingRequestPage() {
             </div>
           </div>
 
+          {lodgeChoiceRequired ? (
+            <div className="space-y-1">
+              <Label htmlFor="lodgeId">Which lodge?</Label>
+              <Select value={lodgeId || undefined} onValueChange={setLodgeId}>
+                <SelectTrigger id="lodgeId">
+                  <SelectValue placeholder="Choose a lodge" />
+                </SelectTrigger>
+                <SelectContent>
+                  {lodges.map((lodge) => (
+                    <SelectItem key={lodge.id} value={lodge.id}>
+                      {lodge.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="checkIn">Check-in</Label>
@@ -366,14 +417,14 @@ export default function SchoolBookingRequestPage() {
               ))}
             </div>
             <p className="text-sm text-muted-foreground">
-              Total guests: {totalGuests} / {club.lodgeCapacity} max ({validTeachers.length} teachers
+              Total guests: {totalGuests} / {effectiveCapacity} max ({validTeachers.length} teachers
               {" "}&amp; helpers, {totalChildren} children)
             </p>
             {overSoftCap ? (
               <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                School groups are capped at {SCHOOL_GROUP_SOFT_CAP} beds (students plus teachers and
-                parent helpers) unless the remaining beds, up to the lodge&apos;s {club.lodgeCapacity},{" "}
-                include a club member staying with your group. Requests over {SCHOOL_GROUP_SOFT_CAP}{" "}
+                School groups are capped at {effectiveSoftCap} beds (students plus teachers and
+                parent helpers) unless the remaining beds, up to the lodge&apos;s {effectiveCapacity},{" "}
+                include a club member staying with your group. Requests over {effectiveSoftCap}{" "}
                 may be declined until a member is confirmed to host. You can still submit and
                 we&apos;ll be in touch.
               </p>

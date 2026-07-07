@@ -60,6 +60,7 @@ export function AdminBookingCalendar() {
   const searchParams = useSearchParams();
   const statusParam = searchParams.get("status");
   const deletedParam = searchParams.get("deleted");
+  const lodgeParam = searchParams.get("lodgeId");
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -116,6 +117,11 @@ export function AdminBookingCalendar() {
       if (deletedParam && deletedParam !== "hide") {
         params.set("deleted", deletedParam);
       }
+      // Multi-lodge: scope the calendar to the selected lodge (matches the list).
+      // "all"/absent leaves it club-wide; the API decides the bed-count treatment.
+      if (lodgeParam && lodgeParam !== "all") {
+        params.set("lodgeId", lodgeParam);
+      }
       const res = await fetch(`/api/admin/bookings?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
@@ -127,7 +133,7 @@ export function AdminBookingCalendar() {
     } finally {
       setLoading(false);
     }
-  }, [deletedParam, monthKey, statusParam]);
+  }, [deletedParam, monthKey, statusParam, lodgeParam]);
 
   useEffect(() => {
     fetchBookings();

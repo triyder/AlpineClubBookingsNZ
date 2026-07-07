@@ -80,7 +80,7 @@ export async function GET(
       });
     }
 
-    const policy = await loadCancellationPolicy(booking.checkIn);
+    const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
     const preview = calculateCancellationPreview({
       payment: booking.payment,
       finalPriceCents: booking.finalPriceCents,

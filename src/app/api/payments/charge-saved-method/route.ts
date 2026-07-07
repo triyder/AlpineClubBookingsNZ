@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
 import {
@@ -95,6 +96,7 @@ export async function POST(request: NextRequest) {
     const savedPayment = booking.payment;
 
     const capacity = await checkCapacityForGuestRanges(
+      booking.lodgeId ?? (await getDefaultLodgeId(prisma)),
       booking.checkIn,
       booking.checkOut,
       booking.guests,

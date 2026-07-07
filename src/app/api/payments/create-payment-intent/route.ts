@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
@@ -10,7 +11,10 @@ import { BookingStatus, PaymentSource } from "@prisma/client";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacityForGuestRanges,
+} from "@/lib/capacity";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
@@ -187,7 +191,11 @@ export async function POST(request: NextRequest) {
     // Payment success performs the final capacity claim.
     if (booking.status === "DRAFT") {
       await prisma.$transaction(async (tx) => {
-        await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+        // The booking's lodge cannot change, so reading it for lock-key
+        // selection before acquiring the lock is safe.
+        const bookingLodgeId =
+          booking.lodgeId ?? (await getDefaultLodgeId(tx));
+        await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
         // Re-fetch within transaction to ensure we have latest state
         const freshBooking = await tx.booking.findUnique({
@@ -200,6 +208,7 @@ export async function POST(request: NextRequest) {
         }
 
         const capacity = await checkCapacityForGuestRanges(
+          bookingLodgeId,
           freshBooking.checkIn,
           freshBooking.checkOut,
           freshBooking.guests,

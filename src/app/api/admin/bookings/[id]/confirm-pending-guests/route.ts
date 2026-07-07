@@ -101,13 +101,16 @@ export async function POST(
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   };
-  const promoEmailOptions = booking.promoRedemption?.promoCode
-    ? {
-        discountCents: booking.discountCents,
-        promoAdjustmentCents: booking.promoAdjustmentCents,
-        promoCode: booking.promoRedemption.promoCode.code,
-      }
-    : undefined;
+  const promoEmailOptions = {
+    lodgeId: booking.lodgeId,
+    ...(booking.promoRedemption?.promoCode
+      ? {
+          discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          promoCode: booking.promoRedemption.promoCode.code,
+        }
+      : {}),
+  };
   const hasSavedPaymentMethod = Boolean(
     booking.payment?.stripePaymentMethodId && booking.payment?.stripeCustomerId
   );
@@ -172,6 +175,7 @@ export async function POST(
         }
 
         const { available, nightDetails } = await checkCapacityForGuestRanges(
+          locked.lodgeId,
           locked.checkIn,
           locked.checkOut,
           locked.guests,
@@ -277,6 +281,7 @@ export async function POST(
         return { error: "Booking is no longer pending" as const, status: 409 };
       }
       const { available, nightDetails } = await checkCapacityForGuestRanges(
+        locked.lodgeId,
         locked.checkIn,
         locked.checkOut,
         locked.guests,

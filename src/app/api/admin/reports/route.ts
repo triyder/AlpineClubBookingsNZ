@@ -3,7 +3,8 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { BookingStatus, SubscriptionStatus } from "@prisma/client";
-import { getLodgeCapacity, getOccupiedBedsForNight } from "@/lib/capacity";
+import { getOccupiedBedsForNight } from "@/lib/capacity";
+import { resolveMetricsCapacityAndScope } from "@/lib/finance-booking-metrics";
 import { eachDayOfInterval, format } from "date-fns";
 import logger from "@/lib/logger";
 import { buildRevenueSeries } from "@/lib/admin-reports";
@@ -26,6 +27,9 @@ const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   deleted: z.enum(["hide", "include", "only"]).default("hide"),
+  // Reporting lodge scope: omitted = all active lodges (occupancy denominator
+  // is the summed active-lodge capacity); a value scopes to that lodge.
+  lodgeId: z.string().min(1).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -36,6 +40,7 @@ export async function GET(request: NextRequest) {
     from: searchParams.get("from"),
     to: searchParams.get("to"),
     deleted: parseBookingDeletedVisibility(searchParams.get("deleted")),
+    lodgeId: searchParams.get("lodgeId") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -59,6 +64,9 @@ export async function GET(request: NextRequest) {
     const currentSeasonYear = getSeasonYear(new Date());
     const currentSeasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
 
+    const { capacity: lodgeCapacity, bookingLodgeWhere } =
+      await resolveMetricsCapacityAndScope(parsed.data.lodgeId);
+
     const [
       bookings,
       occupancyBookings,
@@ -67,7 +75,6 @@ export async function GET(request: NextRequest) {
       unpaidMembers,
       overdueMembers,
       newMembers,
-      lodgeCapacity,
     ] = await Promise.all([
       prisma.booking.findMany({
         where: {
@@ -83,6 +90,7 @@ export async function GET(request: NextRequest) {
       prisma.booking.findMany({
         where: {
           ...deletedWhere,
+          ...bookingLodgeWhere,
           checkIn: { lte: toDate },
           checkOut: { gte: fromDate },
           status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
@@ -127,7 +135,6 @@ export async function GET(request: NextRequest) {
           ],
         },
       }),
-      getLodgeCapacity(),
     ]);
 
     // 1. Occupancy by date

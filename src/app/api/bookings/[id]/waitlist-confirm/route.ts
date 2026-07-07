@@ -37,7 +37,37 @@ export async function POST(
     const status = result.error === "Forbidden" ? 403
       : result.error === "Booking not found" ? 404
       : 400;
-    return NextResponse.json({ error: result.error }, { status });
+    return NextResponse.json(
+      {
+        error: result.error,
+        // Price drift on a cross-lodge offer (ADR-004): the client shows
+        // the refreshed figure so the member can re-confirm knowingly.
+        ...(result.updatedPriceCents !== undefined
+          ? { updatedPriceCents: result.updatedPriceCents, code: "OFFER_PRICE_CHANGED" }
+          : {}),
+      },
+      { status },
+    );
+  }
+
+  // Cross-lodge accept (ADR-004): the entry was replaced by a fresh booking
+  // at the offered lodge. The standard creation path already handled
+  // payment status, emails, and zero-dollar logic for the new booking, so
+  // just point the client at it.
+  if (result.newBookingId) {
+    const newBooking = await prisma.booking.findUnique({
+      where: { id: result.newBookingId },
+      select: { finalPriceCents: true, status: true },
+    });
+    return NextResponse.json({
+      success: true,
+      status: result.newStatus,
+      newBookingId: result.newBookingId,
+      requiresPayment:
+        result.newStatus === BookingStatus.PAYMENT_PENDING &&
+        (newBooking?.finalPriceCents ?? 0) > 0,
+      requiresSetup: result.newStatus === BookingStatus.PENDING,
+    });
   }
 
   // Handle zero-dollar bookings — auto-create payment and set PAID
@@ -80,13 +110,16 @@ export async function POST(
       booking.checkOut,
       booking.guests.length,
       booking.finalPriceCents,
-      booking.promoRedemption?.promoCode
-        ? {
-            discountCents: booking.discountCents,
-            promoAdjustmentCents: booking.promoAdjustmentCents,
-            promoCode: booking.promoRedemption.promoCode.code,
-          }
-        : undefined
+      {
+        lodgeId: booking.lodgeId,
+        ...(booking.promoRedemption?.promoCode
+          ? {
+              discountCents: booking.discountCents,
+              promoAdjustmentCents: booking.promoAdjustmentCents,
+              promoCode: booking.promoRedemption.promoCode.code,
+            }
+          : {}),
+      }
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation email after waitlist confirm"));
 
     void enqueueXeroBookingInvoiceOperation(bookingId)
@@ -119,7 +152,8 @@ export async function POST(
       booking.checkIn,
       booking.checkOut,
       booking.guests.length,
-      booking.nonMemberHoldUntil
+      booking.nonMemberHoldUntil,
+      booking.lodgeId
     ).catch((err) => logger.error({ err }, "Failed to send pending email after waitlist confirm"));
   }
 

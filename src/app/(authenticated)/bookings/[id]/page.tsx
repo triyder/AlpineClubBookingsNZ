@@ -113,6 +113,8 @@ export default async function BookingDetailPage({
       guests: { include: { nights: { select: { stayDate: true } } } },
       payment: true,
       member: { select: { firstName: true, lastName: true } },
+      // Cross-lodge waitlist offer (ADR-004): named on the offer card.
+      waitlistOfferedLodge: { select: { name: true } },
       requestedRoom: {
         select: { id: true, name: true, active: true },
       },
@@ -1071,6 +1073,8 @@ export default async function BookingDetailPage({
           bookingId={booking.id}
           expiresAt={booking.waitlistOfferExpiresAt.toISOString()}
           finalPriceCents={booking.finalPriceCents}
+          offeredLodgeName={booking.waitlistOfferedLodge?.name ?? null}
+          offeredPriceCents={booking.waitlistOfferedPriceCents}
         />
       )}
 
