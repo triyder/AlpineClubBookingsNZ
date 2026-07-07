@@ -216,6 +216,42 @@ key, never re-noting the completed slices. Tiered cancels that
 deliberately retained a policy penalty produce no finding at all — their
 books are correct.
 
+### Backfill cancel-flattened payment statuses (#1473 / #1506)
+
+`scripts/backfill-cancel-flattened-payments.ts` is a one-off, idempotent,
+local-only cleanup for the residual left by PR #1489. Before #1489,
+`cancelBooking` overwrote every non-SUCCEEDED payment's aggregate `status` to
+`FAILED` — including captured `(PARTIALLY_)REFUNDED` payments — while leaving
+`refundedAmountCents` and the `PaymentTransaction` ledger intact. #1489 stopped
+the overwrite going forward but did not backfill rows already flattened. The
+read path is already correct (the booking-vs-Xero repair pass synthesizes the
+captured status from the intact STRIPE mirror / ledger), so this only restores
+the stored `status` field for cleanliness.
+
+It identifies `FAILED` payments on `CANCELLED` bookings that carry capture
+evidence per the exact #1489 discriminator — a captured `PaymentTransaction`
+row, or (for pre-ledger STRIPE rows) `refundedAmountCents > 0` — and restores
+`status` to the same value the repair pass already derives
+(`PARTIALLY_REFUNDED` / `REFUNDED`, or `SUCCEEDED` for a captured-ledger row
+with no refund). It deliberately skips folded never-captured internet-banking
+payments (mirror refund with no captured ledger row: correctly `FAILED`) and
+the narrow unrecoverable residual (no ledger, `refundedAmountCents == 0`: no
+truth to restore). It makes ZERO Xero/Stripe calls, touches only `status`, and
+a second run finds nothing.
+
+Always start with a dry run (the default) against a non-production copy:
+
+```bash
+DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-cancel-flattened-payments.ts
+# or: npm run payments:backfill-cancel-flattened
+```
+
+Only after reviewing the dry-run report, apply inside a transaction:
+
+```bash
+DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-cancel-flattened-payments.ts --apply
+```
+
 ## Quarterly Backup Restore Drill
 
 A backup you have never restored is a hope, not a backup. `scripts/backup-restore-drill.sh`

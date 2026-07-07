@@ -598,19 +598,35 @@ export async function sendBookingRequestQuote(input: {
     // #1423 lock-ordering invariant: lock the BookingRequest row BEFORE the
     // BookingRequestQuote row (matching decline's claim-first order) so a
     // concurrent decline + re-send on the same request cannot deadlock. Pure
-    // statement reorder — same writes, same transaction. (Pre-existing gap, not
-    // fixed here to avoid touching the hold placed before this tx: this request
-    // update is unguarded, so an admin re-send racing a decline in the narrow
-    // window after holdBookingRequestSlots' own status check could resurrect a
-    // just-DECLINED request to QUOTE_SENT — a possible follow-up.)
-    await tx.bookingRequest.update({
-      where: { id: quote.bookingRequestId },
+    // statement reorder — same writes, same transaction.
+    //
+    // #1504 resurrection guard: this request-status flip is a status-guarded
+    // updateMany (claim-first), NOT a plain update. A concurrent admin decline
+    // can finalise the request to DECLINED (releasing its hold) in the narrow
+    // window between holdBookingRequestSlots' own status check and this
+    // transaction; a plain overwrite to QUOTE_SENT would resurrect that
+    // just-DECLINED request. The guard claims the request only while it is still
+    // in a quoteable state (the same live set holdBookingRequestSlots requires),
+    // so a decline wins the race: count 0 throws 409 BEFORE the quote is marked
+    // SENT (the throw rolls the whole tx back, leaving the quote untouched) and
+    // BEFORE the email is sent below, so a lost re-send delivers nothing.
+    const claimed = await tx.bookingRequest.updateMany({
+      where: {
+        id: quote.bookingRequestId,
+        status: { in: [...quoteableStatuses] },
+      },
       data: {
         status: BookingRequestStatus.QUOTE_SENT,
         reviewedByMemberId: input.adminMemberId,
         reviewedAt: sentAt,
       },
     });
+    if (claimed.count === 0) {
+      throw new BookingRequestQuoteError(
+        "This quote can no longer be sent — the booking request has been declined or cancelled.",
+        409
+      );
+    }
 
     const saved = await tx.bookingRequestQuote.update({
       where: { id: quote.id },

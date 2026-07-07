@@ -84,6 +84,29 @@ as a red flag and check the release notes before deploying.
 
 ---
 
+## v0.10.0 → v0.10.1
+
+`v0.10.1` is a patch release: four payment/booking-recovery hardening changes
+and one operator cleanup script (see the `CHANGELOG.md` `0.10.1` section). It
+contains **no database migrations** and no schema changes — there is nothing to
+look up in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, and either app color can
+serve throughout the deploy. The standard procedure still applies: back up the
+database before deploying.
+
+### Post-upgrade actions
+
+None required.
+
+**Optional cleanup:** if your fork ever ran a pre-`v0.10.0` build (any build
+older than PR #1489), booking cancellations may have flattened captured
+`(PARTIALLY_)REFUNDED` payments' stored `status` to `FAILED`. The read path
+already compensates, so this is cosmetic-only for the stored rows. You can
+restore them with `npm run payments:backfill-cancel-flattened` (dry-run by
+default; review the report before re-running with `--apply`). See "Backfill
+cancel-flattened payment statuses" in `docs/MAINTENANCE.md`.
+
+---
+
 ## v0.9.0 → v0.10.0
 
 `v0.10.0` bundles a large quality-and-hardening wave, a remediation wave

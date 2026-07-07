@@ -9,6 +9,7 @@ import {
   enqueueBookingModificationRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
+import { buildBookingModificationRefundMetadata } from "@/lib/payment-recovery-keys";
 import {
   PartialRefundError,
   refundPaymentTransactions,
@@ -74,7 +75,11 @@ export async function executeBookingModificationRefund({
     const refundResult = await refundPaymentTransactions({
       paymentId: result.paymentId,
       amountCents: result.pendingRefundAmountCents,
-      metadata: { bookingId, reason: metadataReason },
+      // #1507: build the Stripe metadata from the shared helper so a recovery
+      // replay (which reconstructs this same reason from the stored key prefix)
+      // sends a byte-identical body and Stripe replays the original refund
+      // instead of rejecting the reused idempotency key.
+      metadata: buildBookingModificationRefundMetadata(bookingId, metadataReason),
       // Scope the Stripe idempotency key to this modification. Without it two
       // reductions on the same booking that resolve to the same refund amount
       // (e.g. removing two identically-priced guests) produce an identical key

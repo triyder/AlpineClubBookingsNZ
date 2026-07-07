@@ -6,6 +6,54 @@ All notable public reference-release changes should be recorded here.
 
 - No changes yet.
 
+## 0.10.1 - 2026-07-07
+
+- Release classification: patch public reference release. Four
+  payment/booking-recovery hardening changes and one operator cleanup script on
+  top of `0.10.0`; no database migrations, no schema changes, no new features,
+  and no behaviour changes outside the raced/edge shapes described below. Safe
+  to deploy tag-to-tag from `v0.10.0` with the standard backup-first procedure
+  (`docs/UPGRADING.md`).
+- Guarded the booking-request quote re-send status flip against a concurrent
+  decline: the flip to `QUOTE_SENT` is now a claim-first, status-guarded update
+  placed first in the existing transaction, so a re-send racing a decline can
+  no longer resurrect a `DECLINED`/`CANCELLED` request or send its quote
+  email — the losing re-send rolls back with a 409 (#1504).
+- Converged the refund-request and booking-modification recovery replays with
+  their inline Stripe refund bodies via shared per-path body builders. The
+  replays previously sent a different `reason` under the same idempotency key,
+  so Stripe rejected the replay with `idempotency_error` and the recovery
+  retried to exhaustion instead of converging (safe-failing — never a double
+  refund); replays now send byte-identical bodies and converge (#1507).
+- Froze the refund-appeal Stripe allocation plan: the approve route computes
+  the per-transaction refund allocation once, uses it for the inline refund,
+  and on inline failure persists those same slices to the recovery operation,
+  so the replay re-requests exactly the original slices under the original
+  idempotency keys. This supersedes the previous completed-refund remainder
+  heuristic and closes the last refund-recovery path that re-derived its
+  allocation at replay time. In the exotic mixed Stripe + Internet-Banking
+  appeal shape, the route now refunds the plannable Stripe portion inline and
+  logs any shortfall instead of pushing the mismatch into recovery — net
+  Stripe money is unchanged and the Internet-Banking portion still settles via
+  credit note (#1510).
+- Capped the never-settled Internet-Banking credit mint per invoice in
+  aggregate: multiple never-settled IB payments matched to a single invoice can
+  no longer collectively mint account credit above that invoice's cash. The
+  previous clamp was per-payment; no current app flow produces the aggregate
+  shape, so real-flow mint amounts are unchanged (#1505).
+- Added `npm run payments:backfill-cancel-flattened`, a one-off, idempotent,
+  dry-run-by-default operator script that restores the stored `Payment.status`
+  on rows the pre-#1489 cancel defect flattened to `FAILED` on cancelled
+  bookings (the read path already synthesizes the correct captured status from
+  the intact ledger/mirror). It makes no Xero and no Stripe calls and is
+  documented in `docs/MAINTENANCE.md` (#1506).
+- Migration/deployment notes: **this release contains no database migrations**
+  and requires no post-upgrade actions; `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+  gains no rows and either app color can serve throughout the deploy. Optional
+  cleanup: forks that ever ran a pre-`v0.10.0` (pre-#1489) build can restore
+  cancel-flattened stored payment statuses with the #1506 backfill above —
+  dry-run first, per `docs/MAINTENANCE.md`.
+
 ## 0.10.0 - 2026-07-07
 
 - Release classification: minor public reference release. The change set since

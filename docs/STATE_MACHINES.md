@@ -298,6 +298,14 @@ actor:
   guards deliberately still allow a re-arm from `CONVERTED`/`APPROVED` so approve's
   `convertedBookingId` idempotency replay (#1232 double-accept) keeps returning the
   one existing booking.
+- **admin re-send (symmetric admin-side backstop, #1504):** the admin quote
+  re-send (`sendBookingRequestQuote`) closes the same narrow TOCTOU on the admin
+  side. Its flip to `QUOTE_SENT` is a **status-guarded** `updateMany` that claims
+  the request only while it is still in a quoteable state (the same live set
+  `holdBookingRequestSlots` requires), committed BEFORE the quote email. So an
+  admin re-send racing a concurrent decline in the narrow window after the hold's
+  own status check `409`s ("...has been declined or cancelled.") and delivers no
+  email, instead of resurrecting the just-`DECLINED` request to `QUOTE_SENT`.
 
 **Lock-ordering invariant (#1423):** every transaction that writes both a
 `BookingRequest` row and its `BookingRequestQuote` row(s) — the decline claim +

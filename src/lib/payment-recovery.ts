@@ -309,21 +309,31 @@ export async function enqueueAdditionalPaymentIntentRecovery({
 /**
  * Durable recovery for an approved refund appeal whose Stripe refund failed
  * (#1039 item 1, PR #846 residual). The approval claim stands and the refund
- * completes through the recovery cron; the processor refunds only what the
- * ledger still shows outstanding, so a partial Stripe success cannot
- * double-refund.
+ * completes through the recovery cron. When the approve route passes the
+ * `allocationPlan` it froze BEFORE the inline Stripe call (#1510), the processor
+ * replays exactly those per-transaction slices under their original
+ * `refund_request_<id>_<txn>_<amount>` Stripe keys — so a multi-transaction
+ * partial-progress replay is answered by Stripe with the original refunds and
+ * the `PaymentRefund` ledger dedupes on refund id, instead of a re-derived,
+ * shifted allocation minting fresh keys. Operations enqueued before #1510 carry
+ * no frozen plan and fall back to the processor's derive-at-replay behaviour
+ * (unchanged; post-#1507 single-transaction payments — the dominant case —
+ * already share slice keys with the inline refund).
  */
 export async function enqueueRefundRequestRefundRecovery({
   bookingId,
   paymentId,
   refundRequestId,
   amountCents,
+  allocationPlan,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
   refundRequestId: string;
   amountCents: number;
+  /** Slices frozen by the approve route BEFORE the inline Stripe refund (#1510). */
+  allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
   return enqueueLedgerRefundRecovery({
@@ -331,6 +341,7 @@ export async function enqueueRefundRequestRefundRecovery({
     paymentId,
     amountCents,
     idempotencyKey: `refund_request_refund_${refundRequestId}`,
+    allocationPlan,
     store,
   });
 }
@@ -338,10 +349,16 @@ export async function enqueueRefundRequestRefundRecovery({
 import {
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
+  buildBookingModificationRefundMetadata,
+  buildRefundRequestRefundMetadata,
+  bookingModificationRefundReasonForKeyPrefix,
 } from "./payment-recovery-keys";
 export {
   buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
+  buildBookingModificationRefundMetadata,
+  buildRefundRequestRefundMetadata,
+  bookingModificationRefundReasonForKeyPrefix,
 };
 
 /**
@@ -1007,13 +1024,18 @@ async function processBookingModificationRefundOperation(
     );
   }
 
-  // The allocation is frozen on the operation the first time it is processed
-  // (#1097): a retry after a partial recorded success must re-request exactly
-  // the original per-transaction slices — with the identical Stripe
-  // idempotency keys, which Stripe answers with the original refunds and the
-  // ledger dedupes by refund id — never a re-derived allocation whose shifted
-  // slice amounts would mint fresh keys (over-refunding) or misread replayed
-  // refunds as new progress (under-refunding).
+  // The allocation is frozen on the operation before its first Stripe call:
+  // booking-cancellation (#1349) and refund-request (#1510) recoveries persist
+  // the inline attempt's own slices at ENQUEUE time, while a booking-
+  // modification recovery freezes them the first time it is processed (#1097).
+  // A retry then re-requests exactly those per-transaction slices — with the
+  // identical Stripe idempotency keys, which Stripe answers with the original
+  // refunds and the ledger dedupes by refund id — never a re-derived allocation
+  // whose shifted slice amounts would mint fresh keys (over-refunding) or
+  // misread replayed refunds as new progress (under-refunding). Operations
+  // enqueued before their freeze existed carry no plan and derive-at-replay
+  // below (single-transaction payments, the dominant case, already share slice
+  // keys — see #1510).
   let plan = parseRefundAllocationPlan(operation.allocationPlan);
 
   if (!plan) {
@@ -1083,11 +1105,20 @@ async function processBookingModificationRefundOperation(
   let metadata: Record<string, string>;
   let idempotencyKeyPrefix: string;
   if (refundRequestId) {
-    metadata = {
-      bookingId: operation.bookingId,
-      reason: "refund_request_refund_recovery",
+    // #1507: replay the inline appeal-refund body VERBATIM. The admin approve
+    // route and this branch both build the metadata from
+    // buildRefundRequestRefundMetadata, so under the shared
+    // `refund_request_<id>` idempotency key Stripe replays the original refund
+    // rather than rejecting the reused key with idempotency_error (which
+    // previously sent the inline-succeeded-but-unrecorded scenario to
+    // retry-exhaustion). The shape reconstructs purely from the persisted
+    // bookingId + refundRequestId, so pre-fix rows replay through this same path
+    // (the inline body — reason:"refund_appeal_approved" — is unchanged, so no
+    // pre-deploy sliver).
+    metadata = buildRefundRequestRefundMetadata(
+      operation.bookingId,
       refundRequestId,
-    };
+    );
     idempotencyKeyPrefix = `refund_request_${refundRequestId}`;
   } else if (isBookingCancellationRecovery) {
     // #1494: replay the inline cancel body VERBATIM. Both callers build the
@@ -1104,13 +1135,23 @@ async function processBookingModificationRefundOperation(
     metadata = buildBookingCancellationRefundMetadata(operation.bookingId);
     idempotencyKeyPrefix = `booking_cancel_refund_${operation.bookingId}`;
   } else {
-    metadata = {
-      bookingId: operation.bookingId,
-      reason: "booking_modification_refund_recovery",
-    };
+    // #1507: replay the inline modification-refund body VERBATIM. The inline
+    // settlement helper stamps a per-path reason (date change / batch / guest
+    // removal); this branch reconstructs that exact reason from the persisted
+    // Stripe key prefix (#1152) via bookingModificationRefundReasonForKeyPrefix
+    // and builds the body from the same buildBookingModificationRefundMetadata
+    // helper the inline path uses, so under the shared stored prefix Stripe
+    // replays the original refund instead of rejecting the reused key with
+    // idempotency_error. Legacy rows without a stored prefix fall back to the
+    // historical recovery reason + operation-scoped key (they were never
+    // shared-key with the inline refund).
     idempotencyKeyPrefix =
       operation.stripeKeyPrefix ??
       `payment_recovery_modification_refund_${operation.id}`;
+    metadata = buildBookingModificationRefundMetadata(
+      operation.bookingId,
+      bookingModificationRefundReasonForKeyPrefix(operation.stripeKeyPrefix),
+    );
   }
 
   await refundPaymentTransactions({

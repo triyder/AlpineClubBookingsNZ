@@ -399,6 +399,9 @@ describe("sendBookingRequestQuote", () => {
     vi.mocked(prisma.booking.findUnique).mockResolvedValue({
       status: "AWAITING_REVIEW",
     } as never);
+    // #1504 claim-first guard: request still quoteable, so the guarded updateMany
+    // claims it (count 1) and the send proceeds.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({ count: 1 } as never);
 
     await sendBookingRequestQuote({ requestId: "req-1", adminMemberId: "admin-1" });
 
@@ -444,6 +447,9 @@ describe("sendBookingRequestQuote", () => {
     vi.mocked(prisma.booking.findUnique).mockResolvedValue({
       status: "AWAITING_REVIEW",
     } as never);
+    // #1504 claim-first guard: the request is still in a quoteable state, so the
+    // status-guarded updateMany claims it (count 1) and the send proceeds.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({ count: 1 } as never);
   }
 
   it("reports emailDelivered true when the quote email sends", async () => {
@@ -593,6 +599,87 @@ describe("sendBookingRequestQuote", () => {
     // Quote is not marked SENT and no email goes out for an unreservable quote.
     expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalled();
     expect(mockSendQuoteEmail).not.toHaveBeenCalled();
+  });
+
+  it("409s a re-send and sends no email when a concurrent decline finalised the request (#1504)", async () => {
+    // Narrow TOCTOU: an admin re-sends a SENT quote while a concurrent admin
+    // decline moves the request to DECLINED (releasing its hold) in the window
+    // after holdBookingRequestSlots' own status check. The re-send's
+    // status-guarded updateMany (status in the quoteable set) claims NOTHING
+    // (count 0), so it throws 409 BEFORE marking the quote SENT and BEFORE the
+    // email — the DECLINED request is never resurrected to QUOTE_SENT.
+    vi.mocked(prisma.bookingRequestQuote.findFirst).mockResolvedValue({
+      id: "quote-1",
+      bookingRequestId: "req-1",
+      version: 1,
+      status: BookingRequestQuoteStatus.SENT,
+      options: [
+        {
+          id: "STANDARD",
+          label: "Quote",
+          cateringOption: null,
+          totalCents: 1000,
+          pricingMode: BookingRequestPricingMode.OVERALL_TOTAL,
+          guestBreakdown: [],
+        },
+      ],
+      message: null,
+      createdByMemberId: "admin-1",
+      bookingRequest: baseRequest({ status: BookingRequestStatus.DECLINED }),
+    } as never);
+    // Hold was placed/reused before the decline released it; the re-send reaches
+    // its transaction, where the guard is the last line of defence.
+    vi.mocked(prisma.bookingRequest.findUnique).mockResolvedValue(
+      baseRequest({ heldBookingId: "held-1", quotes: [] }) as never
+    );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      status: "AWAITING_REVIEW",
+    } as never);
+    // The concurrent decline already moved the row off the quoteable set, so the
+    // guarded claim matches zero rows.
+    vi.mocked(prisma.bookingRequest.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await expect(
+      sendBookingRequestQuote({ requestId: "req-1", adminMemberId: "admin-1" })
+    ).rejects.toMatchObject({ status: 409 });
+
+    // The request was never resurrected: the guarded claim targeted QUOTE_SENT
+    // but only for still-quoteable rows (DECLINED excluded), and because it
+    // claimed nothing the quote is not marked SENT and no email is delivered.
+    const guardCall = vi.mocked(prisma.bookingRequest.updateMany).mock.calls[0][0] as {
+      where: { status: { in: BookingRequestStatus[] } };
+      data: { status: BookingRequestStatus };
+    };
+    expect(guardCall.data.status).toBe(BookingRequestStatus.QUOTE_SENT);
+    expect(guardCall.where.status.in).toContain(BookingRequestStatus.QUOTE_SENT);
+    expect(guardCall.where.status.in).not.toContain(BookingRequestStatus.DECLINED);
+    expect(prisma.bookingRequestQuote.update).not.toHaveBeenCalled();
+    expect(mockSendQuoteEmail).not.toHaveBeenCalled();
+  });
+
+  it("still sends when the request is in a live quoteable state (#1504 happy path)", async () => {
+    mockDraftQuoteForSend();
+    mockSendQuoteEmail.mockResolvedValue(undefined);
+
+    const result = await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    // The claim-first guard passed (count 1): the quote is marked SENT and the
+    // email is delivered, so a legitimate re-send is unaffected.
+    const guardCall = vi.mocked(prisma.bookingRequest.updateMany).mock.calls.at(-1)?.[0] as {
+      where: { status: { in: BookingRequestStatus[] } };
+      data: { status: BookingRequestStatus };
+    };
+    expect(guardCall.data.status).toBe(BookingRequestStatus.QUOTE_SENT);
+    expect(guardCall.where.status.in).not.toContain(BookingRequestStatus.DECLINED);
+    expect(guardCall.where.status.in).not.toContain(BookingRequestStatus.CANCELLED);
+    const updateData = vi.mocked(prisma.bookingRequestQuote.update).mock.calls[0][0]
+      .data as { status: BookingRequestQuoteStatus };
+    expect(updateData.status).toBe(BookingRequestQuoteStatus.SENT);
+    expect(result.emailDelivered).toBe(true);
+    expect(mockSendQuoteEmail).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -533,11 +533,26 @@ Stripe call. Retries replay those exact slices with their original
 idempotency keys — Stripe answers repeats with the original refund and the
 `PaymentRefund` ledger dedupes by refund id — instead of re-deriving a
 shifted allocation from whatever progress happens to be recorded. The
+booking-cancellation (#1349) and refund-request (#1510) inline paths go
+further and freeze the exact slices they execute on the row at **enqueue**
+time — before any Stripe call — passing one frozen plan to both the inline
+refund and the recovery enqueue, so a multi-transaction partial-progress
+replay re-requests byte-identical slices under identical keys rather than a
+re-derived allocation. A refund-request row enqueued before #1510 carries no
+frozen plan and derives-at-replay (unchanged; post-#1507 single-transaction
+payments — the dominant case — already share slice keys). The
 recovery row also carries the originating route's Stripe key prefix
 (`stripeKeyPrefix`, #1152), so even a refund that succeeded on Stripe but was
 never recorded locally is replayed under its original keys rather than
 re-minted — the same guarantee refund-request recoveries have had since
-#1039.
+#1039. The replay also sends a **byte-identical request body** (#1507, the
+refund-request and booking-modification counterpart of the booking-cancellation
+convergence #1494): the cron rebuilds the Stripe metadata from the same shared
+helpers the inline paths use (`buildRefundRequestRefundMetadata`; and for
+modification refunds `buildBookingModificationRefundMetadata`, whose per-path
+`reason` is reconstructed from the persisted key prefix), so a reused idempotency
+key replays the original refund instead of being rejected as an
+`idempotency_error` for mismatched parameters.
 
 Additional PaymentIntent creation has the same durable safety net (#1096):
 every price-increasing edit path (batch modify, date change, guest add,
