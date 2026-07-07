@@ -83,7 +83,7 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     notes:
       "You will need to go to https://www.snow.nz/snow-report-widget and " +
       "select the skifield you want information on. On submit you will be " +
-      'shown a script. On the first line, copy the hash code within the ' +
+      "shown a script. On the first line, copy the hash code within the " +
       'quotes. e.g. data-hash="zzz". On this editor page do the following, ' +
       "while replacing zzz with your hashcode.",
     allowsParameter: true,
@@ -95,8 +95,8 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "skifield-whakapapa",
     kind: "embed",
     description:
-      "This will fetch the Whakapapa report and render a parsed curlData " +
-      "JSON object.",
+      "This will fetch the Whakapapa report and render road status, " +
+      "conditions, and the Facilities, Food & Drink, and Lifts groups.",
     example: "{{skifield-whakapapa}}",
     allowsLegacySingleBrace: true,
     contexts: ["page-content-body"],

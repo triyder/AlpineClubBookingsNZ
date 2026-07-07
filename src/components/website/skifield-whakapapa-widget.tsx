@@ -1,9 +1,57 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { WhakapapaCurlData } from "@/lib/whakapapa-report";
+import type {
+  WhakapapaCurlData,
+  WhakapapaFacilityItem,
+} from "@/lib/whakapapa-report";
 
 type ApiResponse = WhakapapaCurlData & { error?: string; stale?: boolean };
+
+function FacilityGroup({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: WhakapapaFacilityItem[];
+  emptyLabel: string;
+}) {
+  return (
+    <article className="rounded-md border border-slate-200 bg-slate-50 p-4">
+      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+      <div className="mt-3 overflow-x-auto">
+        <table className="min-w-full text-left text-xs text-slate-700">
+          <thead className="text-slate-500">
+            <tr>
+              <th className="pb-2 pr-4 font-medium">Name</th>
+              <th className="pb-2 font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length > 0 ? (
+              items.map((item) => (
+                <tr
+                  key={`${item.name}-${item.status}`}
+                  className="border-t border-slate-200"
+                >
+                  <td className="py-2 pr-4">{item.name || "Unknown"}</td>
+                  <td className="py-2">{item.status || "Unknown"}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="py-2 pr-4 text-slate-500" colSpan={2}>
+                  {emptyLabel}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
 
 const EMPTY_DATA: WhakapapaCurlData = {
   updated: "",
@@ -13,7 +61,9 @@ const EMPTY_DATA: WhakapapaCurlData = {
     wheelRequirements: "",
     roadContent: "",
   },
-  chairlifts: [],
+  facilities: [],
+  foodAndDrink: [],
+  lifts: [],
   conditions: [],
 };
 
@@ -45,7 +95,9 @@ export function SkifieldWhakapapaWidget() {
             wheelRequirements: payload.roadStatus?.wheelRequirements || "",
             roadContent: payload.roadStatus?.roadContent || "",
           },
-          chairlifts: payload.chairlifts ?? [],
+          facilities: payload.facilities ?? [],
+          foodAndDrink: payload.foodAndDrink ?? [],
+          lifts: payload.lifts ?? [],
           conditions: payload.conditions ?? [],
         });
 
@@ -150,38 +202,23 @@ export function SkifieldWhakapapaWidget() {
           ) : null}
         </article>
 
-        <article className="rounded-md border border-slate-200 bg-slate-50 p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Chairlifts</h3>
-          <div className="mt-3 overflow-x-auto">
-            <table className="min-w-full text-left text-xs text-slate-700">
-              <thead className="text-slate-500">
-                <tr>
-                  <th className="pb-2 pr-4 font-medium">Lift</th>
-                  <th className="pb-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.chairlifts.length > 0 ? (
-                  data.chairlifts.map((lift) => (
-                    <tr
-                      key={`${lift.name}-${lift.status}`}
-                      className="border-t border-slate-200"
-                    >
-                      <td className="py-2 pr-4">{lift.name || "Unknown"}</td>
-                      <td className="py-2">{lift.status || "Unknown"}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="py-2 pr-4 text-slate-500" colSpan={2}>
-                      No chairlift data available.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </article>
+        <FacilityGroup
+          title="Lifts"
+          items={data.lifts}
+          emptyLabel="No lift data available."
+        />
+
+        <FacilityGroup
+          title="Facilities"
+          items={data.facilities}
+          emptyLabel="No facility data available."
+        />
+
+        <FacilityGroup
+          title="Food & Drink"
+          items={data.foodAndDrink}
+          emptyLabel="No food & drink data available."
+        />
       </div>
 
       <article className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4">
