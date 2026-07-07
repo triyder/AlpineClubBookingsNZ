@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Requires GNU sed: unsafe_breaking_lines and same_arg_nullif use the
+# case-insensitive "I" s/// flag (a GNU extension, the only GNU-only construct
+# here). CI runs GNU coreutils; BSD/macOS sed rejects the flag and errors out,
+# so the script fails closed there rather than silently misclassifying.
+
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
@@ -18,6 +23,24 @@ DESTRUCTIVE_REMOVAL_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|ALTE
 # type itself contains parentheses, e.g. "(NULL::numeric(10,2))", is likewise not
 # recognised, but plain "(NULL)" and "CAST(NULL AS varchar(10))" are.
 NULL_DEFAULT_VALUE_SQL_REGEX='SET DEFAULT[[:space:]]+(NULL|\([[:space:]]*NULL[[:space:]]*(::[^)]*)?[[:space:]]*\)|CAST[[:space:]]*\([[:space:]]*NULL[[:space:]]+AS[[:space:]]+.+\))[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'
+# NULLIF(x, x) with identical single-quoted literals evaluates to NULL, so it
+# fills nothing and cannot waive a paired SET NOT NULL (#1602 gap 3 lists it as
+# a common spelling). Implemented as two sed extractions + a bash string compare
+# rather than an ERE backreference: backrefs in grep -E are non-POSIX and some
+# grep implementations (e.g. ugrep) reject them, which would silently classify
+# the default as non-NULL and fail OPEN. Only the SAME-argument single-quoted
+# form matches; NULLIF with differing arguments — and every other SQL
+# expression — still classifies as a non-NULL default: expression analysis
+# stays out of scope for this gate.
+same_arg_nullif() {
+  local line="$1" first second
+  first="$(printf '%s' "$line" |
+    sed -nE "s/.*SET DEFAULT[[:space:]]+NULLIF[[:space:]]*\([[:space:]]*('[^']*')[[:space:]]*,.*/\1/pI")"
+  [ -n "$first" ] || return 1
+  second="$(printf '%s' "$line" |
+    sed -nE "s/.*SET DEFAULT[[:space:]]+NULLIF[[:space:]]*\([[:space:]]*'[^']*'[[:space:]]*,[[:space:]]*('[^']*')[[:space:]]*\).*/\1/pI")"
+  [ -n "$second" ] && [ "$first" = "$second" ]
+}
 
 trim_whitespace() {
   local value="$1"
@@ -101,8 +124,15 @@ unsafe_breaking_lines() {
       # the waiver logic instead of always blocking; the captured identifiers keep
       # their original case ("[^"]+" is unaffected by the I modifier) because
       # quoted Postgres identifiers are case-significant.
-      table="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/pI')"
-      col="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/pI')"
+      #
+      # Extract from a comment-stripped copy of the statement: the greedy ".*"
+      # prefix would otherwise let a trailing '-- ALTER COLUMN "other"' comment
+      # retarget the capture and waive an UNPAIRED NOT NULL (#1602 review
+      # finding). The raw $line still flows to the output/keyword paths, so
+      # stripping here can only prevent a comment-induced false waive.
+      stmt_no_comment="$(strip_sql_comment "$stmt")"
+      table="$(printf '%s' "$stmt_no_comment" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/pI')"
+      col="$(printf '%s' "$stmt_no_comment" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/pI')"
       if [ -n "$table" ] && [ -n "$col" ]; then
         # Collect both SET DEFAULT and DROP DEFAULT for this column so the
         # effective final default is judged across both statement kinds.
@@ -117,7 +147,8 @@ unsafe_breaking_lines() {
         if [ -n "$default_lines" ]; then
           last_default="$(strip_sql_comment "$(printf '%s\n' "$default_lines" | tail -n1)")"
           if printf '%s\n' "$last_default" | grep -Eiq 'SET DEFAULT' &&
-            ! printf '%s\n' "$last_default" | grep -Eiq "$NULL_DEFAULT_VALUE_SQL_REGEX"; then
+            ! printf '%s\n' "$last_default" | grep -Eiq "$NULL_DEFAULT_VALUE_SQL_REGEX" &&
+            ! same_arg_nullif "$last_default"; then
             continue
           fi
         fi

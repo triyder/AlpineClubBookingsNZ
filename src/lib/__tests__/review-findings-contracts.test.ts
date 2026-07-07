@@ -1175,13 +1175,15 @@ describe("review finding source/schema contracts", () => {
   );
 
   it(
-    "waives a SET NOT NULL whose default is a NULLIF(...) expression, kept non-NULL by design (#1602 gap 3)",
+    "rejects a SET NOT NULL whose default is a same-argument NULLIF (#1602 gap 3)",
     { timeout: 20000 },
     () => {
-      // NULLIF(x, x) is semantically NULL, but SQL expression analysis is out of
-      // scope: the validator classifies it as a non-NULL default and waives. This
-      // pins the documented choice so a future change that starts recognising it
-      // does so deliberately, not by accident.
+      // NULLIF(x, x) with identical literals evaluates to NULL, so it fills
+      // nothing: an old colour's omitted-column INSERT still lands a null and
+      // the NOT NULL aborts mid-cutover. The issue's gap 3 lists this as a
+      // common NULL spelling to enumerate; the same-argument form is recognised
+      // (backref-free implementation — some greps reject ERE backreferences and
+      // would otherwise fail open).
       const fixture = createTempMigration(
         [
           'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULLIF(\'a\', \'a\');',
@@ -1190,7 +1192,109 @@ describe("review finding source/schema contracts", () => {
         ].join("\n"),
         [
           LEDGER_HEADER,
-          "20990101000000_test_migration\texpand\tn/a\tyes\tNULLIF default classifies as non-NULL by documented choice.",
+          "20990101000000_test_migration\texpand\tn/a\tyes\tSame-argument NULLIF default is semantically NULL; NOT NULL stays breaking.",
+        ].join("\n")
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).not.toBe(0);
+        expect(result.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+        expect(result.stderr).not.toContain("Reviewed no-outage NOT NULL");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "waives a SET NOT NULL whose default is a differing-argument NULLIF, kept non-NULL by design (#1602 gap 3)",
+    { timeout: 20000 },
+    () => {
+      // NULLIF('a', 'b') evaluates to 'a' — a real non-NULL default — and, like
+      // every other SQL expression beyond the enumerated spellings, classifies
+      // as non-NULL: expression analysis stays out of scope. This pins the
+      // boundary so only the same-argument form is treated as a NULL reset.
+      const fixture = createTempMigration(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULLIF(\'a\', \'b\');',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tDiffering-argument NULLIF default classifies as non-NULL by documented choice.",
+        ].join("\n")
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "rejects an unpaired SET NOT NULL whose extraction target is retargeted by a trailing comment (#1602 review finding)",
+    { timeout: 20000 },
+    () => {
+      // A trailing '-- ALTER COLUMN "paired"' comment on the SET NOT NULL line
+      // could retarget the greedy table/column capture at the column that DOES
+      // have a default, waiving the genuinely-unpaired "lodgeId" NOT NULL.
+      // Extraction now runs on a comment-stripped copy of the statement.
+      const fixture = createTempMigration(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "paired" SET DEFAULT \'x\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL; -- ALTER COLUMN "paired"',
+          "",
+        ].join("\n"),
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tUnpaired NOT NULL; the comment must not retarget extraction.",
+        ].join("\n")
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).not.toBe(0);
+        expect(result.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "waives a paired SET NOT NULL carrying a benign trailing comment (#1602 review finding)",
+    { timeout: 20000 },
+    () => {
+      // Comment-stripping before extraction must not break the legitimate case:
+      // a genuine non-NULL pairing whose SET NOT NULL line ends in an ordinary
+      // comment still waives.
+      const fixture = createTempMigration(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL; -- backfilled in prior migration',
+          "",
+        ].join("\n"),
+        [
+          LEDGER_HEADER,
+          "20990101000000_test_migration\texpand\tn/a\tyes\tNon-NULL default pairing; benign trailing comment on the NOT NULL line.",
         ].join("\n")
       );
 
