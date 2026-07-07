@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
@@ -20,6 +20,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  LodgeSelect,
+  initialLodgeIdFromLocation,
+  useLodgeOptions,
+} from "@/components/lodge-select";
 
 type MemberSummary = {
   id: string;
@@ -65,12 +70,26 @@ export default function LockersPage() {
   const [lockers, setLockers] = useState<LockerRecord[]>([]);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  // Lodge context for the page; LodgeSelect renders nothing (and reports the
+  // sole lodge) while fewer than two lodges exist (ADR-002).
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
+  // Hub links (ADR-003) land pre-filtered; read synchronously so the first
+  // fetch is already lodge-filtered.
+  const [lodgeId, setLodgeId] = useState<string | null>(initialLodgeIdFromLocation);
+  const [bulkCount, setBulkCount] = useState("");
+  const [bulkNamePrefix, setBulkNamePrefix] = useState("Locker");
+  const [bulkSaving, setBulkSaving] = useState(false);
 
-  async function loadData() {
+  const loadData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/admin/lockers");
+      const response = await fetch(
+        lodgeId
+          ? `/api/admin/lockers?lodgeId=${encodeURIComponent(lodgeId)}`
+          : "/api/admin/lockers",
+        { signal },
+      );
       const body = await response.json();
       if (!response.ok) {
         throw new Error(body.error || "Failed to load lockers");
@@ -79,6 +98,11 @@ export default function LockersPage() {
       setMembers(body.members ?? []);
       setLockers(body.lockers ?? []);
     } catch (loadError) {
+      // An aborted request means the lodge changed (or the page unmounted);
+      // a newer request owns the list now.
+      if (loadError instanceof DOMException && loadError.name === "AbortError") {
+        return;
+      }
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -87,11 +111,13 @@ export default function LockersPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [lodgeId]);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    const controller = new AbortController();
+    loadData(controller.signal);
+    return () => controller.abort();
+  }, [loadData]);
 
   async function handleFormSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -103,6 +129,9 @@ export default function LockersPage() {
         name,
         allocatedToMemberId:
           allocatedToMemberId === "UNALLOCATED" ? null : allocatedToMemberId,
+        // Lodge is set at creation from the page's lodge context and cannot
+        // be changed by an update.
+        ...(editingLockerId ? {} : { lodgeId: lodgeId ?? undefined }),
       };
       const response = editingLockerId
         ? await fetch(`/api/admin/lockers/${editingLockerId}`, {
@@ -208,6 +237,37 @@ export default function LockersPage() {
     }
   }
 
+  async function bulkCreateLockers() {
+    const count = Number(bulkCount);
+    setBulkSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/lockers/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          count,
+          namePrefix: bulkNamePrefix.trim() || undefined,
+          ...(lodgeId ? { lodgeId } : {}),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.error || "Failed to create lockers");
+      }
+      setBulkCount("");
+      await loadData();
+    } catch (bulkError) {
+      setError(
+        bulkError instanceof Error
+          ? bulkError.message
+          : "Failed to create lockers",
+      );
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
   function toggleSort(nextField: SortField) {
     if (sortField === nextField) {
       setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
@@ -256,6 +316,10 @@ export default function LockersPage() {
         <p className="mt-1 text-sm text-slate-500">
           Create lockers and optionally allocate them to members.
         </p>
+      </div>
+
+      <div className="max-w-xs">
+        <LodgeSelect lodges={lodges} value={lodgeId} onChange={setLodgeId} loading={lodgesLoading} />
       </div>
 
       <Card>
@@ -348,6 +412,51 @@ export default function LockersPage() {
             </div>
           </form>
           {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Quick Add Lockers</CardTitle>
+          <CardDescription>
+            Seed several unallocated lockers at once, then rename or allocate
+            them individually.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-1">
+              <Label htmlFor="bulk-locker-count">How many</Label>
+              <Input
+                id="bulk-locker-count"
+                type="number"
+                min={1}
+                max={100}
+                placeholder="12"
+                value={bulkCount}
+                onChange={(event) => setBulkCount(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="bulk-locker-prefix">Name prefix</Label>
+              <Input
+                id="bulk-locker-prefix"
+                value={bulkNamePrefix}
+                onChange={(event) => setBulkNamePrefix(event.target.value)}
+                placeholder="Locker"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                type="button"
+                onClick={() => void bulkCreateLockers()}
+                disabled={bulkSaving || !bulkCount || Number(bulkCount) < 1}
+                className="w-full sm:w-auto"
+              >
+                {bulkSaving ? "Creating..." : "Create Lockers"}
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

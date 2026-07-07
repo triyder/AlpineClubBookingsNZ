@@ -46,6 +46,12 @@ vi.mock("@/lib/prisma", () => ({
     season: {
       findMany: vi.fn(),
     },
+    lodge: {
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+    },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -66,7 +72,19 @@ vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
 }));
 
+vi.mock("@/lib/lodge-capacity", () => ({
+  // getPublicBookingRequestLodges now resolves each lodge's capacity.
+  getLodgeCapacity: vi.fn(async (lodgeId: string) =>
+    lodgeId === "lodge-2" ? 40 : 20,
+  ),
+}));
+vi.mock("@/lib/lodge-settings", () => ({
+  loadSchoolGroupSoftCap: vi.fn(async (_db: unknown, lodgeId: string) =>
+    lodgeId === "lodge-2" ? 30 : 25,
+  ),
+}));
 vi.mock("@/lib/capacity", () => ({
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: vi.fn(),
 }));
 
@@ -119,12 +137,15 @@ import { hashActionToken } from "@/lib/action-tokens";
 import {
   approveBookingRequest,
   assertMappableOwnerContact,
+  assertRequestedLodgeActive,
   BookingRequestError,
   createBookingRequest,
   declineBookingRequest,
   getBookingRequestSettings,
+  getPublicBookingRequestLodges,
   priceBookingRequest,
   purgeExpiredBookingRequests,
+  resolvePublicRequestLodgeName,
   resolveRequestBookingHoldUntil,
   splitPriceAcrossGuests,
   updateBookingRequestSettings,
@@ -350,6 +371,143 @@ describe("createBookingRequest", () => {
 
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking_request.submitted" })
+    );
+  });
+
+  it("stores null lodgeId (default-lodge semantics) when no lodge is requested", async () => {
+    await createBookingRequest({
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      guests: GUESTS,
+    });
+
+    const createArgs = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(createArgs.lodgeId).toBeNull();
+  });
+
+  it("persists an explicit lodgeId and prices indicatively at that lodge's seasons", async () => {
+    mockedSettingsFindUnique.mockResolvedValue({
+      id: "default",
+      showPricingToNonMembers: true,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+    } as never);
+    vi.mocked(prisma.season.findMany).mockResolvedValue([] as never);
+
+    await createBookingRequest({
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
+      guests: GUESTS,
+      lodgeId: "lodge-2",
+    });
+
+    // Season lookup is scoped strictly to the requested lodge, never the
+    // default lodge.
+    const seasonWhere = vi.mocked(prisma.season.findMany).mock.calls[0][0]!
+      .where as Record<string, unknown>;
+    expect(seasonWhere.lodgeId).toBe("lodge-2");
+    expect(prisma.lodge.findFirst).not.toHaveBeenCalled();
+
+    const createArgs = mockedCreate.mock.calls[0][0].data as Record<string, unknown>;
+    expect(createArgs.lodgeId).toBe("lodge-2");
+  });
+});
+
+describe("assertRequestedLodgeActive", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns null when no lodge is requested", async () => {
+    await expect(assertRequestedLodgeActive(null)).resolves.toBeNull();
+    await expect(assertRequestedLodgeActive(undefined)).resolves.toBeNull();
+    expect(prisma.lodge.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns the id of an active lodge", async () => {
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue({
+      id: "lodge-2",
+      active: true,
+    } as never);
+    await expect(assertRequestedLodgeActive("lodge-2")).resolves.toBe("lodge-2");
+  });
+
+  it("throws 400 for an unknown lodge", async () => {
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue(null);
+    await expect(assertRequestedLodgeActive("nope")).rejects.toMatchObject({
+      status: 400,
+      message: "Lodge not found or not active",
+    });
+  });
+
+  it("throws 400 for an inactive lodge", async () => {
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue({
+      id: "lodge-2",
+      active: false,
+    } as never);
+    await expect(assertRequestedLodgeActive("lodge-2")).rejects.toMatchObject({
+      status: 400,
+      message: "Lodge not found or not active",
+    });
+  });
+});
+
+describe("getPublicBookingRequestLodges", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns an empty list for a single-lodge club (ADR-002)", async () => {
+    vi.mocked(prisma.lodge.findMany).mockResolvedValue([
+      { id: "lodge-1", name: "Ruapehu Lodge" },
+    ] as never);
+    await expect(getPublicBookingRequestLodges()).resolves.toEqual([]);
+  });
+
+  it("returns id and name for each active lodge when two or more are active", async () => {
+    vi.mocked(prisma.lodge.findMany).mockResolvedValue([
+      { id: "lodge-1", name: "Ruapehu Lodge" },
+      { id: "lodge-2", name: "Whakapapa Lodge" },
+    ] as never);
+    await expect(getPublicBookingRequestLodges()).resolves.toEqual([
+      { id: "lodge-1", name: "Ruapehu Lodge", capacity: 20, schoolGroupSoftCap: 25 },
+      { id: "lodge-2", name: "Whakapapa Lodge", capacity: 40, schoolGroupSoftCap: 30 },
+    ]);
+    const args = vi.mocked(prisma.lodge.findMany).mock.calls[0][0]!;
+    expect(args.where).toEqual({ active: true });
+    expect(args.select).toEqual({ id: true, name: true });
+  });
+});
+
+describe("resolvePublicRequestLodgeName", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns null for a request without an explicit lodge", async () => {
+    await expect(resolvePublicRequestLodgeName(null)).resolves.toBeNull();
+    expect(prisma.lodge.count).not.toHaveBeenCalled();
+  });
+
+  it("returns null for a single-lodge club (ADR-002)", async () => {
+    vi.mocked(prisma.lodge.count).mockResolvedValue(1 as never);
+    await expect(resolvePublicRequestLodgeName("lodge-1")).resolves.toBeNull();
+    expect(prisma.lodge.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns the lodge name when the club has two or more active lodges", async () => {
+    vi.mocked(prisma.lodge.count).mockResolvedValue(2 as never);
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue({
+      name: "Whakapapa Lodge",
+    } as never);
+    await expect(resolvePublicRequestLodgeName("lodge-2")).resolves.toBe(
+      "Whakapapa Lodge"
     );
   });
 });
@@ -903,6 +1061,7 @@ describe("approveBookingRequest", () => {
     mockedTransaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
       fn(prisma)
     );
+    vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "lodge-1" } as never);
     // Default to no member-night conflict; individual tests override to reject.
     mockedAssertNoConflicts.mockResolvedValue(undefined);
   });
@@ -1004,6 +1163,47 @@ describe("approveBookingRequest", () => {
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({ action: "booking_request.approved" })
     );
+  });
+
+  it("creates the booking at the request's lodge instead of the default lodge", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseRequest({
+        status: BookingRequestStatus.PRICED,
+        priceCents: 12000,
+        lodgeId: "lodge-2",
+      }) as never
+    );
+    mockedUpdateMany.mockResolvedValue({ count: 1 } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 5,
+      nightDetails: [],
+    } as never);
+    vi.mocked(prisma.member.create).mockResolvedValue({ id: "member-1" } as never);
+    vi.mocked(prisma.booking.create).mockResolvedValue({ id: "booking-1" } as never);
+    vi.mocked(prisma.payment.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.paymentLink.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
+
+    const result = await approveBookingRequest({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result).toMatchObject({ type: "approved", bookingId: "booking-1" });
+    // The default-lodge resolver must not run when the request names a lodge.
+    expect(prisma.lodge.findFirst).not.toHaveBeenCalled();
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "lodge-2",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      expect.anything()
+    );
+    const bookingArgs = vi.mocked(prisma.booking.create).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(bookingArgs.lodgeId).toBe("lodge-2");
   });
 
   it("maps to an existing non-login contact instead of creating a new member (#1255)", async () => {

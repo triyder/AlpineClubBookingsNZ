@@ -11,6 +11,7 @@ const mockChoreAssignmentGroupBy = vi.fn()
 const mockTransaction = vi.fn()
 const mockAllocateChores = vi.fn()
 const mockTxExecuteRaw = vi.fn()
+const mockLodgeFindFirst = vi.fn()
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -49,6 +50,9 @@ vi.mock("@/lib/prisma", () => ({
     choreAssignment: {
       findMany: vi.fn(),
     },
+    lodge: {
+      findFirst: mockLodgeFindFirst,
+    },
     $transaction: (callback: (tx: unknown) => unknown) => mockTransaction(callback),
   },
 }))
@@ -77,6 +81,7 @@ describe("PUT /api/admin/roster/[date] regenerate action", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } })
+    mockLodgeFindFirst.mockResolvedValue({ id: "default-lodge" })
 
     mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({

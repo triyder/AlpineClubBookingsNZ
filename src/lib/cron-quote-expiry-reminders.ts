@@ -74,6 +74,7 @@ export async function sendQuoteExpiryReminders(): Promise<{
       await sendBookingRequestQuoteEmail({
         email: request.contactEmail,
         firstName: request.contactFirstName,
+        lodgeId: request.lodgeId ?? null,
         token,
         checkIn: request.checkIn,
         checkOut: request.checkOut,

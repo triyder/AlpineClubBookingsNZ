@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkLodgeAuth, getLodgeAuthActorMemberId } from "@/lib/lodge-auth";
+import { checkLodgeAuth, getLodgeAuthActorMemberId, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { parseDateOnly } from "@/lib/date-only";
+import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { z } from "zod";
@@ -47,8 +48,17 @@ export async function GET(
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
+  let lodgeId: string;
+  try {
+    lodgeId = await resolveKioskLodgeId(authResult, prisma);
+  } catch (err) {
+    const denied = kioskLodgeAuthErrorResponse(err);
+    if (denied) return denied;
+    throw err;
+  }
+
   const assignments = await prisma.choreAssignment.findMany({
-    where: { date },
+    where: { date, booking: lodgeNullTolerantScope(lodgeId) },
     include: {
       choreTemplate: true,
       bookingGuest: {
@@ -134,8 +144,14 @@ export async function PUT(
   const data = parsed.data;
 
   try {
+    const lodgeId = await resolveKioskLodgeId(authResult, prisma);
+
     const assignment = await prisma.choreAssignment.findFirst({
-      where: { id: data.assignmentId, date },
+      where: {
+        id: data.assignmentId,
+        date,
+        booking: lodgeNullTolerantScope(lodgeId),
+      },
       select: {
         id: true,
         choreTemplateId: true,
@@ -202,6 +218,8 @@ export async function PUT(
       },
     });
   } catch (err) {
+    const denied = kioskLodgeAuthErrorResponse(err);
+    if (denied) return denied;
     logger.error({ err }, "Error toggling chore completion");
     return NextResponse.json(
       { error: "Failed to update assignment" },

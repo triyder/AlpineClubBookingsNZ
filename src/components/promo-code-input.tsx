@@ -37,6 +37,9 @@ interface PromoCodeInputProps {
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
   forMemberId?: string;
+  // Lodge the booking is for (multi-lodge phase 8); promo lodge
+  // restrictions validate against it. Omitted = the club's default lodge.
+  lodgeId?: string | null;
   prefillCode?: string;
   // Disables entry (e.g. while a working bee discount is selected) and
   // explains why.
@@ -51,6 +54,7 @@ export function PromoCodeInput({
   onPromoApplied,
   appliedPromo,
   forMemberId,
+  lodgeId,
   prefillCode,
   disabled = false,
   disabledReason,
@@ -98,6 +102,7 @@ export function PromoCodeInput({
           })),
           ...(selectionRequired ? { promoGuestIndexes: selectedGuestIndexes } : {}),
           ...(forMemberId ? { forMemberId } : {}),
+          ...(lodgeId ? { lodgeId } : {}),
         }),
       });
 

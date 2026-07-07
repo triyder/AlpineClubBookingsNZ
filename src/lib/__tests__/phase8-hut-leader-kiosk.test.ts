@@ -31,6 +31,7 @@ const {
     booking: {
       count: vi.fn(),
       findMany: vi.fn(),
+      findFirst: vi.fn(),
     },
     bookingGuest: {
       findFirst: vi.fn(),
@@ -42,6 +43,12 @@ const {
     },
     auditLog: {
       create: vi.fn(),
+    },
+    memberLodgeAccess: {
+      findMany: vi.fn(),
+    },
+    lodge: {
+      findFirst: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -95,6 +102,8 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     mockSendHutLeaderAssignmentEmail.mockResolvedValue(undefined);
     mockPrisma.auditLog.create.mockResolvedValue({});
     mockPrisma.choreAssignment.deleteMany.mockResolvedValue({ count: 0 });
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockPrisma.$transaction.mockImplementation(
       async (callback: (tx: typeof mockPrisma) => Promise<unknown>) =>
         callback(mockPrisma)
@@ -142,6 +151,226 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       await bcrypt.compare(emailCall.pin, createCall.data.hutLeaderPin)
     ).toBe(true);
   }, 20000);
+
+  it("rejects a PIN scoped to another lodge when kioskLodgeId is passed", async () => {
+    // findMany itself is mocked (no real DB filtering), so it reflects what
+    // the where-clause would already have excluded: an assignment scoped to
+    // a different lodge than the kiosk never comes back from the query.
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+
+    const { findActiveHutLeaderAssignmentByPin } = await import(
+      "@/lib/lodge-pin-session"
+    );
+    const result = await findActiveHutLeaderAssignmentByPin(
+      "123456",
+      undefined,
+      "kiosk-lodge"
+    );
+
+    expect(result).toBeNull();
+    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          lodgeId: "kiosk-lodge",
+        }),
+      })
+    );
+  });
+
+  it("matches a null-lodgeId assignment against any kioskLodgeId", async () => {
+    const pinHash = await bcrypt.hash("123456", 12);
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
+      {
+        id: "assign-1",
+        memberId: "member-1",
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        endDate: new Date("2026-07-20T00:00:00.000Z"),
+        hutLeaderPin: pinHash,
+        lodgeId: null,
+        member: {
+          id: "member-1",
+          active: true,
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@example.com",
+        },
+      },
+    ]);
+
+    const { findActiveHutLeaderAssignmentByPin } = await import(
+      "@/lib/lodge-pin-session"
+    );
+    const result = await findActiveHutLeaderAssignmentByPin(
+      "123456",
+      undefined,
+      "kiosk-lodge"
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe("assign-1");
+  });
+
+  it("resolves the kiosk lodge binding from the staff grant on PIN login", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }], email: "lodge@example.org" },
+    });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "lodge-1",
+      accessRoles: [{ role: "LODGE" }],
+    });
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "bound-lodge" },
+    ]);
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+
+    const { POST } = await import("@/app/api/lodge/pin-login/route");
+    const res = await POST(
+      new Request("http://localhost/api/lodge/pin-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-forwarded-for": "10.0.0.9",
+        },
+        body: JSON.stringify({ pin: "654321" }),
+      }) as any
+    );
+
+    expect(res.status).toBe(401);
+    expect(mockPrisma.memberLodgeAccess.findMany).toHaveBeenCalledWith({
+      where: { memberId: "lodge-1", kind: "STAFF" },
+      select: { lodgeId: true },
+      take: 2,
+    });
+    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          lodgeId: "bound-lodge",
+        }),
+      })
+    );
+    // No STAFF grant means getDefaultLodgeId is never reached for this case.
+    expect(mockPrisma.lodge.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the default lodge on PIN login when there is no staff grant", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }], email: "lodge@example.org" },
+    });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "lodge-1",
+      accessRoles: [{ role: "LODGE" }],
+    });
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+
+    const { POST } = await import("@/app/api/lodge/pin-login/route");
+    const res = await POST(
+      new Request("http://localhost/api/lodge/pin-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-forwarded-for": "10.0.0.10",
+        },
+        body: JSON.stringify({ pin: "654321" }),
+      }) as any
+    );
+
+    expect(res.status).toBe(401);
+    expect(mockPrisma.lodge.findFirst).toHaveBeenCalled();
+    expect(mockPrisma.hutLeaderAssignment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          lodgeId: "default-lodge",
+        }),
+      })
+    );
+  });
+
+  it("denies PIN login when the kiosk account is bound to multiple lodges (M5)", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", accessRoles: [{ role: "LODGE" }], email: "lodge@example.org" },
+    });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "lodge-1",
+      accessRoles: [{ role: "LODGE" }],
+    });
+    // Two STAFF grants: an ordinary admin misselection. The kiosk must not
+    // silently accept the default lodge's hut-leader PINs.
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "lodge-A" },
+      { lodgeId: "lodge-B" },
+    ]);
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+
+    const { POST } = await import("@/app/api/lodge/pin-login/route");
+    const res = await POST(
+      new Request("http://localhost/api/lodge/pin-login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-forwarded-for": "10.0.0.11",
+        },
+        body: JSON.stringify({ pin: "654321" }),
+      }) as any
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error:
+        "This kiosk account is assigned to multiple lodges — an admin must fix the assignment.",
+    });
+    // Deny before falling back to the default lodge or attempting a PIN match.
+    expect(mockPrisma.lodge.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.hutLeaderAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("resolveKioskLodgeId denies an ambiguous multi-lodge kiosk binding (M5)", async () => {
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "lodge-A" },
+      { lodgeId: "lodge-B" },
+    ]);
+
+    const { resolveKioskLodgeId } = await import("@/lib/lodge-auth");
+    const { AmbiguousKioskLodgeError } = await import("@/lib/lodge-access");
+
+    await expect(
+      resolveKioskLodgeId(
+        { tier: "lodge", member: { id: "lodge-1" } },
+        mockPrisma as never
+      )
+    ).rejects.toBeInstanceOf(AmbiguousKioskLodgeError);
+    // "No default-lodge data served": the default lodge is never resolved.
+    expect(mockPrisma.lodge.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("resolveKioskLodgeId returns the bound lodge for a single kiosk grant (M5)", async () => {
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "bound-lodge" },
+    ]);
+
+    const { resolveKioskLodgeId } = await import("@/lib/lodge-auth");
+    const lodgeId = await resolveKioskLodgeId(
+      { tier: "lodge", member: { id: "lodge-1" } },
+      mockPrisma as never
+    );
+
+    expect(lodgeId).toBe("bound-lodge");
+    expect(mockPrisma.lodge.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("resolveKioskLodgeId falls back to the default lodge with no kiosk grant (M5)", async () => {
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
+
+    const { resolveKioskLodgeId } = await import("@/lib/lodge-auth");
+    const lodgeId = await resolveKioskLodgeId(
+      { tier: "admin", member: { id: "lodge-1" } },
+      mockPrisma as never
+    );
+
+    expect(lodgeId).toBe("default-lodge");
+  });
 
   it("formats member guest phone numbers for the kiosk guest list API", async () => {
     mockAuth.mockResolvedValue({
@@ -238,6 +467,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(1);
+    mockPrisma.booking.findFirst.mockResolvedValue({ lodgeId: "default-lodge" });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
         id: "booking-1",
@@ -536,6 +766,9 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       canManageRoster: true,
       canMarkAttendance: true,
       canCompleteChores: true,
+      // Single-lodge club: the kiosk header lodge name stays hidden
+      // (ADR-002 presentation rule).
+      lodgeName: null,
     });
   });
 

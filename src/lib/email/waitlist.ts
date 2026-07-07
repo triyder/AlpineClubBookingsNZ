@@ -20,6 +20,8 @@ export async function sendWaitlistConfirmationEmail(
   checkOut: Date,
   guestCount: number,
   position: number,
+  // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
+  lodgeId?: string | null,
 ) {
   await sendEmail({
     to: email,
@@ -39,6 +41,7 @@ export async function sendWaitlistConfirmationEmail(
       guestCount,
       position,
     },
+    lodgeId,
   });
 }
 
@@ -50,7 +53,17 @@ export async function sendWaitlistOfferEmail(
   guestCount: number,
   expiresAt: Date,
   bookingId: string,
+  // Price the member pays on confirmation (upstream #1035): the offer-time
+  // reprice for same-lodge offers, or the offered lodge's quote for a
+  // cross-lodge offer.
   priceCents: number,
+  // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
+  // A cross-lodge offer passes the OFFERED lodge here so the message
+  // carries that lodge's identity.
+  lodgeId?: string | null,
+  // Cross-lodge offer (ADR-004): names the alternate lodge the member is
+  // being offered. Null for same-lodge offers, which render as before.
+  crossLodgeOffer?: { lodgeName: string | null } | null,
 ) {
   await sendEmail({
     to: email,
@@ -63,6 +76,7 @@ export async function sendWaitlistOfferEmail(
       expiresAt,
       bookingId,
       priceCents,
+      crossLodgeOffer,
     ),
     templateName: "waitlist-offer",
     templateData: {
@@ -74,7 +88,11 @@ export async function sendWaitlistOfferEmail(
       price: formatMoneyCents(priceCents),
       expiresAt: formatNZDateTime(expiresAt),
       bookingId,
+      ...(crossLodgeOffer
+        ? { offeredLodgeName: crossLodgeOffer.lodgeName }
+        : {}),
     },
+    lodgeId,
   });
 }
 
@@ -84,6 +102,8 @@ export async function sendWaitlistOfferExpiredEmail(
   checkIn: Date,
   checkOut: Date,
   position: number,
+  // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
+  lodgeId?: string | null,
 ) {
   await sendEmail({
     to: email,
@@ -96,5 +116,6 @@ export async function sendWaitlistOfferExpiredEmail(
       checkOut: formatNZDate(checkOut),
       position,
     },
+    lodgeId,
   });
 }

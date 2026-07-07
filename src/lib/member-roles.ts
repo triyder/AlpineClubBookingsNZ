@@ -53,6 +53,18 @@ export function isMemberLevelRole(
   return MEMBER_LEVEL_ROLE_VALUES.includes(role as MemberLevelRole);
 }
 
+/**
+ * True for the shared lodge kiosk device login (legacy role or normalized
+ * access-role rows). Kiosk accounts never hold bookings; members holding
+ * the admin role are real people and remain bookable-on-behalf.
+ */
+export function isLodgeKioskAccount(
+  role: string | null | undefined,
+  accessRoles?: readonly string[] | null,
+): boolean {
+  return role === "LODGE" || (accessRoles ?? []).includes("LODGE");
+}
+
 export function isOperationalRole(
   role: string | null | undefined,
 ): role is (typeof OPERATIONAL_ROLE_VALUES)[number] {

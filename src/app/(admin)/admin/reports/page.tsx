@@ -6,6 +6,7 @@ import { format, subMonths, startOfMonth, endOfMonth } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useLodgeOptions } from "@/components/lodge-select";
 import {
   CalendarRange,
   DollarSign,
@@ -140,6 +141,7 @@ function StatCard({
 
 export default function ReportsPage() {
   const club = useClubIdentity();
+  const { lodges } = useLodgeOptions("admin");
   // The reports API interprets from/to in the club time zone, so anchor the
   // default range on the club-timezone "today" rather than the browser's local
   // date (a browser trailing NZ across a month boundary would otherwise seed a
@@ -154,11 +156,21 @@ export default function ReportsPage() {
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
   const [deleted, setDeleted] = useState("hide");
+  // Reporting lodge scope: "" = all active lodges (occupancy uses the summed
+  // active-lodge capacity); a lodge id scopes metrics to that lodge (ADR-002:
+  // the selector only appears once a second active lodge exists).
+  const [lodgeId, setLodgeId] = useState<string>("");
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatingPDF, setGeneratingPDF] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  const occupancyScopeLabel =
+    lodges.length > 1
+      ? lodgeId
+        ? (lodges.find((lodge) => lodge.id === lodgeId)?.name ?? "Selected lodge")
+        : "All lodges"
+      : null;
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -167,6 +179,9 @@ export default function ReportsPage() {
       const params = new URLSearchParams({ from, to });
       if (deleted !== "hide") {
         params.set("deleted", deleted);
+      }
+      if (lodgeId) {
+        params.set("lodgeId", lodgeId);
       }
       const res = await fetch(`/api/admin/reports?${params.toString()}`);
       if (!res.ok) {
@@ -180,7 +195,7 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [deleted, from, to]);
+  }, [deleted, from, to, lodgeId]);
 
   useEffect(() => {
     fetchReports();
@@ -323,6 +338,23 @@ export default function ReportsPage() {
             onFromChange={setFrom}
             onToChange={setTo}
           />
+          {lodges.length > 1 ? (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-500">Lodge</label>
+              <select
+                value={lodgeId}
+                onChange={(event) => setLodgeId(event.target.value)}
+                className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+              >
+                <option value="">All lodges</option>
+                {lodges.map((lodge) => (
+                  <option key={lodge.id} value={lodge.id}>
+                    {lodge.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="space-y-1">
             <label className="text-xs font-medium text-gray-500">Deleted</label>
             <select
@@ -397,7 +429,11 @@ export default function ReportsPage() {
               <StatCard
                 title="Avg Occupancy"
                 value={`${data.summary.avgOccupancyRate}%`}
-                subtitle="Average bed occupancy for the selected dates"
+                subtitle={
+                  occupancyScopeLabel
+                    ? `Average bed occupancy for the selected dates · ${occupancyScopeLabel}`
+                    : "Average bed occupancy for the selected dates"
+                }
                 icon={TrendingUp}
               />
             </div>
@@ -439,7 +475,7 @@ export default function ReportsPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <BarChart2 className="h-5 w-5" />
-                  Occupancy Rate
+                  Occupancy Rate{occupancyScopeLabel ? ` · ${occupancyScopeLabel}` : ""}
                 </CardTitle>
               </CardHeader>
               <CardContent>

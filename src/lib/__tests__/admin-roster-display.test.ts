@@ -9,6 +9,7 @@ const mockChoreTemplateFindMany = vi.fn();
 const mockTransaction = vi.fn();
 const mockTxExecuteRaw = vi.fn();
 const mockMemberCount = vi.fn();
+const mockLodgeFindFirst = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -52,6 +53,9 @@ vi.mock("@/lib/prisma", () => ({
     choreTemplate: {
       findMany: mockChoreTemplateFindMany,
     },
+    lodge: {
+      findFirst: mockLodgeFindFirst,
+    },
     $transaction: (callback: (tx: unknown) => unknown) => mockTransaction(callback),
   },
 }));
@@ -81,6 +85,7 @@ describe("GET /api/admin/roster/[date] age tier display", () => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockMemberCount.mockResolvedValue(1);
+    mockLodgeFindFirst.mockResolvedValue({ id: "default-lodge" });
     mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
         $executeRaw: mockTxExecuteRaw,

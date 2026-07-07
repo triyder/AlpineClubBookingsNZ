@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const mockPrisma = {
-  booking: { findMany: vi.fn(), count: vi.fn() },
+  booking: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
   member: { count: vi.fn(), findUnique: vi.fn() },
   bookingGuest: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   choreAssignment: {
@@ -18,7 +18,9 @@ const mockPrisma = {
     groupBy: vi.fn(),
   },
   choreTemplate: { findMany: vi.fn() },
-  hutLeaderAssignment: { count: vi.fn() },
+  hutLeaderAssignment: { count: vi.fn(), findUnique: vi.fn() },
+  memberLodgeAccess: { findMany: vi.fn() },
+  lodge: { findFirst: vi.fn() },
   $transaction: vi.fn(),
 };
 
@@ -76,9 +78,13 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
   });
 
   it("sets completedAt and completedVia on complete action", async () => {
@@ -236,6 +242,8 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
@@ -333,6 +341,8 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
@@ -471,6 +481,8 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
     mockPrisma.$transaction.mockImplementation(async (fn: any) =>
       fn({
@@ -610,6 +622,8 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 
@@ -691,6 +705,29 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
     expect(data.error).toBe("Unauthorised");
     expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
+
+  it("denies with 403 (not 500) when the kiosk account is bound to multiple lodges", async () => {
+    // M5: a STAFF account granted at 2+ lodges is ambiguous; resolveKioskLodgeId
+    // throws AmbiguousKioskLodgeError, and the route maps it to a clean 403 deny
+    // rather than a 500, so a one-click admin misconfiguration is quiet and
+    // never serves the wrong lodge's guest list.
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([
+      { lodgeId: "lodge-A" },
+      { lodgeId: "lodge-B" },
+    ]);
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const req = new Request("http://localhost/api/lodge/guests/2026-07-10") as any;
+
+    const res = await GET(req, makeParams());
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error).toBe(
+      "This kiosk account is assigned to multiple lodges — an admin must fix the assignment."
+    );
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -708,6 +745,8 @@ describe("F6: GET /api/lodge/roster/[date]/chores", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
   });
 
   it("returns active templates for admins and hut leaders", async () => {
@@ -733,7 +772,7 @@ describe("F6: GET /api/lodge/roster/[date]/chores", () => {
       { id: "ct1", name: "Kitchen", active: true, sortOrder: 1 },
     ]);
     expect(mockPrisma.choreTemplate.findMany).toHaveBeenCalledWith({
-      where: { active: true },
+      where: { active: true, lodgeId: "default-lodge" },
       orderBy: { sortOrder: "asc" },
     });
   });
@@ -765,6 +804,8 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     // Generate requires hut-leader or admin tier (LODGE can't generate)
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
   });
@@ -869,7 +910,9 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
       accessRoles: [{ role: "ADMIN" }],
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
-    mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(1);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockPrisma.bookingGuest.findMany.mockResolvedValue([{ id: "g1", bookingId: "b1" }]);
     // Confirm requires hut-leader or admin tier (LODGE can't confirm)
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
@@ -1052,6 +1095,8 @@ describe("F6: GET /api/lodge/roster/[date]/frequency-info", () => {
     });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
+    mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
   });
 

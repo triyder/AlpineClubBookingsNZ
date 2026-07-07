@@ -52,6 +52,9 @@ interface AccessInfo {
   canManageRoster: boolean;
   canMarkAttendance: boolean;
   canCompleteChores: boolean;
+  // Lodge this kiosk session operates; null for single-lodge clubs
+  // (ADR-002 presentation rule) and older responses.
+  lodgeName?: string | null;
 }
 
 function formatDate(date: Date): string {
@@ -416,6 +419,11 @@ export default function KioskPage() {
           &lsaquo;
         </button>
         <div className="text-center">
+          {access?.lodgeName && (
+            <p className="text-slate-300 text-sm font-medium uppercase tracking-wide">
+              {access.lodgeName}
+            </p>
+          )}
           <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
           <p className="text-slate-400 text-lg">
             {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list

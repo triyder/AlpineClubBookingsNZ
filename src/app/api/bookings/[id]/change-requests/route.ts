@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
@@ -320,7 +321,9 @@ export async function POST(
     );
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const lodgeCapacity = await getLodgeCapacity(
+    booking.lodgeId ?? (await getDefaultLodgeId(prisma)),
+  );
   const proposedGuestCount =
     booking.guests.length - removeSet.size + (addGuests?.length ?? 0);
   if (proposedGuestCount > lodgeCapacity) {

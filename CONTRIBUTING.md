@@ -49,6 +49,7 @@ Run the relevant focused tests first, then the full gate before opening a PR:
 npm audit --audit-level=high
 npm run lint
 DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npm run knip
 npm test
 npm run build
 git diff --check
@@ -57,6 +58,31 @@ git diff --check
 For UI and accessibility changes, use the staging workflow described in
 `docs/STAGING_ACCESSIBILITY.md`. Do not run broad browser automation against a
 live production site.
+
+### Dead-code gate (knip)
+
+`npm run knip` is a blocking CI check (the `verify` job runs `npx knip` after
+the typecheck step). It fails the build if a pull request adds an unused file,
+export, type, or dependency, so remove dead code in the same PR that orphans it.
+Like the test suite, knip needs `DATABASE_URL` set to any value (an unreachable
+dummy is fine) so `prisma.config.ts` resolves; without it knip errors on the
+Prisma schema.
+
+When knip reports a **false positive** — a file or export that is genuinely used
+but through a path knip cannot statically trace (a shell script, a Playwright
+`testMatch` regex, a framework convention export, a documented operator CLI) —
+add a justified carve-out to `knip.jsonc` rather than deleting live code:
+
+- Prefer an `entry` declaration for a file that is a real entry point (a script,
+  a runtime hook, a tool invoked outside the import graph).
+- Use a file-scoped `ignoreIssues` rule (for example
+  `"path/to/file.ts": ["exports"]`) for a specific export/type/duplicate that is
+  intentionally kept. Prefer file-scoped rules over directory globs, and never
+  disable an issue type globally.
+- Every entry and ignore entry gets a one-line comment explaining why it is
+  safe. Decisions the owner has already accepted keeping (shadcn `ui/*` idiom
+  exports, Next/NextAuth convention exports, type-only exports, e2e test-seam
+  helpers) are recorded in issue #1129 / PR #1178.
 
 ## Pull Requests
 

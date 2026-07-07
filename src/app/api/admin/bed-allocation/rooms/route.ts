@@ -10,6 +10,8 @@ import {
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
+import { prisma } from "@/lib/prisma";
+import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 
 // requireAdmin() is enforced by requireBedAllocationAdmin().
 const roomSchema = z
@@ -18,15 +20,28 @@ const roomSchema = z
     sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
     active: z.boolean().default(true),
     notes: z.string().trim().max(500).nullable().optional(),
+    lodgeId: z.string().min(1).optional(),
   })
   .strict();
 
-export async function GET() {
+export async function GET(request: Request) {
   const guard = await requireBedAllocationAdmin();
   if (!guard.ok) return guard.response;
 
   try {
-    return NextResponse.json(await getRoomsAndBedsConfiguration());
+    const lodgeId =
+      new URL(request.url).searchParams.get("lodgeId") ?? undefined;
+    // Validate an explicit lodge scope the way the POST path does (400 on
+    // unknown/inactive); omitted stays club-wide.
+    if (lodgeId && !(await resolveOptionalActiveLodgeId(prisma, lodgeId))) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json(
+      await getRoomsAndBedsConfiguration(undefined, lodgeId),
+    );
   } catch (error) {
     return bedAllocationErrorResponse(error);
   }
@@ -48,7 +63,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const room = await createBedAllocationRoom(body.data);
+    const lodgeId = await resolveOptionalActiveLodgeId(
+      prisma,
+      body.data.lodgeId,
+    );
+    if (!lodgeId) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 },
+      );
+    }
+
+    const room = await createBedAllocationRoom({ ...body.data, lodgeId });
     logAudit({
       action: "BED_ALLOCATION_ROOM_CREATED",
       memberId: guard.session.user.id,

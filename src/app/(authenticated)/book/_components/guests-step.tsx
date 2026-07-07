@@ -132,15 +132,16 @@ export function GuestsStep({
             </div>
           </div>
         )}
-        {showInviteFamilyGroupMembersLink && (
-          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-4">
-            <p className="text-sm text-slate-600">
-              No other family group members are available to quick add yet.{" "}
+        {(showInviteFamilyGroupMembersLink || familyMembers.length > 0) && (
+          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-4 dark:border-indigo-800 dark:bg-indigo-950/30">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Family member missing? Add or invite them in your User Profile &gt;
+              Family Group, then return here to quick add them at member rates.{" "}
               <Link
                 href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
-                className="font-medium text-indigo-700 underline underline-offset-4 hover:text-indigo-800"
+                className="font-medium text-indigo-700 underline underline-offset-4 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200"
               >
-                Invite family group members
+                Open Family Group in your profile
               </Link>
               .
             </p>

@@ -125,6 +125,10 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
       "/api/skifield-conditions",
     ],
   },
+  {
+    flag: "multiLodge",
+    prefixes: ["/admin/lodges", "/api/admin/lodges"],
+  },
 ];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {

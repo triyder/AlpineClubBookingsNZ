@@ -19,6 +19,9 @@ const mockFindMany = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     minimumStayPolicy: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
       create: vi.fn(),
@@ -178,8 +181,13 @@ describe("validateMinimumStay", () => {
     expect(mockFindMany).toHaveBeenCalledTimes(1);
     const call = mockFindMany.mock.calls[0][0];
     expect(call.where.active).toBe(true);
-    expect(call.where.startDate).toHaveProperty("lte");
-    expect(call.where.endDate).toHaveProperty("gte");
+    // The whole active policy type is fetched (lodge-scoped with club-wide
+    // fallback rows) and date filtering now happens in the resolver, per the
+    // ADR-001 replace-not-merge override rule.
+    expect(call.where.OR).toEqual([
+      { lodgeId: "lodge-1" },
+      { lodgeId: null },
+    ]);
   });
 });
 

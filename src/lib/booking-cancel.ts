@@ -241,7 +241,10 @@ async function cancelLinkedProvisionalChildBookings(
       child.member.firstName,
       child.checkIn,
       child.checkOut,
-      0
+      0,
+      "card",
+      0,
+      child.lodgeId
     ).catch((err) =>
       logger.error(
         { err, bookingId: child.id },
@@ -249,7 +252,11 @@ async function cancelLinkedProvisionalChildBookings(
       )
     );
 
-    processWaitlistForDates({ checkIn: child.checkIn, checkOut: child.checkOut }).catch(
+    processWaitlistForDates({
+      checkIn: child.checkIn,
+      checkOut: child.checkOut,
+      lodgeId: child.lodgeId,
+    }).catch(
       (err) =>
         logger.error(
           { err, bookingId: child.id },
@@ -385,6 +392,12 @@ async function performBookingCancellation(
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
           waitlistPosition: null,
+          // Clear the cross-lodge offer residue too (ADR-004): a cancelled
+          // WAITLIST_OFFERED entry must not keep a stale offered lodge/price.
+          // Inert for non-offered statuses (already null), but keeps the row
+          // honest.
+          waitlistOfferedLodgeId: null,
+          waitlistOfferedPriceCents: null,
         },
       });
       if (wasAwaitingReview) {
@@ -478,13 +491,14 @@ async function performBookingCancellation(
         fresh.checkOut,
         0,
         "card",
-        creditRestoredCents
+        creditRestoredCents,
+        fresh.lodgeId
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for no-payment booking"));
     }
 
     // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
     if (wasOffered) {
-      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
+      processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
         .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
     }
 
@@ -596,11 +610,12 @@ async function performBookingCancellation(
       fresh.checkOut,
       0,
       "card",
-      creditRestoredCents
+      creditRestoredCents,
+      fresh.lodgeId
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after pending cancellation"));
 
     return {
@@ -883,11 +898,12 @@ async function performBookingCancellation(
       fresh.checkOut,
       0,
       "card",
-      creditRestoredCents
+      creditRestoredCents,
+      fresh.lodgeId
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after confirmed cancellation"));
 
     return {
@@ -1035,7 +1051,7 @@ async function performBookingCancellation(
       Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
       payment.changeFeeCents;
     const days = daysUntilDate(fresh.checkIn);
-    const policy = await loadCancellationPolicy(fresh.checkIn);
+    const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId);
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card
@@ -1327,11 +1343,12 @@ async function performBookingCancellation(
       fresh.checkOut,
       refundAmountCents,
       "credit",
-      creditRestoredCents
+      creditRestoredCents,
+      fresh.lodgeId
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after credit cancellation"));
 
     return {
@@ -1493,11 +1510,12 @@ async function performBookingCancellation(
       fresh.checkOut,
       refundAmountCents,
       "card",
-      creditRestoredCents
+      creditRestoredCents,
+      fresh.lodgeId
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     // Trigger waitlist processing for freed dates
-    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
+    processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
       .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after card refund cancellation"));
 
     return {
@@ -1552,11 +1570,12 @@ async function performBookingCancellation(
     fresh.checkOut,
     0,
     "card",
-    creditRestoredCents
+    creditRestoredCents,
+    fresh.lodgeId
   ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
   // Trigger waitlist processing for freed dates
-  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut })
+  processWaitlistForDates({ checkIn: fresh.checkIn, checkOut: fresh.checkOut, lodgeId: fresh.lodgeId })
     .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after no-refund cancellation"));
 
   return {

@@ -17,10 +17,36 @@ Future reviews and issues should cite this file when proposing changes.
   unless a feature explicitly requires time-of-day semantics.
 - `BookingGuest.stayStart` and `BookingGuest.stayEnd` represent each guest's
   date-only occupancy inside the booking envelope.
+- Capacity is per lodge. A booking belongs to exactly one lodge
+  (`Booking.lodgeId`); capacity is "beds available on date D at lodge L", and
+  no code path may sum beds across lodges into a single club-wide number. Two
+  bookings at different lodges never contend for the same beds. The one
+  deliberate, documented exception is a reporting-layer occupancy denominator
+  that intentionally aggregates active lodges; any such aggregate must be
+  recorded in `docs/multi-lodge/lodge-scoping-contract.md` and labelled as
+  cross-lodge in the surface that shows it. A single-lodge club is simply a
+  club whose `Lodge` table has one active row — the same per-lodge rules apply
+  with the lodge dimension hidden by the ADR-002 presentation rule.
+- `lodgeId` is **`NOT NULL`** on the six entity tables (`LodgeRoom`, `Locker`,
+  `Season`, `Booking`, `ChoreTemplate`, `HutLeaderAssignment`), enforced
+  **without an outage** via a `default_lodge_id()` column default: an old
+  (pre-lodge) colour's insert omits `lodgeId` and auto-fills the default lodge,
+  so no null is written even mid-blue/green-cutover. `lodgeNullTolerantScope`
+  is now a strict `{ lodgeId }`. Policy/settings tables keep a **nullable**
+  `lodgeId` (null = club-wide default), scoped via `resolvePolicyRowsForLodge`.
+  See `docs/multi-lodge/contract-release.md`.
+- Each lodge's capacity resolves through `getLodgeCapacityStatus`: active
+  configured beds when the Bed Allocation module is on, else the per-lodge
+  `LodgeSettings.capacity` override, else the club-config bed total for the
+  default lodge only. An additional lodge with neither configured beds nor a
+  capacity override resolves to capacity 0 (`unconfigured_lodge`), so a
+  freshly created lodge is unbookable rather than overbookable until it is set
+  up.
 - A booking consumes beds when it is capacity-holding. The implementation
   source of truth is `capacityHoldingBookingFilter()` in
-  `src/lib/booking-status.ts`, which every occupancy/availability query uses.
-  A booking holds capacity when either (a) its status is in
+  `src/lib/booking-status.ts`, which every occupancy/availability query uses
+  (composed under `AND` with the per-lodge scope, since both are `OR`
+  fragments). A booking holds capacity when either (a) its status is in
   `CAPACITY_HOLDING_BOOKING_STATUSES` (PAID, COMPLETED, CONFIRMED,
   AWAITING_REVIEW), or (b) it is PENDING **and** is the converted booking of a
   `BookingRequest` — i.e. an accepted-but-unpaid quote or a directly-approved

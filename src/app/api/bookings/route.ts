@@ -41,6 +41,7 @@ import {
   DEFAULT_BOOKING_PAYMENT_METHOD,
 } from "@/lib/booking-payment-methods";
 import {
+  BookingLodgeError,
   BookingPromoError,
   BookingReviewJustificationRequiredError,
   createConfirmedBooking,
@@ -48,6 +49,7 @@ import {
   createWaitlistedBooking,
   type BookingGuestInput,
 } from "@/lib/booking-create";
+import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
 import {
   BookingMemberNightConflictError,
   findBookingMemberNightConflicts,
@@ -59,6 +61,7 @@ import {
 } from "@/lib/booking-guest-stay-range-input";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import {
   hasAccessRole,
   hasAdminAccess,
@@ -98,6 +101,12 @@ const createBookingSchema = z.object({
   waitlist: z.boolean().optional(),
   expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
   requestedRoomId: z.string().min(1).optional(),
+  // Lodge the booking is for (multi-lodge phase 8). Optional so existing
+  // single-lodge clients keep working; omitted resolves to the default lodge.
+  lodgeId: z.string().min(1).optional(),
+  // Cross-lodge waitlist opt-in (ADR-004): other lodges the member would
+  // also accept. Only meaningful with waitlist: true; ignored otherwise.
+  alternateLodgeIds: z.array(z.string().min(1)).max(20).optional(),
   cancelIfGuestsBumped: z.boolean().optional(),
   applyCreditCents: z.number().int().min(0).optional(),
   forMemberId: z.string().optional(),
@@ -288,7 +297,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const bookingLodgeId = await resolveOptionalActiveLodgeId(
+    prisma,
+    parsed.data.lodgeId,
+  );
+  if (!bookingLodgeId) {
+    return NextResponse.json(
+      { error: "Unknown or inactive lodgeId" },
+      { status: 400 },
+    );
+  }
+
+  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
   if (guestInputs.length > lodgeCapacity) {
     return NextResponse.json(
       { error: `A booking cannot exceed ${lodgeCapacity} guests` },
@@ -377,7 +397,7 @@ export async function POST(request: NextRequest) {
   // self-bookings always enforce it, #1442).
   if (!isAuthorizedOnBehalf) {
     const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
-    const stayResult = await validateMinimumStay(checkIn, checkOut);
+    const stayResult = await validateMinimumStay(checkIn, checkOut, bookingLodgeId);
     if (!stayResult.valid) {
       return NextResponse.json(
         {
@@ -412,6 +432,7 @@ export async function POST(request: NextRequest) {
         cancelIfGuestsBumped,
         groupDiscount,
         memberReviewJustification,
+        lodgeId: parsed.data.lodgeId,
       });
       return NextResponse.json(newBooking, { status: 201 });
     } catch (err) {
@@ -472,7 +493,7 @@ export async function POST(request: NextRequest) {
 
   const hasNonMembers = guestInputs.some((g) => !g.isMember);
   const holdPolicy = hasNonMembers
-    ? await getNonMemberHoldPolicy(checkIn)
+    ? await getNonMemberHoldPolicy(checkIn, parsed.data.lodgeId ?? null)
     : { enabled: false, holdDays: 0, source: "default" as const };
   const { shouldBePending, status } = calculateBookingHoldDecision({
     hasNonMembers,
@@ -511,6 +532,7 @@ export async function POST(request: NextRequest) {
       paymentMethod,
       internetBankingSettings,
       memberReviewJustification,
+      lodgeId: parsed.data.lodgeId,
     });
 
     if (outcome.type === "created") {
@@ -547,6 +569,8 @@ export async function POST(request: NextRequest) {
         requestedRoomId,
         groupDiscount,
         memberReviewJustification,
+        lodgeId: parsed.data.lodgeId,
+        alternateLodgeIds: parsed.data.alternateLodgeIds,
       });
       return NextResponse.json(waitlisted.booking, { status: 201 });
     } catch (waitlistErr) {
@@ -570,6 +594,15 @@ export async function POST(request: NextRequest) {
       }
       if (waitlistErr instanceof BookingPromoError) {
         return NextResponse.json({ error: waitlistErr.message }, { status: 400 });
+      }
+      if (waitlistErr instanceof BookingLodgeError) {
+        return NextResponse.json({ error: waitlistErr.message }, { status: 400 });
+      }
+      if (waitlistErr instanceof LodgeBookingEligibilityError) {
+        return NextResponse.json(
+          { error: waitlistErr.message },
+          { status: waitlistErr.status },
+        );
       }
       logger.error({ err: waitlistErr }, "Failed to create waitlisted booking");
       return NextResponse.json({ error: "Failed to create waitlisted booking" }, { status: 500 });

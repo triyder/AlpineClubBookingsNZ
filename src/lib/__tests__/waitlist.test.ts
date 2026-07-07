@@ -5,7 +5,15 @@
  * cancellation triggers, cron job, API routes, status colors, email templates.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+
+// Pay the module-graph transform cost once, outside any single test's 5s
+// budget: every test dynamic-imports @/lib/waitlist (for mock ordering), and
+// the FIRST such import transforms the whole dependency graph — which on a
+// loaded host can alone exceed the per-test timeout.
+beforeAll(async () => {
+  await import("@/lib/waitlist");
+});
 
 // ─── Mocks ───
 
@@ -20,6 +28,12 @@ const mockExecuteRaw = vi.fn().mockResolvedValue(undefined);
 
 const mockTx = {
   $executeRaw: mockExecuteRaw,
+  lodge: {
+    findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    // Cross-lodge pass (ADR-004): lock-list and offered-lodge-name reads.
+    findMany: vi.fn().mockResolvedValue([{ id: "lodge-1" }]),
+    findUnique: vi.fn().mockResolvedValue({ name: "Lodge One" }),
+  },
   booking: {
     findMany: vi.fn(),
     findUnique: vi.fn(),
@@ -53,6 +67,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   LODGE_CAPACITY: 29,
 }));
 
@@ -116,6 +131,12 @@ beforeEach(() => {
   mockTx.booking.findUnique.mockReset();
   mockTx.booking.update.mockReset();
   mockTx.booking.count.mockReset();
+  mockTx.lodge.findFirst.mockReset();
+  mockTx.lodge.findFirst.mockResolvedValue({ id: "lodge-1" });
+  mockTx.lodge.findMany.mockReset();
+  mockTx.lodge.findMany.mockResolvedValue([{ id: "lodge-1" }]);
+  mockTx.lodge.findUnique.mockReset();
+  mockTx.lodge.findUnique.mockResolvedValue({ name: "Lodge One" });
   mockExecuteRaw.mockResolvedValue(undefined);
   // Default: transaction runs the callback with mockTx
   mockPrismaTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx));
@@ -183,6 +204,36 @@ describe("getWaitlistPosition", () => {
     const position = await getWaitlistPosition("nonexistent");
     expect(position).toBe(0);
   });
+
+  it("counts only the entry's own lodge (M6): first in line at lodge B, not behind older lodge A entries", async () => {
+    const { getWaitlistPosition } = await import("@/lib/waitlist");
+
+    // The entry waits at lodge B. Older overlapping WAITLISTED entries exist at
+    // lodge A; club-wide counting would put this entry at position 4, but the
+    // per-lodge queue makes it position 1.
+    mockBookingFindUnique.mockResolvedValue({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-08T12:00:00Z"),
+      status: "WAITLISTED",
+      lodgeId: "lodge-b",
+    });
+    // The three ahead-of-you entries all sit at lodge A; only lodge-B entries
+    // are counted.
+    const aheadByLodge: Record<string, number> = { "lodge-a": 3, "lodge-b": 0 };
+    mockBookingCount.mockImplementation(async (args: { where: { lodgeId?: string } }) =>
+      args.where.lodgeId ? aheadByLodge[args.where.lodgeId] ?? 0 : 3
+    );
+
+    const position = await getWaitlistPosition("booking1");
+
+    expect(position).toBe(1);
+    expect(mockBookingCount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
+      })
+    );
+  });
 });
 
 describe("getWaitlistForDates", () => {
@@ -197,13 +248,15 @@ describe("getWaitlistForDates", () => {
 
     const result = await getWaitlistForDates(
       new Date("2026-07-01"),
-      new Date("2026-07-05")
+      new Date("2026-07-05"),
+      "lodge-b"
     );
 
     expect(result).toEqual(mockEntries);
+    // Per-lodge queue (M6): the query is scoped to the supplied lodge.
     expect(mockBookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED" }),
+        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
         orderBy: { createdAt: "asc" },
       })
     );
@@ -222,6 +275,10 @@ describe("processWaitlistForDates", () => {
       createdAt: new Date("2026-04-01"),
       guests: [{ id: "g1" }, { id: "g2" }],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      memberId: "m1",
+      lodgeId: "lodge-1",
+      waitlistAlternateLodges: [],
+      promoRedemption: null,
     };
 
     mockTx.booking.findMany.mockResolvedValue([candidate]);
@@ -313,7 +370,12 @@ describe("processWaitlistForDates", () => {
       2,
       expect.any(Date),
       "booking1",
-      24000
+      24000,
+      // Merged multi-lodge params: these fixtures model pre-migration
+      // rows with no lodgeId (club identity fallback); no cross-lodge
+      // block for a same-lodge offer.
+      undefined,
+      null
     );
   });
 
@@ -363,7 +425,9 @@ describe("processWaitlistForDates", () => {
       expect.anything(),
       expect.anything(),
       "booking1",
-      16000
+      16000,
+      undefined,
+      null
     );
   });
 
@@ -466,7 +530,9 @@ describe("processWaitlistForDates", () => {
       expect.anything(),
       expect.anything(),
       "booking1",
-      20000
+      20000,
+      undefined,
+      null
     );
   });
 
@@ -481,6 +547,10 @@ describe("processWaitlistForDates", () => {
       createdAt: new Date("2026-04-01"),
       guests: [{ id: "g1" }],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      memberId: "m1",
+      lodgeId: "lodge-1",
+      waitlistAlternateLodges: [],
+      promoRedemption: null,
     };
 
     mockTx.booking.findMany.mockResolvedValue([candidate]);
@@ -516,6 +586,10 @@ describe("processWaitlistForDates", () => {
         },
       ],
       member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+      memberId: "m1",
+      lodgeId: "lodge-1",
+      waitlistAlternateLodges: [],
+      promoRedemption: null,
     };
 
     mockTx.booking.findMany.mockResolvedValue([candidate]);
@@ -534,6 +608,7 @@ describe("processWaitlistForDates", () => {
 
     expect(result.offeredBookingId).toBe("booking1");
     expect(mockCheckCapacity).toHaveBeenCalledWith(
+      "lodge-1",
       candidate.checkIn,
       candidate.checkOut,
       candidate.guests,
@@ -808,6 +883,87 @@ describe("expireStaleOffers", () => {
       expect.objectContaining({
         where: { id: "expired-offer-1" },
         data: expect.objectContaining({ status: "WAITLISTED" }),
+      })
+    );
+  });
+
+  it("reprocesses each lodge's own queue when two same-range offers expire at different lodges (M2)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
+
+    const checkIn = new Date("2026-09-01");
+    const checkOut = new Date("2026-09-03");
+
+    // Two expired same-lodge offers sharing a date range, one at each lodge.
+    // A date-only affectedRanges key would collapse them into a single
+    // default-lodge reprocess; keying by lodge keeps them separate so each
+    // lodge's own queue is served.
+    const offerA = {
+      id: "offer-a",
+      lodgeId: "lodge-a",
+      waitlistOfferedLodgeId: null,
+      checkIn,
+      checkOut,
+      createdAt: new Date("2026-05-01"),
+      member: { email: "a@test.com", firstName: "A" },
+    };
+    const offerB = {
+      id: "offer-b",
+      lodgeId: "lodge-b",
+      waitlistOfferedLodgeId: null,
+      checkIn,
+      checkOut,
+      createdAt: new Date("2026-05-02"),
+      member: { email: "b@test.com", firstName: "B" },
+    };
+    function nextInLine(id: string, lodgeId: string, createdAt: string) {
+      return {
+        id,
+        memberId: `m-${id}`,
+        lodgeId,
+        checkIn,
+        checkOut,
+        createdAt: new Date(createdAt),
+        totalPriceCents: 20000,
+        finalPriceCents: 20000,
+        guests: [{ id: `g-${id}`, ageTier: "ADULT", isMember: true, memberId: `m-${id}`, nights: [] }],
+        member: { id: `m-${id}`, email: `${id}@test.com`, firstName: id, lastName: "Next" },
+        waitlistAlternateLodges: [],
+        promoRedemption: null,
+      };
+    }
+
+    mockTx.booking.findMany
+      .mockResolvedValueOnce([offerA, offerB]) // the offers query
+      .mockResolvedValueOnce([nextInLine("cand-a", "lodge-a", "2026-06-01")]) // pass 1: lodge A
+      .mockResolvedValueOnce([nextInLine("cand-b", "lodge-b", "2026-06-02")]) // pass 2: lodge B
+      .mockResolvedValue([]);
+    mockTx.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }, { id: "lodge-b" }]);
+    vi.mocked(checkCapacityForGuestRanges).mockResolvedValue({
+      available: true,
+      minAvailable: 1,
+      nightDetails: [],
+    });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+
+    const result = await expireStaleOffers();
+
+    expect(result.expiredCount).toBe(2);
+    // Two independent reprocess passes ran — proving the same-range offers at
+    // two lodges did not collapse into a single call.
+    expect(result.reofferedCount).toBe(2);
+    // Each lodge's own next-in-line was offered.
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-a" },
+        data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
+      })
+    );
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-b" },
+        data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
       })
     );
   });

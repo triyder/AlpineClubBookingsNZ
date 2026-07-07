@@ -12,6 +12,7 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
+import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type {
   CalendarOverlayValue,
@@ -33,6 +34,8 @@ interface HutLeaderAssignment {
   startDate: string;
   endDate: string;
   createdAt: string;
+  lodgeId: string | null;
+  lodgeName: string | null;
 }
 
 interface UnassignedDate {
@@ -87,6 +90,11 @@ export default function HutLeadersPage() {
   const [selection, setSelection] = useState({ startDate: "", endDate: "" });
   const [target, setTarget] = useState<AssignmentTarget | null>(null);
   const [error, setError] = useState<{ message: string; memberId: string | null } | null>(null);
+  // Lodge context for new assignments; LodgeSelect renders nothing (and
+  // reports the sole lodge) while fewer than two lodges exist (ADR-002).
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("admin");
+  const [lodgeId, setLodgeId] = useState<string | null>(null);
+  const showLodgeColumn = lodges.length > 1;
 
   const [visibleMonthKey, setVisibleMonthKey] = useState(() =>
     monthKeyForDate(getTodayDateOnly()),
@@ -244,6 +252,7 @@ export default function HutLeadersPage() {
           memberId: target.memberId,
           startDate: selection.startDate,
           endDate: selection.endDate,
+          ...(lodgeId ? { lodgeId } : {}),
         }),
       });
       if (!res.ok) {
@@ -492,6 +501,14 @@ export default function HutLeadersPage() {
         creating={creating}
         error={error}
         onConfirm={handleConfirm}
+        lodgeSelector={
+          <LodgeSelect
+            lodges={lodges}
+            value={lodgeId}
+            onChange={setLodgeId}
+            loading={lodgesLoading}
+          />
+        }
       />
 
       {pinMessage && (
@@ -532,6 +549,9 @@ export default function HutLeadersPage() {
                 <thead>
                   <tr className="border-b bg-slate-50">
                     <th className="px-4 py-3 text-left font-medium text-slate-600">Member</th>
+                    {showLodgeColumn && (
+                      <th className="px-4 py-3 text-left font-medium text-slate-600">Lodge</th>
+                    )}
                     <th className="px-4 py-3 text-left font-medium text-slate-600">Start</th>
                     <th className="px-4 py-3 text-left font-medium text-slate-600">End</th>
                     <th className="px-4 py-3 text-left font-medium text-slate-600">Status</th>
@@ -553,6 +573,9 @@ export default function HutLeadersPage() {
                             </div>
                           </div>
                         </td>
+                        {showLodgeColumn && (
+                          <td className="px-4 py-3">{a.lodgeName ?? "—"}</td>
+                        )}
                         <td className="px-4 py-3">{a.startDate}</td>
                         <td className="px-4 py-3">{a.endDate}</td>
                         <td className="px-4 py-3">

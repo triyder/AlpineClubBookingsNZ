@@ -16,6 +16,7 @@ export async function GET() {
 
   const events = await prisma.workPartyEvent.findMany({
     include: {
+      lodge: { select: { name: true } },
       promoCode: {
         select: {
           id: true,
@@ -27,8 +28,9 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    events: events.map(({ promoCode, ...event }) => ({
+    events: events.map(({ promoCode, lodge, ...event }) => ({
       ...event,
+      lodgeName: lodge?.name ?? null,
       bookingCount: promoCode.redemptions.length,
       totalDiscountCents: promoCode.redemptions.reduce(
         (sum, redemption) => sum + redemption.discountCents,
@@ -59,6 +61,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: datesError }, { status: 400 });
   }
 
+  if (parsed.data.lodgeId) {
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: parsed.data.lodgeId },
+      select: { active: true },
+    });
+    if (!lodge?.active) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 }
+      );
+    }
+  }
+
   const event = await createWorkPartyEventWithPromo({
     name: parsed.data.name,
     description: parsed.data.description ?? null,
@@ -66,6 +81,7 @@ export async function POST(req: NextRequest) {
     endDate: parsed.data.endDate,
     discountPercent: parsed.data.discountPercent,
     active: parsed.data.active,
+    lodgeId: parsed.data.lodgeId ?? null,
   });
 
   logAudit({

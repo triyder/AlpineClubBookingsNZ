@@ -18,6 +18,9 @@ vi.mock("@/lib/prisma", () => ({
     bookingEvent: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -47,6 +50,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 
 vi.mock("@/lib/capacity", () => ({
   checkCapacityForGuestRanges: vi.fn(),
+  acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { loadEffectiveModuleFlagsMock, queueXeroInvoiceForPaidBookingMock } = vi.hoisted(() => ({
@@ -517,6 +521,51 @@ describe("createPaymentIntentForPaymentLink", () => {
 
     await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 409 });
     expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
+  });
+
+  it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {
+    // Pre-lock read is a lodgeId-only key select; the buggy order consumed its
+    // stale dates/guests. Make the two in-transaction reads differ and prove
+    // the capacity check ran against the POST-lock snapshot.
+    mockedFindUnique.mockResolvedValue(baseLink() as never);
+    let readCount = 0;
+    vi.mocked(prisma.booking.findUnique).mockImplementation((async () =>
+      readCount++ === 0
+        ? {
+            lodgeId: "lodge-1",
+            checkIn: new Date("2026-01-01T00:00:00.000Z"),
+            checkOut: new Date("2026-01-03T00:00:00.000Z"),
+          }
+        : baseBooking({
+            checkIn: new Date("2026-05-20T00:00:00.000Z"),
+            checkOut: new Date("2026-05-22T00:00:00.000Z"),
+            guests: [{ id: "g-post" }],
+          })) as never);
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] } as never);
+    mockedFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" } as never);
+    mockedCreatePaymentIntent.mockResolvedValue({
+      id: "pi_new",
+      client_secret: "secret_new",
+      amount: 12000,
+    } as never);
+    vi.mocked(prisma.payment.upsert).mockResolvedValue({ id: "pay-1" } as never);
+
+    await createPaymentIntentForPaymentLink(RAW_TOKEN);
+
+    // Pre-lock read selects only the lock key.
+    expect(vi.mocked(prisma.booking.findUnique)).toHaveBeenNthCalledWith(1, {
+      where: { id: "booking-1" },
+      select: { lodgeId: true },
+    });
+    // The capacity check ran against the POST-lock (May) dates + guest set.
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      "lodge-1",
+      new Date("2026-05-20T00:00:00.000Z"),
+      new Date("2026-05-22T00:00:00.000Z"),
+      [{ id: "g-post" }],
+      "booking-1",
+      expect.anything()
+    );
   });
 
   it("creates a new PaymentIntent for a fresh payable booking", async () => {

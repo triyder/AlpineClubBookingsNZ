@@ -17,6 +17,7 @@ export const MODULE_KEYS = [
   "hutLeaders",
   "communications",
   "skifieldConditions",
+  "multiLodge",
   "twoFactor",
   "analytics",
 ] as const;
@@ -47,6 +48,7 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   hutLeaders: true,
   communications: true,
   skifieldConditions: true,
+  multiLodge: false,
   twoFactor: false,
   analytics: false,
 };
@@ -177,6 +179,15 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description:
       "Live mountain/road status panel and widgets, plus the admin conditions cache.",
     dependencies: [],
+  },
+  multiLodge: {
+    key: "multiLodge",
+    label: "Multiple lodges",
+    description:
+      "Manage more than one lodge property. Enables the Lodges admin page; member-facing screens only change once a second active lodge exists.",
+    dependencies: [
+      "Cannot be turned off while more than one active lodge exists.",
+    ],
   },
   twoFactor: {
     key: "twoFactor",

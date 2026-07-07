@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -74,6 +74,9 @@ interface AssignmentFormProps {
   creating: boolean;
   error: { message: string; memberId: string | null } | null;
   onConfirm: () => void;
+  // Optional lodge picker (multi-lodge, ADR-002): renders in step 1 above the
+  // date inputs. It renders nothing while fewer than two lodges exist.
+  lodgeSelector?: ReactNode;
 }
 
 export function AssignmentForm({
@@ -94,6 +97,7 @@ export function AssignmentForm({
   creating,
   error,
   onConfirm,
+  lodgeSelector,
 }: AssignmentFormProps) {
   const label = hutLeaderLabel.toLowerCase();
   const datesSelected = Boolean(
@@ -123,6 +127,7 @@ export function AssignmentForm({
           <h3 className="text-sm font-semibold text-slate-900">
             1. Pick the nights to cover
           </h3>
+          {lodgeSelector ? <div className="max-w-xs">{lodgeSelector}</div> : null}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="startDate">Start Date</Label>

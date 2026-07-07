@@ -29,12 +29,20 @@ const createSchema = z.object({
   nonMemberHoldDays: z.number().int().min(1).max(365),
   cancellationRules: z.array(cancellationRuleSchema).min(1),
   active: z.boolean().optional(),
+  // Per-lodge override partition (ADR-001 resolved question 3). Omitted =
+  // club-wide (null lodgeId). Any rows for a lodge REPLACE the club-wide
+  // set at runtime for that lodge.
+  lodgeId: z.string().min(1).optional(),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  // Exact partition, not null-tolerant: null rows are the club-wide rules
+  // and a lodge's rows are its override set (replace, never merge).
+  const lodgeId = request.nextUrl.searchParams.get("lodgeId")
   const periods = await prisma.bookingPeriod.findMany({
+    where: { lodgeId: lodgeId ?? null },
     orderBy: { startDate: "asc" },
   });
 
@@ -63,6 +71,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (data.lodgeId) {
+      const lodge = await prisma.lodge.findUnique({
+        where: { id: data.lodgeId },
+        select: { id: true, active: true },
+      });
+      if (!lodge || !lodge.active) {
+        return NextResponse.json(
+          { error: "Lodge not found or not active" },
+          { status: 400 }
+        );
+      }
+    }
+
     const period = await prisma.bookingPeriod.create({
       data: {
         name: data.name,
@@ -74,6 +95,7 @@ export async function POST(request: NextRequest) {
           data.cancellationRules
         ) as unknown as Prisma.InputJsonValue,
         active: data.active ?? true,
+        lodgeId: data.lodgeId ?? null,
       },
     });
 

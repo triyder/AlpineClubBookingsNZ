@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import { type GuestData } from "@/components/guest-form";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { useLodgeOptions } from "@/components/lodge-select";
 import { type PromoResult } from "@/components/promo-code-input";
 import {
   getBookingErrorPaymentTargets,
@@ -102,6 +103,12 @@ export function useBookingWizard() {
   const { data: session } = useSession();
   const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<BookingWizardStep>("dates");
+  // Lodge being booked (multi-lodge phase 8). /api/lodges only returns
+  // lodges this member may book; LodgeSelect renders nothing (and reports
+  // the sole lodge) while fewer than two come back (ADR-002), so
+  // single-lodge clubs see no change.
+  const { lodges, loading: lodgesLoading } = useLodgeOptions("member");
+  const [lodgeId, setLodgeId] = useState<string | null>(null);
   // Set when the booking is created on the card-payment path; drives step 4.
   const [createdBooking, setCreatedBooking] = useState<CreatedBooking | null>(
     null,
@@ -123,6 +130,9 @@ export function useBookingWizard() {
   const [showWaitlistPrompt, setShowWaitlistPrompt] = useState(false);
   const [waitlistFullNights, setWaitlistFullNights] = useState<string[]>([]);
   const [joiningWaitlist, setJoiningWaitlist] = useState(false);
+  // Cross-lodge waitlist opt-in (ADR-004): other eligible lodges the member
+  // would also accept. Only offered when a second eligible lodge exists.
+  const [waitlistAlternateLodgeIds, setWaitlistAlternateLodgeIds] = useState<string[]>([]);
   const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
   const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AvailabilityNightDetail[]>([]);
   const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
@@ -175,6 +185,32 @@ export function useBookingWizard() {
     );
     return hasMinor && !hasAdult;
   })();
+
+  // Display label for capacity copy: the lodge's name once a second lodge
+  // exists, the generic phrase otherwise (ADR-002 presentation rule).
+  const selectedLodge = lodges.find((lodge) => lodge.id === lodgeId) ?? null;
+  const lodgeLabel =
+    lodges.length > 1 && selectedLodge ? selectedLodge.name : "The lodge";
+
+  function handleLodgeChange(nextLodgeId: string | null) {
+    if (nextLodgeId === lodgeId) return;
+    const hadLodge = lodgeId !== null;
+    setLodgeId(nextLodgeId);
+    if (!hadLodge) return;
+    // Availability, pricing, policies, promos, and rooms are all per lodge:
+    // switching lodges restarts the flow from date selection.
+    setStep("dates");
+    setCheckIn(null);
+    setCheckOut(null);
+    setError("");
+    setGuestProfileBlocks([]);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    setRequestedRoomId(null);
+    setAvailabilityNightDetails([]);
+    setShowWaitlistPrompt(false);
+  }
 
   function getBookingDateStrings() {
     if (!checkIn || !checkOut) {
@@ -297,10 +333,10 @@ export function useBookingWizard() {
 
   function formatCapacityExceededMessage(fullNights: string[]) {
     if (fullNights.length === 1) {
-      return `The lodge does not have enough beds on ${fullNights[0]}`;
+      return `${lodgeLabel} does not have enough beds on ${fullNights[0]}`;
     }
 
-    return `The lodge does not have enough beds on ${fullNights.length} nights`;
+    return `${lodgeLabel} does not have enough beds on ${fullNights.length} nights`;
   }
 
   useEffect(() => {
@@ -380,7 +416,11 @@ export function useBookingWizard() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/bookings/rooms")
+    fetch(
+      lodgeId
+        ? `/api/bookings/rooms?lodgeId=${encodeURIComponent(lodgeId)}`
+        : "/api/bookings/rooms"
+    )
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         setRoomRequestEnabled(Boolean(data?.enabled));
@@ -390,7 +430,7 @@ export function useBookingWizard() {
         setRoomRequestEnabled(false);
         setRoomOptions([]);
       });
-  }, []);
+  }, [lodgeId]);
 
   // Fetch subscription status for the current season
   useEffect(() => {
@@ -569,10 +609,11 @@ export function useBookingWizard() {
     setWorkPartyClearedNotice(null);
     const ciStr = formatLocalDateOnly(ci);
     const coStr = formatLocalDateOnly(co);
+    const lodgeParam = lodgeId ? `&lodgeId=${encodeURIComponent(lodgeId)}` : "";
 
     // Fetch availability for selected range
     const res = await fetch(
-      `/api/availability/check?checkIn=${ciStr}&checkOut=${coStr}`
+      `/api/availability/check?checkIn=${ciStr}&checkOut=${coStr}${lodgeParam}`
     );
     if (res.ok) {
       const data = await res.json();
@@ -583,7 +624,7 @@ export function useBookingWizard() {
     }
 
     // Check minimum stay policies
-    const policyRes = await fetch(`/api/booking-policies/check?checkIn=${ciStr}&checkOut=${coStr}`);
+    const policyRes = await fetch(`/api/booking-policies/check?checkIn=${ciStr}&checkOut=${coStr}${lodgeParam}`);
     if (policyRes.ok) {
       const policyData = await policyRes.json();
       if (!policyData.valid) {
@@ -637,6 +678,7 @@ export function useBookingWizard() {
       body: JSON.stringify({
         checkIn: checkInStr,
         checkOut: checkOutStr,
+        lodgeId: lodgeId ?? undefined,
         guests: guestPayload.map((g) => ({
           ageTier: g.ageTier,
           isMember: g.isMember,
@@ -662,8 +704,13 @@ export function useBookingWizard() {
         .then((codes) => setAvailablePromoCodes(codes))
         .catch(() => {});
 
-      // Fetch active working bee events that overlap these dates
-      fetch(`/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}`)
+      // Fetch active working bee events that overlap these dates; events
+      // bound to another lodge are filtered out server-side.
+      fetch(
+        `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
+          lodgeId ? `&lodgeId=${encodeURIComponent(lodgeId)}` : ""
+        }`
+      )
         .then((r) => r.ok ? r.json() : { events: [] })
         .then((data) => {
           const events: WorkPartyEvent[] = data.events || [];
@@ -719,6 +766,7 @@ export function useBookingWizard() {
       body: JSON.stringify({
         checkIn: checkInStr,
         checkOut: checkOutStr,
+        lodgeId: lodgeId ?? undefined,
         guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
@@ -798,6 +846,7 @@ export function useBookingWizard() {
       if (data.code === "CAPACITY_EXCEEDED" && data.canWaitlist) {
         setShowWaitlistPrompt(true);
         setWaitlistFullNights(data.fullNights || []);
+        setWaitlistAlternateLodgeIds([]);
         setError("");
       } else {
         handleBookingApiError(data, "Failed to create booking");
@@ -842,7 +891,12 @@ export function useBookingWizard() {
           guests.some((g) => !g.isMember) && cancelIfGuestsBumped
             ? true
             : undefined,
+        lodgeId: lodgeId ?? undefined,
         waitlist: true,
+        alternateLodgeIds:
+          waitlistAlternateLodgeIds.length > 0
+            ? waitlistAlternateLodgeIds
+            : undefined,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim()
           : undefined,
@@ -892,6 +946,7 @@ export function useBookingWizard() {
             ? true
             : undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+        lodgeId: lodgeId ?? undefined,
         draft: true,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim() || undefined
@@ -1154,5 +1209,13 @@ export function useBookingWizard() {
     wizardSteps,
     activeStepIndex,
     lodgeCapacity,
+    lodges,
+    lodgeId,
+    lodgesLoading,
+    handleLodgeChange,
+    selectedLodge,
+    lodgeLabel,
+    waitlistAlternateLodgeIds,
+    setWaitlistAlternateLodgeIds,
   };
 }

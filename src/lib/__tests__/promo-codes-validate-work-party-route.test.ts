@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   prisma: {
+    lodge: {
+      findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }),
+    },
     promoCode: {
       findUnique: vi.fn(),
     },

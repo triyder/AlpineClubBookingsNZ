@@ -210,6 +210,24 @@ BLUE_GREEN_MIGRATION_OVERRIDE_REASON="..."
 
 Use this only with a written rollback and lock-impact plan.
 
+### Expand then contract (multi-lodge)
+
+Some features ship as a two-step expand/contract pair: an expand release adds
+nullable columns and backfills, and a later contract release tightens them
+(`NOT NULL`, dropped superseded columns, added unique indexes). The
+multi-lodge feature is the current example — its `lodgeId` columns landed
+nullable and backfilled, with the tightening deferred.
+
+**Do not run the multi-lodge contract release until the expand release is
+fully cut over and the old (pre-lodge) app colour is completely drained.** A
+draining old colour can still write `NULL`-`lodgeId` rows, which the `NOT NULL`
+migration will reject, and the runtime keeps null-tolerant compatibility
+branches alive until the contract release lands. Follow
+`docs/multi-lodge/contract-release.md` for the item list, backfill
+verification queries, sequencing, and the ledger entries that release needs;
+each contract migration must name its `previous_expand_release` in
+`docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
+
 ## Staging
 
 Use staging for browser checks, accessibility review, and integration rehearsal.

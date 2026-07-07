@@ -25,6 +25,12 @@ export interface BedAllocationRoom {
   name: string;
   sortOrder?: number | null;
   active?: boolean | null;
+  // The lodge this room belongs to. A null lodgeId during the expand release
+  // (rooms written before the backfill, or by a draining old colour) is
+  // treated as club-wide-compatible. Used by roomsForBooking so a booking's
+  // guests can never land in another lodge's beds, even when the caller pools
+  // multiple lodges' rooms (club-wide auto-allocation).
+  lodgeId?: string | null;
   beds: BedAllocationBed[];
 }
 
@@ -39,6 +45,10 @@ interface BedAllocationGuest {
 export interface BedAllocationBooking {
   id: string;
   createdAt: Date;
+  // The lodge this booking belongs to (ADR-001: one booking = one lodge). Null
+  // during the expand release stays club-wide-compatible. roomsForBooking uses
+  // it to restrict the booking to its own lodge's rooms.
+  lodgeId?: string | null;
   guests: BedAllocationGuest[];
   /**
    * Preferred room from the booking's room request, if any. Auto-allocation
@@ -221,17 +231,37 @@ function sortedActiveRoomsWithBeds(
  * not in `rooms` (inactive, deleted, or never set), the original order is
  * returned unchanged — the request is silently treated as no preference.
  */
+// Lodge isolation, enforced at the matcher itself (defence in depth): a
+// booking may only be placed in rooms at its own lodge, so cross-lodge
+// allocation is impossible even when the caller pools several lodges' rooms
+// (club-wide auto-allocation). Null-tolerant during the expand release — a
+// booking or room with a null lodgeId is club-wide-compatible, mirroring
+// lodgeNullTolerantScope. Manual allocation already enforces this server-side;
+// this closes the same guarantee for the auto/first-fit path.
+function roomsAtBookingLodge(
+  rooms: SortedRoomWithBeds[],
+  booking: BedAllocationBooking,
+): SortedRoomWithBeds[] {
+  if (booking.lodgeId == null) return rooms;
+  return rooms.filter(
+    (room) => room.lodgeId == null || room.lodgeId === booking.lodgeId,
+  );
+}
+
 function roomsForBooking(
   rooms: SortedRoomWithBeds[],
   booking: BedAllocationBooking,
 ): SortedRoomWithBeds[] {
+  const lodgeScoped = roomsAtBookingLodge(rooms, booking);
   const requestedRoomId = booking.requestedRoomId;
-  if (!requestedRoomId) return rooms;
+  if (!requestedRoomId) return lodgeScoped;
 
-  const requestedIndex = rooms.findIndex((room) => room.id === requestedRoomId);
-  if (requestedIndex <= 0) return rooms;
+  const requestedIndex = lodgeScoped.findIndex(
+    (room) => room.id === requestedRoomId,
+  );
+  if (requestedIndex <= 0) return lodgeScoped;
 
-  const reordered = [...rooms];
+  const reordered = [...lodgeScoped];
   const [requestedRoom] = reordered.splice(requestedIndex, 1);
   reordered.unshift(requestedRoom);
   return reordered;
@@ -1046,7 +1076,14 @@ export function buildFirstFitBedAllocationPlan({
             booking,
             guest,
             stayDate,
-            activeRooms,
+            // Lodge isolation (#1387 × multi-lodge): the displacement search —
+            // both the displaceable-bed scan and the free-bed relocation target —
+            // must run over THIS booking's own lodge rooms, never the pooled
+            // all-lodges `activeRooms`. Otherwise a held booking at lodge A could
+            // evict a provisional occupant from, or relocate one onto, another
+            // lodge's bed (the club-wide auto-allocation pools every lodge's rooms
+            // into one planner call).
+            activeRooms: roomsForThisBooking,
             bedRoomIds,
             occupied,
             occupantByKey,

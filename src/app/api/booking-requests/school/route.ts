@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SchoolCateringPreference } from "@prisma/client";
 import { z } from "zod";
-import { BookingRequestError } from "@/lib/booking-request";
+import {
+  assertRequestedLodgeActive,
+  BookingRequestError,
+} from "@/lib/booking-request";
 import {
   createSchoolBookingRequest,
   generateSchoolGuests,
   schoolChildCountsSchema,
   schoolTeacherSchema,
 } from "@/lib/school-booking-request";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { nameField } from "@/lib/zod-helpers";
@@ -37,6 +40,8 @@ const schoolBookingRequestSchema = z.object({
     .nullable(),
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  // Lodge the stay is requested at; omitted means the club's default lodge.
+  lodgeId: z.string().min(1).optional(),
   cateringPreference: z
     .enum(["CATERED", "NON_CATERED", "QUOTE_BOTH"])
     .default("QUOTE_BOTH"),
@@ -88,15 +93,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
-    return NextResponse.json(
-      { error: `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests` },
-      { status: 400 }
-    );
-  }
-
   try {
+    // A provided lodgeId must name an ACTIVE lodge (400 otherwise); omitted
+    // means the club's default lodge, stored as null.
+    const lodgeId = await assertRequestedLodgeActive(parsed.data.lodgeId);
+
+    const lodgeCapacity = lodgeId
+      ? await getLodgeCapacity(lodgeId)
+      : await getDefaultLodgeCapacity();
+    if (guests.length > lodgeCapacity) {
+      return NextResponse.json(
+        { error: `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests` },
+        { status: 400 }
+      );
+    }
+
     await createSchoolBookingRequest({
       schoolName: parsed.data.schoolName,
       contactFirstName: parsed.data.contactFirstName,
@@ -109,6 +120,7 @@ export async function POST(request: NextRequest) {
       teachers,
       childCounts,
       message: parsed.data.message,
+      lodgeId,
     });
 
     return NextResponse.json({ success: true }, { status: 201 });

@@ -71,6 +71,9 @@ describe("feature route map", () => {
     expect(getRequiredFeaturesForPath("/api/skifield-whakapapa")).toEqual([
       "skifieldConditions",
     ]);
+    expect(getRequiredFeaturesForPath("/admin/lodges")).toEqual([
+      "multiLodge",
+    ]);
   });
 
   it("blocks each new module's pages AND api routes when it is off", () => {
@@ -97,6 +100,25 @@ describe("feature route map", () => {
         promoCodes: false,
       })
     ).toBe("promoCodes");
+    // Multi-lodge: the lodge admin page and its API both 404 when off.
+    expect(
+      getDisabledFeatureForPath("/admin/lodges", {
+        ...allOn,
+        multiLodge: false,
+      })
+    ).toBe("multiLodge");
+    expect(
+      getDisabledFeatureForPath("/api/admin/lodges", {
+        ...allOn,
+        multiLodge: false,
+      })
+    ).toBe("multiLodge");
+    expect(
+      getDisabledFeatureForPath("/api/admin/lodges/lodge-1", {
+        ...allOn,
+        multiLodge: false,
+      })
+    ).toBe("multiLodge");
     expect(
       getDisabledFeatureForPath("/api/address-autocomplete/search", {
         ...allOn,
@@ -164,6 +186,35 @@ describe("feature route map", () => {
   it("does not match shared booking APIs or similar prefixes", () => {
     expect(getRequiredFeaturesForPath("/api/bookings")).toEqual([]);
     expect(getRequiredFeaturesForPath("/financex")).toEqual([]);
+  });
+
+  it("never gates booking creation on the multiLodge flag", () => {
+    // multiLodge only guards the admin lodges surface. Core booking creation
+    // (and reads) must work whether or not the club runs multiple lodges, so
+    // no booking route requires the flag and disabling it never 404s a
+    // booking. A `/admin/lodges`-lookalike prefix must not catch bookings.
+    expect(getRequiredFeaturesForPath("/api/bookings")).not.toContain(
+      "multiLodge"
+    );
+    expect(getRequiredFeaturesForPath("/api/bookings/booking-1")).not.toContain(
+      "multiLodge"
+    );
+    expect(
+      getDisabledFeatureForPath("/api/bookings", { ...allOn, multiLodge: false })
+    ).toBeNull();
+    expect(
+      getDisabledFeatureForPath("/api/bookings/booking-1", {
+        ...allOn,
+        multiLodge: false,
+      })
+    ).toBeNull();
+    // The admin bookings surface is likewise never behind multiLodge.
+    expect(
+      getDisabledFeatureForPath("/admin/bookings", {
+        ...allOn,
+        multiLodge: false,
+      })
+    ).toBeNull();
   });
 
   it("supports nav filtering with query strings", () => {

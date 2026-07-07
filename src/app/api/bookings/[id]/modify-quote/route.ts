@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   getStayNights,
@@ -135,6 +136,7 @@ type PromoRedemptionWithTargets = {
   promoCode: {
     assignedMembersOnlyOwnNights?: boolean | null;
     assignments: Array<{ memberId: string }>;
+    lodges?: Array<{ lodgeId: string }>;
   };
   guestTargets?: Array<{ bookingGuestId: string }>;
 };
@@ -216,7 +218,10 @@ export async function POST(
         include: {
           guestTargets: { select: { bookingGuestId: true } },
           promoCode: {
-            include: { assignments: { select: { memberId: true } } },
+            include: {
+              assignments: { select: { memberId: true } },
+              lodges: { select: { lodgeId: true } },
+            },
           },
         },
       },
@@ -598,7 +603,8 @@ export async function POST(
   const totalGuestCount = guestsForPricing.length;
   const seasonYear = getSeasonYear(newCheckIn);
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
+  const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
   if (totalGuestCount > lodgeCapacity) {
     return NextResponse.json(
       { error: `A booking cannot exceed ${lodgeCapacity} guests` },
@@ -660,13 +666,13 @@ export async function POST(
   let minimumStayViolations: { policyName: string; triggerDay: string; minimumNights: number; actualNights: number }[] = [];
   if (!isAdmin && !isInProgressEdit) {
     const { validateMinimumStay } = await import("@/lib/booking-policies");
-    const stayResult = await validateMinimumStay(newCheckIn, newCheckOut);
+    const stayResult = await validateMinimumStay(newCheckIn, newCheckOut, bookingLodgeId);
     minimumStayViolations = stayResult.violations;
   }
 
   // Load seasons for pricing
   const seasons = await prisma.season.findMany({
-    where: { active: true },
+    where: { active: true, ...lodgeNullTolerantScope(bookingLodgeId) },
     include: { rates: true },
   });
 
@@ -743,12 +749,14 @@ export async function POST(
     ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
     : inProgressPlan && editableFrom
       ? await checkCapacityForGuestRanges(
+          bookingLodgeId,
           editableFrom,
           newCheckOut,
           inProgressPlan.capacityGuestRanges,
           bookingId
         )
       : await checkCapacityForGuestRanges(
+          bookingLodgeId,
           newCheckIn,
           newCheckOut,
           policyAdjustedGuestsForPricing,
@@ -887,7 +895,7 @@ export async function POST(
 
   if (!skipBookingLifecycleRules && checkInChanged && !isInProgressEdit) {
     const now = new Date();
-    const policy = await loadCancellationPolicy(booking.checkIn);
+    const policy = await loadCancellationPolicy(booking.checkIn, bookingLodgeId);
     const feeResult = calculateChangeFee({
       daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
       daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
@@ -1010,7 +1018,7 @@ export async function POST(
       totalPriceCents: newTotalPriceCents,
       memberId: booking.memberId,
       guests: getGuestNightRates(),
-    }, bookingId);
+    }, bookingId, bookingLodgeId);
 
     if (validation.valid) {
       newDiscountCents = validation.discountCents ?? 0;
@@ -1047,7 +1055,7 @@ export async function POST(
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      { excludeBookingId: bookingId, db: prisma, selectedGuestIndexes },
+      { excludeBookingId: bookingId, db: prisma, selectedGuestIndexes, lodgeId: bookingLodgeId },
     );
 
     if (application.error || !application.discount) {

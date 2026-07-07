@@ -14,6 +14,7 @@ const {
   mockParseCashSnapshot,
   mockRefreshFinancialYearConfig,
   mockSeasonFindMany,
+  mockLodgeFindMany,
 } = vi.hoisted(() => ({
   mockBuildFinanceMonthlyPnlSummary: vi.fn(),
   mockBuildFinanceMonthlyBalanceSeries: vi.fn(),
@@ -27,12 +28,16 @@ const {
   mockParseCashSnapshot: vi.fn(),
   mockRefreshFinancialYearConfig: vi.fn(),
   mockSeasonFindMany: vi.fn(),
+  mockLodgeFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     season: {
       findMany: mockSeasonFindMany,
+    },
+    lodge: {
+      findMany: mockLodgeFindMany,
     },
   },
 }));
@@ -337,6 +342,9 @@ describe("finance dashboard page model", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSeasonFindMany.mockResolvedValue([]);
+    // Single active lodge by default: the reporting-lodge selector stays hidden
+    // (ADR-002) and metrics run club-wide, matching existing expectations.
+    mockLodgeFindMany.mockResolvedValue([{ id: "lodge-default", name: "The Lodge" }]);
     mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
       latestRun: {
         status: "SUCCEEDED",
@@ -573,6 +581,59 @@ describe("finance dashboard page model", () => {
 
     expect(managerModel.isManager).toBe(true);
     expect(viewerModel.isManager).toBe(false);
+  });
+
+  it("keeps the booking metrics club-wide and hides the lodge selector for a single-lodge club (#17, ADR-002)", async () => {
+    // Default beforeEach: one active lodge.
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings" },
+    });
+
+    expect(model.lodges).toEqual([]);
+    expect(model.selectedLodgeId).toBeNull();
+    // All-lodges scope: metrics run with lodgeId null.
+    expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: null })
+    );
+  });
+
+  it("scopes the booking metrics to the selected lodge and exposes the selector when a second lodge exists (#17)", async () => {
+    mockLodgeFindMany.mockResolvedValue([
+      { id: "lodge-a", name: "Alpha Lodge" },
+      { id: "lodge-b", name: "Bravo Lodge" },
+    ]);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings", lodgeId: "lodge-b" },
+    });
+
+    expect(model.lodges).toEqual([
+      { id: "lodge-a", name: "Alpha Lodge" },
+      { id: "lodge-b", name: "Bravo Lodge" },
+    ]);
+    expect(model.selectedLodgeId).toBe("lodge-b");
+    expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: "lodge-b" })
+    );
+  });
+
+  it("falls back to all-lodges when the requested lodgeId is not an active lodge (#17)", async () => {
+    mockLodgeFindMany.mockResolvedValue([
+      { id: "lodge-a", name: "Alpha Lodge" },
+      { id: "lodge-b", name: "Bravo Lodge" },
+    ]);
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "bookings", lodgeId: "lodge-ghost" },
+    });
+
+    expect(model.selectedLodgeId).toBeNull();
+    expect(mockGetFinanceBookingMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ lodgeId: null })
+    );
   });
 
   it("surfaces missing stored monthly data as a compact warning", async () => {

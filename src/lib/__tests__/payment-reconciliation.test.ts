@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingStatus } from "@prisma/client";
-import { parseDateOnly } from "@/lib/date-only";
+import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   restoreCreditFromBooking: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
+  lodgeFindFirst: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -58,6 +59,10 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 
 const tx = {
   $executeRaw: (...args: unknown[]) => mocks.executeRaw(...args),
+  $queryRaw: (...args: unknown[]) => mocks.executeRaw(...args),
+  lodge: {
+    findFirst: (...args: unknown[]) => mocks.lodgeFindFirst(...args),
+  },
   booking: {
     findUnique: (...args: unknown[]) => mocks.bookingFindUnique(...args),
     findMany: (...args: unknown[]) => mocks.bookingFindMany(...args),
@@ -105,6 +110,7 @@ describe("markBookingPaymentSucceeded", () => {
       fn(tx)
     );
     mocks.executeRaw.mockResolvedValue(undefined);
+    mocks.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
     mocks.bookingFindUnique.mockResolvedValue(makeStaggeredBooking());
     mocks.paymentUpsert.mockResolvedValue({ id: "payment-1" });
     mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
@@ -153,6 +159,55 @@ describe("markBookingPaymentSucceeded", () => {
       where: { id: "booking-1" },
       data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
     });
+  });
+
+  it("consumes the POST-lock re-read (not the pre-lock read) for the capacity check (H3)", async () => {
+    // Pre-lock read is a lodgeId-only key select; the buggy order consumed its
+    // (stale) dates. Give the two reads different dates and prove the capacity
+    // occupancy query is scoped by the POST-lock dates.
+    mocks.bookingFindUnique
+      // pre-lock: the code must use ONLY .lodgeId from this read
+      .mockResolvedValueOnce({
+        lodgeId: "lodge-1",
+        checkIn: parseDateOnly("2026-01-01"),
+        checkOut: parseDateOnly("2026-01-03"),
+      })
+      // post-lock: the full re-read the capacity check/claim consume
+      .mockResolvedValueOnce({
+        id: "booking-1",
+        memberId: "member-1",
+        status: BookingStatus.PAYMENT_PENDING,
+        lodgeId: "lodge-1",
+        checkIn: parseDateOnly("2026-05-20"),
+        checkOut: parseDateOnly("2026-05-22"),
+        finalPriceCents: 10000,
+        guests: [],
+        member: { firstName: "Alice", lastName: "Member", email: "alice@example.com" },
+      });
+    mocks.bookingFindMany.mockResolvedValue([]); // no occupancy -> available
+
+    const result = await markBookingPaymentSucceeded({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_h3",
+      amountCents: 10000,
+      paymentMethodId: null,
+    });
+
+    expect(result.outcome).toBe("paid");
+    // Pre-lock read selects only the lock key.
+    expect(mocks.bookingFindUnique).toHaveBeenNthCalledWith(1, {
+      where: { id: "booking-1" },
+      select: { lodgeId: true },
+    });
+    // The capacity occupancy query is bounded by the POST-lock (May) dates, not
+    // the January dates that only the pre-lock read carried.
+    const occ = mocks.bookingFindMany.mock.calls[0][0];
+    expect(occ.where.checkIn.lt).toEqual(
+      normalizeDateOnlyForTimeZone(parseDateOnly("2026-05-22"))
+    );
+    expect(occ.where.checkOut.gt).toEqual(
+      normalizeDateOnlyForTimeZone(parseDateOnly("2026-05-20"))
+    );
   });
 
   // Regression for the R1 overbooking carried into #738: a lodge full of

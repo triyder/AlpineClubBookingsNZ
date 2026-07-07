@@ -17,6 +17,9 @@ const approveSchema = z
     allocationIds: z.array(z.string().min(1)).max(250).optional(),
     from: z.string().optional(),
     to: z.string().optional(),
+    // Board lodge scope (ADR-003): a range approval only approves this
+    // lodge's pending allocations. Omitted = club-wide.
+    lodgeId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -47,6 +50,7 @@ export async function POST(request: Request) {
       approvedByMemberId: guard.session.user.id,
       allocationIds: body.data.allocationIds,
       range,
+      lodgeId: body.data.lodgeId,
     });
 
     await createAuditLog({

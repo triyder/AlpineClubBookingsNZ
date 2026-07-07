@@ -100,6 +100,7 @@ export async function resolvePromoInTransaction(
     nightDatesByGuest?: Date[][];
     promoGuestIndexes?: number[];
     allowInternal?: boolean;
+    lodgeId: string;
   },
 ): Promise<ResolvedPromo> {
   const {
@@ -112,6 +113,7 @@ export async function resolvePromoInTransaction(
     nightDatesByGuest,
     promoGuestIndexes,
     allowInternal,
+    lodgeId,
   } = options;
   const normalizedCode = promoCodeStr.toUpperCase().trim();
   const lockedRows = await tx.$queryRaw<LockedPromoRow[]>`
@@ -124,14 +126,22 @@ export async function resolvePromoInTransaction(
   }
 
   let assignedMemberIds: string[] | null = null;
+  let promoLodges: { lodgeId: string }[] = [];
   if (promoCode) {
-    const assignments = await tx.promoCodeAssignment.findMany({
-      where: { promoCodeId: promoCode.id },
-      select: { memberId: true },
-    });
+    const [assignments, lodgeRows] = await Promise.all([
+      tx.promoCodeAssignment.findMany({
+        where: { promoCodeId: promoCode.id },
+        select: { memberId: true },
+      }),
+      tx.promoCodeLodge.findMany({
+        where: { promoCodeId: promoCode.id },
+        select: { lodgeId: true },
+      }),
+    ]);
     if (assignments.length > 0) {
       assignedMemberIds = assignments.map((a) => a.memberId);
     }
+    promoLodges = lodgeRows;
   }
 
   const guestNightRates = guests.map((guest, index) => ({
@@ -142,7 +152,7 @@ export async function resolvePromoInTransaction(
     nightDates: nightDatesByGuest?.[index],
   }));
   const application = await validateAndCalculatePromoDiscount(
-    promoCode,
+    promoCode ? { ...promoCode, lodges: promoLodges } : null,
     {
       memberId: effectiveMemberId,
       bookingCheckIn: checkIn,
@@ -150,7 +160,7 @@ export async function resolvePromoInTransaction(
       guests: guestNightRates,
     },
     assignedMemberIds,
-    { db: tx, selectedGuestIndexes: promoGuestIndexes }
+    { db: tx, selectedGuestIndexes: promoGuestIndexes, lodgeId }
   );
   if (application.error || !application.discount) {
     throw new BookingPromoError(application.error ?? "Promo code could not be applied");
@@ -186,6 +196,9 @@ export async function resolveEffectivePromoSource(
     workPartyEventId?: string;
     checkIn: Date;
     checkOut: Date;
+    // Lodge the booking is being created at: a lodge-bound working bee
+    // only discounts stays at its own lodge.
+    lodgeId?: string | null;
   }
 ): Promise<{ promoCodeStr: string; allowInternal: boolean } | null> {
   if (!options.workPartyEventId && !options.promoCodeStr) {
@@ -209,7 +222,8 @@ export async function resolveEffectivePromoSource(
       db,
       workPartyEventId,
       options.checkIn,
-      options.checkOut
+      options.checkOut,
+      options.lodgeId
     );
     if (!resolution.ok) {
       throw new BookingPromoError(resolution.error);

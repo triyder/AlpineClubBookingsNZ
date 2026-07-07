@@ -11,6 +11,9 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
 const bookingPolicyCheckQuerySchema = z.object({
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  // Lodge being booked (multi-lodge phase 8): minimum-stay overrides resolve
+  // per lodge. Omitted = the club's default lodge.
+  lodgeId: z.string().min(1).nullish(),
 })
 
 export async function GET(request: NextRequest) {
@@ -20,6 +23,7 @@ export async function GET(request: NextRequest) {
   const parsed = bookingPolicyCheckQuerySchema.safeParse({
     checkIn: request.nextUrl.searchParams.get("checkIn"),
     checkOut: request.nextUrl.searchParams.get("checkOut"),
+    lodgeId: request.nextUrl.searchParams.get("lodgeId"),
   })
 
   if (!parsed.success) {
@@ -38,7 +42,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const result = await validateMinimumStay(checkIn, checkOut)
+  const result = await validateMinimumStay(checkIn, checkOut, parsed.data.lodgeId)
 
   return NextResponse.json({
     valid: result.valid,

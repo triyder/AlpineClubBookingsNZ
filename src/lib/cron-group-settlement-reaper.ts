@@ -322,6 +322,9 @@ type ReleasedChild = {
   id: string;
   checkIn: Date;
   checkOut: Date;
+  // The child's own lodge: the freed beds are at this lodge, so its waitlist
+  // queue (not the default lodge's) is the one to re-process (multi-lodge).
+  lodgeId: string;
   memberEmail: string;
   memberFirstName: string;
 };
@@ -362,6 +365,7 @@ async function releaseSettlementChildren(
         id: true,
         checkIn: true,
         checkOut: true,
+        lodgeId: true,
         member: { select: { email: true, firstName: true } },
       },
     });
@@ -396,6 +400,7 @@ async function releaseSettlementChildren(
       id: child.id,
       checkIn: child.checkIn,
       checkOut: child.checkOut,
+      lodgeId: child.lodgeId,
       memberEmail: child.member.email,
       memberFirstName: child.member.firstName,
     }));
@@ -443,6 +448,7 @@ async function cancelReapedChildren(
         id: true,
         checkIn: true,
         checkOut: true,
+        lodgeId: true,
         member: { select: { email: true, firstName: true } },
       },
     });
@@ -458,6 +464,7 @@ async function cancelReapedChildren(
       id: child.id,
       checkIn: child.checkIn,
       checkOut: child.checkOut,
+      lodgeId: child.lodgeId,
       memberEmail: child.member.email,
       memberFirstName: child.member.firstName,
     }));
@@ -560,6 +567,8 @@ async function finishReap({
     processWaitlistForDates({
       checkIn: child.checkIn,
       checkOut: child.checkOut,
+      // Re-process the freed lodge's own queue, not the default lodge's.
+      lodgeId: child.lodgeId,
     }).catch((err) =>
       logger.error(
         { err, bookingId: child.id },

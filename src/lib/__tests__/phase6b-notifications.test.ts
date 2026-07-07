@@ -5,12 +5,28 @@ import {
 } from "@/config/club-identity";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
+// The cron resolves each lodge's own capacity; pin it to the club config
+// total so the fixtures keep their original arithmetic.
+vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  return {
+    ...actual,
+    getLodgeCapacity: vi.fn(async () => actual.FALLBACK_LODGE_CAPACITY),
+  };
+});
+
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter } = vi.hoisted(() => {
   const mockTransporter = {
     sendMail: vi.fn().mockResolvedValue({ messageId: "msg-456" }),
   };
   const mockPrisma = {
+    // Per-lodge capacity warnings (lodge-scoping contract): one active
+    // lodge in these fixtures, preserving the original single-lodge
+    // expectations.
+    lodge: {
+      findMany: vi.fn().mockResolvedValue([{ id: "lodge-1", name: "Lodge" }]),
+    },
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),

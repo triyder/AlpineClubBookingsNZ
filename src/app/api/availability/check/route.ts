@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCapacity } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { z } from "zod";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 
@@ -12,6 +15,7 @@ const dateOnlyString = z.string().refine(isDateOnlyString, {
 const availabilityCheckQuerySchema = z.object({
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  lodgeId: z.string().min(1).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -27,6 +31,7 @@ export async function GET(request: NextRequest) {
   const parsed = availabilityCheckQuerySchema.safeParse({
     checkIn: request.nextUrl.searchParams.get("checkIn"),
     checkOut: request.nextUrl.searchParams.get("checkOut"),
+    lodgeId: request.nextUrl.searchParams.get("lodgeId") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -36,13 +41,36 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { checkIn, checkOut } = parsed.data;
+  const { checkIn, checkOut, lodgeId: requestedLodgeId } = parsed.data;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "checkOut must be after checkIn" }, { status: 400 });
   }
 
-  const result = await checkCapacity(checkIn, checkOut, 1);
+  let lodgeId: string;
+  if (requestedLodgeId) {
+    const lodge = await prisma.lodge.findUnique({
+      where: { id: requestedLodgeId },
+      select: { id: true, active: true },
+    });
+    if (!lodge || !lodge.active) {
+      return NextResponse.json({ error: "Unknown or inactive lodgeId" }, { status: 400 });
+    }
+    lodgeId = lodge.id;
+  } else {
+    lodgeId = await getDefaultLodgeId(prisma);
+  }
+
+  // A BOOKING_RESTRICTION-ed member must not read a forbidden lodge's
+  // availability, mirroring the booking create path (assertMemberMayBookLodge).
+  if (!(await isMemberEligibleToBookLodge(prisma, session.user.id, lodgeId))) {
+    return NextResponse.json(
+      { error: "This member cannot book the selected lodge." },
+      { status: 403 }
+    );
+  }
+
+  const result = await checkCapacity(lodgeId, checkIn, checkOut, 1);
 
   return NextResponse.json({
     minAvailable: result.minAvailable,

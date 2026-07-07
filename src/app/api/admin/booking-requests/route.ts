@@ -42,6 +42,9 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
       take: pageSize,
       skip: (page - 1) * pageSize,
+      // Lodge name for the queue display; null lodgeId means the club's
+      // default lodge (pre-multi-lodge rows and single-lodge submissions).
+      include: { lodge: { select: { name: true } } },
     }),
     prisma.bookingRequest.count({ where }),
   ]);

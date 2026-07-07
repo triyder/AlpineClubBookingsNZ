@@ -197,6 +197,7 @@ export async function DELETE(
         changeFeeCents: 0,
         refundAmountCents: result.refundAmountCents,
         accountCreditAmountCents: result.accountCreditAmountCents,
+        lodgeId: result.booking.lodgeId,
         // Removing a guest can raise the price when it invalidates a group
         // promo the remaining guests relied on. Surface the increase when a
         // way to pay it exists: the Xero supplementary invoice on the

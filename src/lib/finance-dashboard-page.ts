@@ -163,6 +163,16 @@ export interface FinanceDashboardPageModel {
     linkLabel?: string;
   }>;
   exportSections: FinanceDashboardExportSection[];
+  /**
+   * Active lodges for the booking-derived reporting scope (occupancy, guest
+   * nights, booked revenue). ADR-002: the selector only appears once a second
+   * active lodge exists, so a single-lodge club sees an empty list and no
+   * selector. Accounting views (P&L, cash, balances) stay club-wide and ignore
+   * this scope.
+   */
+  lodges: Array<{ id: string; name: string }>;
+  /** Selected reporting lodge, or null for all active lodges (summed capacity). */
+  selectedLodgeId: string | null;
 }
 
 const SERIES_COLORS = {
@@ -296,7 +306,8 @@ function buildSelectionLabels(selection: FinanceDashboardSelection) {
 }
 
 async function buildBookingsDashboard(
-  selection: FinanceDashboardSelection
+  selection: FinanceDashboardSelection,
+  lodgeId: string | null
 ): Promise<FinanceDashboardViewModel> {
   const warnings: string[] = [];
   const query = {
@@ -314,6 +325,7 @@ async function buildBookingsDashboard(
           },
         }
       : {}),
+    lodgeId,
   };
   const [metrics, comparison] = await Promise.all([
     getFinanceBookingMetrics(query),
@@ -324,6 +336,7 @@ async function buildBookingsDashboard(
             to: selection.comparison.to,
             cutoffDate: selection.comparison.to,
           },
+          lodgeId,
         })
       : Promise.resolve(null),
   ]);
@@ -911,7 +924,10 @@ async function buildRevenueDashboard(selection: FinanceDashboardSelection) {
   return mapped;
 }
 
-async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelection) {
+async function buildPricingSensitivityDashboard(
+  selection: FinanceDashboardSelection,
+  lodgeId: string | null
+) {
   const [costs, metrics] = await Promise.all([
     buildFinanceMonthlyPnlSummary({
       kind: "EXPENSE",
@@ -925,6 +941,7 @@ async function buildPricingSensitivityDashboard(selection: FinanceDashboardSelec
         to: selection.primary.to,
         cutoffDate: selection.primary.to,
       },
+      lodgeId,
     }),
   ]);
   const realized = metrics.realized;
@@ -1439,11 +1456,31 @@ export async function buildFinanceDashboardPageModel(input: {
   });
   const labels = buildSelectionLabels(selection);
 
+  const activeLodges = await prisma.lodge.findMany({
+    where: { active: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
+  // Booking-derived reporting scope (occupancy, guest nights, booked revenue).
+  // ADR-002: only expose the selector once a second active lodge exists — a
+  // single-lodge club gets an empty list and no selector. An unknown/omitted
+  // lodgeId param falls back to all active lodges (summed-capacity denominator).
+  const requestedLodgeId =
+    typeof input.searchParams?.lodgeId === "string"
+      ? input.searchParams.lodgeId
+      : undefined;
+  const selectableLodges = activeLodges.length > 1 ? activeLodges : [];
+  const selectedLodgeId =
+    requestedLodgeId &&
+    selectableLodges.some((lodge) => lodge.id === requestedLodgeId)
+      ? requestedLodgeId
+      : null;
+
   let viewModel: FinanceDashboardViewModel;
   let ratios: FinanceDashboardRatioExplorerModel | null = null;
 
   if (selection.view === "bookings") {
-    viewModel = await buildBookingsDashboard(selection);
+    viewModel = await buildBookingsDashboard(selection, selectedLodgeId);
   } else if (selection.view === "revenue") {
     viewModel = await buildRevenueDashboard(selection);
   } else if (selection.view === "costs") {
@@ -1458,7 +1495,7 @@ export async function buildFinanceDashboardPageModel(input: {
     ratios = ratiosModel.ratios;
     viewModel = ratiosModel;
   } else if (selection.view === "pricing-sensitivity") {
-    viewModel = await buildPricingSensitivityDashboard(selection);
+    viewModel = await buildPricingSensitivityDashboard(selection, selectedLodgeId);
   } else if (selection.view === "cash") {
     viewModel = await buildCashDashboard(selection);
   } else if (selection.view === "working-capital") {
@@ -1493,6 +1530,8 @@ export async function buildFinanceDashboardPageModel(input: {
     statusPanels: viewModel.statusPanels,
     costFilters: viewModel.costFilters,
     sourceNotes: viewModel.sourceNotes,
+    lodges: selectableLodges,
+    selectedLodgeId,
     exportSections: [
       {
         title: "Dashboard selection",

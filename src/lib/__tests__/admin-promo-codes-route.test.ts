@@ -83,6 +83,7 @@ describe("admin promo code routes - fixed nightly price", () => {
     mocks.prisma.promoCode.findUnique.mockResolvedValueOnce(null);
     mocks.tx.promoCode.create.mockResolvedValue({ id: "pc-1" });
     mocks.tx.promoCode.findUnique.mockResolvedValue({
+      lodges: [],
       id: "pc-1",
       code: "FIXED30",
       type: "FIXED_NIGHTLY_PRICE",
@@ -125,6 +126,7 @@ describe("admin promo code routes - fixed nightly price", () => {
     mocks.prisma.promoCode.findUnique.mockResolvedValueOnce(null);
     mocks.tx.promoCode.create.mockResolvedValue({ id: "pc-1" });
     mocks.tx.promoCode.findUnique.mockResolvedValue({
+      lodges: [],
       id: "pc-1",
       code: "MEMBER30",
       type: "FIXED_NIGHTLY_PRICE",
@@ -154,6 +156,7 @@ describe("admin promo code routes - fixed nightly price", () => {
     mocks.prisma.promoCode.findUnique.mockResolvedValueOnce(null);
     mocks.tx.promoCode.create.mockResolvedValue({ id: "pc-1" });
     mocks.tx.promoCode.findUnique.mockResolvedValue({
+      lodges: [],
       id: "pc-1",
       code: "PCT25",
       type: "PERCENTAGE",
@@ -178,6 +181,7 @@ describe("admin promo code routes - fixed nightly price", () => {
     mocks.prisma.promoCode.findUnique.mockResolvedValueOnce(null);
     mocks.tx.promoCode.create.mockResolvedValue({ id: "pc-1" });
     mocks.tx.promoCode.findUnique.mockResolvedValue({
+      lodges: [],
       id: "pc-1",
       code: "ONEDAY",
       type: "PERCENTAGE",
@@ -242,6 +246,7 @@ describe("admin promo code routes - fixed nightly price", () => {
       bookingStartUntil: null,
     });
     mocks.tx.promoCode.findUnique.mockResolvedValue({
+      lodges: [],
       id: "pc-1",
       code: "CAP30",
       type: "FIXED_NIGHTLY_PRICE",

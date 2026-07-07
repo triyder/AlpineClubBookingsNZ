@@ -119,7 +119,12 @@ export async function getWorkPartyNightWindowForPromo(
 export async function findActiveWorkPartyEventsForRange(
   checkIn: Date,
   checkOut: Date,
-  db: WorkPartyDbClient = prisma
+  db: WorkPartyDbClient = prisma,
+  // Lodge the member is booking (lodge-scoping contract): filters out
+  // events bound to a different lodge. Omitted keeps the historical
+  // behaviour of listing every active event; lodge-less events are
+  // club-wide and always listed.
+  lodgeId?: string | null
 ) {
   return db.workPartyEvent.findMany({
     where: {
@@ -130,6 +135,7 @@ export async function findActiveWorkPartyEventsForRange(
       startDate: { lt: checkOut },
       endDate: { gte: checkIn },
       promoCode: { active: true, archivedAt: null },
+      ...(lodgeId ? { OR: [{ lodgeId: null }, { lodgeId }] } : {}),
     },
     select: {
       id: true,
@@ -138,6 +144,8 @@ export async function findActiveWorkPartyEventsForRange(
       startDate: true,
       endDate: true,
       discountPercent: true,
+      lodgeId: true,
+      lodge: { select: { name: true } },
     },
     orderBy: { startDate: "asc" },
   });
@@ -157,7 +165,10 @@ export async function resolveWorkPartyEventPromoForBooking(
   db: WorkPartyDbClient,
   workPartyEventId: string,
   checkIn: Date,
-  checkOut: Date
+  checkOut: Date,
+  // Lodge the booking is being created at. An event bound to a lodge can
+  // only discount stays at that lodge; lodge-less events stay club-wide.
+  bookingLodgeId?: string | null
 ): Promise<WorkPartyPromoResolution> {
   const event = await db.workPartyEvent.findUnique({
     where: { id: workPartyEventId },
@@ -166,6 +177,8 @@ export async function resolveWorkPartyEventPromoForBooking(
       active: true,
       startDate: true,
       endDate: true,
+      lodgeId: true,
+      lodge: { select: { name: true } },
       promoCode: { select: { code: true, active: true, archivedAt: true } },
     },
   });
@@ -180,6 +193,12 @@ export async function resolveWorkPartyEventPromoForBooking(
     return {
       ok: false,
       error: "This working bee event does not overlap your booking dates",
+    };
+  }
+  if (event.lodgeId && bookingLodgeId && event.lodgeId !== bookingLodgeId) {
+    return {
+      ok: false,
+      error: `This working bee is held at ${event.lodge?.name ?? "another lodge"} — book that lodge to attend it`,
     };
   }
 
@@ -199,6 +218,8 @@ export const workPartyEventSchema = z
     endDate: dateOnlyString.transform(parseDateOnly),
     discountPercent: z.number().int().min(1).max(100).default(100),
     active: z.boolean().default(true),
+    // Lodge the working bee is held at; null/omitted = club-wide event.
+    lodgeId: z.string().min(1).optional().nullable(),
   })
   .strict();
 
@@ -219,6 +240,7 @@ export interface WorkPartyEventInput {
   endDate: Date;
   discountPercent: number;
   active: boolean;
+  lodgeId?: string | null;
 }
 
 function internalPromoDataForEvent(input: WorkPartyEventInput) {
@@ -262,6 +284,7 @@ export async function createWorkPartyEventWithPromo(input: WorkPartyEventInput) 
             endDate: input.endDate,
             discountPercent: input.discountPercent,
             active: input.active,
+            lodgeId: input.lodgeId ?? null,
             promoCodeId: promoCode.id,
           },
           include: { promoCode: { select: { id: true, code: true } } },
@@ -296,6 +319,7 @@ export async function updateWorkPartyEventAndPromo(
         endDate: input.endDate,
         discountPercent: input.discountPercent,
         active: input.active,
+        lodgeId: input.lodgeId ?? null,
       },
     });
     await tx.promoCode.update({
