@@ -30,7 +30,7 @@ export interface PersistedMembershipLockoutSettings {
   updatedAt?: Date | string | null;
 }
 
-export function getDefaultMembershipLockoutSettings(): MembershipLockoutSettings {
+function getDefaultMembershipLockoutSettings(): MembershipLockoutSettings {
   return {
     enabled: true,
     financialYearEndMonthOverride: null,

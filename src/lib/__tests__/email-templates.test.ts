@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  welcomeTemplate,
   passwordResetTemplate,
   bookingConfirmedTemplate,
   bookingPendingTemplate,
@@ -17,30 +16,9 @@ import {
 } from "../email-templates";
 import { getAppBaseUrl } from "../app-url";
 import { formatNZDateTime } from "../nzst-date";
-import { CLUB_NAME } from "@/config/club-identity";
 
 describe("email-templates", () => {
-  describe("welcomeTemplate", () => {
-    it("includes the member name", () => {
-      const html = welcomeTemplate("Alice");
-      expect(html).toContain("Alice");
-    });
-
-    it("includes login link", () => {
-      const html = welcomeTemplate("Bob");
-      expect(html).toContain("/login");
-    });
-
-    it("includes club branding", () => {
-      const html = welcomeTemplate("Test");
-      expect(html).toContain(CLUB_NAME);
-      expect(html).toContain("/branding/logo.png");
-      // Emails now derive their palette from the club (Site Style) theme; the
-      // default/fallback is the site default brand gold (#8fa87c, #1186), not
-      // the legacy hard-coded email gold (#ffcb05).
-      expect(html).toContain("#8fa87c");
-    });
-
+  describe("adminDailyDigestTemplate", () => {
     it("uses dark text on light table headers", () => {
       const html = adminDailyDigestTemplate({
         newBookings: 1,
@@ -54,12 +32,6 @@ describe("email-templates", () => {
 
       expect(html).toContain("background-color: #d7dde1; color: #1f2933;");
       expect(html).not.toContain("background-color: #d7dde1; color: #8fa87c;");
-    });
-
-    it("produces valid HTML structure", () => {
-      const html = welcomeTemplate("Test");
-      expect(html).toContain("<!DOCTYPE html>");
-      expect(html).toContain("</html>");
     });
   });
 

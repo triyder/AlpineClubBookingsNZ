@@ -126,7 +126,7 @@ export function buildXeroContactDisplayName(
     .trim();
 }
 
-export function tokenizeXeroContactMatchValue(
+function tokenizeXeroContactMatchValue(
   value: string | null | undefined
 ): string[] {
   return normalizeXeroContactMatchValue(value)
@@ -157,7 +157,7 @@ export function namesLookSimilarForPotentialMatch(
   return matchedTokens >= requiredMatches;
 }
 
-export function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
+function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
   const text = getXeroErrorSearchText(error);
   return (
     text.includes("already assigned to another contact") ||
@@ -186,7 +186,7 @@ export function parseXeroCompanyNumberDate(
 // Address builders / validation
 // ---------------------------------------------------------------------------
 
-export function buildXeroAddresses(member: {
+function buildXeroAddresses(member: {
   streetAddressLine1?: string | null;
   streetAddressLine2?: string | null;
   streetCity?: string | null;
@@ -226,7 +226,7 @@ export function buildXeroAddresses(member: {
   return addresses;
 }
 
-export function getMissingFieldsForXeroContactCreate(member: {
+function getMissingFieldsForXeroContactCreate(member: {
   firstName?: string | null;
   lastName?: string | null;
   email?: string | null;
@@ -342,7 +342,7 @@ async function linkMatchedXeroContact(
   });
 }
 
-export async function findExistingXeroContactByExactName(input: {
+async function findExistingXeroContactByExactName(input: {
   xero: XeroClient;
   tenantId: string;
   fullName: string;

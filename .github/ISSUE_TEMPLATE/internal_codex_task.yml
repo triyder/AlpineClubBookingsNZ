@@ -1,4 +1,4 @@
-name: Codex Task
+name: "[internal] Codex Task"
 description: Define one issue-scoped Codex implementation or documentation task.
 title: "[Codex] "
 labels:

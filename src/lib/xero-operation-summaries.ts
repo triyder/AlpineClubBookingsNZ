@@ -24,7 +24,7 @@ import { formatCents } from "@/lib/utils";
  * Unknown / unmapped shapes return `null` so the panel falls back to raw JSON.
  */
 
-export interface XeroOperationSummaryFact {
+interface XeroOperationSummaryFact {
   label: string;
   value: string;
 }

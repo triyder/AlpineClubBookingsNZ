@@ -28,7 +28,7 @@ export interface AgeTierXeroContactGroupConfig {
   }>;
 }
 
-export interface XeroContactGroupMismatchEntry {
+interface XeroContactGroupMismatchEntry {
   memberId: string;
   memberName: string;
   memberEmail: string;
@@ -63,7 +63,7 @@ export interface XeroContactGroupMismatchSnapshot {
   mismatches: XeroContactGroupMismatchEntry[];
 }
 
-export function buildAgeTierXeroContactGroupConfigs(
+function buildAgeTierXeroContactGroupConfigs(
   mappings: AgeTierXeroContactGroupMapping[]
 ): AgeTierXeroContactGroupConfig[] {
   const configs = new Map<AgeTier, AgeTierXeroContactGroupConfig>();

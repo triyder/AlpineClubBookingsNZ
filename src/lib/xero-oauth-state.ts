@@ -5,7 +5,7 @@ export const XERO_OAUTH_STATE_COOKIE = "xero_oauth_state";
 const XERO_OAUTH_STATE_MAX_AGE_SECONDS = 10 * 60;
 const XERO_OAUTH_STATE_PATH = "/api/admin/xero";
 
-export function getOAuthCookieDomain(requestUrl?: string): string | undefined {
+function getOAuthCookieDomain(requestUrl?: string): string | undefined {
   const candidates = [process.env.NEXTAUTH_URL, requestUrl];
 
   for (const candidate of candidates) {

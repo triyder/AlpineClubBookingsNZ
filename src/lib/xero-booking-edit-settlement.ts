@@ -16,7 +16,7 @@ const UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES = new Set<string>([
   "REFUNDED",
 ]);
 
-export type XeroBookingEditFinancialAction =
+type XeroBookingEditFinancialAction =
   | { type: "none"; reason: string }
   | {
       type: "primary-invoice";
@@ -41,7 +41,7 @@ export type XeroBookingEditFinancialAction =
       reason: string;
     };
 
-export type XeroBookingEditPrimaryUpdateAction =
+type XeroBookingEditPrimaryUpdateAction =
   | { type: "none"; reason: string }
   | { type: "queue"; reason: string }
   | { type: "skip"; reason: string };
