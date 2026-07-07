@@ -972,6 +972,7 @@ describe("processStoredXeroInboundEvents", () => {
           memberCredit: {
             findFirst: mocks.memberCreditFindFirst,
             create: mocks.memberCreditCreate,
+            aggregate: mocks.memberCreditAggregate,
           },
           // The in-tx enqueue reads its dedup lookups through this same client.
           xeroObjectLink: {
@@ -1258,6 +1259,7 @@ describe("processStoredXeroInboundEvents", () => {
           memberCredit: {
             findFirst: mocks.memberCreditFindFirst,
             create: mocks.memberCreditCreate,
+            aggregate: mocks.memberCreditAggregate,
           },
           xeroObjectLink: { findFirst: mocks.txLinkFindFirst },
           xeroSyncOperation: {
@@ -1743,6 +1745,272 @@ describe("processStoredXeroInboundEvents", () => {
     expect(alertArgs.errorMessage).toContain("$123.45");
     expect(alertArgs.errorMessage).toContain("$61.72");
     expect(alertArgs.errorMessage).toContain("never credits automatically");
+  });
+
+  it("caps the aggregate mint at the invoice's cash across two never-settled payments on one invoice (#1505)", async () => {
+    // Two never-settled Internet Banking payments (distinct cancelled
+    // bookings) are matched to ONE invoice whose cash ($100.00) covers only
+    // part of their combined face ($80.00 + $80.00). The #1459 per-payment
+    // clamp alone would mint min($80, $100) = $80 for EACH — $160 aggregate,
+    // more than the invoice's cash. The #1505 aggregate cap apportions the
+    // invoice's cash: the first payment mints its full $80, the second is
+    // capped at the $20 remaining, so the aggregate is EXACTLY the invoice's
+    // $100 cash — never more.
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_ib_agg",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_ib_agg",
+        correlationKey: "corr_ib_agg",
+        payload: { resourceId: "inv_ib_agg" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_ib_agg" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_ib_agg_a",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+        {
+          localModel: "Payment",
+          localId: "pay_ib_agg_b",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const bookingA = {
+      id: "booking_ib_agg_a",
+      memberId: "mem_agg_a",
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      status: "CANCELLED",
+      finalPriceCents: 8000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      guests: [{ id: "guest_agg_a", nights: [] }],
+      member: { email: "alice@example.com", firstName: "Alice", lastName: "Smith" },
+      promoRedemption: null,
+    };
+    const bookingB = {
+      id: "booking_ib_agg_b",
+      memberId: "mem_agg_b",
+      checkIn: new Date("2026-07-14"),
+      checkOut: new Date("2026-07-16"),
+      status: "CANCELLED",
+      finalPriceCents: 8000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      guests: [{ id: "guest_agg_b", nights: [] }],
+      member: { email: "bob@example.com", firstName: "Bob", lastName: "Jones" },
+      promoRedemption: null,
+    };
+
+    // syncLinkedPaymentInvoiceMetadata then syncInternetBankingPaymentsForPaidInvoice.
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([
+        { id: "pay_ib_agg_a", xeroInvoiceId: null, xeroInvoiceNumber: null },
+        { id: "pay_ib_agg_b", xeroInvoiceId: null, xeroInvoiceNumber: null },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_agg_a",
+          bookingId: "booking_ib_agg_a",
+          amountCents: 8000,
+          status: "PENDING",
+          source: "INTERNET_BANKING",
+          reference: "BOOKING-AGGA",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          booking: bookingA,
+        },
+        {
+          id: "pay_ib_agg_b",
+          bookingId: "booking_ib_agg_b",
+          amountCents: 8000,
+          status: "PENDING",
+          source: "INTERNET_BANKING",
+          reference: "BOOKING-AGGB",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          booking: bookingB,
+        },
+      ])
+      // resolveXeroAuditSubjects, resolving the audit-log subjects for the two
+      // Payment→INVOICE links.
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_agg_a",
+          bookingId: "booking_ib_agg_a",
+          booking: { memberId: "mem_agg_a" },
+        },
+        {
+          id: "pay_ib_agg_b",
+          bookingId: "booking_ib_agg_b",
+          booking: { memberId: "mem_agg_b" },
+        },
+      ]);
+
+    const freshById: Record<string, unknown> = {
+      pay_ib_agg_a: {
+        id: "pay_ib_agg_a",
+        bookingId: "booking_ib_agg_a",
+        amountCents: 8000,
+        status: "PENDING",
+        source: "INTERNET_BANKING",
+        reference: "BOOKING-AGGA",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        internetBankingHoldSlots: true,
+        xeroRefundCreditNoteId: null,
+        booking: bookingA,
+      },
+      pay_ib_agg_b: {
+        id: "pay_ib_agg_b",
+        bookingId: "booking_ib_agg_b",
+        amountCents: 8000,
+        status: "PENDING",
+        source: "INTERNET_BANKING",
+        reference: "BOOKING-AGGB",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        internetBankingHoldSlots: true,
+        xeroRefundCreditNoteId: null,
+        booking: bookingB,
+      },
+    };
+    mocks.paymentFindUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => freshById[where.id] ?? null
+    );
+    mocks.memberCreditFindFirst.mockResolvedValue(null);
+    // Simulate the DB accumulation the aggregate cap reads back under the
+    // advisory lock: booking A has minted nothing when A's cap is computed;
+    // A's $80.00 credit is committed and visible when B's cap is computed.
+    mocks.memberCreditAggregate
+      .mockResolvedValueOnce({ _sum: { amountCents: 0 } })
+      .mockResolvedValueOnce({ _sum: { amountCents: 8000 } });
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_agg" });
+
+    const txOperationUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    mocks.transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          $executeRaw: mocks.txExecuteRaw,
+          processedWebhookEvent: { deleteMany: mocks.processedDeleteMany },
+          xeroInboundEvent: { update: mocks.inboundUpdate },
+          payment: {
+            findUnique: mocks.paymentFindUnique,
+            update: mocks.paymentUpdate,
+          },
+          paymentTransaction: {
+            updateMany: mocks.paymentTransactionUpdateMany,
+            findFirst: vi.fn().mockResolvedValue({ id: "ptx_primary" }),
+            create: mocks.paymentTransactionCreate,
+          },
+          booking: { update: mocks.bookingUpdate },
+          memberCredit: {
+            findFirst: mocks.memberCreditFindFirst,
+            create: mocks.memberCreditCreate,
+            aggregate: mocks.memberCreditAggregate,
+          },
+          xeroObjectLink: { findFirst: mocks.txLinkFindFirst },
+          xeroSyncOperation: {
+            findFirst: mocks.txOperationFindFirst,
+            updateMany: txOperationUpdateMany,
+          },
+        })
+    );
+
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_ib_agg",
+              invoiceNumber: "INV-IB-AGG",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              amountPaid: 100.0,
+              payments: [],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    // Two credits: the first payment's full face, the second apportioned to the
+    // invoice's remaining cash.
+    const mintedAmounts = mocks.memberCreditCreate.mock.calls.map(
+      ([args]) => args.data.amountCents
+    );
+    expect(mintedAmounts).toEqual([8000, 2000]);
+    // The invariant: the aggregate mint equals EXACTLY the invoice's cash — the
+    // per-payment clamp alone would have minted 8000 + 8000 = 16000.
+    expect(mintedAmounts.reduce((a, b) => a + b, 0)).toBe(10000);
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        amountCents: 8000,
+        sourceBookingId: "booking_ib_agg_a",
+      }),
+    });
+    expect(mocks.memberCreditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        amountCents: 2000,
+        sourceBookingId: "booking_ib_agg_b",
+      }),
+    });
+
+    // The offsetting account-credit notes mirror the minted (not face) amounts.
+    const enqueuedAmounts = mocks.startXeroSyncOperation.mock.calls
+      .filter(([input]) => input?.requestPayload?.queueType === "ACCOUNT_CREDIT_NOTE")
+      .map(([input]) => input.requestPayload.refundAmountCents);
+    expect(enqueuedAmounts).toEqual([8000, 2000]);
+
+    // The capped payment raises a loud alert naming the aggregate-cap reason —
+    // never a silent overmint.
+    const cappedAlert = vi
+      .mocked(sendAdminPaymentFailureAlert)
+      .mock.calls.map(([args]) => args)
+      .find((args) => args.amountCents === 2000);
+    expect(cappedAlert).toBeDefined();
+    expect(cappedAlert?.errorMessage).toContain(
+      "aggregate credit across all payments on one invoice can never exceed the invoice's cash"
+    );
+    expect(cappedAlert?.errorMessage).toContain("remaining cash");
+
+    // Both bookings are credited; exactly one of them is a partial (capped) mint.
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "xero.invoice.reconciled",
+        metadata: expect.objectContaining({
+          internetBankingPaymentSync: expect.objectContaining({
+            creditedInternetBankingBookings: 2,
+            partialCashCreditedInternetBankingBookings: 1,
+          }),
+        }),
+      }),
+    });
   });
 
   it("floors the mint at verified cash when an allocation component is unreadable (#1459)", async () => {

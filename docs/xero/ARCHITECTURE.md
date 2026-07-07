@@ -274,10 +274,17 @@ and a payload carrying neither cash field fails the event into the
 FAILED-retry sweep rather than settling blind. Both credit-minting arms —
 cash landing on an already-cancelled booking's stale invoice, and the
 late-capacity-failure cancel — mint member credit sized by the invoice's
-quantified cash, clamped to the payment amount (#1357/#1459): a mixed
-cash+allocation invoice credits only the cash portion, the admin alert names
-both amounts so the allocation source gets verified, and verified cash
+quantified cash, clamped to the payment amount (#1357/#1459) and, across all
+payments matched to one invoice, to the invoice's remaining cash (#1505): a
+mixed cash+allocation invoice credits only the cash portion, the admin alert
+names both amounts so the allocation source gets verified, and verified cash
 arriving after a mint alerts with the delta (it never credits automatically).
+Two never-settled payments on one invoice each mint no more than the invoice's
+cash NOT already minted for the other (a defensive invariant — no app flow
+produces that shape; the remaining-cash read-back happens inside each payment's
+reconcile transaction under the shared advisory lock, so it stays idempotent
+under retry, and a capped mint raises the same loud alert, never a silent
+overmint).
 
 ```mermaid
 sequenceDiagram
