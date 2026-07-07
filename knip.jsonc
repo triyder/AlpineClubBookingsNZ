@@ -11,6 +11,9 @@
     "e2e/auth.setup.ts",
     // Invoked from scripts/e2e-stack.sh (shell), never imported.
     "e2e/setup/enable-e2e-modules.ts",
+    // Invoked from scripts/e2e-stack.sh (shell) only when E2E_MULTI_LODGE=1
+    // (advisory multi-lodge project, #1568), never imported.
+    "e2e/setup/seed-second-lodge.ts",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
     "scripts/codex/issue-to-prompt.mjs",

@@ -61,6 +61,15 @@ lifted.
 - Xero invoice generation unchanged: club-wide item/account mappings
   produce identical output for bookings at either lodge
 
+> **Automated advisory coverage (issue #1568):** an advisory (non-blocking)
+> `multi-lodge` Playwright project (`E2E_MULTI_LODGE=1`; see
+> `docs/E2E_PLAYWRIGHT.md`) now exercises a subset of the cross-lodge isolation
+> checks below — the `/book` lodge step + per-lodge availability, capacity
+> isolation at a second lodge, kiosk-to-lodge binding, and the cross-lodge
+> waitlist offer/confirm happy path. It is a coverage aid only and is **not** a
+> substitute for the manual matrix here, which remains the hard gate before
+> enabling `multiLodge` in production.
+
 ## Manual Verification (Staging)
 
 ### Cross-Lodge Isolation
