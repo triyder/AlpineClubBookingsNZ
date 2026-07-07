@@ -39,7 +39,11 @@ Two properties of the current machinery shape this design:
    - `OWN_LODGE_FIRST` (default): when capacity frees at lodge X, X's own
      waitlist is served first in join order; only then are cross-lodge
      opt-ins from other lodges' queues considered, also in join order. No
-     one is overtaken in a queue they joined.
+     one is overtaken in a queue they joined. *As implemented, "own first"
+     holds per candidate, not per event — see the 2026-07-08
+     implementation note below (owner-accepted, #1566): across candidates
+     the pass runs in club-wide join order, so the freed lodge's queue is
+     not necessarily exhausted first.*
    - `MERGED`: everyone whose entry could be satisfied at lodge X — its
      own queue plus opt-ins — is ranked purely by `createdAt`.
 2. **Cross-lodge offers require explicit confirmation of the new price.**
