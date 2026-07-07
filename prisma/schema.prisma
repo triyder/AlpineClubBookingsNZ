@@ -2039,9 +2039,11 @@ model BookingPeriod {
 // Booking Defaults (global settings, single row)
 // ---------------------------------------------------------------------------
 
-// Cross-lodge waitlist queue order (ADR-004, owner decision 1): when
-// capacity frees at a lodge, OWN_LODGE_FIRST serves that lodge's own
-// waitlist before cross-lodge opt-ins (each in join order); MERGED ranks
+// Cross-lodge waitlist queue order (ADR-004, owner decision 1): per
+// candidate, OWN_LODGE_FIRST considers their own-lodge chance before any
+// cross-lodge opt-in; across candidates the pass runs in club-wide join
+// order (owner-accepted, #1566 — see ADR-004 implementation notes), so a
+// freed lodge's queue is not necessarily exhausted first. MERGED ranks
 // everyone eligible purely by when they joined. Club-wide policy.
 enum WaitlistCrossLodgeOrder {
   OWN_LODGE_FIRST
