@@ -57,12 +57,14 @@ vi.mock("../profile-details-card", () => ({
 vi.mock("../profile-section-card", () => ({
   ProfileSectionCard: ({
     children,
+    id,
     title,
   }: {
     children: ReactNode;
+    id?: string;
     title: string;
   }) => (
-    <section>
+    <section id={id}>
       <h2>{title}</h2>
       {children}
     </section>
@@ -215,5 +217,12 @@ describe("ProfilePage two-factor card", () => {
     expect(html).toContain(
       "Enrollment is required the next time the club enables two-factor authentication.",
     );
+  });
+
+  it("renders dashboard drill-down anchors for credit and promo code sections", async () => {
+    const html = await renderProfilePage();
+
+    expect(html).toContain('id="account-credit"');
+    expect(html).toContain('id="promo-codes"');
   });
 });

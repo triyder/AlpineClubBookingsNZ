@@ -31,7 +31,10 @@ import { Separator } from "@/components/ui/separator";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
-import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
+import {
+  subscriptionStatusClass,
+  subscriptionStatusLabel,
+} from "@/lib/status-colors";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import { requiresPaidSubscriptionForMemberForBooking } from "@/lib/membership-type-policy";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -146,7 +149,11 @@ export default async function ProfilePage({
               name: true,
               memberships: {
                 where: { member: { active: true } },
-                select: { member: { select: { id: true, firstName: true, lastName: true } } },
+                select: {
+                  member: {
+                    select: { id: true, firstName: true, lastName: true },
+                  },
+                },
               },
             },
           },
@@ -162,21 +169,25 @@ export default async function ProfilePage({
   if (!member) redirect("/login");
   const isAdmin = hasAdminAccess(member);
 
-  const currentSub = member.subscriptions.find(s => s.seasonYear === currentSeasonYear);
-  const subscriptionRequired = await requiresPaidSubscriptionForMemberForBooking(prisma, {
-    memberId: member.id,
-    seasonYear: currentSeasonYear,
-    ageTier: member.ageTier,
-  });
+  const currentSub = member.subscriptions.find(
+    (s) => s.seasonYear === currentSeasonYear,
+  );
+  const subscriptionRequired =
+    await requiresPaidSubscriptionForMemberForBooking(prisma, {
+      memberId: member.id,
+      seasonYear: currentSeasonYear,
+      ageTier: member.ageTier,
+    });
   const subscriptionStatus = subscriptionRequired
-    ? currentSub?.status ?? null
+    ? (currentSub?.status ?? null)
     : "NOT_REQUIRED";
   const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
   const modules = await loadEffectiveModuleFlags();
-  const showTwoFactorSecurityCard = modules.twoFactor || member.twoFactorEnabled;
+  const showTwoFactorSecurityCard =
+    modules.twoFactor || member.twoFactorEnabled;
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -215,299 +226,314 @@ export default async function ProfilePage({
           <ProfileDetailsPageActions />
         </div>
 
-      {emailChanged ? (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          Your email address has been updated successfully.
-        </div>
-      ) : null}
+        {emailChanged ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            Your email address has been updated successfully.
+          </div>
+        ) : null}
 
-      {emailChangeError ? (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          {emailChangeError === "missing"
-            ? "The email change link was incomplete."
-            : emailChangeError === "invalid"
-              ? "That email change link is invalid."
-              : emailChangeError === "expired"
-                ? "That email change link has expired."
-                : emailChangeError === "taken"
-                  ? "That email address is already in use."
-                  : "The email change could not be completed."}
-        </div>
-      ) : null}
+        {emailChangeError ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            {emailChangeError === "missing"
+              ? "The email change link was incomplete."
+              : emailChangeError === "invalid"
+                ? "That email change link is invalid."
+                : emailChangeError === "expired"
+                  ? "That email change link has expired."
+                  : emailChangeError === "taken"
+                    ? "That email address is already in use."
+                    : "The email change could not be completed."}
+          </div>
+        ) : null}
 
-      {/* Account info */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between">
-            <div>
-              <CardTitle>Account Information</CardTitle>
-              <CardDescription>
-                Your membership details and status
-              </CardDescription>
+        {/* Account info */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-start justify-between">
+              <div>
+                <CardTitle>Account Information</CardTitle>
+                <CardDescription>
+                  Your membership details and status
+                </CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <Badge variant={isAdmin ? "default" : "secondary"}>
+                  {member.role}
+                </Badge>
+                <Badge variant={member.active ? "default" : "destructive"}>
+                  {member.active ? "Active" : "Inactive"}
+                </Badge>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Badge variant={isAdmin ? "default" : "secondary"}>
-                {member.role}
-              </Badge>
-              <Badge variant={member.active ? "default" : "destructive"}>
-                {member.active ? "Active" : "Inactive"}
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Email</span>
+              <span className="font-medium">{member.email}</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Age Tier</span>
+              <span className="font-medium">{member.ageTier}</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Member Since</span>
+              <span className="font-medium">
+                {new Date(member.createdAt).toLocaleDateString("en-NZ", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </span>
+            </div>
+            <Separator />
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">
+                Subscription ({seasonLabel})
+              </span>
+              <Badge
+                className={subscriptionStatusClass(
+                  subscriptionStatus ?? "NOT_INVOICED",
+                )}
+              >
+                {subscriptionStatusLabel(subscriptionStatus ?? "NOT_INVOICED")}
               </Badge>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Email</span>
-            <span className="font-medium">{member.email}</span>
-          </div>
-          <Separator />
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Age Tier</span>
-            <span className="font-medium">{member.ageTier}</span>
-          </div>
-          <Separator />
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Member Since</span>
-            <span className="font-medium">
-              {new Date(member.createdAt).toLocaleDateString("en-NZ", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
+          </CardContent>
+        </Card>
+
+        {/* Security */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Security</CardTitle>
+            <CardDescription>
+              Manage your password and account security
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex justify-between items-center">
+              <div>
+                <span className="text-muted-foreground">Password</span>
+                {member.passwordChangedAt ? (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Last changed{" "}
+                    {new Date(member.passwordChangedAt).toLocaleDateString(
+                      "en-NZ",
+                      {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      },
+                    )}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Never changed
+                  </p>
+                )}
+              </div>
+              <Button asChild variant="outline" size="sm">
+                <Link href="/change-password">Change Password</Link>
+              </Button>
+            </div>
+            {showTwoFactorSecurityCard ? (
+              <TwoFactorSecurityCard
+                enabled={member.twoFactorEnabled}
+                method={member.twoFactorMethod}
+                moduleEnabled={modules.twoFactor}
+              />
+            ) : null}
+          </CardContent>
+        </Card>
+
+        {/* Subscription History */}
+        <ProfileSectionCard
+          collapsible
+          defaultOpen={false}
+          description="Your membership payment status across seasons"
+          title="Subscription History"
+        >
+          {subscriptionHistory.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No subscription records — contact the club if this seems wrong.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {subscriptionHistory.map((sub) => {
+                const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
+                const isCurrent = sub.seasonYear === currentSeasonYear;
+                return (
+                  <div
+                    key={sub.seasonYear}
+                    className="flex justify-between items-center py-2.5"
+                  >
+                    <span className="text-sm">
+                      {label}
+                      {isCurrent && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          (current)
+                        </span>
+                      )}
+                    </span>
+                    <Badge className={subscriptionStatusClass(sub.status)}>
+                      {subscriptionStatusLabel(sub.status)}
+                    </Badge>
+                  </div>
+                );
               })}
-            </span>
-          </div>
-          <Separator />
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">
-              Subscription ({seasonLabel})
-            </span>
-            <Badge className={subscriptionStatusClass(subscriptionStatus ?? "NOT_INVOICED")}>
-              {subscriptionStatusLabel(subscriptionStatus ?? "NOT_INVOICED")}
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
+            </div>
+          )}
+        </ProfileSectionCard>
 
-      {/* Security */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Security</CardTitle>
-          <CardDescription>
-            Manage your password and account security
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="flex justify-between items-center">
+        {/* Account Credit */}
+        <ProfileSectionCard
+          description="Your credit balance and transaction history"
+          id="account-credit"
+          title="Account Credit"
+        >
+          <AccountCreditSection />
+        </ProfileSectionCard>
+
+        {/* Promo Codes */}
+        <ProfileSectionCard
+          description="Promo codes assigned to your member account"
+          id="promo-codes"
+          title="Promo Codes"
+        >
+          {availablePromoCodes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No assigned promo codes available.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {availablePromoCodes.map((promo) => (
+                <div
+                  className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0"
+                  key={promo.code}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className="font-mono" variant="secondary">
+                      {promo.code}
+                    </Badge>
+                    <Badge variant="success">{formatPromoBenefit(promo)}</Badge>
+                  </div>
+                  {promo.description ? (
+                    <p className="text-sm text-muted-foreground">
+                      {promo.description}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </ProfileSectionCard>
+
+        {/* Family Group */}
+        <ProfileSectionCard
+          collapsible
+          defaultOpen
+          description="Manage your family group members. Adults can invite other adults, and request to add infants, children, or youth."
+          id="family-group"
+          title="Family Group"
+        >
+          <FamilyGroupSection
+            familyGroups={member.familyGroupMemberships.map((ms) => ({
+              id: ms.familyGroup.id,
+              name: ms.familyGroup.name,
+              members: ms.familyGroup.memberships
+                .map((m) => m.member)
+                .filter((m) => m.id !== member.id),
+            }))}
+            canManage={member.ageTier === "ADULT" && member.canLogin === true}
+          />
+        </ProfileSectionCard>
+
+        <ProfileSectionCard
+          collapsible
+          defaultOpen={false}
+          description="Request committee review for membership cancellation."
+          id="membership-cancellation"
+          title="Membership Cancellation"
+        >
+          <MembershipCancellationPanel />
+        </ProfileSectionCard>
+
+        {/* Notification Preferences */}
+        <ProfileSectionCard
+          collapsible
+          defaultOpen
+          description="Choose which email notifications you receive"
+          title="Notification Preferences"
+        >
+          <NotificationPreferences />
+        </ProfileSectionCard>
+
+        {/* Change Email */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Change Email</CardTitle>
+            <CardDescription>
+              Update your email address. You will need to verify the new
+              address.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChangeEmailForm currentEmail={member.email} />
+          </CardContent>
+        </Card>
+
+        <ProfileDetailsCard
+          member={profileFormMember}
+          returnTo={returnTo}
+          ageTier={member.ageTier}
+          showOccupation={memberFieldsFlags.showOccupation}
+        />
+
+        {/* Account Activity */}
+        <ProfileSectionCard
+          collapsible
+          defaultOpen={false}
+          description="Recent account, booking, payment, family, and privacy activity"
+          title="Account Activity"
+        >
+          <AuditTimeline
+            endpoint="/api/member/audit-log"
+            categoryOptions={MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS}
+            showMetadata={false}
+          />
+        </ProfileSectionCard>
+
+        {/* Privacy & Data */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Privacy &amp; Data</CardTitle>
+            <CardDescription>
+              Download a copy of your data or request account deletion
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div>
-              <span className="text-muted-foreground">Password</span>
-              {member.passwordChangedAt ? (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Last changed{" "}
-                  {new Date(member.passwordChangedAt).toLocaleDateString("en-NZ", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Never changed
+              <p className="text-sm text-muted-foreground mb-2">
+                Download a machine-readable copy of all data the system holds
+                about you (JSON format, max 5 times per day).
+              </p>
+              <DataExportButton />
+            </div>
+            <div className="pt-2 border-t">
+              <p className="text-sm text-muted-foreground mb-2">
+                Request permanent deletion of your account. An admin will review
+                your request. This action is irreversible.
+              </p>
+              {!isAdmin && <DeleteAccountButton />}
+              {isAdmin && (
+                <p className="text-sm text-slate-500 italic">
+                  Admin accounts cannot be self-deleted. Contact another admin.
                 </p>
               )}
             </div>
-            <Button asChild variant="outline" size="sm">
-              <Link href="/change-password">Change Password</Link>
-            </Button>
-          </div>
-          {showTwoFactorSecurityCard ? (
-            <TwoFactorSecurityCard
-              enabled={member.twoFactorEnabled}
-              method={member.twoFactorMethod}
-              moduleEnabled={modules.twoFactor}
-            />
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {/* Subscription History */}
-      <ProfileSectionCard
-        collapsible
-        defaultOpen={false}
-        description="Your membership payment status across seasons"
-        title="Subscription History"
-      >
-        {subscriptionHistory.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No subscription records — contact the club if this seems wrong.
-          </p>
-        ) : (
-          <div className="divide-y">
-            {subscriptionHistory.map((sub) => {
-              const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
-              const isCurrent = sub.seasonYear === currentSeasonYear;
-              return (
-                <div key={sub.seasonYear} className="flex justify-between items-center py-2.5">
-                  <span className="text-sm">
-                    {label}
-                    {isCurrent && (
-                      <span className="ml-2 text-xs text-muted-foreground">(current)</span>
-                    )}
-                  </span>
-                  <Badge className={subscriptionStatusClass(sub.status)}>
-                    {subscriptionStatusLabel(sub.status)}
-                  </Badge>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </ProfileSectionCard>
-
-      {/* Account Credit */}
-      <ProfileSectionCard
-        description="Your credit balance and transaction history"
-        title="Account Credit"
-      >
-        <AccountCreditSection />
-      </ProfileSectionCard>
-
-      {/* Promo Codes */}
-      <ProfileSectionCard
-        description="Promo codes assigned to your member account"
-        title="Promo Codes"
-      >
-        {availablePromoCodes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No assigned promo codes available.
-          </p>
-        ) : (
-          <div className="divide-y">
-            {availablePromoCodes.map((promo) => (
-              <div
-                className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0"
-                key={promo.code}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge className="font-mono" variant="secondary">
-                    {promo.code}
-                  </Badge>
-                  <Badge variant="success">{formatPromoBenefit(promo)}</Badge>
-                </div>
-                {promo.description ? (
-                  <p className="text-sm text-muted-foreground">
-                    {promo.description}
-                  </p>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </ProfileSectionCard>
-
-      {/* Family Group */}
-      <ProfileSectionCard
-        collapsible
-        defaultOpen
-        description="Manage your family group members. Adults can invite other adults, and request to add infants, children, or youth."
-        id="family-group"
-        title="Family Group"
-      >
-        <FamilyGroupSection
-          familyGroups={member.familyGroupMemberships.map((ms) => ({
-            id: ms.familyGroup.id,
-            name: ms.familyGroup.name,
-            members: ms.familyGroup.memberships
-              .map((m) => m.member)
-              .filter((m) => m.id !== member.id),
-          }))}
-          canManage={member.ageTier === "ADULT" && member.canLogin === true}
-        />
-      </ProfileSectionCard>
-
-      <ProfileSectionCard
-        collapsible
-        defaultOpen={false}
-        description="Request committee review for membership cancellation."
-        id="membership-cancellation"
-        title="Membership Cancellation"
-      >
-        <MembershipCancellationPanel />
-      </ProfileSectionCard>
-
-      {/* Notification Preferences */}
-      <ProfileSectionCard
-        collapsible
-        defaultOpen
-        description="Choose which email notifications you receive"
-        title="Notification Preferences"
-      >
-        <NotificationPreferences />
-      </ProfileSectionCard>
-
-      {/* Change Email */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Change Email</CardTitle>
-          <CardDescription>
-            Update your email address. You will need to verify the new address.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ChangeEmailForm currentEmail={member.email} />
-        </CardContent>
-      </Card>
-
-      <ProfileDetailsCard
-        member={profileFormMember}
-        returnTo={returnTo}
-        ageTier={member.ageTier}
-        showOccupation={memberFieldsFlags.showOccupation}
-      />
-
-      {/* Account Activity */}
-      <ProfileSectionCard
-        collapsible
-        defaultOpen={false}
-        description="Recent account, booking, payment, family, and privacy activity"
-        title="Account Activity"
-      >
-        <AuditTimeline
-          endpoint="/api/member/audit-log"
-          categoryOptions={MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS}
-          showMetadata={false}
-        />
-      </ProfileSectionCard>
-
-      {/* Privacy & Data */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Privacy &amp; Data</CardTitle>
-          <CardDescription>
-            Download a copy of your data or request account deletion
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <p className="text-sm text-muted-foreground mb-2">
-              Download a machine-readable copy of all data the system holds
-              about you (JSON format, max 5 times per day).
-            </p>
-            <DataExportButton />
-          </div>
-          <div className="pt-2 border-t">
-            <p className="text-sm text-muted-foreground mb-2">
-              Request permanent deletion of your account. An admin will review
-              your request. This action is irreversible.
-            </p>
-            {!isAdmin && <DeleteAccountButton />}
-            {isAdmin && (
-              <p className="text-sm text-slate-500 italic">
-                Admin accounts cannot be self-deleted. Contact another admin.
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
       </div>
     </ProfileDetailsProvider>
   );

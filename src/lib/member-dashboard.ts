@@ -1,6 +1,7 @@
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 
 export interface DashboardPaymentSnapshot {
+  id: string;
   status: string;
   finalPriceCents: number;
   payment: {
@@ -15,32 +16,45 @@ export interface DashboardPaymentSummary {
   totalCents: number;
 }
 
+export function getDashboardPaymentOwedCents(booking: DashboardPaymentSnapshot) {
+  let owedCents = 0;
+
+  if (
+    isPaymentOwedBookingStatus(booking.status) &&
+    booking.payment?.status !== "SUCCEEDED"
+  ) {
+    owedCents += booking.finalPriceCents;
+  }
+
+  if (
+    booking.payment &&
+    booking.payment.additionalAmountCents > 0 &&
+    booking.payment.additionalPaymentStatus !== "SUCCEEDED"
+  ) {
+    owedCents += booking.payment.additionalAmountCents;
+  }
+
+  return owedCents;
+}
+
+export function isDashboardPaymentOwed(booking: DashboardPaymentSnapshot) {
+  return getDashboardPaymentOwedCents(booking) > 0;
+}
+
 export function summarizeMemberPaymentOwed(
-  bookings: DashboardPaymentSnapshot[]
+  bookings: DashboardPaymentSnapshot[],
 ): DashboardPaymentSummary {
   return bookings.reduce<DashboardPaymentSummary>(
     (summary, booking) => {
-      let bookingOwedCents = 0;
+      const owedCents = getDashboardPaymentOwedCents(booking);
 
-      if (isPaymentOwedBookingStatus(booking.status) && booking.payment?.status !== "SUCCEEDED") {
-        bookingOwedCents += booking.finalPriceCents;
-      }
-
-      if (
-        booking.payment &&
-        booking.payment.additionalAmountCents > 0 &&
-        booking.payment.additionalPaymentStatus !== "SUCCEEDED"
-      ) {
-        bookingOwedCents += booking.payment.additionalAmountCents;
-      }
-
-      if (bookingOwedCents > 0) {
+      if (owedCents > 0) {
         summary.bookingCount += 1;
-        summary.totalCents += bookingOwedCents;
+        summary.totalCents += owedCents;
       }
 
       return summary;
     },
-    { bookingCount: 0, totalCents: 0 }
+    { bookingCount: 0, totalCents: 0 },
   );
 }
