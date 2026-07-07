@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Requires GNU sed: unsafe_breaking_lines uses the case-insensitive "I" flag on
+# its s/// commands (a GNU extension, the only GNU-only construct here). CI runs
+# GNU coreutils; BSD/macOS sed rejects the flag and errors out, so the script
+# fails closed there rather than silently misclassifying a migration.
+
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
@@ -26,6 +31,83 @@ sql_lines() {
   ' "$file"
 }
 
+# Strip a trailing "-- ..." line comment from each stdin line so a comment can
+# never defeat the $-anchored NULL-default check (e.g. "SET DEFAULT NULL; -- reset"
+# would otherwise classify as a non-NULL default and wrongly waive). Applied only
+# in the default-classification pipeline below, NOT in sql_lines/the breaking grep:
+# stripping there would drop a breaking keyword that appears inside a trailing
+# comment and loosen breaking detection. Common case only: a "--" starts a comment
+# unless an ODD number of single quotes precedes it (i.e. it sits inside a
+# single-quoted string literal such as SET DEFAULT '--'). Dollar-quoted bodies and
+# doubled '' escapes inside a literal are out of scope; migration DEFAULT clauses
+# here never use them. Because it only ever trims a trailing comment, it can only
+# remove a comment-only false match from selection, never rewrite a real
+# SET/DROP DEFAULT statement into something looser.
+strip_trailing_sql_comments() {
+  awk -v q="'" '{
+    n = length($0)
+    inq = 0
+    for (i = 1; i <= n; i++) {
+      c = substr($0, i, 1)
+      if (c == q) { inq = !inq; continue }
+      if (!inq && c == "-" && substr($0, i + 1, 1) == "-") {
+        $0 = substr($0, 1, i - 1)
+        break
+      }
+    }
+    print
+  }'
+}
+
+# Classify a single (already comment-stripped) ALTER COLUMN default statement as a
+# NULL reset — one that leaves the column with no usable default, so an old
+# colour's omitted-column INSERT still lands a null and a paired SET NOT NULL would
+# abort mid-cutover. Returns 0 for a NULL reset (the pairing is vacuous; the
+# NOT NULL stays breaking), 1 for a real non-NULL default that backfills.
+#
+# A NULL reset is any of:
+#   * DROP DEFAULT               — removes the default entirely (gap 1)
+#   * SET DEFAULT NULL [::type]  — bare or cast NULL
+#   * SET DEFAULT (NULL[::type]) — parenthesised NULL
+#   * SET DEFAULT NULLIF('','')  — empty-string same-arg NULLIF evaluates to NULL
+#   * SET DEFAULT CAST(NULL AS <type>) — casting NULL to any type stays NULL
+#
+# This is deliberate enumeration, NOT expression evaluation: only these named
+# spellings are recognised. Anything else (a function call, a literal, a compound
+# expression) is treated as a real non-NULL default. A same-arg NULLIF with
+# non-empty args or a CAST wrapped inside a larger expression (e.g.
+# COALESCE(CAST(NULL AS text), 'x')) is intentionally left to classify non-NULL;
+# recognising arbitrary NULL-valued expressions is out of scope.
+default_is_null_reset() {
+  local clean="$1"
+  # DROP DEFAULT removes the default entirely -> column resets to NULL.
+  if printf '%s\n' "$clean" | grep -Eiq 'DROP DEFAULT[[:space:]]*;?[[:space:]]*$'; then
+    return 0
+  fi
+  # Bare or cast NULL: SET DEFAULT NULL [::type] ;
+  if printf '%s\n' "$clean" |
+    grep -Eiq 'SET DEFAULT[[:space:]]+NULL[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
+    return 0
+  fi
+  # Parenthesised NULL: SET DEFAULT (NULL) / (NULL::type) [::type] ;
+  if printf '%s\n' "$clean" |
+    grep -Eiq 'SET DEFAULT[[:space:]]+\([[:space:]]*NULL[[:space:]]*(::[^)]*)?[[:space:]]*\)[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
+    return 0
+  fi
+  # Empty-string same-arg NULLIF: NULLIF('','') evaluates to NULL.
+  if printf '%s\n' "$clean" |
+    grep -Eiq "SET DEFAULT[[:space:]]+NULLIF[[:space:]]*\([[:space:]]*''[[:space:]]*,[[:space:]]*''[[:space:]]*\)[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$"; then
+    return 0
+  fi
+  # CAST(NULL AS <type>): the exact type text is irrelevant, but stay anchored so a
+  # CAST(NULL ...) nested inside a larger non-NULL expression does not match.
+  if printf '%s\n' "$clean" |
+    grep -Eiq 'SET DEFAULT[[:space:]]+CAST[[:space:]]*\([[:space:]]*NULL[[:space:]]+AS[[:space:]]+[^()]+(\([^)]*\))?[[:space:]]*\)[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
+    return 0
+  fi
+  return 1
+}
+
 migration_name_for_file() {
   local file="$1"
   basename "$(dirname "$file")"
@@ -37,16 +119,25 @@ migration_name_for_file() {
 # old colour that omits the column on INSERT receives that default, so no null is
 # ever written and the NOT NULL holds throughout the cutover (old-code-compatible,
 # no outage). Such a NOT NULL still needs a documented ledger entry, but not the
-# ALLOW_BREAKING override. A "SET DEFAULT NULL" does NOT qualify: it fills nothing,
-# so an old colour's omitted-column INSERT still lands a null and the NOT NULL
-# would abort — the pairing is vacuous and the NOT NULL stays unsafe. A NULL
-# default counts as NULL in any spelling, including a cast form like
-# "SET DEFAULT NULL::text". When a migration issues several SET DEFAULT statements
-# for the same column, only the LAST one is the effective default (last-wins), so
-# only that final statement is judged. Drops, renames, type changes, and an
-# unmatched SET NOT NULL remain unsafe.
+# ALLOW_BREAKING override.
+#
+# A "SET DEFAULT NULL" does NOT qualify: it fills nothing, so an old colour's
+# omitted-column INSERT still lands a null and the NOT NULL would abort — the
+# pairing is vacuous and the NOT NULL stays unsafe. NULL is recognised in every
+# enumerated spelling (see default_is_null_reset): bare/cast NULL, parenthesised
+# (NULL), empty-string NULLIF('',''), and CAST(NULL AS <type>).
+#
+# The effective default is the LAST same-column SET DEFAULT *or* DROP DEFAULT
+# (last-wins). A trailing DROP DEFAULT ordered after the last SET DEFAULT leaves
+# the column with no default at all, so it voids the waiver exactly like a
+# SET DEFAULT NULL; a DROP DEFAULT ordered before a later SET DEFAULT does not.
+# Table/column extraction is case-insensitive (matching the case-insensitive
+# greps), so a lowercase "alter table … set not null" can enter this branch and
+# waive when it is genuinely paired; a lowercase vacuous pairing still blocks.
+# Trailing "-- comments" are stripped before classification. Drops, renames, type
+# changes, and an unmatched SET NOT NULL remain unsafe.
 unsafe_breaking_lines() {
-  local file="$1" breaking line stmt table col default_lines last_default
+  local file="$1" breaking line stmt stmt_sql table col default_lines last_default
   breaking="$(sql_lines "$file" | grep -Ei "$BREAKING_SQL_REGEX" || true)"
   [ -n "$breaking" ] || return 0
   while IFS= read -r line; do
@@ -54,22 +145,29 @@ unsafe_breaking_lines() {
     # strip the leading "NR:" line-number prefix sql_lines adds
     stmt="${line#*:}"
     if printf '%s' "$stmt" | grep -Eiq 'ALTER COLUMN .* SET NOT NULL'; then
-      table="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/p')"
-      col="$(printf '%s' "$stmt" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/p')"
+      # Extract the table/column from the SQL only, never a trailing comment: the
+      # greedy ".*" in the sed capture would otherwise pull the identifier from an
+      # "-- ALTER COLUMN \"other\"" comment on this same line, retargeting the
+      # default lookup and waiving an unpaired NOT NULL. The breaking-keyword grep
+      # above deliberately stays on the raw line (comment keywords must still be
+      # caught). Case-insensitive so lowercase SQL enters the branch; the quoted
+      # identifier is captured verbatim (Postgres quoted identifiers are
+      # case-sensitive).
+      stmt_sql="$(printf '%s\n' "$stmt" | strip_trailing_sql_comments)"
+      table="$(printf '%s' "$stmt_sql" | sed -nE 's/.*ALTER TABLE "([^"]+)".*/\1/Ip')"
+      col="$(printf '%s' "$stmt_sql" | sed -nE 's/.*ALTER COLUMN "([^"]+)".*/\1/Ip')"
       if [ -n "$table" ] && [ -n "$col" ]; then
-        default_lines="$(sql_lines "$file" |
-          grep -Ei "ALTER TABLE \"${table}\" ALTER COLUMN \"${col}\" SET DEFAULT" || true)"
-        # Last-wins: several SET DEFAULT statements for the same column leave the
-        # FINAL one as the effective default, so judge only that last line. It
-        # qualifies (waives the NOT NULL) iff its value is non-NULL. A NULL default
-        # in any spelling — bare "SET DEFAULT NULL" or a cast such as
-        # "SET DEFAULT NULL::text" / "NULL :: varchar(10)" — fills nothing, so the
-        # pairing is vacuous and the NOT NULL stays unsafe (the optional
-        # "(::[^;]*)?" tail normalises the cast away before the NULL check).
+        # Collect every same-column SET DEFAULT / DROP DEFAULT in file order,
+        # trailing comments stripped first so a comment can neither defeat the
+        # NULL check nor inject a phantom candidate line into selection.
+        default_lines="$(sql_lines "$file" | strip_trailing_sql_comments |
+          grep -Ei "ALTER TABLE \"${table}\" ALTER COLUMN \"${col}\" (SET DEFAULT|DROP DEFAULT)" || true)"
+        # Last-wins: judge only the final default statement. Waive the NOT NULL iff
+        # that last statement is a real non-NULL SET DEFAULT; a SET DEFAULT NULL (any
+        # spelling) or a trailing DROP DEFAULT is a NULL reset that keeps it unsafe.
         if [ -n "$default_lines" ]; then
           last_default="$(printf '%s\n' "$default_lines" | tail -n1)"
-          if ! printf '%s\n' "$last_default" |
-            grep -Eiq 'SET DEFAULT[[:space:]]+NULL[[:space:]]*(::[^;]*)?[[:space:]]*;?[[:space:]]*$'; then
+          if ! default_is_null_reset "$last_default"; then
             continue
           fi
         fi

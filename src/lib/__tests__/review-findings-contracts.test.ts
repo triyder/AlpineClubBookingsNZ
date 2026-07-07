@@ -134,6 +134,67 @@ function runMigrationSafetyCoverage(
   });
 }
 
+// #1602 helpers: the blue/green NOT-NULL waiver fixtures come in matched pairs.
+// A "blocks without an override" fixture proves the pairing is vacuous (the
+// NOT NULL stays breaking): it must fail with no override, name the
+// ALLOW_BREAKING escape hatch, NOT print the reviewed-safe line, and pass once
+// the override is set. A "waives" fixture proves a genuinely-paired non-null
+// default is accepted override-free (status 0 + reviewed-safe line).
+function expectNotNullBlocksWithoutOverride(sql: string, note: string) {
+  const fixture = createTempMigration(
+    sql,
+    [
+      LEDGER_HEADER,
+      `20990101000000_test_migration\texpand\tn/a\tyes\t${note}`,
+    ].join("\n")
+  );
+
+  try {
+    const blocked = runMigrationSafetyValidator(
+      fixture.migrationPath,
+      fixture.ledgerPath
+    );
+    const allowed = runMigrationSafetyValidator(
+      fixture.migrationPath,
+      fixture.ledgerPath,
+      {
+        ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+        BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+          "vacuous NOT NULL pairing accepted after out-of-band verification",
+      }
+    );
+
+    expect(blocked.status, blocked.stderr).not.toBe(0);
+    expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+    expect(blocked.stderr).not.toContain("Reviewed no-outage NOT NULL");
+    expect(allowed.status, allowed.stderr).toBe(0);
+  } finally {
+    rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+}
+
+function expectNotNullWaivesWithoutOverride(sql: string, note: string) {
+  const fixture = createTempMigration(
+    sql,
+    [
+      LEDGER_HEADER,
+      `20990101000000_test_migration\texpand\tn/a\tyes\t${note}`,
+    ].join("\n")
+  );
+
+  try {
+    const result = runMigrationSafetyValidator(
+      fixture.migrationPath,
+      fixture.ledgerPath
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+  } finally {
+    rmSync(fixture.tempDir, { recursive: true, force: true });
+  }
+}
+
 describe("review finding source/schema contracts", () => {
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
@@ -946,6 +1007,243 @@ describe("review finding source/schema contracts", () => {
       } finally {
         rmSync(fixture.tempDir, { recursive: true, force: true });
       }
+    }
+  );
+
+  it(
+    "rejects a SET NOT NULL whose same-column DROP DEFAULT lands after the last SET DEFAULT (#1602 gap 1)",
+    { timeout: 20000 },
+    () => {
+      // The DROP DEFAULT loophole: SET DEFAULT 'x'; SET NOT NULL; ... DROP DEFAULT.
+      // The earlier non-null default would waive, but the trailing DROP DEFAULT
+      // leaves the column with NO default, so an old colour's omitted-column INSERT
+      // lands a null and the NOT NULL aborts mid-cutover. A same-column DROP DEFAULT
+      // ordered after the last SET DEFAULT is a NULL reset and must void the waiver.
+      expectNotNullBlocksWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" DROP DEFAULT;',
+          "",
+        ].join("\n"),
+        "Trailing DROP DEFAULT clears the default; NOT NULL stays breaking."
+      );
+    }
+  );
+
+  it(
+    "still waives a genuine SET DEFAULT + SET NOT NULL with no DROP DEFAULT (#1602 gap 1)",
+    { timeout: 20000 },
+    () => {
+      // The DROP-DEFAULT hardening must not over-correct: a plain non-null
+      // SET DEFAULT paired with SET NOT NULL and no DROP DEFAULT anywhere is still
+      // old-code-safe and must waive override-free.
+      expectNotNullWaivesWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        "Paired non-null SET DEFAULT, no DROP DEFAULT; old-colour inserts stay non-null."
+      );
+    }
+  );
+
+  it(
+    "still waives when a DROP DEFAULT precedes a later non-null SET DEFAULT (#1602 gap 1)",
+    { timeout: 20000 },
+    () => {
+      // Ordering matters: a DROP DEFAULT followed by a non-null SET DEFAULT on the
+      // same column leaves the effective default non-null (last-wins). The earlier
+      // DROP DEFAULT must not void the waiver — only a DROP DEFAULT after the last
+      // SET DEFAULT does.
+      expectNotNullWaivesWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" DROP DEFAULT;',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'seed-lodge\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        "DROP DEFAULT before a later non-null SET DEFAULT; effective default stays non-null."
+      );
+    }
+  );
+
+  it(
+    "rejects a SET DEFAULT NULL defeated by a trailing -- comment (#1602 gap 2)",
+    { timeout: 20000 },
+    () => {
+      // A trailing "-- comment" pushes the ';' off the end of the line, so the
+      // $-anchored NULL check used to miss and the vacuous SET DEFAULT NULL waived.
+      // The comment must be stripped before classification so it correctly blocks.
+      expectNotNullBlocksWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL; -- reset',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        "Trailing comment must not hide the vacuous SET DEFAULT NULL."
+      );
+    }
+  );
+
+  it(
+    "does not treat a -- inside a string-literal default as a comment (#1602 gap 2)",
+    { timeout: 20000 },
+    () => {
+      // The comment strip is quote-aware: a "--" inside a single-quoted literal is
+      // part of the (non-null) default value, not a comment, so the pairing still
+      // waives. Guards against the strip over-reaching into string literals.
+      expectNotNullWaivesWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'a--b\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        "Dashes inside a string literal are a real non-null default, not a comment."
+      );
+    }
+  );
+
+  it(
+    "classifies enumerated NULL-valued default expressions as vacuous (#1602 gap 3)",
+    { timeout: 20000 },
+    () => {
+      // Semantically-NULL expressions used to slip through the bare-NULL check and
+      // waive. Enumerate (do NOT evaluate) the common spellings — an empty-string
+      // same-arg NULLIF, a CAST(NULL AS <type>), and a parenthesised (NULL) — all of
+      // which leave the column effectively NULL, so each must block override-free.
+      const nullExpressions = [
+        "NULLIF('','')",
+        "CAST(NULL AS text)",
+        "CAST(NULL AS varchar(10))",
+        "(NULL)",
+        "(NULL)::text",
+      ];
+      for (const nullExpression of nullExpressions) {
+        expectNotNullBlocksWithoutOverride(
+          [
+            `ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT ${nullExpression};`,
+            'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+            "",
+          ].join("\n"),
+          `${nullExpression} evaluates to NULL; NOT NULL stays breaking.`
+        );
+      }
+    }
+  );
+
+  it(
+    "still waives a same-arg-shaped NULLIF whose arguments differ (#1602 gap 3 boundary)",
+    { timeout: 20000 },
+    () => {
+      // The enumeration is exact: only the empty-string same-arg NULLIF('','') is a
+      // NULL reset. NULLIF('a','b') can be non-null, so it must classify as a real
+      // default and waive — proving gap 3 did not over-reach into general NULLIF.
+      expectNotNullWaivesWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULLIF(\'a\',\'b\');',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        "Different-argument NULLIF is a real non-null default."
+      );
+    }
+  );
+
+  it(
+    "waives a lowercase legitimate SET NOT NULL + non-null SET DEFAULT pairing (#1602 gap 4)",
+    { timeout: 20000 },
+    () => {
+      // The table/column extraction is now case-insensitive (the identifiers are
+      // still captured verbatim), so a lowercase pairing can finally enter the
+      // waiver branch and be recognised as old-code-safe.
+      expectNotNullWaivesWithoutOverride(
+        [
+          'alter table "LodgeRoom" alter column "lodgeId" set default default_lodge_id();',
+          'alter table "LodgeRoom" alter column "lodgeId" set not null;',
+          "",
+        ].join("\n"),
+        "Lowercase paired non-null default; old-colour inserts stay non-null."
+      );
+    }
+  );
+
+  it(
+    "still blocks a lowercase vacuous SET NOT NULL + SET DEFAULT NULL pairing (#1602 gap 4 guard)",
+    { timeout: 20000 },
+    () => {
+      // Case normalisation must not loosen anything: a lowercase pairing that is
+      // vacuous (SET DEFAULT NULL) must still block override-free, exactly like its
+      // uppercase form. This is the guard that proves gap 4 only newly-waives
+      // provably-safe lowercase spellings.
+      expectNotNullBlocksWithoutOverride(
+        [
+          'alter table "LodgeRoom" alter column "lodgeId" set default null;',
+          'alter table "LodgeRoom" alter column "lodgeId" set not null;',
+          "",
+        ].join("\n"),
+        "Lowercase SET DEFAULT NULL is still vacuous; NOT NULL stays breaking."
+      );
+    }
+  );
+
+  it(
+    "does not let a trailing-comment phantom SET DEFAULT flip a real NULL default to waived (#1602 gaps 1+2)",
+    { timeout: 20000 },
+    () => {
+      // Selection strips trailing comments BEFORE grepping same-column defaults, so
+      // a non-null SET DEFAULT injected inside a trailing comment after the real
+      // effective SET DEFAULT NULL can never become the last-wins default and waive
+      // the NOT NULL. The real (null) default must win and block.
+      expectNotNullBlocksWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT NULL;',
+          'INSERT INTO "Seed" VALUES (1); -- ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT \'x\'',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL;',
+          "",
+        ].join("\n"),
+        "Commented-out SET DEFAULT must not backfill; real default is NULL."
+      );
+    }
+  );
+
+  it(
+    "rejects a SET NOT NULL whose trailing comment hijacks the column extraction (#1602 gap 2 / PE-1)",
+    { timeout: 20000 },
+    () => {
+      // Greedy column-extraction comment hijack: a trailing "-- ALTER COLUMN
+      // \"paired\"" on the SET NOT NULL line used to make the greedy sed capture read
+      // "paired" from the comment, so the default lookup found the paired column's
+      // non-null default and waived the UNPAIRED lodgeId NOT NULL. The extraction now
+      // strips the trailing comment first, so it reads the real lodgeId (no default)
+      // and blocks.
+      expectNotNullBlocksWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "paired" SET DEFAULT \'x\';',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL; -- ALTER COLUMN "paired"',
+          "",
+        ].join("\n"),
+        "Comment must not retarget the extraction; real lodgeId has no default."
+      );
+    }
+  );
+
+  it(
+    "still waives a genuine pairing with a benign trailing comment on the SET NOT NULL line (#1602 gap 2 / PE-1)",
+    { timeout: 20000 },
+    () => {
+      // The extraction strip must not over-reach: a legitimate paired non-null
+      // default with a harmless trailing comment on the SET NOT NULL line still
+      // reads the real column and waives override-free.
+      expectNotNullWaivesWithoutOverride(
+        [
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET DEFAULT default_lodge_id();',
+          'ALTER TABLE "LodgeRoom" ALTER COLUMN "lodgeId" SET NOT NULL; -- backfilled in prior migration',
+          "",
+        ].join("\n"),
+        "Benign trailing comment does not change the real paired column."
+      );
     }
   );
 
