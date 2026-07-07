@@ -26,7 +26,7 @@ import {
   type PnlReportRow,
 } from "@/lib/finance-pnl-snapshot";
 
-export interface FinanceChartAccountInfo {
+interface FinanceChartAccountInfo {
   accountId: string;
   code: string | null;
   name: string | null;

@@ -38,7 +38,7 @@ export const FINANCE_CURRENT_LIABILITY_ACCOUNT_TYPES = new Set([
   "SUPERANNUATIONLIABILITY",
 ]);
 
-export interface FinanceMonthlyBalancePoint {
+interface FinanceMonthlyBalancePoint {
   monthKey: string;
   /** Short month label for chart axes, e.g. "Jun 2026". */
   label: string;

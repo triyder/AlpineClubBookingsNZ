@@ -490,6 +490,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         },
       ]);
       mockPrisma.booking.findMany.mockResolvedValue([]);
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
 
       const { GET } = await import(
         "@/app/api/admin/hut-leaders/eligible-members/route"
@@ -501,6 +502,8 @@ describe("F8: Hut Leader Role Assignment", () => {
       const data = await res.json();
       expect(data.members).toHaveLength(1);
       expect(data.members[0].firstName).toBe("Alice");
+      // No assignments exist, so an at-lodge adult is surfaced as not-yet-covered.
+      expect(data.members[0].fullyCovered).toBe(false);
     });
 
     it("deduplicates members across bookings", async () => {
@@ -527,6 +530,7 @@ describe("F8: Hut Leader Role Assignment", () => {
           member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true, ageTier: "ADULT" },
         },
       ]);
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
 
       const { GET } = await import(
         "@/app/api/admin/hut-leaders/eligible-members/route"
@@ -535,6 +539,148 @@ describe("F8: Hut Leader Role Assignment", () => {
       const res = await GET(req as any);
       const data = await res.json();
       expect(data.members).toHaveLength(1);
+      expect(data.members[0].fullyCovered).toBe(false);
+    });
+
+    it("clamps suggestion to the uncovered contiguous run", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        {
+          memberId: "m1",
+          member: {
+            id: "m1",
+            firstName: "Alice",
+            lastName: "Smith",
+            email: "alice@test.com",
+            active: true,
+            hutLeaderEligible: true,
+          },
+          booking: { checkIn: new Date("2026-07-10"), checkOut: new Date("2026-07-17") },
+        },
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+      // An existing leader already covers Jul 10–12 (inclusive).
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
+        { startDate: new Date("2026-07-10"), endDate: new Date("2026-07-12") },
+      ]);
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members?startDate=2026-07-10&endDate=2026-07-17");
+      const res = await GET(req as any);
+      const data = await res.json();
+
+      expect(data.members).toHaveLength(1);
+      const m = data.members[0];
+      expect(m.fullyCovered).toBe(false);
+      // Stay nights Jul10–16 (checkout Jul17 is the departure morning, not a
+      // night); Jul10–12 covered → first uncovered night is Jul13, last is Jul16.
+      expect(m.suggestedStartDate).toBe("2026-07-13");
+      expect(m.suggestedEndDate).toBe("2026-07-16");
+      expect(m.uncoveredNightCount).toBe(4); // Jul 13,14,15,16
+    });
+
+    it("flags a fully-covered member and sorts them last", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        {
+          memberId: "covered",
+          member: {
+            id: "covered",
+            firstName: "Cara",
+            lastName: "Covered",
+            email: "cara@test.com",
+            active: true,
+            hutLeaderEligible: true,
+          },
+          booking: { checkIn: new Date("2026-07-11"), checkOut: new Date("2026-07-13") },
+        },
+        {
+          memberId: "open",
+          member: {
+            id: "open",
+            firstName: "Owen",
+            lastName: "Open",
+            email: "owen@test.com",
+            active: true,
+            hutLeaderEligible: true,
+          },
+          booking: { checkIn: new Date("2026-07-20"), checkOut: new Date("2026-07-23") },
+        },
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+      // Assignment fully wraps Cara's stay (Jul11–13) but not Owen's (Jul20–23).
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
+        { startDate: new Date("2026-07-10"), endDate: new Date("2026-07-14") },
+      ]);
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members?startDate=2026-07-11&endDate=2026-07-23");
+      const res = await GET(req as any);
+      const data = await res.json();
+
+      expect(data.members).toHaveLength(2);
+      const covered = data.members.find((x: { id: string }) => x.id === "covered");
+      const open = data.members.find((x: { id: string }) => x.id === "open");
+      expect(covered.fullyCovered).toBe(true);
+      expect(covered.uncoveredNightCount).toBe(0);
+      expect(open.fullyCovered).toBe(false);
+      // Fully-covered members sort last.
+      expect(data.members[0].id).toBe("open");
+      expect(data.members[1].id).toBe("covered");
+    });
+
+    it("handover boundary is not over-clamped", async () => {
+      // The existing assignment shares only the Jul12 boundary night with the
+      // member's stay. POST would still allow a Jul12 handover start
+      // (overlapDays == 1), but the suggestion is deliberately conservative and
+      // always safely POST-able — it starts at the first fully-uncovered night.
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+      });
+
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        {
+          memberId: "m1",
+          member: {
+            id: "m1",
+            firstName: "Alice",
+            lastName: "Smith",
+            email: "alice@test.com",
+            active: true,
+            hutLeaderEligible: true,
+          },
+          booking: { checkIn: new Date("2026-07-12"), checkOut: new Date("2026-07-15") },
+        },
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
+        { startDate: new Date("2026-07-10"), endDate: new Date("2026-07-12") },
+      ]);
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members?startDate=2026-07-12&endDate=2026-07-15");
+      const res = await GET(req as any);
+      const data = await res.json();
+
+      expect(data.members).toHaveLength(1);
+      const m = data.members[0];
+      expect(m.fullyCovered).toBe(false);
+      // Stay nights Jul12–14 (checkout Jul15 is not a night). Jul12 is covered
+      // by the existing assignment (inclusive), so the suggestion starts at Jul13.
+      expect(m.suggestedStartDate).toBe("2026-07-13");
+      expect(m.uncoveredNightCount).toBe(2); // Jul 13,14
     });
   });
 

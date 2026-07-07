@@ -45,7 +45,7 @@ const HUT_FEE_LABEL_KEYWORDS = ["hut fee", "hut fees", "accommodation"];
 const SUBSCRIPTION_LABEL_KEYWORDS = ["subscription", "membership"];
 
 /** How a period's Xero income figures were matched to the booking categories. */
-export type FinanceIncomeMatchStrategy = "GL_CODE" | "LABEL";
+type FinanceIncomeMatchStrategy = "GL_CODE" | "LABEL";
 
 /** Resolved GL codes + AccountID-to-code map used for GL-code matching. */
 interface ChartOfAccountsContext {
@@ -63,12 +63,12 @@ const DEFAULT_TOLERANCE_PCT = 0.01; // 1%
 const DEFAULT_TOLERANCE_CENTS = 5000; // $50
 const MILLISECONDS_PER_DAY = 86_400_000;
 
-export type FinanceReconciliationStatus =
+type FinanceReconciliationStatus =
   | "TIES"
   | "DOES_NOT_TIE"
   | "XERO_UNAVAILABLE";
 
-export interface FinanceReconciliationPeriod {
+interface FinanceReconciliationPeriod {
   periodLabel: string;
   periodStart: string;
   periodEnd: string;

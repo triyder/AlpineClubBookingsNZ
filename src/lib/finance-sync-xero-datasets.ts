@@ -28,7 +28,7 @@ import {
 import { callXeroApi } from "@/lib/xero";
 import { XERO_REPORT_OAUTH_SCOPES } from "@/lib/xero-config";
 
-export const FINANCE_SYNC_DATA_TIMEZONE = APP_TIME_ZONE;
+const FINANCE_SYNC_DATA_TIMEZONE = APP_TIME_ZONE;
 export const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY =
   "xero-profit-and-loss-monthly";
 export const FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY =
@@ -54,7 +54,7 @@ export const FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_DATASET_KEY =
  * Prior monthly periods requested alongside the primary month, so one report
  * call yields 12 monthly columns. Xero caps report comparison periods at 11.
  */
-export const FINANCE_MONTHLY_FACTS_PRIOR_PERIODS = 11;
+const FINANCE_MONTHLY_FACTS_PRIOR_PERIODS = 11;
 
 const FINANCE_XERO_PAGE_SIZE = 100;
 const FINANCE_AGED_INVOICE_STATUSES = [

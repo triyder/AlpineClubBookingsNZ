@@ -54,7 +54,7 @@ export interface FinanceReportCategoryDto {
   mappings: FinanceReportCategoryMappingDto[];
 }
 
-export interface SaveFinanceReportCategoryInput {
+interface SaveFinanceReportCategoryInput {
   id?: string;
   kind: FinanceReportCategoryKindValue;
   name: string;
@@ -68,7 +68,7 @@ export interface SaveFinanceReportMappingsInput {
   categories: SaveFinanceReportCategoryInput[];
 }
 
-export interface FinanceReportUnmappedLine {
+interface FinanceReportUnmappedLine {
   kind: FinanceReportCategoryKindValue;
   sectionLabel: string;
   lineLabel: string;
@@ -116,7 +116,7 @@ export interface FinanceMappedPnlCategorySummary {
   lines: FinanceMappedPnlLineSummary[];
 }
 
-export interface FinanceMappedPnlTrendPoint {
+interface FinanceMappedPnlTrendPoint {
   label: string;
   amountCents: number;
 }
@@ -236,7 +236,7 @@ function formatSignedCents(amountCents: number) {
   return `${amountCents > 0 ? "+" : "-"}${formatCents(Math.abs(amountCents))}`;
 }
 
-export async function ensureDefaultFinanceReportCategories(
+async function ensureDefaultFinanceReportCategories(
   db: Prisma.TransactionClient | typeof prisma = prisma
 ) {
   for (const category of DEFAULT_FINANCE_REPORT_CATEGORIES) {
