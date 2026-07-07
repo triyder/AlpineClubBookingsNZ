@@ -52,11 +52,18 @@ import {
   hasPrivilegedAccess,
   isFullAdmin,
   legacyRoleFromAccessRoles,
+  memberHoldsPrivilegedRole,
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
   type AccessRoleInput,
 } from "@/lib/access-roles";
+import {
+  AdminAccountGuardError,
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+  wouldRemoveLastFullAdmin,
+} from "@/lib/admin-account-guards";
 import {
   accessRoleAssignmentRowsFromTokens,
   findUnknownAccessRoleTokens,
@@ -731,6 +738,31 @@ export async function updateAdminMember(params: {
     );
   }
 
+  // Whether this edit actually transitions the target OUT of active/login,
+  // not merely echoing an already-false value. The edit dialog re-submits the
+  // current active/canLogin on every save (including contact-only edits and a
+  // dormant, already-de-logined ex-admin), so guard only on a real
+  // deactivate/de-login — mirroring the #1012 no-op-echo handling.
+  const deactivatesTarget = data.active === false && existing.active;
+  const deLoginsTarget = data.canLogin === false && existing.canLogin;
+
+  // Privileged-target guard (issue #1604): only a Full Admin may deactivate or
+  // disable login for an account that holds (or dormantly stores) a privileged
+  // access role. Mirrors the #1012 role gate and stops a scoped admin (e.g. the
+  // seeded Membership Officer) from de-activating admin-holding accounts. Own
+  // account deactivate/de-login is already blocked above.
+  if (
+    (deactivatesTarget || deLoginsTarget) &&
+    id !== currentAdminMemberId &&
+    !isFullAdmin({ accessRoles: currentAdminAccessRoles }) &&
+    memberHoldsPrivilegedRole(existing)
+  ) {
+    return jsonResult(
+      { error: PRIVILEGED_TARGET_GUARD_MESSAGE },
+      { status: 403 },
+    );
+  }
+
   // Full Admin gate on privileged-member email changes (issue #1026): a
   // scoped admin must not edit the login email of a member who holds a
   // privileged access role — an email change plus a public forgot-password
@@ -1052,6 +1084,17 @@ export async function updateAdminMember(params: {
       auditUpdateData,
     );
     const updated = await prisma.$transaction(async (tx) => {
+      // Last-admin guard (issue #1604): counted inside the mutation
+      // transaction so it sees this transaction's read view. Only a real
+      // deactivate/de-login can strand the club; role demotion of another
+      // admin always leaves the actor as an admin and is out of scope here.
+      if (
+        (deactivatesTarget || deLoginsTarget) &&
+        (await wouldRemoveLastFullAdmin(tx, id))
+      ) {
+        throw new AdminAccountGuardError(LAST_FULL_ADMIN_GUARD_MESSAGE);
+      }
+
       const updatedMember = await tx.member.update({
         where: { id },
         data: updateData,
@@ -1218,6 +1261,13 @@ export async function updateAdminMember(params: {
 
     return jsonResult(updated);
   } catch (error) {
+    if (error instanceof AdminAccountGuardError) {
+      return jsonResult(
+        { error: error.message },
+        { status: error.statusCode },
+      );
+    }
+
     if (isPrismaUniqueConstraintError(error)) {
       return jsonResult(
         { error: "A member with this email already exists" },

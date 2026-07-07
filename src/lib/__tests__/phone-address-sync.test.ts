@@ -113,6 +113,8 @@ describe("Profile API: structured phone and address fields", () => {
       return operation({
         member: {
           update: prisma.member.update,
+          // #1604 last-admin guard counts active Full Admins inside the tx.
+          count: prisma.member.count,
         },
         memberAccessRole: {
           createMany: vi.fn().mockResolvedValue({ count: 1 }),

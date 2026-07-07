@@ -1644,7 +1644,12 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
-          member: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+          member: {
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            // #1604 last-admin end-state guard counts active Full Admins
+            // inside the tx; two survive the set, so it does not block.
+            count: vi.fn().mockResolvedValue(2),
+          },
           familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
         };
         return fn(tx);

@@ -270,6 +270,24 @@ export function hasPrivilegedAccess(input: AccessRoleInput) {
 }
 
 /**
+ * True when a member holds any privileged (non USER/ORG) access role,
+ * evaluated canLogin-BLIND over the stored role fields and access-role rows
+ * (issue #1604). Used by the privileged-target guard so a scoped admin cannot
+ * deactivate, disable login for, or archive an account that holds — or
+ * dormantly stores — an admin/finance/lodge/custom role, including a cancelled
+ * ex-admin whose canLogin is already false. Distinct from hasPrivilegedAccess,
+ * which is canLogin-AWARE (returns false once login is disabled) and is used
+ * where only live access matters.
+ */
+export function memberHoldsPrivilegedRole(member: {
+  accessRoles?: ReadonlyArray<AccessRoleAssignmentInput | string> | null;
+  role?: Role | string | null;
+  financeAccessLevel?: FinanceAccessLevel | string | null;
+}): boolean {
+  return storedAccessRolesForFullAdminGate(member).some(isPrivilegedAccessRole);
+}
+
+/**
  * True when moving a member from `before` to `after` grants or revokes any
  * privileged access role, which only a Full Admin may do (issue #1012).
  * Submitting an unchanged role set never trips this.

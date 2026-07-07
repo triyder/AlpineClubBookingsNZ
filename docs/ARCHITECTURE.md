@@ -480,6 +480,33 @@ another member who holds a privileged access role, because an email change
 plus a forgot-password request would hand the account and its roles to the
 new address (`hasPrivilegedAccess` in `src/lib/access-roles.ts`).
 
+Two further guards protect the admin population itself against being locked
+out (issue #1604), enforced server-side across every path that can deactivate,
+disable login for, or archive an account — member edit, bulk update, member
+lifecycle archive, and deletion-request approval. The **last-admin guard**
+blocks any actor, including another Full Admin, from removing the final active,
+login-enabled Full Admin; a bulk deactivate is evaluated on its end state so a
+selection that collectively removes every remaining Full Admin fails as a
+whole. The **privileged-target guard** restricts deactivating, de-logging, or
+archiving an account that holds — or dormantly stores — a privileged role to
+Full Admins only, matching the #1012 role gate and so a scoped admin such as
+the seeded Membership Officer can no longer touch admin-holding accounts. A
+"Full Admin" here is exactly what `requireAdmin()` grants on: an active,
+login-enabled member with the `ADMIN` access-role row (a legacy `Member.role =
+ADMIN` without that row is not counted, because it confers no runtime admin
+access). The helpers live in `src/lib/admin-account-guards.ts`
+(`wouldRemoveLastFullAdmin`, `wouldRemoveAllFullAdmins`, `actorIsFullAdmin`) and
+`memberHoldsPrivilegedRole` in `src/lib/access-roles.ts`; the last-admin count
+runs inside each path's mutation transaction so it sees that transaction's read
+view. Two concurrent deactivations of the last two admins remain a narrow
+residual TOCTOU on the paths without an advisory lock, acceptable at club
+scale. Three other flows outside these four paths can also clear `canLogin` on
+an admin and are not yet guarded: membership cancellation approval and
+family-group login-holder transfer
+(`POST /api/admin/family-groups/[id]/login-holder`), both `membership:edit`-
+reachable (#1622), and the age-down cron via a date-of-birth edit into a minor
+tier (indirect).
+
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, subscription behavior, allowed age tiers, and optional Xero

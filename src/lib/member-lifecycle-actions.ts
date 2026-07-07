@@ -5,7 +5,14 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { hasAdminAccess, memberHoldsPrivilegedRole } from "@/lib/access-roles";
+import {
+  actorIsFullAdmin,
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+  wouldRemoveLastFullAdmin,
+} from "@/lib/admin-account-guards";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { createAuditLog } from "@/lib/audit";
 import {
   sendAdminMemberArchiveRequestedAlert,
@@ -44,6 +51,12 @@ const archiveTargetMemberSelect = {
   cancelledReason: true,
   archivedAt: true,
   archivedReason: true,
+  // Role fields feed the #1604 privileged-target guard: archive requires a
+  // prior cancellation (which clears canLogin but not the stored role fields),
+  // so this is evaluated canLogin-blind via memberHoldsPrivilegedRole.
+  role: true,
+  financeAccessLevel: true,
+  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
 } satisfies Prisma.MemberSelect;
 
 const lifecycleActionRequestInclude = {
@@ -877,6 +890,17 @@ export async function createMemberArchiveRequest({
 
   assertArchiveEligible(member);
 
+  // Privileged-target guard (issue #1604): only a Full Admin may archive an
+  // account that holds (or dormantly stores) a privileged access role. Checked
+  // canLogin-blind because archive targets are already cancelled (canLogin
+  // false). Enforced again at approval below for defence in depth.
+  if (
+    !(await actorIsFullAdmin(prisma, requestedByMemberId)) &&
+    memberHoldsPrivilegedRole(member)
+  ) {
+    throw new MemberLifecycleActionError(PRIVILEGED_TARGET_GUARD_MESSAGE, 403);
+  }
+
   if (existingPendingRequest) {
     throw new MemberLifecycleActionError(
       "This member already has a pending archive request.",
@@ -1224,6 +1248,22 @@ export async function reviewMemberArchiveRequest({
     }
 
     assertArchiveEligible(member);
+
+    // Admin-account guards (issue #1604), enforced at the approval/execution
+    // point. Privileged-target: only a Full Admin may approve an archive of an
+    // account holding privileged access. Last-admin: a backstop that is vacuous
+    // in practice because archive requires a prior cancellation (which already
+    // cleared canLogin, so the target is not a counted active Full Admin), but
+    // kept so the invariant holds if that precondition ever changes.
+    if (
+      !(await actorIsFullAdmin(tx, reviewedByMemberId)) &&
+      memberHoldsPrivilegedRole(member)
+    ) {
+      throw new MemberLifecycleActionError(PRIVILEGED_TARGET_GUARD_MESSAGE, 403);
+    }
+    if (await wouldRemoveLastFullAdmin(tx, request.memberId)) {
+      throw new MemberLifecycleActionError(LAST_FULL_ADMIN_GUARD_MESSAGE, 409);
+    }
 
     const now = new Date();
 

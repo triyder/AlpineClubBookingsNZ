@@ -10,10 +10,17 @@ import {
   accessRolesFromCompatibilityFields,
   isFullAdmin,
   legacyRoleFromAccessRoles,
+  memberHoldsPrivilegedRole,
   normalizeAssignableAccessRoleTokens,
   resolveAccessRoleTokens,
   storedAccessRolesForFullAdminGate,
 } from "@/lib/access-roles";
+import {
+  AdminAccountGuardError,
+  LAST_FULL_ADMIN_BULK_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+  wouldRemoveAllFullAdmins,
+} from "@/lib/admin-account-guards";
 import {
   accessRoleAssignmentRowsFromTokens,
   findUnknownAccessRoleTokens,
@@ -221,8 +228,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Privileged-target guard (issue #1604): only a Full Admin may
+    // bulk-deactivate accounts that hold (or dormantly store) a privileged
+    // access role, consistent with the #1012 role gate above.
+    if (
+      action === "deactivate" &&
+      !isFullAdmin(session.user) &&
+      existingMembers.some(
+        (member) =>
+          idsToUpdate.includes(member.id) && memberHoldsPrivilegedRole(member),
+      )
+    ) {
+      return NextResponse.json(
+        { error: PRIVILEGED_TARGET_GUARD_MESSAGE },
+        { status: 403 },
+      );
+    }
+
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
+      // Last-admin end-state guard (issue #1604): evaluate the whole set, not
+      // per row, so a bulk deactivate that collectively removes every
+      // remaining Full Admin fails as a whole. Counted inside the transaction
+      // for the mutation's read view.
+      if (
+        action === "deactivate" &&
+        (await wouldRemoveAllFullAdmins(tx, idsToUpdate))
+      ) {
+        throw new AdminAccountGuardError(LAST_FULL_ADMIN_BULK_GUARD_MESSAGE);
+      }
+
       const updateResult =
         action === "set-role"
           ? { count: idsToUpdate.length }
@@ -301,6 +336,12 @@ export async function POST(req: NextRequest) {
       notFound,
     });
   } catch (error) {
+    if (error instanceof AdminAccountGuardError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode },
+      );
+    }
     logger.error({ err: error }, "Failed to bulk update members");
     return NextResponse.json({ error: "Failed to bulk update members" }, { status: 500 });
   }

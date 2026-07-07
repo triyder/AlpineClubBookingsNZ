@@ -9,6 +9,14 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { logAudit } from "@/lib/audit";
+import { isFullAdmin, memberHoldsPrivilegedRole } from "@/lib/access-roles";
+import {
+  AdminAccountGuardError,
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+  wouldRemoveLastFullAdmin,
+} from "@/lib/admin-account-guards";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
   sendAccountDeletionApprovedEmail,
   sendAccountDeletionRejectedEmail,
@@ -57,7 +65,9 @@ export async function POST(
             lastName: true,
             email: true,
             role: true,
+            financeAccessLevel: true,
             active: true,
+            accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
           },
         },
       },
@@ -107,6 +117,27 @@ export async function POST(
     }
 
     // --- APPROVE ---
+
+    // Admin-account guards (issue #1604). Approving a deletion request
+    // anonymises the member and sets active=false, so it is a deactivate of
+    // the target. A member cannot self-request deletion while holding admin
+    // access, but a request made before promotion could later target an
+    // admin, so re-check at this execution point. Fail fast here (before any
+    // booking cancellation) on the actor-permission and invariant; the
+    // last-admin check is repeated inside the anonymise transaction below for
+    // race-safety.
+    if (!isFullAdmin(session.user) && memberHoldsPrivilegedRole(member)) {
+      return NextResponse.json(
+        { error: PRIVILEGED_TARGET_GUARD_MESSAGE },
+        { status: 403 },
+      );
+    }
+    if (await wouldRemoveLastFullAdmin(prisma, member.id)) {
+      return NextResponse.json(
+        { error: LAST_FULL_ADMIN_GUARD_MESSAGE },
+        { status: 409 },
+      );
+    }
 
     const now = new Date();
 
@@ -211,6 +242,13 @@ export async function POST(
     // 4-7: Anonymise atomically in a single transaction
     const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
     await prisma.$transaction(async (tx) => {
+      // Race-safe re-check of the last-admin invariant inside the mutation
+      // transaction (issue #1604): the fail-fast check above ran before the
+      // booking cleanup, so re-count against this transaction's read view.
+      if (await wouldRemoveLastFullAdmin(tx, member.id)) {
+        throw new AdminAccountGuardError(LAST_FULL_ADMIN_GUARD_MESSAGE);
+      }
+
       // 3. Anonymise the member record
       await tx.member.update({
         where: { id: member.id },
@@ -281,6 +319,12 @@ export async function POST(
       cancelledBookings: cancelledBookingIds.length,
     });
   } catch (err) {
+    if (err instanceof AdminAccountGuardError) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: err.statusCode },
+      );
+    }
     logger.error({ err, requestId: id }, "Failed to process deletion request");
     return NextResponse.json({ error: "Failed to process deletion request" }, { status: 500 });
   }

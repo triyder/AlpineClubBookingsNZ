@@ -811,6 +811,23 @@ Lodge kiosk; `ORG` ⇒ Organisation; otherwise User) and save it back as plain
 `USER` token. No new stored classification field may be introduced for it,
 organisations cannot hold admin roles, and the server-side Full-Admin gates
 on access-role writes remain the authority (the UI only mirrors them).
+The admin population is protected against lock-out on the four member-write
+paths that can deactivate, de-login, or archive an account (#1604): member
+edit, bulk update, lifecycle archive, and deletion-request approval. On those
+paths the last active, login-enabled Full Admin can never be deactivated,
+de-logined, or archived — by anyone, including another Full Admin — and only a
+Full Admin may deactivate, de-login, or archive an account holding a privileged
+role. Both guards are enforced server-side; the last-admin count runs inside
+each mutation's transaction, and "Full Admin" means an active, login-enabled
+member with the `ADMIN` access-role row (the runtime grant), not a bare legacy
+`Member.role`. The guarantee is scoped to those paths, not absolute: three
+other routes can still clear `canLogin` on an admin and are NOT yet guarded —
+(a) membership cancellation approval, which sets `active`/`canLogin` false
+(#1622); (b) family-group login-holder transfer
+(`POST /api/admin/family-groups/[id]/login-holder`), a second
+`membership:edit`-reachable de-login path (#1622); and (c) the age-down cron,
+where editing a date of birth to a minor tier can indirectly clear `canLogin`
+(informational).
 On-behalf booking must not depend on `membership:view`: a Booking Officer
 (`bookings:edit`) reaches the booking owner's or target member's family group
 through the bookings-scoped pickers

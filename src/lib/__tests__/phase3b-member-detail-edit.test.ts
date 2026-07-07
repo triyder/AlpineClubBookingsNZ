@@ -126,6 +126,9 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       return operation({
         member: {
           update: prisma.member.update,
+          // #1604 last-admin guard counts active Full Admins inside the
+          // transaction; default (undefined) resolves to "not the last admin".
+          count: prisma.member.count,
         },
         memberAccessRole: {
           createMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -307,6 +310,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       return operation({
         member: {
           update: prisma.member.update,
+          count: prisma.member.count,
         },
         memberAccessRole: {
           createMany: vi.fn().mockImplementation(async (args: any) => {

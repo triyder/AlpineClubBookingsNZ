@@ -712,3 +712,115 @@ describe("member archive lifecycle actions", () => {
     );
   });
 });
+
+// Issue #1604: only a Full Admin may archive an account holding a privileged
+// role (the privileged-target guard), enforced canLogin-blind at both request
+// creation and approval. The last-admin backstop is vacuous on this path
+// because archive requires a prior cancellation (which already cleared
+// canLogin), so a cancelled admin is never a counted active Full Admin.
+describe("member archive admin-account guards (#1604)", () => {
+  const cancelledAdmin = () =>
+    archiveTarget({
+      role: "ADMIN",
+      financeAccessLevel: "NONE",
+      accessRoles: [{ role: "ADMIN" }],
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.memberLifecycleActionRequest.findFirst.mockResolvedValue(null);
+    mockPrisma.memberLifecycleActionRequest.findUnique.mockResolvedValue(
+      archiveRequest(),
+    );
+    mockPrisma.memberLifecycleActionRequest.create.mockImplementation(
+      async (args: { data: Record<string, unknown> }) =>
+        archiveRequest({
+          id: "archive-request-created",
+          ...args.data,
+          requestedBy: requestedBy(),
+        }),
+    );
+    mockPrisma.memberLifecycleActionRequest.update.mockImplementation(
+      async (args: { data: Record<string, unknown> }) =>
+        archiveRequest({
+          ...args.data,
+          requestedBy: requestedBy(),
+          reviewedBy: reviewedBy(),
+        }),
+    );
+    mockPrisma.member.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.familyGroupMember.deleteMany.mockResolvedValue({ count: 0 });
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) =>
+        callback(mockPrisma),
+    );
+  });
+
+  it("privileged-target: a scoped admin cannot request archive of an admin-holding account (403)", async () => {
+    mockPrisma.member.findUnique.mockResolvedValue(cancelledAdmin());
+    mockPrisma.member.count.mockResolvedValue(0); // requester is not a Full Admin
+
+    await expect(
+      createMemberArchiveRequest({
+        memberId: "member-1",
+        requestedByMemberId: "membership-officer",
+        reason: "Cleaning up records",
+      }),
+    ).rejects.toMatchObject({
+      name: "MemberLifecycleActionError",
+      statusCode: 403,
+    } satisfies Partial<MemberLifecycleActionError>);
+
+    expect(
+      mockPrisma.memberLifecycleActionRequest.create,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("privileged-target: a Full Admin can request archive of an admin-holding account", async () => {
+    mockPrisma.member.findUnique.mockResolvedValue(cancelledAdmin());
+    mockPrisma.member.count.mockResolvedValue(1); // requester is a Full Admin
+
+    const result = await createMemberArchiveRequest({
+      memberId: "member-1",
+      requestedByMemberId: "full-admin",
+      reason: "Cleaning up records",
+    });
+
+    expect(result.request.id).toBe("archive-request-created");
+  });
+
+  it("privileged-target: a scoped admin cannot approve archive of an admin-holding account (403)", async () => {
+    mockPrisma.member.findUnique.mockResolvedValue(cancelledAdmin());
+    mockPrisma.member.count.mockResolvedValue(0); // reviewer is not a Full Admin
+
+    await expect(
+      reviewMemberArchiveRequest({
+        requestId: "archive-request-1",
+        reviewedByMemberId: "membership-officer",
+        action: "approve",
+      }),
+    ).rejects.toMatchObject({
+      name: "MemberLifecycleActionError",
+      statusCode: 403,
+    } satisfies Partial<MemberLifecycleActionError>);
+
+    expect(mockPrisma.member.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("privileged-target: a Full Admin can approve archive of an admin-holding account", async () => {
+    mockPrisma.member.findUnique.mockResolvedValue(cancelledAdmin());
+    // actorIsFullAdmin -> 1; the last-admin target count -> 0 (a cancelled
+    // admin is not an active Full Admin), so the backstop short-circuits.
+    mockPrisma.member.count
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(0);
+
+    const result = await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "full-admin",
+      action: "approve",
+    });
+
+    expect(result.request.status).toBe("APPROVED");
+  });
+});
