@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  assertRequestedLodgeActive,
   bookingRequestGuestSchema,
   BookingRequestError,
   createBookingRequest,
 } from "@/lib/booking-request";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { nameField } from "@/lib/zod-helpers";
@@ -29,6 +30,8 @@ const bookingRequestSchema = z.object({
     .nullable(),
   checkIn: dateOnlyString.transform(parseDateOnly),
   checkOut: dateOnlyString.transform(parseDateOnly),
+  // Lodge the stay is requested at; omitted means the club's default lodge.
+  lodgeId: z.string().min(1).optional(),
   guests: z.array(bookingRequestGuestSchema).min(1).max(200),
   message: z
     .string()
@@ -68,15 +71,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Cannot request a booking in the past" }, { status: 400 });
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
-  if (guests.length > lodgeCapacity) {
-    return NextResponse.json(
-      { error: `A booking request cannot exceed ${lodgeCapacity} guests` },
-      { status: 400 }
-    );
-  }
-
   try {
+    // A provided lodgeId must name an ACTIVE lodge (400 otherwise); omitted
+    // means the club's default lodge, stored as null.
+    const lodgeId = await assertRequestedLodgeActive(parsed.data.lodgeId);
+
+    const lodgeCapacity = lodgeId
+      ? await getLodgeCapacity(lodgeId)
+      : await getDefaultLodgeCapacity();
+    if (guests.length > lodgeCapacity) {
+      return NextResponse.json(
+        { error: `A booking request cannot exceed ${lodgeCapacity} guests` },
+        { status: 400 }
+      );
+    }
+
     await createBookingRequest({
       contactFirstName: parsed.data.contactFirstName,
       contactLastName: parsed.data.contactLastName,
@@ -86,6 +95,7 @@ export async function POST(request: NextRequest) {
       checkOut,
       guests,
       message: parsed.data.message,
+      lodgeId,
     });
 
     return NextResponse.json({ success: true }, { status: 201 });

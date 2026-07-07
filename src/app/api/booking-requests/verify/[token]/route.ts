@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isActionTokenFormat } from "@/lib/action-tokens";
-import { parseBookingRequestGuests, verifyBookingRequest } from "@/lib/booking-request";
+import {
+  parseBookingRequestGuests,
+  resolvePublicRequestLodgeName,
+  verifyBookingRequest,
+} from "@/lib/booking-request";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 /**
@@ -28,12 +32,19 @@ export async function GET(
     case "expired":
       return NextResponse.json({ outcome: "expired" }, { status: 410 });
     case "verified":
-    case "already_verified":
+    case "already_verified": {
+      // Presentation-only lodge context (ADR-002): omitted for requests with
+      // no explicit lodge and for single-lodge clubs.
+      const lodgeName = await resolvePublicRequestLodgeName(
+        result.request.lodgeId
+      );
       return NextResponse.json({
         outcome: result.outcome,
         checkIn: result.request.checkIn.toISOString(),
         checkOut: result.request.checkOut.toISOString(),
         guestCount: parseBookingRequestGuests(result.request.guests).length,
+        ...(lodgeName ? { lodgeName } : {}),
       });
+    }
   }
 }

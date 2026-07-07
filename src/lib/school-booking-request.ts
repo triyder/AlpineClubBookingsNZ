@@ -50,14 +50,14 @@ import {
 } from "@/lib/booking-request";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   sendAdminOwnerSubstitutionAlert,
   sendAdminSchoolManualInvoiceEmail,
   sendBookingRequestVerificationEmail,
   sendHutLeaderAssignmentEmail,
 } from "@/lib/email";
-import { getLodgeCapacity } from "@/lib/lodge-capacity";
+import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 import logger from "@/lib/logger";
 import { assertMembershipTypeBookingAllowed } from "@/lib/membership-type-policy";
@@ -67,6 +67,7 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import type { PriceBreakdown } from "@/lib/policies/pricing";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import {
   enqueueXeroBookingInvoiceOperation,
@@ -119,6 +120,12 @@ interface CreateSchoolBookingRequestInput {
   childCounts: SchoolChildCounts;
   cateringPreference: SchoolCateringPreference;
   message?: string | null;
+  /**
+   * Lodge the stay is requested at. Callers must validate it names an ACTIVE
+   * lodge (assertRequestedLodgeActive). Null/omitted means the club's default
+   * lodge (BookingRequest.lodgeId null semantics).
+   */
+  lodgeId?: string | null;
 }
 
 interface StoredTeacher {
@@ -203,12 +210,16 @@ async function priceSchoolGuests(input: {
   checkIn: Date;
   checkOut: Date;
   guests: Array<{ ageTier: AgeTier }>;
+  /** Requested lodge; null/omitted prices against the club's default lodge. */
+  lodgeId?: string | null;
 }): Promise<PriceBreakdown | null> {
+  const requestLodgeId = input.lodgeId ?? (await getDefaultLodgeId(prisma));
   const seasons = await prisma.season.findMany({
     where: {
       active: true,
       startDate: { lte: input.checkOut },
       endDate: { gte: input.checkIn },
+      ...lodgeNullTolerantScope(requestLodgeId),
     },
     include: { rates: true },
   });
@@ -237,6 +248,7 @@ async function calculateSchoolIndicativePriceCents(input: {
   checkIn: Date;
   checkOut: Date;
   guests: Array<{ ageTier: AgeTier }>;
+  lodgeId?: string | null;
 }): Promise<number | null> {
   const price = await priceSchoolGuests(input);
   return price ? price.totalPriceCents : null;
@@ -286,7 +298,10 @@ export async function createSchoolBookingRequest(
     throw new BookingRequestError("At least one guest is required", 422);
   }
 
-  const lodgeCapacity = await getLodgeCapacity();
+  const requestedLodgeId = input.lodgeId ?? null;
+  const lodgeCapacity = requestedLodgeId
+    ? await getLodgeCapacity(requestedLodgeId)
+    : await getDefaultLodgeCapacity();
   if (guests.length > lodgeCapacity) {
     throw new BookingRequestError(
       `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
@@ -298,6 +313,7 @@ export async function createSchoolBookingRequest(
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     guests,
+    lodgeId: requestedLodgeId,
   });
 
   const { token, tokenHash } = issueActionToken();
@@ -320,6 +336,7 @@ export async function createSchoolBookingRequest(
       guests,
       message: cleanNullableString(input.message),
       indicativePriceCents,
+      lodgeId: requestedLodgeId,
       verificationTokenHash: tokenHash,
       verificationTokenExpiresAt,
     },
@@ -334,6 +351,7 @@ export async function createSchoolBookingRequest(
       checkOut: input.checkOut,
       guestCount: guests.length,
       expiresAt: verificationTokenExpiresAt,
+      lodgeId: input.lodgeId ?? null,
     });
   } catch (err) {
     logger.error(
@@ -357,6 +375,7 @@ export async function createSchoolBookingRequest(
       guestCount: guests.length,
       teacherCount: teachers.length,
       indicativePriceCents,
+      lodgeId: requestedLodgeId,
     },
   });
 
@@ -450,7 +469,9 @@ export async function approveSchoolBookingRequest(input: {
     throw new BookingRequestError("At least one guest is required", 422);
   }
   if (input.guestOverride) {
-    const lodgeCapacity = await getLodgeCapacity();
+    const lodgeCapacity = request.lodgeId
+      ? await getLodgeCapacity(request.lodgeId)
+      : await getDefaultLodgeCapacity();
     if (guests.length > lodgeCapacity) {
       throw new BookingRequestError(
         `A school booking cannot exceed the lodge capacity of ${lodgeCapacity} guests`,
@@ -469,6 +490,7 @@ export async function approveSchoolBookingRequest(input: {
     checkIn: request.checkIn,
     checkOut: request.checkOut,
     guests,
+    lodgeId: request.lodgeId,
   });
 
   let totalPriceCents: number;
@@ -526,9 +548,11 @@ export async function approveSchoolBookingRequest(input: {
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
-      // Single advisory lock serialises all booking creation paths so the
-      // capacity check below stays safe (same key as booking-create.ts).
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      // Per-lodge advisory lock serialises booking creation at this lodge so
+      // the capacity check below stays safe (same key as booking-create.ts).
+      // A null lodgeId means the club's default lodge.
+      const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
       // Idempotency (#1232 double-charge guard): a prior approve for this
       // request — a concurrent double-accept, or a retry whose caller re-armed
@@ -680,6 +704,7 @@ export async function approveSchoolBookingRequest(input: {
         // nights listed. (This makes the docstring's "capacity re-checked
         // against the new list" promise true on this branch.)
         const heldCapacity = await checkCapacityForGuestRanges(
+          bookingLodgeId,
           request.checkIn,
           request.checkOut,
           guests.map(() => ({
@@ -724,6 +749,7 @@ export async function approveSchoolBookingRequest(input: {
           stayEnd: request.checkOut,
         }));
         const capacity = await checkCapacityForGuestRanges(
+          bookingLodgeId,
           request.checkIn,
           request.checkOut,
           capacityRanges,
@@ -772,6 +798,7 @@ export async function approveSchoolBookingRequest(input: {
         booking = await tx.booking.create({
           data: {
             memberId: schoolMember.id,
+            lodgeId: bookingLodgeId,
             checkIn: request.checkIn,
             checkOut: request.checkOut,
             status: BookingStatus.CONFIRMED,
@@ -826,6 +853,10 @@ export async function approveSchoolBookingRequest(input: {
             startDate: request.checkIn,
             endDate: request.checkOut,
             hutLeaderPin: plan.hutLeaderPin,
+            // A hut leader serves one lodge (ADR-001 Q5): stamp the booking's
+            // lodge so school-created assignments are lodge-scoped like the
+            // manual and cron paths, not left null.
+            lodgeId: bookingLodgeId,
           },
         });
 

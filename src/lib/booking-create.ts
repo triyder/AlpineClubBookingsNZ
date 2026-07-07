@@ -14,15 +14,22 @@
  *   - booking dates stay NZ date-only (Date with time set to 00:00)
  *   - external network calls (email, Xero) stay outside long DB
  *     transactions (fired-and-forget after commit)
- *   - the single advisory lock key=1 still serialises ALL booking
- *     creation transactions to keep capacity checks safe
+ *   - booking creation transactions serialise per lodge via
+ *     acquireLodgeCapacityLock so capacity checks stay safe without
+ *     cross-lodge contention
  */
 import {
   BookingEventType,
   BookingStatus,
   PaymentSource,
   PaymentStatus,
+  type PrismaClient,
 } from "@prisma/client";
+import { assertMemberMayBookLodge } from "@/lib/lodge-access";
+import {
+  lodgeNullTolerantScope,
+  resolveOptionalActiveLodgeId,
+} from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
@@ -30,7 +37,7 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   redeemPromoCode,
   shouldPersistPromoRedemption,
@@ -70,6 +77,7 @@ import {
   type WaitlistedBookingResult,
   BookingPromoError,
   BookingReviewJustificationRequiredError,
+  BookingLodgeError,
   GroupJoinConflictError,
 } from "./booking-create-types";
 import {
@@ -94,6 +102,7 @@ import {
 export {
   BookingPromoError,
   BookingReviewJustificationRequiredError,
+  BookingLodgeError,
   GroupJoinConflictError,
 };
 export type {
@@ -105,6 +114,81 @@ export type {
   WaitlistedBookingResult,
 };
 export { buildGuestCreateData };
+
+type LodgeResolutionDb = Parameters<typeof resolveOptionalActiveLodgeId>[0] & {
+  lodgeRoom: {
+    findUnique: (args: {
+      where: { id: string };
+      select: { lodgeId: true };
+    }) => Promise<{ lodgeId: string | null } | null>;
+  };
+};
+
+/**
+ * Resolve the lodge a new booking belongs to and enforce the lodge-scoping
+ * contract: an explicit lodgeId must name an active lodge, and a requested
+ * room must belong to that lodge (rooms without a lodgeId — expand-release
+ * tolerance — pass). Throws BookingLodgeError; the routes turn it into 400.
+ */
+async function resolveBookingLodgeId(
+  db: LodgeResolutionDb,
+  requestedLodgeId: string | undefined,
+  requestedRoomId: string | undefined,
+): Promise<string> {
+  const lodgeId = await resolveOptionalActiveLodgeId(db, requestedLodgeId);
+  if (!lodgeId) {
+    throw new BookingLodgeError("Unknown or inactive lodgeId");
+  }
+  if (requestedRoomId) {
+    const room = await db.lodgeRoom.findUnique({
+      where: { id: requestedRoomId },
+      select: { lodgeId: true },
+    });
+    if (room?.lodgeId && room.lodgeId !== lodgeId) {
+      throw new BookingLodgeError(
+        "Requested room belongs to a different lodge",
+      );
+    }
+  }
+  return lodgeId;
+}
+
+/**
+ * Validate the cross-lodge waitlist opt-in list (ADR-004): every alternate
+ * must be an active lodge distinct from the primary, and the member must be
+ * eligible to book it (same rule as the primary lodge; admin on-behalf
+ * bypasses eligibility exactly as assertMemberMayBookLodge does). Throws
+ * BookingLodgeError / LodgeBookingEligibilityError; routes map them to
+ * 400 / 403. Exported for unit tests.
+ */
+export async function resolveWaitlistAlternateLodgeIds(
+  db: Pick<PrismaClient, "lodge" | "memberLodgeAccess">,
+  input: {
+    requestedAlternateLodgeIds: string[] | undefined;
+    primaryLodgeId: string;
+    memberId: string;
+    isOnBehalf: boolean;
+  },
+): Promise<string[]> {
+  const distinct = Array.from(new Set(input.requestedAlternateLodgeIds ?? []))
+    .filter((id) => id && id !== input.primaryLodgeId);
+  if (distinct.length === 0) return [];
+
+  const activeCount = await db.lodge.count({
+    where: { id: { in: distinct }, active: true },
+  });
+  if (activeCount !== distinct.length) {
+    throw new BookingLodgeError("Unknown or inactive alternate lodgeId");
+  }
+  for (const alternateLodgeId of distinct) {
+    await assertMemberMayBookLodge(db, {
+      memberId: input.memberId,
+      lodgeId: alternateLodgeId,
+      isOnBehalf: input.isOnBehalf,
+    });
+  }
+  return distinct;
+}
 
 /**
  * Create a DRAFT booking. Skips capacity locking, payment, Xero, and
@@ -129,6 +213,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     cancelIfGuestsBumped,
     groupDiscount,
     memberReviewJustification,
+    lodgeId,
   } = input;
   // Auto-expand (issue #713): the persisted range covers every guest night,
   // never shrinking below the member's stated range.
@@ -152,7 +237,19 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   const draftStatus = review.blockForReview ? BookingStatus.AWAITING_REVIEW : BookingStatus.DRAFT;
 
   const newBooking = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const bookingLodgeId = await resolveBookingLodgeId(
+      tx,
+      lodgeId,
+      requestedRoomId,
+    );
+    await assertMemberMayBookLodge(tx, {
+      memberId: effectiveMemberId,
+      lodgeId: bookingLodgeId,
+      isOnBehalf,
+    });
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
+    // Duplicate member nights (upstream #80cbdf4c): a member cannot hold
+    // two bookings covering the same night, regardless of lodge.
     await assertNoBookingMemberNightConflicts(tx, {
       actorMemberId: sessionUserId,
       actorRole: isOnBehalf ? "ADMIN" : "USER",
@@ -165,7 +262,12 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       : new Date(Date.now() + 72 * 60 * 60 * 1000);
 
     const seasons = await tx.season.findMany({
-      where: { active: true, startDate: { lte: checkOut }, endDate: { gte: checkIn } },
+      where: {
+        active: true,
+        startDate: { lte: checkOut },
+        endDate: { gte: checkIn },
+        ...lodgeNullTolerantScope(bookingLodgeId),
+      },
       include: { rates: true },
     });
     const seasonData = toSeasonRateData(seasons);
@@ -192,6 +294,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       workPartyEventId,
       checkIn,
       checkOut,
+      lodgeId: bookingLodgeId,
     });
     if (promoSource) {
       const resolved = await resolvePromoInTransaction(tx, {
@@ -204,6 +307,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
         nightDatesByGuest: price.guests.map((g) => g.nightDates),
         promoGuestIndexes,
+        lodgeId: bookingLodgeId,
       });
       discountCents = resolved.discountCents;
       promoAdjustmentCents = resolved.promoAdjustmentCents;
@@ -221,6 +325,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     const createdBooking = await tx.booking.create({
       data: {
         memberId: effectiveMemberId,
+        lodgeId: bookingLodgeId,
         checkIn,
         checkOut,
         status: draftStatus,
@@ -260,6 +365,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         promoEligibleGuestCount || undefined,
         promoAllocations,
         getPromoTargetBookingGuestIds(createdBooking.guests, promoSelectedGuestIndexes),
+        bookingLodgeId,
       );
     }
 
@@ -376,6 +482,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     memberReviewJustification,
     parentBookingId,
     organiserSettled,
+    lodgeId,
     groupJoin,
   } = input;
   // Auto-expand (issue #713): cover every guest night (members + non-members)
@@ -473,7 +580,18 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   let booking: BookingWithGuests;
   try {
     booking = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const bookingLodgeId = await resolveBookingLodgeId(
+        tx,
+        lodgeId,
+        requestedRoomId,
+      );
+      await assertMemberMayBookLodge(tx, {
+        memberId: effectiveMemberId,
+        lodgeId: bookingLodgeId,
+        isOnBehalf,
+      });
+      await acquireLodgeCapacityLock(tx, bookingLodgeId);
+      // Duplicate member nights (upstream #80cbdf4c).
       await assertNoBookingMemberNightConflicts(tx, {
         actorMemberId: sessionUserId,
         actorRole: isOnBehalf ? "ADMIN" : "USER",
@@ -482,8 +600,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         guests,
       });
 
+
       const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
       const capacityCheck = await checkCapacityForGuestRanges(
+        bookingLodgeId,
         checkIn,
         checkOut,
         capacityGuestRanges,
@@ -492,7 +612,12 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       );
 
       const seasons = await tx.season.findMany({
-        where: { active: true, startDate: { lte: checkOut }, endDate: { gte: checkIn } },
+        where: {
+          active: true,
+          startDate: { lte: checkOut },
+          endDate: { gte: checkIn },
+          ...lodgeNullTolerantScope(bookingLodgeId),
+        },
         include: { rates: true },
       });
       const seasonData = toSeasonRateData(seasons);
@@ -519,6 +644,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         workPartyEventId,
         checkIn,
         checkOut,
+        lodgeId: bookingLodgeId,
       });
       if (promoSource) {
         const resolved = await resolvePromoInTransaction(tx, {
@@ -531,6 +657,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
           nightDatesByGuest: price.guests.map((g) => g.nightDates),
           promoGuestIndexes: primaryPromoGuestIndexes,
+          lodgeId: bookingLodgeId,
         });
         discountCents = resolved.discountCents;
         promoAdjustmentCents = resolved.promoAdjustmentCents;
@@ -577,6 +704,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       const newBooking = await tx.booking.create({
         data: {
           memberId: effectiveMemberId,
+          lodgeId: bookingLodgeId,
           checkIn,
           checkOut,
           status: effectiveStatus,
@@ -626,6 +754,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           promoEligibleGuestCount || undefined,
           promoAllocations,
           getPromoTargetBookingGuestIds(newBooking.guests, promoSelectedGuestIndexes),
+          bookingLodgeId,
         );
       }
 
@@ -643,6 +772,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         !review.blockForReview
       ) {
         const finalCapacityCheck = await checkCapacityForGuestRanges(
+          bookingLodgeId,
           checkIn,
           checkOut,
           capacityGuestRanges,
@@ -727,6 +857,9 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         const childBooking = await tx.booking.create({
           data: {
             memberId: effectiveMemberId,
+            // The child of a split booking always stays at the same lodge as
+            // its parent (one booking = one lodge, ADR-001).
+            lodgeId: newBooking.lodgeId,
             checkIn,
             checkOut,
             status: BookingStatus.PENDING,
@@ -921,17 +1054,20 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           fullBooking.checkOut,
           fullBooking.guests.length,
           fullBooking.finalPriceCents,
-          fullBooking.promoRedemption?.promoCode
-            ? {
-                discountCents: fullBooking.discountCents,
-                promoAdjustmentCents: fullBooking.promoAdjustmentCents,
-                // Internal work-party promo codes are meaningless to
-                // members; label the discount with the event name instead.
-                promoCode:
-                  fullBooking.promoRedemption.promoCode.workPartyEvent?.name ??
-                  fullBooking.promoRedemption.promoCode.code,
-              }
-            : undefined,
+          {
+            lodgeId: fullBooking.lodgeId,
+            ...(fullBooking.promoRedemption?.promoCode
+              ? {
+                  discountCents: fullBooking.discountCents,
+                  promoAdjustmentCents: fullBooking.promoAdjustmentCents,
+                  // Internal work-party promo codes are meaningless to
+                  // members; label the discount with the event name instead.
+                  promoCode:
+                    fullBooking.promoRedemption.promoCode.workPartyEvent?.name ??
+                    fullBooking.promoRedemption.promoCode.code,
+                }
+              : {}),
+          },
         ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
 
         const effectiveModules = await loadEffectiveModuleFlags();
@@ -981,6 +1117,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         booking.checkOut,
         booking.guests.length,
         booking.nonMemberHoldUntil,
+        booking.lodgeId,
       ).catch((err) => logger.error({ err }, "Failed to send pending booking email"));
     }
   }
@@ -1025,6 +1162,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     cancelIfGuestsBumped,
     groupDiscount,
     memberReviewJustification,
+    lodgeId,
   } = input;
   // Auto-expand (issue #713): the persisted range covers every guest night,
   // never shrinking below the member's stated range.
@@ -1046,8 +1184,29 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     memberReviewJustification,
   });
 
+  const waitlistLodgeId = await resolveBookingLodgeId(
+    prisma,
+    lodgeId,
+    requestedRoomId,
+  );
+  await assertMemberMayBookLodge(prisma, {
+    memberId: effectiveMemberId,
+    lodgeId: waitlistLodgeId,
+    isOnBehalf,
+  });
+  const alternateLodgeIds = await resolveWaitlistAlternateLodgeIds(prisma, {
+    requestedAlternateLodgeIds: input.alternateLodgeIds,
+    primaryLodgeId: waitlistLodgeId,
+    memberId: effectiveMemberId,
+    isOnBehalf,
+  });
   const seasons = await prisma.season.findMany({
-    where: { active: true, startDate: { lte: checkOut }, endDate: { gte: checkIn } },
+    where: {
+      active: true,
+      startDate: { lte: checkOut },
+      endDate: { gte: checkIn },
+      ...lodgeNullTolerantScope(waitlistLodgeId),
+    },
     include: { rates: true },
   });
   const seasonData = toSeasonRateData(seasons);
@@ -1075,12 +1234,16 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     workPartyEventId,
     checkIn,
     checkOut,
+    lodgeId: waitlistLodgeId,
   });
   if (promoSource) {
     const normalizedCode = promoSource.promoCodeStr.toUpperCase().trim();
     const promoCode = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
-      include: { assignments: { select: { memberId: true } } },
+      include: {
+        assignments: { select: { memberId: true } },
+        lodges: { select: { lodgeId: true } },
+      },
     });
     if (promoCode?.internal && !promoSource.allowInternal) {
       throw new BookingPromoError("Promo code not found");
@@ -1104,7 +1267,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         guests: guestNightRates,
       },
       assignedMemberIds,
-      { db: prisma, selectedGuestIndexes: promoGuestIndexes }
+      { db: prisma, selectedGuestIndexes: promoGuestIndexes, lodgeId: waitlistLodgeId }
     );
     if (application.error || !application.discount) {
       throw new BookingPromoError(application.error ?? "Promo code could not be applied");
@@ -1124,7 +1287,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   const hasNonMembers = guests.some((g) => !g.isMember);
 
   const { newBooking, position } = await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+    await acquireLodgeCapacityLock(tx, waitlistLodgeId);
+    // Duplicate member nights (upstream #80cbdf4c): waitlist entries also
+    // may not overlap the member's existing booked nights.
     await assertNoBookingMemberNightConflicts(tx, {
       actorMemberId: sessionUserId,
       actorRole: isOnBehalf ? "ADMIN" : "USER",
@@ -1136,6 +1301,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     const createdBooking = await tx.booking.create({
       data: {
         memberId: effectiveMemberId,
+        lodgeId: waitlistLodgeId,
         checkIn,
         checkOut,
         status: BookingStatus.WAITLISTED,
@@ -1174,7 +1340,17 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         promoEligibleGuestCount || undefined,
         promoAllocations,
         getPromoTargetBookingGuestIds(createdBooking.guests, promoSelectedGuestIndexes),
+        waitlistLodgeId,
       );
+    }
+
+    if (alternateLodgeIds.length > 0) {
+      await tx.bookingWaitlistAlternateLodge.createMany({
+        data: alternateLodgeIds.map((alternateLodgeId) => ({
+          bookingId: createdBooking.id,
+          lodgeId: alternateLodgeId,
+        })),
+      });
     }
 
     const waitlistPosition =
@@ -1205,6 +1381,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       checkOut,
       newBooking.guests.length,
       position,
+      newBooking.lodgeId,
     ).catch((err) => logger.error({ err }, "Failed to send waitlist confirmation email"));
 
     sendAdminNewBookingAlert({
@@ -1237,6 +1414,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       position,
       finalPriceCents: newBooking.finalPriceCents,
       requiresAdminReview: newBooking.requiresAdminReview,
+      ...(alternateLodgeIds.length > 0 ? { alternateLodgeIds } : {}),
     },
   });
 
