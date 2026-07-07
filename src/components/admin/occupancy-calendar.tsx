@@ -32,11 +32,30 @@ type OccupancyCalendarResponse = {
   bookings: OccupancyCalendarBooking[];
 };
 
+export type CalendarTone = "red" | "amber" | "orange" | "green";
+
+// Static class table so Tailwind sees every class literally (no dynamic class
+// construction, which its JIT would prune). Consumers pass a tone; the calendar
+// never builds these strings at runtime.
+const CALENDAR_TONE_CLASSES: Record<CalendarTone, { cell: string; badge: string }> = {
+  red: { cell: "border-red-300 bg-red-50 text-slate-900 hover:bg-red-100", badge: "bg-red-100 text-red-800" },
+  amber: { cell: "border-amber-300 bg-amber-50 text-slate-900 hover:bg-amber-100", badge: "bg-amber-100 text-amber-800" },
+  orange: { cell: "border-orange-300 bg-orange-50 text-slate-900 hover:bg-orange-100", badge: "bg-orange-100 text-orange-800" },
+  green: { cell: "border-green-300 bg-green-50 text-slate-900 hover:bg-green-100", badge: "bg-green-100 text-green-800" },
+};
+
 type OccupancyCalendarProps = {
   mode: OccupancyCalendarMode;
   selectedStartDate?: string;
   selectedEndDate?: string;
   onSelectionChange: (selection: { startDate: string; endDate: string }) => void;
+  // Optional per-date colour overlay (e.g. roster status). Backwards compatible:
+  // consumers that pass none behave exactly as before.
+  overlayByDate?: Record<string, { tone: CalendarTone; label: string }>;
+  overlayLegend?: Array<{ tone: CalendarTone; label: string }>;
+  // Fires with the visible month key (YYYY-MM) on mount and every navigation, so
+  // a parent can lazily load overlay data for the month in view.
+  onVisibleMonthChange?: (month: string) => void;
 };
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -88,6 +107,9 @@ export function OccupancyCalendar({
   selectedStartDate,
   selectedEndDate,
   onSelectionChange,
+  overlayByDate,
+  overlayLegend,
+  onVisibleMonthChange,
 }: OccupancyCalendarProps) {
   const today = formatDateOnly(getTodayDateOnly());
   const initialMonth = selectedStartDate ? parseDateOnly(selectedStartDate) : getTodayDateOnly();
@@ -101,6 +123,10 @@ export function OccupancyCalendar({
   const [rangeAnchor, setRangeAnchor] = useState<string | null>(null);
   const requestedMonthKeys = useRef(new Set<string>());
   const visibleMonthKey = monthKey(visibleMonth);
+
+  useEffect(() => {
+    onVisibleMonthChange?.(visibleMonthKey);
+  }, [visibleMonthKey, onVisibleMonthChange]);
 
   useEffect(() => {
     if (!selectedStartDate) return;
@@ -368,14 +394,17 @@ export function OccupancyCalendar({
               dateString < selectedEndDate,
           );
           const hasGuests = Boolean(night?.guestCount);
+          const overlay = overlayByDate?.[dateString];
           const selectionClass =
             isSelectedStart || isSelectedEnd
               ? "border-blue-600 bg-blue-600 text-white"
               : isInRange
                 ? "border-blue-200 bg-blue-50 text-blue-900"
-                : hasGuests
-                  ? "border-emerald-200 bg-emerald-50 text-slate-900 hover:bg-emerald-100"
-                  : "border-slate-100 bg-white text-slate-700 hover:bg-slate-50";
+                : overlay
+                  ? CALENDAR_TONE_CLASSES[overlay.tone].cell
+                  : hasGuests
+                    ? "border-emerald-200 bg-emerald-50 text-slate-900 hover:bg-emerald-100"
+                    : "border-slate-100 bg-white text-slate-700 hover:bg-slate-50";
           const guestLabel = night?.guestCount
             ? `${night.guestCount} guest${night.guestCount === 1 ? "" : "s"}`
             : "No guests";
@@ -387,7 +416,7 @@ export function OccupancyCalendar({
               disabled={isPast}
               onClick={() => handleDayClick(dateString)}
               aria-pressed={isSelectedStart || isSelectedEnd || isInRange}
-              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}`}
+              aria-label={`${formatDisplayDate(dateString)}, ${guestLabel}${isPast ? ", past date" : ""}${overlay ? `, ${overlay.label}` : ""}`}
               className={`min-h-16 border-b border-r p-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-300 ${selectionClass}`}
             >
               <span className="block text-sm font-semibold leading-none">{day}</span>
@@ -397,6 +426,13 @@ export function OccupancyCalendar({
                 }`}>
                   <Users className="mr-1 h-3 w-3" />
                   {night?.guestCount}
+                </span>
+              )}
+              {overlay && (
+                <span
+                  className={`mt-1 block truncate rounded px-1 py-0.5 text-[10px] font-medium leading-tight ${CALENDAR_TONE_CLASSES[overlay.tone].badge}`}
+                >
+                  {overlay.label}
                 </span>
               )}
             </button>
@@ -414,6 +450,12 @@ export function OccupancyCalendar({
             <span className="h-3 w-3 rounded bg-blue-600" />
             Selected {mode === "single" ? "date" : "range"}
           </span>
+          {overlayLegend?.map((item) => (
+            <span key={item.label} className="inline-flex items-center gap-1">
+              <span className={"h-3 w-3 rounded " + CALENDAR_TONE_CLASSES[item.tone].badge} />
+              {item.label}
+            </span>
+          ))}
         </div>
 
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
