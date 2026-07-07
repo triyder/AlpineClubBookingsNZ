@@ -5,12 +5,11 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
 import { getActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 
-export type OccupancyBookingSummary = {
+type OccupancyBookingSummary = {
   id: string;
   reference: string;
   ownerName: string;
@@ -20,7 +19,7 @@ export type OccupancyBookingSummary = {
   status: BookingStatus;
 };
 
-export type OccupancyNight = {
+type OccupancyNight = {
   date: string;
   guestCount: number;
   bookings: OccupancyBookingSummary[];
@@ -168,14 +167,4 @@ export async function getAdminOccupancyMonth(input: {
     nights,
     bookings: [...bookingSummaries.values()],
   };
-}
-
-export function validateOccupancySelection(input: {
-  startDate: string;
-  endDate: string;
-}) {
-  if (!isDateOnlyString(input.startDate) || !isDateOnlyString(input.endDate)) {
-    return false;
-  }
-  return input.startDate <= input.endDate;
 }

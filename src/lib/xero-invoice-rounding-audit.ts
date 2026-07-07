@@ -32,7 +32,7 @@ import { formatDate } from "./xero-invoice-helpers";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-export interface AuditGuestNight {
+interface AuditGuestNight {
   stayDate: Date;
   priceCents: number;
 }
@@ -48,7 +48,7 @@ export interface AuditGuest {
 }
 
 /** One contiguous pre-#1231 date run and the drift its rounding introduced. */
-export interface DriftRun {
+interface DriftRun {
   startDate: string; // YYYY-MM-DD
   endExclusive: string; // YYYY-MM-DD
   nightCount: number;
@@ -82,7 +82,7 @@ export interface GuestDrift {
  * Both paths run through the same `buildInvoiceLineItems`, so both share the
  * pre-#1231 drift exposure.
  */
-export type RoundingDriftSource = "BOOKING" | "GROUP_SETTLEMENT";
+type RoundingDriftSource = "BOOKING" | "GROUP_SETTLEMENT";
 
 export interface InvoiceRoundingDrift {
   source: RoundingDriftSource;
@@ -215,7 +215,7 @@ export function computeGuestRoundingDrift(
  * child booking (mirroring the per-child loop in
  * `xero-group-settlement-invoices.ts`).
  */
-export interface DriftLineBlock {
+interface DriftLineBlock {
   bookingNights: number;
   guests: AuditGuest[];
 }
@@ -319,7 +319,7 @@ export function computeSettlementRoundingDrift(
 // ---------------------------------------------------------------------------
 
 /** Guest + per-night rows as read from the DB (shared by both scan paths). */
-export interface RoundingAuditGuest {
+interface RoundingAuditGuest {
   firstName: string;
   lastName: string;
   ageTier: string;

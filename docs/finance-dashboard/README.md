@@ -138,6 +138,7 @@ never calls Xero live — and has no range/compare selectors.
 - [finance-sync-service-contract.md](finance-sync-service-contract.md)
 - [finance-sync-cron-contract.md](finance-sync-cron-contract.md)
 - [finance-sync-diagnostics-contract.md](finance-sync-diagnostics-contract.md)
+- [finance-sync-health-contract.md](finance-sync-health-contract.md)
 - [finance-manual-sync-contract.md](finance-manual-sync-contract.md)
 - [finance-booking-metrics-contract.md](finance-booking-metrics-contract.md)
 - [test-plan.md](test-plan.md)

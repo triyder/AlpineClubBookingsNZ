@@ -8,7 +8,7 @@ import {
 } from "@/lib/club-theme-schema";
 import type { ClubThemeUpdateInput } from "@/lib/club-theme-update-schema";
 
-export async function ensureClubTheme() {
+async function ensureClubTheme() {
   return prisma.clubTheme.upsert({
     where: { id: CLUB_THEME_ID },
     create: {

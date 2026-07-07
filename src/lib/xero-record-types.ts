@@ -11,7 +11,7 @@ export interface XeroRecordBackLink {
   label: string
 }
 
-export interface XeroRecordActivitySummary {
+interface XeroRecordActivitySummary {
   totalOperations: number
   failedOperations: number
   pendingOperations: number

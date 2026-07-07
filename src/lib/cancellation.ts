@@ -12,7 +12,7 @@ export {
 } from "./policies/cancellation";
 export type { CancellationRule } from "./policies/cancellation";
 
-export type NonMemberHoldPolicySource = "period" | "default";
+type NonMemberHoldPolicySource = "period" | "default";
 
 export type NonMemberHoldPolicy = {
   enabled: boolean;
@@ -23,7 +23,7 @@ export type NonMemberHoldPolicy = {
 /**
  * Find the active BookingPeriod that covers a given check-in date, if any.
  */
-export async function getBookingPeriodForDate(checkIn: Date) {
+async function getBookingPeriodForDate(checkIn: Date) {
   return prisma.bookingPeriod.findFirst({
     where: {
       active: true,

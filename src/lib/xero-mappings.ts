@@ -78,7 +78,7 @@ export async function getAccountMapping(key: string): Promise<string | null> {
  * Get the Xero Item Code for a given mapping key.
  * Returns null if not configured.
  */
-export async function getItemCodeMapping(key: string): Promise<string | null> {
+async function getItemCodeMapping(key: string): Promise<string | null> {
   const mapping = await getResolvedAccountMapping(key);
   return mapping.itemCode;
 }
@@ -121,7 +121,7 @@ export async function getHutFeeItemCodeMap(): Promise<Map<string, string>> {
  * Get the entrance fee item code and amount for a specific category.
  * Falls back to the legacy flat entranceFeeItem/entranceFeeAmountCents if the new table is empty.
  */
-export async function getEntranceFeeMapping(
+async function getEntranceFeeMapping(
   category: EntranceFeeCategory
 ): Promise<{ itemCode: string | null; amountCents: number | null }> {
   const row = await prisma.xeroItemCodeMapping.findFirst({

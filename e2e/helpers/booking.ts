@@ -38,7 +38,7 @@ export async function fetchOccupiedBeds(
 // afterwards: completing the wizard raises the member-onboarding-confirmed
 // event and the page refetches its family list (#1124), which this suite
 // deliberately relies on for regression coverage.
-export async function completeMemberDetailsGateIfShown(page: Page): Promise<void> {
+async function completeMemberDetailsGateIfShown(page: Page): Promise<void> {
   const dialogTitle = page.getByText("Confirm member details");
   try {
     await dialogTitle.waitFor({ state: "visible", timeout: 5_000 });

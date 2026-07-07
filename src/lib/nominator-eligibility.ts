@@ -125,7 +125,7 @@ export function evaluateNominatorEligibility(
 }
 
 /** Whether the member has at least one completed induction record. */
-export async function isMemberInducted(memberId: string): Promise<boolean> {
+async function isMemberInducted(memberId: string): Promise<boolean> {
   const count = await prisma.memberInduction.count({
     where: { memberId, status: "COMPLETED" },
   });

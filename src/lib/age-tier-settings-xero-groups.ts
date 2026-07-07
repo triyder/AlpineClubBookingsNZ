@@ -21,7 +21,7 @@ type PrimaryXeroContactGroup = {
   name: string;
 } | null;
 
-export function getPrimaryXeroContactGroupIds(
+function getPrimaryXeroContactGroupIds(
   settings: AgeTierXeroGroupSelection[]
 ): Set<string> {
   return new Set(

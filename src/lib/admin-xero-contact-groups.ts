@@ -1,4 +1,4 @@
-export interface AdminXeroContactGroup {
+interface AdminXeroContactGroup {
   id: string;
   name: string;
   contactCount: number;

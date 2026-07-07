@@ -1,9 +1,9 @@
-# Hashed Token Migration
+# Token Hashing
 
 Password reset, email verification/change, guest chore, and membership
 nomination bearer tokens use hash-at-rest storage.
 
-## Migration approach
+## Hash-at-rest design
 
 1. Enable `pgcrypto` if needed.
 2. Add a new `tokenHash` column to each affected table.

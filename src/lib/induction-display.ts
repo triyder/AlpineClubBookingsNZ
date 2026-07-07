@@ -37,7 +37,7 @@ export const INDUCTION_SIGNER_ROLE_LABELS: Record<InductionSignerRole, string> =
   ADMIN: "Administrator",
 };
 
-export interface InductionItemClient {
+interface InductionItemClient {
   id: string;
   label: string;
   competencyPrompt: string | null;
@@ -46,7 +46,7 @@ export interface InductionItemClient {
   requiresDemonstration: boolean;
 }
 
-export interface InductionSectionClient {
+interface InductionSectionClient {
   id: string;
   title: string;
   description: string | null;
@@ -54,7 +54,7 @@ export interface InductionSectionClient {
   items: InductionItemClient[];
 }
 
-export interface InductionSignOffClient {
+interface InductionSignOffClient {
   id: string;
   signerMemberId: string | null;
   signerName: string;
@@ -63,7 +63,7 @@ export interface InductionSignOffClient {
   signedAt: string;
 }
 
-export interface AssignedSignerClient {
+interface AssignedSignerClient {
   memberId: string;
   firstName: string;
   lastName: string;

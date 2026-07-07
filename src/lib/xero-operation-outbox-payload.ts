@@ -46,7 +46,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
 ] as const;
 
-export interface QueuedEntranceFeeOutboxPayload {
+interface QueuedEntranceFeeOutboxPayload {
   queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
   category: EntranceFeeCategory;
   itemCode: string | null;
@@ -54,18 +54,18 @@ export interface QueuedEntranceFeeOutboxPayload {
   description?: string | null;
 }
 
-export interface QueuedBookingInvoiceOutboxPayload {
+interface QueuedBookingInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_BOOKING_INVOICE_TYPE;
   bookingId: string;
 }
 
-export interface QueuedBookingInvoiceUpdateOutboxPayload {
+interface QueuedBookingInvoiceUpdateOutboxPayload {
   queueType: typeof XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE;
   bookingId: string;
   xeroInvoiceId?: string;
 }
 
-export interface QueuedRefundCreditNoteOutboxPayload {
+interface QueuedRefundCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE;
   refundAmountCents: number;
   // Cumulative refunded-cents watermark this note settles up to (#1162). Absent
@@ -73,12 +73,12 @@ export interface QueuedRefundCreditNoteOutboxPayload {
   watermarkCents?: number;
 }
 
-export interface QueuedAccountCreditNoteOutboxPayload {
+interface QueuedAccountCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
   refundAmountCents: number;
 }
 
-export interface QueuedSupplementaryInvoiceOutboxPayload {
+interface QueuedSupplementaryInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE;
   bookingId: string;
   priceDiffCents: number;
@@ -89,14 +89,14 @@ export interface QueuedSupplementaryInvoiceOutboxPayload {
   waitForConfirmedAdditionalPayment?: boolean;
 }
 
-export interface QueuedModificationCreditNoteOutboxPayload {
+interface QueuedModificationCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE;
   bookingId: string;
   refundAmountCents: number;
   bookingModificationId?: string;
 }
 
-export interface QueuedModificationAccountCreditNoteOutboxPayload {
+interface QueuedModificationAccountCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE;
   bookingId: string;
   paymentId: string;
@@ -104,7 +104,7 @@ export interface QueuedModificationAccountCreditNoteOutboxPayload {
   bookingModificationId: string;
 }
 
-export interface QueuedCreditNoteAllocationOutboxPayload {
+interface QueuedCreditNoteAllocationOutboxPayload {
   queueType: typeof XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE;
   creditNoteId: string;
   invoiceId: string;
@@ -112,21 +112,21 @@ export interface QueuedCreditNoteAllocationOutboxPayload {
   role?: string;
 }
 
-export interface QueuedMembershipCancellationCreditNoteOutboxPayload {
+interface QueuedMembershipCancellationCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE;
   subscriptionId: string;
   requestId: string;
   participantId: string;
 }
 
-export interface QueuedMembershipCancellationContactOutboxPayload {
+interface QueuedMembershipCancellationContactOutboxPayload {
   queueType: typeof XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE;
   memberId: string;
   requestId: string;
   participantId: string;
 }
 
-export interface QueuedGroupSettlementInvoiceOutboxPayload {
+interface QueuedGroupSettlementInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE;
   settlementId: string;
 }

@@ -1101,9 +1101,9 @@ export function adminDailyDigestTemplate(sections: {
   `);
 }
 
-export type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
+type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
 
-export interface XeroReconciliationIssueItemEmail {
+interface XeroReconciliationIssueItemEmail {
   label: string;
   localModel: string | null;
   localId: string | null;
@@ -1121,7 +1121,7 @@ export interface XeroReconciliationIssueItemEmail {
   createdAt: Date | null;
 }
 
-export interface XeroReconciliationIssueSectionEmail {
+interface XeroReconciliationIssueSectionEmail {
   id: string;
   title: string;
   severity: XeroReconciliationIssueSeverityEmail;

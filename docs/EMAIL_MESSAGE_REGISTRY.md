@@ -1,6 +1,6 @@
-# Email Message Audit
+# Email Message Registry
 
-This is an audit of outbound email messages in the current repository state.
+This is the registry of outbound email messages in the current repository state.
 The main senders live under `src/lib/email/` (with `src/lib/email.ts` kept as a
 re-export facade); the core `sendEmail` transport is in `src/lib/email/core.ts`
 and most HTML bodies are in
