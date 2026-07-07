@@ -2032,6 +2032,9 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
         waitlistOfferedAt: null,
         waitlistOfferExpiresAt: null,
         waitlistPosition: null,
+        // Cross-lodge offer residue is cleared on cancel too (ADR-004 / Low).
+        waitlistOfferedLodgeId: null,
+        waitlistOfferedPriceCents: null,
       },
     });
   });
@@ -2161,6 +2164,42 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     expect(auditMetadata.checkOut).toBe(freshCheckOut.toISOString());
     expect(auditMetadata.checkIn).not.toBe(staleCheckIn.toISOString());
   });
+
+  // Low fix (ADR-004): cancelling a WAITLIST_OFFERED booking must clear ALL
+  // FOUR offer fields, including the cross-lodge offered lodge and price —
+  // otherwise the cancelled row keeps stale offered-lodge residue.
+  it("clears all four offer fields when cancelling a cross-lodge WAITLIST_OFFERED booking", async () => {
+    const offered = {
+      id: "held-1",
+      memberId: "owner-1",
+      status: "WAITLIST_OFFERED",
+      finalPriceCents: 1000,
+      checkIn: new Date("2026-09-01"),
+      checkOut: new Date("2026-09-03"),
+      lodgeId: "lodge-a",
+      waitlistOfferedLodgeId: "lodge-b",
+      waitlistOfferedPriceCents: 34000,
+      member: { id: "owner-1", email: "owner@example.com", firstName: "Owner" },
+      payment: null,
+    };
+    mocks.bookingFindUnique.mockResolvedValue({ ...offered });
+    mocks.txBookingFindUnique.mockResolvedValue({ ...offered });
+
+    const result = await cancelBooking("held-1", "owner-1", "USER", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "held-1" },
+      data: {
+        status: "CANCELLED",
+        waitlistOfferedAt: null,
+        waitlistOfferExpiresAt: null,
+        waitlistPosition: null,
+        waitlistOfferedLodgeId: null,
+        waitlistOfferedPriceCents: null,
+      },
+    });
+  });
 });
 
 // #1406: opt-in caller guard (`requireRequestHold`) for the two "release a held
@@ -2274,6 +2313,9 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
         waitlistOfferedAt: null,
         waitlistOfferExpiresAt: null,
         waitlistPosition: null,
+        // Cross-lodge offer residue is cleared on cancel too (ADR-004 / Low).
+        waitlistOfferedLodgeId: null,
+        waitlistOfferedPriceCents: null,
       },
     });
     // The booking-request pointer to this hold is detached at the source (#1254).

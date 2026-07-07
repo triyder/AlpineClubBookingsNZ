@@ -113,6 +113,29 @@ Two behaviours were pinned down during implementation:
   `waitlistOfferedPriceCents` to the fresh figure, so the offer screen
   shows the price the member can actually accept on retry rather than
   failing forever against a stale quote.
+- **Queue positions are counted per-lodge.** Offer *selection* was always
+  per-lodge (each freed lodge serves its own queue plus cross-lodge
+  opt-ins). The display/email position a member sees is counted the same
+  way: only overlapping `WAITLISTED` entries at the *same* lodge count, so
+  a member first in their lodge's queue reads position 1 regardless of
+  other lodges' queues. This is consistent with the per-lodge queue model
+  above and does not conflict with the club-wide *queue-order enum* under
+  Configuration (that setting governs cross-lodge ordering policy, not how
+  a single lodge's positions are numbered). Applies to the offer-time
+  count, `getWaitlistPosition`, `updateWaitlistPositions`, and
+  `getWaitlistForDates`.
+- **Confirm rejects a duplicate stay at the offered lodge.** If Phase 3
+  (cancel the waitlist entry) failed on an earlier confirm, the entry is
+  stranded in `WAITLIST_OFFERED` with a booking already created at the
+  offered lodge; a re-confirm — or an expiry re-offer then confirm — would
+  create a *second* booking and payment request for the same stay. Phase 1
+  (under the offered lodge's capacity lock) therefore rejects the confirm
+  when the member already holds an active booking (any non-cancelled,
+  non-waitlist status — `PAYMENT_PENDING` counts) overlapping the offer's
+  dates at the offered lodge, excluding the entry itself. The rejection
+  carries a `DUPLICATE_STAY` code (surfaced by the confirm route like
+  `OFFER_PRICE_CHANGED`); the offer is left intact so the member can cancel
+  the duplicate and re-confirm.
 
 ### Configuration
 

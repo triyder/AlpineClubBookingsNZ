@@ -45,6 +45,10 @@ export async function POST(
         ...(result.updatedPriceCents !== undefined
           ? { updatedPriceCents: result.updatedPriceCents, code: "OFFER_PRICE_CHANGED" }
           : {}),
+        // Other structured rejection codes (e.g. DUPLICATE_STAY): forwarded so
+        // the client can distinguish them. Mutually exclusive with the
+        // price-drift path above, so there is no code collision.
+        ...(result.code ? { code: result.code } : {}),
       },
       { status },
     );

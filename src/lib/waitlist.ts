@@ -39,7 +39,7 @@ export const WAITLIST_OFFER_HOURS =
 export async function getWaitlistPosition(bookingId: string): Promise<number> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    select: { checkIn: true, checkOut: true, createdAt: true, status: true },
+    select: { checkIn: true, checkOut: true, createdAt: true, status: true, lodgeId: true },
   });
 
   if (!booking || (booking.status !== BookingStatus.WAITLISTED && booking.status !== BookingStatus.WAITLIST_OFFERED)) {
@@ -49,6 +49,9 @@ export async function getWaitlistPosition(bookingId: string): Promise<number> {
   const ahead = await prisma.booking.count({
     where: {
       status: BookingStatus.WAITLISTED,
+      // Positions are per-lodge: each lodge runs its own FIFO queue, so only
+      // count entries waiting for the same lodge (multi-lodge).
+      lodgeId: booking.lodgeId,
       checkIn: { lt: booking.checkOut },
       checkOut: { gt: booking.checkIn },
       createdAt: { lt: booking.createdAt },
@@ -60,12 +63,19 @@ export async function getWaitlistPosition(bookingId: string): Promise<number> {
 
 // test seam
 /**
- * Get all WAITLISTED bookings overlapping a date range, ordered FIFO.
+ * Get all WAITLISTED bookings for one lodge overlapping a date range, ordered
+ * FIFO. Scoped to a single lodge because each lodge runs its own queue
+ * (multi-lodge).
  */
-export async function getWaitlistForDates(checkIn: Date, checkOut: Date) {
+export async function getWaitlistForDates(
+  checkIn: Date,
+  checkOut: Date,
+  lodgeId: string
+) {
   return prisma.booking.findMany({
     where: {
       status: BookingStatus.WAITLISTED,
+      lodgeId,
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
     },
@@ -402,10 +412,13 @@ export async function processWaitlistForDates(freedDates: {
 
                 offeredBookingId = candidate.id;
 
-        // Count position (how many were ahead in queue)
+        // Count position (how many were ahead in queue). Per-lodge: the
+        // position shown to the member counts only entries waiting for their
+        // own lodge, matching the per-lodge FIFO queue (multi-lodge).
         const position = await tx.booking.count({
           where: {
             status: BookingStatus.WAITLISTED,
+            lodgeId: candidate.lodgeId ?? defaultLodgeId,
             checkIn: { lt: candidate.checkOut },
             checkOut: { gt: candidate.checkIn },
             createdAt: { lt: candidate.createdAt },
@@ -514,6 +527,9 @@ export async function confirmWaitlistOffer(
   error?: string;
   newBookingId?: string;
   updatedPriceCents?: number;
+  // Machine-readable rejection code forwarded from the cross-lodge path
+  // (e.g. "DUPLICATE_STAY") so the API route can surface it to the client.
+  code?: string;
 }> {
   const offerKind = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -702,6 +718,9 @@ export async function expireStaleOffers(): Promise<{
         newPosition:
           offers.filter(
             (entry) =>
+              // Per-lodge queue: only same-lodge expiring offers count toward
+              // the position quoted in the expiry email (same scoping as M6).
+              entry.lodgeId === offer.lodgeId &&
               entry.checkIn < offer.checkOut &&
               entry.checkOut > offer.checkIn &&
               entry.createdAt < offer.createdAt
@@ -709,13 +728,23 @@ export async function expireStaleOffers(): Promise<{
       })),
       affectedRanges: Array.from(
         new Map(
-          offers.map((offer) => [
-            `${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
-            {
-              checkIn: offer.checkIn,
-              checkOut: offer.checkOut,
-            },
-          ])
+          offers.map((offer) => {
+            // The freed spot is at the lodge whose place was being offered
+            // (the offered lodge for a cross-lodge offer, else the entry's
+            // own lodge). Read from the in-memory pre-revert snapshot: the
+            // revert above nulled these fields in the DB, not on this object.
+            const freedLodgeId = offer.waitlistOfferedLodgeId ?? offer.lodgeId;
+            return [
+              // Key by lodge as well as range so two lodges' same-range
+              // expiries do not collapse into one processing call.
+              `${freedLodgeId}_${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
+              {
+                checkIn: offer.checkIn,
+                checkOut: offer.checkOut,
+                lodgeId: freedLodgeId,
+              },
+            ];
+          })
         ).values()
       ),
     };
@@ -765,7 +794,9 @@ export async function expireStaleOffers(): Promise<{
 // test seam
 /**
  * Recalculate and update waitlistPosition for all WAITLISTED bookings
- * overlapping the given date range.
+ * overlapping the given date range. Positions are numbered per-lodge: each
+ * lodge runs its own FIFO queue, so a booking's position counts only entries
+ * waiting for the same lodge (multi-lodge).
  */
 export async function updateWaitlistPositions(
   checkIn: Date,
@@ -778,13 +809,18 @@ export async function updateWaitlistPositions(
       checkOut: { gt: checkIn },
     },
     orderBy: { createdAt: "asc" },
-    select: { id: true },
+    select: { id: true, lodgeId: true },
   });
 
-  for (let i = 0; i < waitlisted.length; i++) {
+  // Number each lodge's queue independently, preserving the FIFO createdAt
+  // order the query already applied.
+  const positionByLodge = new Map<string, number>();
+  for (const booking of waitlisted) {
+    const nextPosition = (positionByLodge.get(booking.lodgeId) ?? 0) + 1;
+    positionByLodge.set(booking.lodgeId, nextPosition);
     await prisma.booking.update({
-      where: { id: waitlisted[i].id },
-      data: { waitlistPosition: i + 1 },
+      where: { id: booking.id },
+      data: { waitlistPosition: nextPosition },
     });
   }
 }

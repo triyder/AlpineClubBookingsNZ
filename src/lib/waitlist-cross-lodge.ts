@@ -14,6 +14,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
+import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   createConfirmedBooking,
   type BookingGuestInput,
@@ -145,7 +146,21 @@ export interface CrossLodgeConfirmResult {
   // between offer and confirm; the stored offer is updated to this figure
   // so the member can re-confirm at the price they can actually see.
   updatedPriceCents?: number;
+  // Machine-readable rejection code the API route forwards to the client
+  // (e.g. "DUPLICATE_STAY"). The price-drift rejection is signalled by
+  // `updatedPriceCents` instead and needs no code here.
+  code?: string;
 }
+
+// A member's existing "real stay" for the duplicate-stay guard: everything
+// that is not cancelled/bumped and not a waitlist placeholder. This includes
+// PAYMENT_PENDING (a real pending stay awaiting payment) and COMPLETED (for
+// completeness, though it cannot overlap a future offer's dates); it excludes
+// WAITLISTED / WAITLIST_OFFERED, which are not stays.
+const DUPLICATE_STAY_BOOKING_STATUSES = [
+  ...ACTIVE_BOOKING_STATUSES,
+  BookingStatus.COMPLETED,
+] as const;
 
 type CrossLodgeOfferEntry = Prisma.BookingGetPayload<{
   include: {
@@ -249,6 +264,40 @@ export async function confirmCrossLodgeWaitlistOffer(
             success: false,
             error:
               "That lodge is no longer available to you. You've been returned to the waitlist.",
+          },
+        };
+      }
+
+      // Duplicate-stay guard. If Phase 3 (cancel the waitlist entry) failed on
+      // an earlier confirm, the entry is stranded in WAITLIST_OFFERED with a
+      // booking already created at the offered lodge; a re-confirm (or an
+      // expiry re-offer + confirm) would create a SECOND booking and a second
+      // payment request for the same stay. Reject when the member already holds
+      // an active booking overlapping the offer's dates at the offered lodge.
+      // Runs under the offered lodge's capacity lock (taken above), so it is
+      // serialised against the create-and-cancel path. The entry itself is
+      // excluded by id, and waitlist placeholders never count.
+      const duplicateStay = await tx.booking.findFirst({
+        where: {
+          memberId,
+          lodgeId: offeredLodgeId,
+          id: { not: entry.id },
+          deletedAt: null,
+          status: { in: [...DUPLICATE_STAY_BOOKING_STATUSES] },
+          // Date-only overlap, matching the processor's overlap predicate.
+          checkIn: { lt: entry.checkOut },
+          checkOut: { gt: entry.checkIn },
+        },
+        select: { id: true },
+      });
+      if (duplicateStay) {
+        return {
+          ok: false as const,
+          result: {
+            success: false,
+            error:
+              "You already have a booking at this lodge for these dates. Cancel it before accepting this offer.",
+            code: "DUPLICATE_STAY",
           },
         };
       }

@@ -378,6 +378,12 @@ async function performBookingCancellation(
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
           waitlistPosition: null,
+          // Clear the cross-lodge offer residue too (ADR-004): a cancelled
+          // WAITLIST_OFFERED entry must not keep a stale offered lodge/price.
+          // Inert for non-offered statuses (already null), but keeps the row
+          // honest.
+          waitlistOfferedLodgeId: null,
+          waitlistOfferedPriceCents: null,
         },
       });
       if (wasAwaitingReview) {

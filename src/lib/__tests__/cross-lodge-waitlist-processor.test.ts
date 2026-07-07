@@ -243,6 +243,42 @@ describe("processWaitlistForDates cross-lodge pass", () => {
     expect(currentTx.booking.update).not.toHaveBeenCalled();
   });
 
+  it("counts the offered candidate's queue position per-lodge, not club-wide (M6)", async () => {
+    // The candidate is first in line at lodge B. Older overlapping WAITLISTED
+    // entries exist at lodge A; club-wide counting would report position 4,
+    // but the per-lodge count makes it position 1.
+    const ownCandidate = candidate({
+      id: "entry-b",
+      lodgeId: "lodge-b",
+      createdAt: "2026-07-02T10:00:00Z",
+    });
+    currentTx = makeTx([ownCandidate]);
+    // Only lodge-B entries count toward this candidate's position; the three
+    // older lodge-A entries do not.
+    currentTx.booking.count.mockImplementation(async (args: {
+      where: { lodgeId?: string };
+    }) => (args.where.lodgeId === "lodge-b" ? 0 : 3));
+    mocks.checkCapacityForGuestRanges.mockResolvedValue({ available: true });
+
+    const result = await processWaitlistForDates({
+      checkIn: CHECK_IN,
+      checkOut: CHECK_OUT,
+      lodgeId: "lodge-b",
+    });
+
+    expect(result.offeredBookingId).toBe("entry-b");
+    // The position count is scoped to the candidate's own lodge.
+    expect(currentTx.booking.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
+      }),
+    );
+    // The admin alert (and audit metadata) report position 1, not 4.
+    expect(mocks.sendAdminWaitlistOfferAlert).toHaveBeenCalledWith(
+      expect.objectContaining({ position: 1 }),
+    );
+  });
+
   it("never builds a cross-lodge opportunity for a candidate who did not opt into the freed lodge", async () => {
     const nonOptIn = candidate({
       id: "entry-a",

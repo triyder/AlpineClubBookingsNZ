@@ -196,6 +196,36 @@ describe("getWaitlistPosition", () => {
     const position = await getWaitlistPosition("nonexistent");
     expect(position).toBe(0);
   });
+
+  it("counts only the entry's own lodge (M6): first in line at lodge B, not behind older lodge A entries", async () => {
+    const { getWaitlistPosition } = await import("@/lib/waitlist");
+
+    // The entry waits at lodge B. Older overlapping WAITLISTED entries exist at
+    // lodge A; club-wide counting would put this entry at position 4, but the
+    // per-lodge queue makes it position 1.
+    mockBookingFindUnique.mockResolvedValue({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-08T12:00:00Z"),
+      status: "WAITLISTED",
+      lodgeId: "lodge-b",
+    });
+    // The three ahead-of-you entries all sit at lodge A; only lodge-B entries
+    // are counted.
+    const aheadByLodge: Record<string, number> = { "lodge-a": 3, "lodge-b": 0 };
+    mockBookingCount.mockImplementation(async (args: { where: { lodgeId?: string } }) =>
+      args.where.lodgeId ? aheadByLodge[args.where.lodgeId] ?? 0 : 3
+    );
+
+    const position = await getWaitlistPosition("booking1");
+
+    expect(position).toBe(1);
+    expect(mockBookingCount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
+      })
+    );
+  });
 });
 
 describe("getWaitlistForDates", () => {
@@ -210,13 +240,15 @@ describe("getWaitlistForDates", () => {
 
     const result = await getWaitlistForDates(
       new Date("2026-07-01"),
-      new Date("2026-07-05")
+      new Date("2026-07-05"),
+      "lodge-b"
     );
 
     expect(result).toEqual(mockEntries);
+    // Per-lodge queue (M6): the query is scoped to the supplied lodge.
     expect(mockBookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ status: "WAITLISTED" }),
+        where: expect.objectContaining({ status: "WAITLISTED", lodgeId: "lodge-b" }),
         orderBy: { createdAt: "asc" },
       })
     );
@@ -843,6 +875,87 @@ describe("expireStaleOffers", () => {
       expect.objectContaining({
         where: { id: "expired-offer-1" },
         data: expect.objectContaining({ status: "WAITLISTED" }),
+      })
+    );
+  });
+
+  it("reprocesses each lodge's own queue when two same-range offers expire at different lodges (M2)", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
+
+    const checkIn = new Date("2026-09-01");
+    const checkOut = new Date("2026-09-03");
+
+    // Two expired same-lodge offers sharing a date range, one at each lodge.
+    // A date-only affectedRanges key would collapse them into a single
+    // default-lodge reprocess; keying by lodge keeps them separate so each
+    // lodge's own queue is served.
+    const offerA = {
+      id: "offer-a",
+      lodgeId: "lodge-a",
+      waitlistOfferedLodgeId: null,
+      checkIn,
+      checkOut,
+      createdAt: new Date("2026-05-01"),
+      member: { email: "a@test.com", firstName: "A" },
+    };
+    const offerB = {
+      id: "offer-b",
+      lodgeId: "lodge-b",
+      waitlistOfferedLodgeId: null,
+      checkIn,
+      checkOut,
+      createdAt: new Date("2026-05-02"),
+      member: { email: "b@test.com", firstName: "B" },
+    };
+    function nextInLine(id: string, lodgeId: string, createdAt: string) {
+      return {
+        id,
+        memberId: `m-${id}`,
+        lodgeId,
+        checkIn,
+        checkOut,
+        createdAt: new Date(createdAt),
+        totalPriceCents: 20000,
+        finalPriceCents: 20000,
+        guests: [{ id: `g-${id}`, ageTier: "ADULT", isMember: true, memberId: `m-${id}`, nights: [] }],
+        member: { id: `m-${id}`, email: `${id}@test.com`, firstName: id, lastName: "Next" },
+        waitlistAlternateLodges: [],
+        promoRedemption: null,
+      };
+    }
+
+    mockTx.booking.findMany
+      .mockResolvedValueOnce([offerA, offerB]) // the offers query
+      .mockResolvedValueOnce([nextInLine("cand-a", "lodge-a", "2026-06-01")]) // pass 1: lodge A
+      .mockResolvedValueOnce([nextInLine("cand-b", "lodge-b", "2026-06-02")]) // pass 2: lodge B
+      .mockResolvedValue([]);
+    mockTx.lodge.findMany.mockResolvedValue([{ id: "lodge-a" }, { id: "lodge-b" }]);
+    vi.mocked(checkCapacityForGuestRanges).mockResolvedValue({
+      available: true,
+      minAvailable: 1,
+      nightDetails: [],
+    });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+
+    const result = await expireStaleOffers();
+
+    expect(result.expiredCount).toBe(2);
+    // Two independent reprocess passes ran — proving the same-range offers at
+    // two lodges did not collapse into a single call.
+    expect(result.reofferedCount).toBe(2);
+    // Each lodge's own next-in-line was offered.
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-a" },
+        data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
+      })
+    );
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cand-b" },
+        data: expect.objectContaining({ status: "WAITLIST_OFFERED" }),
       })
     );
   });
