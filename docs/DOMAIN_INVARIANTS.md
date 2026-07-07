@@ -801,8 +801,14 @@ only. Do not add committee positions to access roles or `Member.role`.
 `CommitteeRole` master records and `CommitteeAssignment` member links can be
 active/inactive independently of access role and seasonal membership type, and
 newly linked assignments are hidden until explicitly published by an admin.
-Committee contact routing uses the role email alias stored on `CommitteeRole`,
-falling back to the linked member's email only when the role email is blank.
+Committee contact routing is chosen per assignment via
+`CommitteeAssignment.contactEmailMode` (`ROLE`, `MEMBER`, or `CUSTOM`, default
+`ROLE`). `ROLE` uses the role email alias stored on `CommitteeRole`, `MEMBER`
+uses the linked member's own email, and `CUSTOM` uses
+`CommitteeAssignment.contactEmailOverride` (required and email-validated when
+the mode is `CUSTOM`; forced null under `ROLE`/`MEMBER`). If the selected mode's
+address is missing or deactivated, delivery falls back to the role email and
+then the member's email so public contact mail is never black-holed.
 Booking pricing, booking block checks, and effective subscription lockout may
 depend on the member's seasonal membership type for the
 booking season; application access and committee presentation must not.

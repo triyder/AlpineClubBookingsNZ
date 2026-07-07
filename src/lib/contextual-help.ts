@@ -1674,6 +1674,7 @@ const adminHelpEntries: HelpEntry[] = [
         "Create or archive master roles before assigning members to them.",
         "Set public display flags deliberately; new assignments should stay hidden until reviewed.",
         "Use role email aliases for public contact routing when privacy matters.",
+        "When an assignment is Contactable, choose per assignment whether public contact messages route to the committee role email, the member's own email, or a custom address (role falls back to the member email when the role alias is blank).",
       ],
       [
         {

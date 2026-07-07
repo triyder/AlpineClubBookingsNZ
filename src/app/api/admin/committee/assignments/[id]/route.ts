@@ -7,6 +7,7 @@ import {
 } from "@/lib/audit";
 import {
   committeeAssignmentSelect,
+  normalizeCommitteeEmail,
   normalizeCommitteeText,
   serializeCommitteeAssignment,
 } from "@/lib/committee";
@@ -24,6 +25,14 @@ const patchSchema = z
     published: z.boolean().optional(),
     showPhone: z.boolean().optional(),
     contactable: z.boolean().optional(),
+    contactEmailMode: z.enum(["ROLE", "MEMBER", "CUSTOM"]).optional(),
+    contactEmailOverride: z
+      .string()
+      .trim()
+      .max(320)
+      .email("Invalid committee email")
+      .nullable()
+      .optional(),
     isActive: z.boolean().optional(),
   })
   .strict();
@@ -111,6 +120,35 @@ export async function PATCH(
   if (parsed.data.isActive !== undefined) {
     data.isActive = parsed.data.isActive;
   }
+
+  const modeProvided = parsed.data.contactEmailMode !== undefined;
+  const overrideProvided = parsed.data.contactEmailOverride !== undefined;
+  const nextMode = parsed.data.contactEmailMode ?? existing.contactEmailMode;
+  if (modeProvided) {
+    data.contactEmailMode = parsed.data.contactEmailMode;
+  }
+  if (nextMode === "CUSTOM") {
+    const resolvedOverride = normalizeCommitteeEmail(
+      parsed.data.contactEmailOverride ?? existing.contactEmailOverride,
+    );
+    if (!resolvedOverride) {
+      return NextResponse.json(
+        {
+          error:
+            "A custom committee email is required when contact email mode is CUSTOM",
+        },
+        { status: 400 },
+      );
+    }
+    if (overrideProvided || modeProvided) {
+      data.contactEmailOverride = resolvedOverride;
+    }
+  } else if (modeProvided) {
+    // Mode moved away from CUSTOM: drop any stale custom address.
+    data.contactEmailOverride = null;
+  }
+  // If only contactEmailOverride was supplied under a non-CUSTOM mode, it is
+  // intentionally ignored so a custom address can't linger under ROLE/MEMBER.
 
   const updated = await prisma.$transaction(async (tx) => {
     const assignment = await tx.committeeAssignment.update({
