@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Archive,
   ArrowDown,
   ArrowUp,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Trash2,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -141,6 +143,30 @@ const xeroRuleModeLabels: Record<XeroContactGroupRuleMode, string> = {
 const knownAgeTierOrder = ["INFANT", "CHILD", "YOUTH", "ADULT"];
 const allAgeTierValue = "__all__";
 const noXeroGroupValue = "__none__";
+
+type XeroContactGroupRule = MembershipType["xeroContactGroupRules"][number];
+
+function normalizedXeroRuleKey(rule: XeroContactGroupRule) {
+  return `${rule.mode}:${rule.ageTier ?? "ALL"}:${rule.groupId}:${
+    rule.isActive
+  }`;
+}
+
+// Compares the meaningful Xero-rule surface (mode, age scope, group, active) of
+// two types so the merge dialog can warn when reassigned members would land on a
+// type with different Xero contact-group behavior.
+function xeroRulesDiffer(
+  left: readonly XeroContactGroupRule[],
+  right: readonly XeroContactGroupRule[],
+) {
+  const leftKeys = new Set(left.map(normalizedXeroRuleKey));
+  const rightKeys = new Set(right.map(normalizedXeroRuleKey));
+  if (leftKeys.size !== rightKeys.size) return true;
+  for (const key of leftKeys) {
+    if (!rightKeys.has(key)) return true;
+  }
+  return false;
+}
 
 function formatAgeTierLabel(ageTier: AgeTier) {
   return ageTier
@@ -859,15 +885,154 @@ function MembershipTypeEditorDialog({
   );
 }
 
+interface MembershipTypeMergeDialogProps {
+  source: MembershipType | null;
+  membershipTypes: MembershipType[];
+  targetId: string;
+  merging: boolean;
+  onTargetChange: (targetId: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function MembershipTypeMergeDialog({
+  source,
+  membershipTypes,
+  targetId,
+  merging,
+  onTargetChange,
+  onCancel,
+  onConfirm,
+}: MembershipTypeMergeDialogProps) {
+  const isOpen = source !== null;
+  // Only active, non-archived types other than the source can receive
+  // assignments (mirrors the server merge guard).
+  const targetOptions = source
+    ? membershipTypes.filter(
+        (type) => type.isActive && type.id !== source.id,
+      )
+    : [];
+  const target = targetOptions.find((type) => type.id === targetId) ?? null;
+  const assignmentCount = source?.assignmentCount ?? 0;
+  const xeroWarning =
+    source && target
+      ? xeroRulesDiffer(
+          source.xeroContactGroupRules,
+          target.xeroContactGroupRules,
+        )
+      : false;
+
+  return (
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && !merging) onCancel();
+      }}
+    >
+      <DialogContent className="max-w-lg" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Delete {source?.name ?? "membership type"}</DialogTitle>
+          <DialogDescription>
+            {source?.name ?? "This type"} still has {assignmentCount} seasonal
+            assignment{assignmentCount === 1 ? "" : "s"}. Move{" "}
+            {assignmentCount === 1 ? "it" : "them"} to another type, then delete
+            this one. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="membership-type-merge-target">Move assignments to</Label>
+            <Select
+              value={targetId || ""}
+              onValueChange={onTargetChange}
+              disabled={merging || targetOptions.length === 0}
+            >
+              <SelectTrigger id="membership-type-merge-target">
+                <SelectValue placeholder="Select a target type" />
+              </SelectTrigger>
+              <SelectContent>
+                {targetOptions.map((type) => (
+                  <SelectItem key={type.id} value={type.id}>
+                    {type.name}
+                    {type.isBuiltIn ? " (Built-in)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {targetOptions.length === 0 && (
+              <p className="text-sm text-amber-800">
+                No active target type is available. Reactivate or create a type
+                to merge into.
+              </p>
+            )}
+          </div>
+
+          {target && (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              Move {assignmentCount} assignment
+              {assignmentCount === 1 ? "" : "s"} from{" "}
+              <span className="font-medium">{source?.name}</span> to{" "}
+              <span className="font-medium">{target.name}</span>, then delete{" "}
+              <span className="font-medium">{source?.name}</span>.
+            </div>
+          )}
+
+          {xeroWarning && (
+            <div
+              role="alert"
+              className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                {source?.name} and {target?.name} have different Xero
+                contact-group rules. Reassigned members keep their Xero group
+                membership until the next Xero reconciliation; review the target
+                type&apos;s Xero rules before confirming.
+              </span>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:space-x-0">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onCancel}
+            disabled={merging}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={merging || !target}
+          >
+            {merging ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="mr-2 h-4 w-4" />
+            )}
+            Merge and delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface MembershipTypeListProps {
   membershipTypes: MembershipType[];
   drafts: Record<string, DraftMembershipType>;
   availableAgeTiers: AgeTier[];
   savingId: string | null;
+  deletingId: string | null;
   reordering: boolean;
   onEdit: (type: MembershipType) => void;
   onMove: (index: number, direction: -1 | 1) => void;
   onSetActive: (type: MembershipType, isActive: boolean) => void;
+  onDelete: (type: MembershipType) => void;
 }
 
 function MembershipTypeList({
@@ -875,10 +1040,12 @@ function MembershipTypeList({
   drafts,
   availableAgeTiers,
   savingId,
+  deletingId,
   reordering,
   onEdit,
   onMove,
   onSetActive,
+  onDelete,
 }: MembershipTypeListProps) {
   if (membershipTypes.length === 0) {
     return (
@@ -1004,6 +1171,22 @@ function MembershipTypeList({
                   )}
                   {type.isActive ? "Archive" : "Reactivate"}
                 </Button>
+                {!type.isBuiltIn && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onDelete(type)}
+                    disabled={deletingId === type.id}
+                    aria-label={`Delete ${type.name}`}
+                  >
+                    {deletingId === type.id ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="mr-2 h-4 w-4" />
+                    )}
+                    Delete
+                  </Button>
+                )}
               </div>
             </div>
           </article>
@@ -1026,6 +1209,10 @@ export default function AdminMembershipTypesPage() {
   const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [mergeSource, setMergeSource] = useState<MembershipType | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState("");
+  const [merging, setMerging] = useState(false);
   const [creating, setCreating] = useState(false);
   const [reordering, setReordering] = useState(false);
   const [rollForwardFromSeasonYear, setRollForwardFromSeasonYear] =
@@ -1043,6 +1230,7 @@ export default function AdminMembershipTypesPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   const { scrollToError, scrollToTop } = useScrollToFeedback();
+  const { confirm, confirmDialog } = useConfirm();
 
   const sortedTypes = useMemo(
     () =>
@@ -1381,6 +1569,120 @@ export default function AdminMembershipTypesPage() {
     }
   }
 
+  async function deleteMembershipType(type: MembershipType) {
+    setDeletingId(type.id);
+    setError("");
+    setSavedMessage("");
+
+    try {
+      const response = await fetch(`/api/admin/membership-types/${type.id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string }
+        | null;
+      if (!response.ok || !body?.ok) {
+        throw new Error(
+          responseErrorMessage(body, "Failed to delete membership type"),
+        );
+      }
+      setMembershipTypes((current) =>
+        current.filter((item) => item.id !== type.id),
+      );
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[type.id];
+        return next;
+      });
+      setSavedMessage(`Deleted ${type.name}.`);
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete membership type",
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function requestDelete(type: MembershipType) {
+    setError("");
+    setSavedMessage("");
+
+    // A custom type with seasonal assignments cannot be deleted outright — route
+    // the admin into the merge (reassign-then-delete) flow instead.
+    if (type.assignmentCount > 0) {
+      setMergeTargetId("");
+      setMergeSource(type);
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: `Delete ${type.name}?`,
+      description:
+        "Permanently deletes this membership type. This cannot be undone.",
+      confirmLabel: "Delete type",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await deleteMembershipType(type);
+  }
+
+  async function mergeMembershipType() {
+    if (!mergeSource || !mergeTargetId) return;
+
+    const source = mergeSource;
+    const sourceName = source.name;
+    const targetName =
+      membershipTypes.find((type) => type.id === mergeTargetId)?.name ?? "type";
+
+    setMerging(true);
+    setError("");
+    setSavedMessage("");
+
+    try {
+      const response = await fetch(
+        `/api/admin/membership-types/${source.id}/merge`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetId: mergeTargetId }),
+        },
+      );
+      const body = (await response.json().catch(() => null)) as
+        | { ok?: boolean; reassignedCount?: number; error?: string }
+        | null;
+      if (!response.ok || !body?.ok) {
+        throw new Error(
+          responseErrorMessage(body, "Failed to merge membership type"),
+        );
+      }
+      const reassignedCount = body.reassignedCount ?? 0;
+      setMergeSource(null);
+      setMergeTargetId("");
+      // Reload so the deleted source disappears and the target's assignment
+      // count reflects the reassignment.
+      await loadMembershipTypes();
+      setSavedMessage(
+        `Moved ${reassignedCount} assignment${
+          reassignedCount === 1 ? "" : "s"
+        } from ${sourceName} to ${targetName}, then deleted ${sourceName}.`,
+      );
+    } catch (mergeError) {
+      setError(
+        mergeError instanceof Error
+          ? mergeError.message
+          : "Failed to merge membership type",
+      );
+    } finally {
+      setMerging(false);
+    }
+  }
+
   function moveType(index: number, direction: -1 | 1) {
     const targetIndex = index + direction;
     if (targetIndex < 0 || targetIndex >= sortedTypes.length) {
@@ -1526,10 +1828,12 @@ export default function AdminMembershipTypesPage() {
           drafts={drafts}
           availableAgeTiers={availableAgeTiers}
           savingId={savingId}
+          deletingId={deletingId}
           reordering={reordering}
           onEdit={openEditEditor}
           onMove={moveType}
           onSetActive={(type, isActive) => void setActive(type, isActive)}
+          onDelete={(type) => void requestDelete(type)}
         />
       </section>
 
@@ -1711,6 +2015,22 @@ export default function AdminMembershipTypesPage() {
           if (editingType) void setActive(editingType, isActive);
         }}
       />
+
+      <MembershipTypeMergeDialog
+        source={mergeSource}
+        membershipTypes={sortedTypes}
+        targetId={mergeTargetId}
+        merging={merging}
+        onTargetChange={setMergeTargetId}
+        onCancel={() => {
+          if (merging) return;
+          setMergeSource(null);
+          setMergeTargetId("");
+        }}
+        onConfirm={() => void mergeMembershipType()}
+      />
+
+      {confirmDialog}
     </div>
   );
 }

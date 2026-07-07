@@ -836,6 +836,21 @@ Family, School, or another
 configured type. Age-tier Xero groups and membership-type Xero groups may both
 exist; duplicate exact rules and multiple managed rules for the same scope are
 not valid.
+Built-in membership types can never be deleted or merged. A custom type may be
+deleted only when it has zero `SeasonalMembershipAssignment` rows; a custom type
+that still has assignments must be merged into another type first. A merge
+requires an active (non-archived) target that is not the source and whose
+allowed age tiers cover every affected member's current age tier
+(`NOT_APPLICABLE`/organisation members are exempt because they are excluded from
+all age-tier policy); it reassigns every source assignment to the target and
+deletes the source in one transaction, writing both a `MEMBERSHIP_TYPE_MERGED`
+and a `MEMBERSHIP_TYPE_DELETED` audit record. Because reassigning an
+assignment's membership type never changes its `(memberId, seasonYear)`, the
+merge cannot violate the per-season uniqueness constraint. Merges (like every
+other seasonal assignment change) do not synchronously resync Xero contact
+groups; reassigned members reconcile through the existing periodic/mismatch Xero
+tooling, and the admin is warned before confirming when the source and target
+Xero rules differ.
 Organisation-type members (the `ORG` access role or the legacy `SCHOOL` role)
 always carry the `NOT_APPLICABLE` age tier, and no other member may hold it —
 the server forces it on every org create/update, rejects it for people, and
