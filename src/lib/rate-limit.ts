@@ -70,7 +70,7 @@ export interface RateLimitConfig {
  * per-process fallback. 4 covers the blue/green double-slot deployment plus
  * headroom for process restarts resetting in-memory counters mid-window.
  */
-export const DEGRADED_AUTH_LIMIT_DIVISOR = 4;
+const DEGRADED_AUTH_LIMIT_DIVISOR = 4;
 
 export interface RateLimitResult {
   success: boolean;

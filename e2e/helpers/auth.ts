@@ -57,13 +57,9 @@ export function readStoredTwoFactor(email: string): StoredTwoFactor | null {
   return JSON.parse(fs.readFileSync(file, "utf8")) as StoredTwoFactor;
 }
 
-export function storeTwoFactor(email: string, data: StoredTwoFactor): void {
+function storeTwoFactor(email: string, data: StoredTwoFactor): void {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
   fs.writeFileSync(twoFactorPath(email), JSON.stringify(data, null, 2));
-}
-
-export function clearStoredTwoFactor(email: string): void {
-  fs.rmSync(twoFactorPath(email), { force: true });
 }
 
 // Each persona logs in from its own synthetic client IP (via x-forwarded-for,
@@ -146,7 +142,7 @@ export async function enrollTotp(page: Page, email: string): Promise<StoredTwoFa
 }
 
 // Answers the /login/verify challenge with a TOTP code for the stored secret.
-export async function verifyTotp(page: Page, secret: string): Promise<void> {
+async function verifyTotp(page: Page, secret: string): Promise<void> {
   await expect(page.getByText("Verify your sign-in")).toBeVisible();
   await page.locator("#two-factor-code").fill(totpCode(secret));
   await page.getByRole("button", { name: "Verify" }).click();

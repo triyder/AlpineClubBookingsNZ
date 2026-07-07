@@ -18,9 +18,9 @@ import {
 import { getNominationTokenExpiryDate } from "@/lib/nomination-token-policy";
 import { prisma } from "@/lib/prisma";
 
-export const TOKEN_EMAIL_RECOVERY_ACTION = "email.token_lifecycle.reissued";
+const TOKEN_EMAIL_RECOVERY_ACTION = "email.token_lifecycle.reissued";
 
-export const TOKEN_EMAIL_RECOVERY_TEMPLATES = [
+const TOKEN_EMAIL_RECOVERY_TEMPLATES = [
   "nomination-request",
   "member-setup-invite",
   "membership-cancellation-confirmation",
@@ -43,7 +43,7 @@ export class TokenEmailRecoveryError extends Error {
   }
 }
 
-export interface TokenEmailRecoveryQueueItem {
+interface TokenEmailRecoveryQueueItem {
   id: string;
   to: string;
   subject: string;

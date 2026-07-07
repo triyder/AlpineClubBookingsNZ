@@ -33,13 +33,9 @@
     // shadcn/ui vendored primitives keep the full Radix-parity export/type surface
     // by design; unused idiom exports are expected (#1129/#1178 kept class).
     "src/components/ui/**": ["exports", "types"],
-    // e2e 2FA test-seam helpers retained for #1134 (#1178 kept class).
-    "e2e/helpers/auth.ts": ["exports"],
-    // Type-only export TwoFactorStatus kept as documented shape (#1178 kept class).
-    "src/lib/two-factor.ts": ["types"],
-    // Type-only exports kept (#1178) + intentional backward-compat alias
+    // Intentional backward-compat alias
     // getMemberProfileCompleteness = evaluateMemberProfileCompleteness.
-    "src/lib/member-profile-completeness.ts": ["types", "duplicates"],
+    "src/lib/member-profile-completeness.ts": ["duplicates"],
     // Intentional backward-compat alias FALLBACK_LODGE_CAPACITY = CLUB_CONFIG_LODGE_CAPACITY.
     "src/lib/lodge-capacity.ts": ["duplicates"],
     // Intentional documented alias SCHOOL_GROUP_SOFT_CAP = DEFAULT_SCHOOL_GROUP_SOFT_CAP

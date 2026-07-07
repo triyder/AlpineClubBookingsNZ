@@ -18,7 +18,7 @@ export type AuditCategory =
   | (string & {});
 
 export type AuditSeverity = "info" | "important" | "critical";
-export type AuditOutcome = "success" | "failure" | "blocked";
+type AuditOutcome = "success" | "failure" | "blocked";
 export type AuditRetentionClass =
   | "critical"
   | "sensitive_access"

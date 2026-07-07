@@ -38,7 +38,7 @@ const PRISMA_ONLY_DATABASE_URL_PARAMS = new Set([
   "schema",
 ]);
 
-export interface BackupRestoreValidation {
+interface BackupRestoreValidation {
   source: "local-file" | "s3-readback";
   memberCount: number;
   bookingCount: number;

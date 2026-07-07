@@ -1,4 +1,4 @@
-export type ApiRouteBoundary =
+type ApiRouteBoundary =
   | "public"
   | "webhook"
   | "member"
@@ -180,7 +180,7 @@ export const explicitPublicApiRoutes = {
   },
 } as const satisfies Record<string, ApiRouteSecurityMetadata>;
 
-export type ApiRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type ApiRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type MixedMethodApiRouteMetadata = {
   methods: Partial<

@@ -17,21 +17,14 @@ const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const ENCRYPTION_VERSION = "v1";
 
-export const TWO_FACTOR_EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
-export const TWO_FACTOR_SESSION_CHALLENGE_TTL_MS = 2 * 60 * 1000;
-export const TWO_FACTOR_RECOVERY_CODE_COUNT = 10;
-export const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
-export const TWO_FACTOR_TOTP_WINDOW = 1;
+const TWO_FACTOR_EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+const TWO_FACTOR_SESSION_CHALLENGE_TTL_MS = 2 * 60 * 1000;
+const TWO_FACTOR_RECOVERY_CODE_COUNT = 10;
+const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30;
+const TWO_FACTOR_TOTP_WINDOW = 1;
 // test seam
 export const TWO_FACTOR_MAX_FAILED_ATTEMPTS = 5;
-export const TWO_FACTOR_LOCKOUT_MS = 15 * 60 * 1000;
-
-export type TwoFactorStatus = {
-  required: boolean;
-  verified: boolean;
-  enrolled: boolean;
-  method: TwoFactorMethod | null;
-};
+const TWO_FACTOR_LOCKOUT_MS = 15 * 60 * 1000;
 
 function getSecretMaterial() {
   const secret = getAuthSecret();
@@ -94,11 +87,11 @@ export function decryptTwoFactorSecret(encrypted: string): string {
   return decrypted;
 }
 
-export function normalizeOtpCode(code: string) {
+function normalizeOtpCode(code: string) {
   return code.replace(/\s+/g, "").trim();
 }
 
-export function normalizeRecoveryCode(code: string) {
+function normalizeRecoveryCode(code: string) {
   return code.replace(/[\s-]+/g, "").trim().toUpperCase();
 }
 
@@ -117,16 +110,16 @@ export function hashRecoveryCode(code: string) {
   return hashTwoFactorCode(normalizeRecoveryCode(code));
 }
 
-export function generateEmailOtpCode() {
+function generateEmailOtpCode() {
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
-export function generateRecoveryCode() {
+function generateRecoveryCode() {
   const raw = randomBytes(6).toString("hex").toUpperCase();
   return raw.match(/.{1,4}/g)?.join("-") ?? raw;
 }
 
-export function generateRecoveryCodes(count = TWO_FACTOR_RECOVERY_CODE_COUNT) {
+function generateRecoveryCodes(count = TWO_FACTOR_RECOVERY_CODE_COUNT) {
   return Array.from({ length: count }, () => generateRecoveryCode());
 }
 

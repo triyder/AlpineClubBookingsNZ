@@ -7,7 +7,7 @@ import {
   getActiveTwoFactorLockout,
 } from "@/lib/two-factor";
 
-export const TWO_FACTOR_MEMBER_SELECT = {
+const TWO_FACTOR_MEMBER_SELECT = {
   id: true,
   email: true,
   firstName: true,

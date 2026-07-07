@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "crypto";
 
-export const ACTION_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
+const ACTION_TOKEN_PATTERN = /^[a-f0-9]{64}$/;
 
 export type IssuedActionToken = {
   token: string;

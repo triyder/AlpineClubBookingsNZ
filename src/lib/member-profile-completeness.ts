@@ -9,7 +9,7 @@ import {
   hasLodgeAccess,
 } from "@/lib/access-roles";
 
-export type MemberProfileConfirmationMode = "self" | "delegated" | "not_allowed";
+type MemberProfileConfirmationMode = "self" | "delegated" | "not_allowed";
 
 export type MemberProfileMissingField =
   | "firstName"
@@ -79,9 +79,6 @@ export interface MemberProfileCompletenessOptions {
   delegatedConfirmationValid?: boolean;
 }
 
-export type ConfirmationMode = MemberProfileConfirmationMode;
-export type MemberProfileCompleteness = MemberProfileCompletenessResult;
-
 export interface SelfServiceProfilePayloadCompletenessResult {
   isProfileComplete: boolean;
   missingFields: MemberProfileMissingField[];
@@ -96,7 +93,7 @@ const REQUIRED_POSTAL_ADDRESS_FIELDS = POSTAL_ADDRESS_FIELDS.filter(
   (field) => field !== "postalAddressLine2"
 );
 
-export const MEMBER_PROFILE_FIELD_LABELS: Record<MemberProfileMissingField, string> = {
+const MEMBER_PROFILE_FIELD_LABELS: Record<MemberProfileMissingField, string> = {
   firstName: "First Name",
   lastName: "Last Name",
   phoneCountryCode: "Phone Country Code",

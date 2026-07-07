@@ -12,7 +12,7 @@ import {
   type AuditTimelineCategory,
 } from "@/lib/audit-query";
 
-export const adminAuditLogQuerySchema = z.object({
+const adminAuditLogQuerySchema = z.object({
   eventType: z.string().max(160).optional(),
   action: z.string().max(160).optional(),
   category: z.string().optional().default("all"),
@@ -31,7 +31,7 @@ export const adminAuditLogQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
 
-export type AdminAuditLogFilters = {
+type AdminAuditLogFilters = {
   eventType: string;
   category: AuditTimelineCategory;
   memberId: string | null;
@@ -44,7 +44,7 @@ export type AdminAuditLogFilters = {
   q: string | null;
 };
 
-export type ParsedAdminAuditLogQuery = {
+type ParsedAdminAuditLogQuery = {
   page: number;
   pageSize: number;
   category: AuditTimelineCategory;
@@ -66,14 +66,14 @@ function getSearchParam(searchParams: URLSearchParams, name: string) {
   return searchParams.get(name) ?? undefined;
 }
 
-export function optionalAuditFilter(value?: string): string | undefined {
+function optionalAuditFilter(value?: string): string | undefined {
   if (!value || value === "all") {
     return undefined;
   }
   return value;
 }
 
-export function buildAuditDateWhere(params: {
+function buildAuditDateWhere(params: {
   from?: string;
   to?: string;
 }): Prisma.AuditLogWhereInput | null {
@@ -91,7 +91,7 @@ export function buildAuditDateWhere(params: {
   return { createdAt };
 }
 
-export function buildAuditTextSearchWhere(
+function buildAuditTextSearchWhere(
   q?: string,
 ): Prisma.AuditLogWhereInput | null {
   const search = q?.trim();
@@ -111,7 +111,7 @@ export function buildAuditTextSearchWhere(
   };
 }
 
-export function buildGlobalAuditWhere(params: {
+function buildGlobalAuditWhere(params: {
   eventType?: string;
   category: AuditTimelineCategory;
   memberId?: string;

@@ -1,6 +1,6 @@
 import type { AccessRole, FinanceAccessLevel, Role } from "@prisma/client";
 
-export const ACCESS_ROLE_VALUES = [
+const ACCESS_ROLE_VALUES = [
   "USER",
   "ADMIN",
   "ADMIN_READONLY",
@@ -84,7 +84,7 @@ export function isAccessRole(
   return ACCESS_ROLE_VALUES.includes(value as AppAccessRole);
 }
 
-export function legacyRoleToAccessRoles(
+function legacyRoleToAccessRoles(
   role: Role | string | null | undefined,
   canLogin?: boolean | null,
 ): AppAccessRole[] {
@@ -102,7 +102,7 @@ export function legacyRoleToAccessRoles(
   }
 }
 
-export function financeAccessLevelToAccessRoles(
+function financeAccessLevelToAccessRoles(
   financeAccessLevel: FinanceAccessLevel | string | null | undefined,
 ): AppAccessRole[] {
   switch (financeAccessLevel) {
@@ -192,7 +192,7 @@ export function resolveAccessRoles(input: AccessRoleInput): AppAccessRole[] {
  * definition link), and the AccessRoleDefinition id for custom roles.
  * Tokens are what the picker submits and what the Full-Admin gate compares.
  */
-export function accessRoleTokenFromAssignment(
+function accessRoleTokenFromAssignment(
   item:
     | AppAccessRole
     | AccessRole

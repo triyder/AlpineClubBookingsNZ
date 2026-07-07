@@ -18,7 +18,7 @@ export const AUDIT_TIMELINE_CATEGORY_OPTIONS = [
 export type AuditTimelineCategory =
   (typeof AUDIT_TIMELINE_CATEGORY_OPTIONS)[number]["value"];
 
-export const MEMBER_VISIBLE_AUDIT_CATEGORIES = [
+const MEMBER_VISIBLE_AUDIT_CATEGORIES = [
   "account",
   "booking",
   "payment",
@@ -107,7 +107,7 @@ export function getAuditLogActorMemberId(
   return log.actorMemberId ?? log.memberId ?? null;
 }
 
-export function getAuditLogSubjectMemberId(
+function getAuditLogSubjectMemberId(
   log: Pick<
     AuditLog,
     "action" | "subjectMemberId" | "entityType" | "entityId" | "targetId"
@@ -263,7 +263,7 @@ export function buildMemberVisibleAuditLogWhere(
   };
 }
 
-export const auditTimelineSelect = {
+const auditTimelineSelect = {
   id: true,
   action: true,
   memberId: true,
@@ -301,7 +301,7 @@ type AuditTimelineActorRecord = Prisma.MemberGetPayload<{
   select: typeof auditActorSelect;
 }>;
 
-export type AuditTimelineMember = {
+type AuditTimelineMember = {
   id: string;
   firstName: string;
   lastName: string;
@@ -309,7 +309,7 @@ export type AuditTimelineMember = {
   role?: string;
 };
 
-export type AuditTimelineActor = AuditTimelineMember;
+type AuditTimelineActor = AuditTimelineMember;
 
 export type AuditDrilldownLink = {
   label: string;
