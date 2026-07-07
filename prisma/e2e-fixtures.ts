@@ -240,16 +240,19 @@ export const CROSS_LODGE_OFFER_WINDOW = {
   nights: ["2026-08-24", "2026-08-25"],
 };
 
-// #1609 tripwire: the same cross-lodge offer shape but with the guest row
-// member-linked (Wanda herself). Runtime-confirmed to be blocked today — the
-// Phase-2 member-night guard receives no exclude-id and trips on the entry's
-// own WAITLIST_OFFERED booking — so member-cross-lodge.spec.ts encodes its
-// confirm as test.fail(); the suite goes loud (unexpected pass) the moment
-// #1609 is fixed. Window is disjoint from every other lodge-B fixture.
+// #1628/#1609 regression (scenario e): the same cross-lodge offer shape but
+// with the guest row member-linked (Wanda herself). The Phase-2 member-night
+// guard now excludes the entry being replaced, so this confirm must succeed
+// exactly like (d). The window must be disjoint from EVERY booking that lists
+// Wanda as a member-linked guest — the guard is cross-lodge and per-member by
+// design. (The old tripwire sat on 2026-09-07..09, which exactly collided
+// with Wanda's IB_WINDOW booking: the expected-fail spec was double-blocked
+// and could never flip green on the guard fix alone.) Late September is
+// in-season (Winter 2026 ends 09-30) and untouched by any other fixture.
 export const CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID =
   "e2e-cross-lodge-offer-member-guest";
 export const CROSS_LODGE_OFFER_MEMBER_GUEST_WINDOW = {
-  checkIn: "2026-09-07",
-  checkOut: "2026-09-09",
-  nights: ["2026-09-07", "2026-09-08"],
+  checkIn: "2026-09-28",
+  checkOut: "2026-09-30",
+  nights: ["2026-09-28", "2026-09-29"],
 };

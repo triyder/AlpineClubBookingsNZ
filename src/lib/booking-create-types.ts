@@ -91,6 +91,10 @@ export interface ConfirmedBookingInput extends BaseInput {
    * exclude is carried here, so the guard can never disagree with the booking
    * being created. Only the cross-lodge confirm path sets this; every other
    * caller leaves it undefined and the guard is skipped.
+   *
+   * The member-night conflict check excludes the same entry (#1628/#1609):
+   * the replaced WAITLIST_OFFERED booking may list the confirming member as a
+   * guest and must not count against the booking replacing it.
    */
   duplicateStayGuard?: { excludeBookingId: string };
 }

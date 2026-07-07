@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BookingStatus, AgeTier } from "@prisma/client";
 import { LodgeBookingEligibilityError } from "@/lib/lodge-access";
+import { BookingMemberNightConflictError } from "@/lib/booking-member-night-conflicts";
 
 const h = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -30,6 +31,7 @@ const h = vi.hoisted(() => ({
   groupJoinUpdate: vi.fn(),
   acquireLodgeCapacityLock: vi.fn(),
   bookingFindFirst: vi.fn(),
+  bookingGuestFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -143,6 +145,7 @@ const tx = {
   },
   payment: { create: (...a: unknown[]) => h.paymentCreate(...a) },
   lodge: { findFirst: (...a: unknown[]) => h.lodgeFindFirst(...a) },
+  bookingGuest: { findMany: (...a: unknown[]) => h.bookingGuestFindMany(...a) },
   memberLodgeAccess: {
     findMany: (...a: unknown[]) => h.memberLodgeAccessFindMany(...a),
   },
@@ -528,5 +531,104 @@ describe("in-transaction duplicate-stay guard (#1587 item 2)", () => {
 
     expect(outcome.type).toBe("created");
     expect(h.bookingFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("member-night guard excludes the replaced cross-lodge entry (#1628/#1609)", () => {
+  const duplicateStayGuard = { excludeBookingId: "entry-1" };
+  // The waitlister is a member-guest on her own entry: the guest row that
+  // trips the guard when the exclusion is missing.
+  const memberGuest: BookingGuestInput = { ...guest(true, "Wanda"), memberId: "member-1" };
+  // The entry's own guest row, shaped exactly as the finder's include returns
+  // it — a live WAITLIST_OFFERED booking overlapping the requested nights.
+  const entryOwnGuestRow = {
+    id: "entry-1-g0",
+    memberId: "member-1",
+    firstName: "Wanda",
+    lastName: "Test",
+    nights: [{ stayDate: checkIn }],
+    member: { firstName: "Wanda", lastName: "Test" },
+    booking: {
+      id: "entry-1",
+      memberId: "member-1",
+      status: BookingStatus.WAITLIST_OFFERED,
+      checkIn,
+      checkOut,
+      member: { firstName: "Wanda", lastName: "Test" },
+      guests: [{ id: "entry-1-g0", memberId: "member-1" }],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createdCount = 0;
+    h.transaction.mockImplementation(async (fn: (store: typeof tx) => Promise<unknown>) => fn(tx));
+    h.executeRaw.mockResolvedValue(undefined);
+    h.seasonFindMany.mockResolvedValue(mockSeasons);
+    h.checkCapacityForGuestRanges.mockResolvedValue({ available: true, nightDetails: [] });
+    h.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
+    h.bookingUpdate.mockResolvedValue({});
+    h.memberFindUnique.mockResolvedValue({ id: "member-1", firstName: "Mem", lastName: "Ber", email: "m@example.com" });
+    h.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
+    h.memberLodgeAccessFindMany.mockResolvedValue([]);
+    h.bookingFindFirst.mockResolvedValue(null);
+    // Discriminating DB emulation: honour the query's own exclusion. If the
+    // member-night finder excludes the replaced entry, its guest row is not
+    // returned (as a real database would omit it); if the exclusion is ever
+    // dropped, the entry's own row comes back and the guard throws — so this
+    // suite fails loudly on regression rather than merely asserting a
+    // where-clause shape.
+    h.bookingGuestFindMany.mockImplementation(
+      (args: { where: { booking: { id?: { not?: string } } } }) =>
+        Promise.resolve(args.where.booking.id?.not === "entry-1" ? [] : [entryOwnGuestRow])
+    );
+    h.bookingCreate.mockImplementation((args: { data: Record<string, unknown> }) => {
+      createdCount += 1;
+      const id = `booking-${createdCount}`;
+      const guestRows = (args.data.guests as { create: Array<Record<string, unknown>> }).create.map(
+        (g, i) => ({ ...g, id: `${id}-g${i}` })
+      );
+      return Promise.resolve({ ...args.data, id, guests: guestRows });
+    });
+  });
+
+  it("a member-guest cross-lodge confirm succeeds: the guard skips the entry being replaced", async () => {
+    const outcome = await createConfirmedBooking(
+      baseInput([memberGuest], { duplicateStayGuard })
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+    // Belt and braces: the finder's booking scope carried the exclusion.
+    const where = h.bookingGuestFindMany.mock.calls[0][0].where;
+    expect(where.booking.id).toEqual({ not: "entry-1" });
+  });
+
+  it("still rejects a genuine conflict on a DIFFERENT booking even with the exclusion set", async () => {
+    // The exclusion must be surgical — only the replaced entry is ignored. A
+    // real overlapping stay elsewhere still blocks the confirm.
+    const otherBookingConflict = {
+      ...entryOwnGuestRow,
+      id: "other-g0",
+      booking: { ...entryOwnGuestRow.booking, id: "other-booking", status: BookingStatus.PAID },
+    };
+    h.bookingGuestFindMany.mockResolvedValue([otherBookingConflict]);
+
+    await expect(
+      createConfirmedBooking(baseInput([memberGuest], { duplicateStayGuard }))
+    ).rejects.toBeInstanceOf(BookingMemberNightConflictError);
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("passes no exclusion for callers without duplicateStayGuard", async () => {
+    // Ordinary creation paths replace nothing; their member-night scope must
+    // stay exactly as before the #1628 fix. (The discriminator mock would
+    // throw here by design — this test only pins the query shape.)
+    h.bookingGuestFindMany.mockResolvedValue([]);
+    const outcome = await createConfirmedBooking(baseInput([memberGuest]));
+
+    expect(outcome.type).toBe("created");
+    const where = h.bookingGuestFindMany.mock.calls[0][0].where;
+    expect(where.booking.id).toBeUndefined();
   });
 });

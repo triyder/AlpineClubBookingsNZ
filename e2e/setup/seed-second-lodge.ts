@@ -342,13 +342,10 @@ async function main() {
 
   // 7. Cross-lodge waitlist offer (scenario d, ADR-004): Wanda's WAITLIST_OFFERED
   //    entry stays on lodge A, but its active offer is for lodge B. The guest
-  //    row deliberately carries NO memberId: a member-linked guest makes the
-  //    Phase-2 member-night guard trip on the entry's own WAITLIST_OFFERED
-  //    booking (issue #1609, runtime-confirmed), so the member-guest
-  //    composition can never confirm today — it is seeded separately below as
-  //    the #1609 expected-fail tripwire. A member booking on behalf of a
-  //    non-member guest is a standard domain shape, and it exercises the same
-  //    create-and-cancel accept path.
+  //    row carries NO memberId — a member booking on behalf of a non-member
+  //    guest is a standard domain shape, and it exercises the create-and-cancel
+  //    accept path. The member-linked composition (which #1628/#1609 used to
+  //    block) is seeded separately below as scenario (e)'s regression fixture.
   const offer = await createBookingWithGuests({
     id: CROSS_LODGE_OFFER_BOOKING_ID,
     memberId: wanda.id,
@@ -373,12 +370,12 @@ async function main() {
   });
   const offerPriceCents = await stampCrossLodgeOffer(offer.id);
 
-  // 7b. #1609 tripwire (expected-fail spec): the same offer shape but with the
-  //     guest row member-linked (Wanda herself). Runtime-confirmed to be
-  //     blocked by the Phase-2 member-night guard against the entry's own
-  //     WAITLIST_OFFERED booking; the spec encodes it as test.fail() so the
-  //     suite goes loud the moment #1609 is fixed. Disjoint window from every
-  //     other lodge-B fixture so it interacts with nothing else.
+  // 7b. #1628/#1609 regression fixture (scenario e): the same offer shape but
+  //     with the guest row member-linked (Wanda herself). The Phase-2
+  //     member-night guard used to trip on the entry's own WAITLIST_OFFERED
+  //     booking; it now excludes the entry being replaced, so this confirm
+  //     must succeed exactly like (d). Disjoint window from every other
+  //     lodge-B fixture so it interacts with nothing else.
   const memberGuestOffer = await createBookingWithGuests({
     id: CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID,
     memberId: wanda.id,
@@ -414,7 +411,7 @@ async function main() {
     `Second lodge seeded (E2E_MULTI_LODGE): "${SECOND_LODGE.name}" ` +
       `(${SECOND_LODGE_BED_COUNT} beds, ${lodgeASeasons.length} seasons), kiosk bound, ` +
       `cross-lodge offer ${CROSS_LODGE_OFFER_BOOKING_ID} @ ${offerPriceCents}c ` +
-      `(+ #1609 member-guest tripwire ${CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID}); multiLodge module enabled`,
+      `(+ #1628 member-guest regression ${CROSS_LODGE_OFFER_MEMBER_GUEST_BOOKING_ID}); multiLodge module enabled`,
   );
 }
 

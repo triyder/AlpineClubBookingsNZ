@@ -609,17 +609,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // disagree with the row about to be written; the confirm's own entry is
       // excluded by id.
       //
-      // Runs BEFORE the member-night guard on purpose: a member guest on the
-      // offer's still-live WAITLIST_OFFERED entry trips the member-night check
-      // in every guarded Phase-2 run — race or not — because that check
-      // receives no exclude-id here (pre-existing; tracked in #1609). Ordering
-      // this first at least makes the true race surface as the friendly
-      // DUPLICATE_STAY rejection rather than a generic member-night error. It
-      // is a strict no-op for a normal confirm and every non-cross-lodge
-      // caller: the only overlapping booking in those cases is the
-      // WAITLIST_OFFERED entry, and WAITLIST_OFFERED is not in
-      // DUPLICATE_STAY_BOOKING_STATUSES (ACTIVE + COMPLETED), so the query
-      // matches nothing and nothing throws until a real concurrent stay
+      // Runs BEFORE the member-night guard on purpose: when a real concurrent
+      // stay exists, the friendlier DUPLICATE_STAY rejection should win over a
+      // generic member-night error. The member-night guard below excludes the
+      // same replaced entry (#1628/#1609), so the offer's own WAITLIST_OFFERED
+      // booking trips neither check. This guard is a strict no-op for a normal
+      // confirm and every non-cross-lodge caller: the only overlapping booking
+      // in those cases is the WAITLIST_OFFERED entry, and WAITLIST_OFFERED is
+      // not in DUPLICATE_STAY_BOOKING_STATUSES (ACTIVE + COMPLETED), so the
+      // query matches nothing and nothing throws until a real concurrent stay
       // exists.
       if (duplicateStayGuard) {
         const duplicateStay = await tx.booking.findFirst({
@@ -640,13 +638,20 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         }
       }
 
-      // Duplicate member nights (upstream #80cbdf4c).
+      // Duplicate member nights (upstream #80cbdf4c). The cross-lodge confirm
+      // replaces a still-live WAITLIST_OFFERED entry whose guest rows can carry
+      // the confirming member's own memberId; without an exclusion the guard
+      // trips on the very booking this create is replacing and every
+      // member-guest confirm fails (#1628/#1609). The replaced entry is the
+      // same booking the duplicate-stay guard excludes, so its id is reused
+      // here; undefined for every other caller — their behaviour is unchanged.
       await assertNoBookingMemberNightConflicts(tx, {
         actorMemberId: sessionUserId,
         actorRole: isOnBehalf ? "ADMIN" : "USER",
         checkIn,
         checkOut,
         guests,
+        excludeBookingId: duplicateStayGuard?.excludeBookingId,
       });
 
       const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
