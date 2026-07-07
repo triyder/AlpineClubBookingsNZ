@@ -8,7 +8,7 @@ import { sendPreArrivalReminderEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
-export const PRE_ARRIVAL_REMINDER_DAYS = 3;
+const PRE_ARRIVAL_REMINDER_DAYS = 3;
 
 const PRE_ARRIVAL_REMINDER_STATUSES = [
   BookingStatus.CONFIRMED,

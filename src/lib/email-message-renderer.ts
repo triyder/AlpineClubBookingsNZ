@@ -14,10 +14,10 @@ import {
 } from "@/lib/email-message-registry";
 import { prisma } from "@/lib/prisma";
 
-export type EmailTemplateValue = string | number | boolean | null | undefined;
+type EmailTemplateValue = string | number | boolean | null | undefined;
 export type EmailTemplateData = Record<string, EmailTemplateValue>;
 
-export interface EmailTemplateOverrideRecord {
+interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
@@ -32,7 +32,7 @@ export interface PreparedEmailMessage {
   overrideApplied: boolean;
 }
 
-export interface EmailTemplateValidationIssue {
+interface EmailTemplateValidationIssue {
   code:
     | "unknown_template"
     | "unknown_token"
@@ -58,7 +58,7 @@ export interface EmailTemplateValidationResult {
   unsafeLinks: string[];
 }
 
-export function extractTemplateTokens(value: string): string[] {
+function extractTemplateTokens(value: string): string[] {
   return Array.from(value.matchAll(/\{\{([^{}]+)\}\}/g))
     .map((match) => match[1].trim())
     .filter(Boolean);
@@ -93,7 +93,7 @@ function normalizeLinkCandidate(value: string): string {
   return value.replace(/[.;]+$/g, "");
 }
 
-export function findUnsafeTemplateLinks(values: string[]): string[] {
+function findUnsafeTemplateLinks(values: string[]): string[] {
   const unsafe = new Set<string>();
   const linkPattern =
     /(?:[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+|mailto:[^\s<>"']+|javascript:[^\s<>"']+|data:[^\s<>"']+|vbscript:[^\s<>"']+|www\.[^\s<>"']+)/gi;
@@ -310,7 +310,7 @@ async function loadTemplateOverride(
   }
 }
 
-export function buildEmailTemplateData(
+function buildEmailTemplateData(
   settings: EmailMessageSettings,
   templateData?: EmailTemplateData,
 ): EmailTemplateData {

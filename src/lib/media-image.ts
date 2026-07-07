@@ -28,7 +28,7 @@ export const ALLOWED_MEDIA_IMAGE_CONTENT_TYPES = [
 export type AllowedMediaImageContentType =
   (typeof ALLOWED_MEDIA_IMAGE_CONTENT_TYPES)[number];
 
-export const MAX_MEDIA_IMAGE_FILENAME_LENGTH = 200;
+const MAX_MEDIA_IMAGE_FILENAME_LENGTH = 200;
 export const MAX_MEDIA_IMAGE_ALT_TEXT_LENGTH = 280;
 
 const BOM = "﻿";

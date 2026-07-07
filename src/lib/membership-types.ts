@@ -8,7 +8,7 @@ import type {
 } from "@prisma/client";
 import { getSeasonYear } from "@/lib/utils";
 
-export const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
+const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
 
 export const MEMBERSHIP_TYPE_BOOKING_BEHAVIORS = [
   "MEMBER_RATE",
@@ -96,14 +96,14 @@ export const BUILT_IN_MEMBERSHIP_TYPES = [
   sortOrder: number;
 }>;
 
-export const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
+const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
   (type) => type.key,
 );
 
 export type BuiltInMembershipTypeKey =
   (typeof BUILT_IN_MEMBERSHIP_TYPES)[number]["key"];
 
-export const LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES = {
+const LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES = {
   RESERVE: "ASSOCIATE",
 } as const satisfies Record<string, BuiltInMembershipTypeKey>;
 const LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP: Record<
@@ -111,7 +111,7 @@ const LEGACY_MEMBERSHIP_TYPE_KEY_ALIAS_MAP: Record<
   BuiltInMembershipTypeKey
 > = LEGACY_MEMBERSHIP_TYPE_KEY_ALIASES;
 
-export const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
+const BUILT_IN_MEMBERSHIP_TYPE_ALLOWED_AGE_TIERS = {
   FULL: ["INFANT", "CHILD", "YOUTH", "ADULT"],
   ASSOCIATE: ["ADULT"],
   LIFE: ["ADULT"],
@@ -260,10 +260,6 @@ type MembershipTypeWithAssignmentCount = {
     assignments: number;
   };
 };
-
-export type SerializedMembershipType = ReturnType<
-  typeof serializeMembershipType
->;
 
 interface MembershipTypeSeedClient {
   membershipType: {

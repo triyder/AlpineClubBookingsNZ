@@ -95,17 +95,17 @@ type FinancePaymentStatusKey = (typeof PAYMENT_STATUS_KEYS)[number];
 type FinanceAdditionalPaymentStatusKey =
   (typeof ADDITIONAL_PAYMENT_STATUS_KEYS)[number];
 
-export interface FinanceBookingMetricsDateRangeInput {
+interface FinanceBookingMetricsDateRangeInput {
   from: string;
   to: string;
 }
 
-export interface FinanceRealizedStayMetricsQuery
+interface FinanceRealizedStayMetricsQuery
   extends FinanceBookingMetricsDateRangeInput {
   cutoffDate?: string;
 }
 
-export interface FinanceForwardBookingMetricsQuery
+interface FinanceForwardBookingMetricsQuery
   extends FinanceBookingMetricsDateRangeInput {
   asOfDate?: string;
 }
@@ -121,7 +121,7 @@ export interface FinanceBookingMetricsQuery {
   lodgeId?: string | null;
 }
 
-export interface FinanceBookingMetricsWindow {
+interface FinanceBookingMetricsWindow {
   from: string;
   to: string;
   effectiveFrom: string | null;
@@ -129,20 +129,20 @@ export interface FinanceBookingMetricsWindow {
   dayCount: number;
 }
 
-export interface FinanceBookingOccupancySummary {
+interface FinanceBookingOccupancySummary {
   occupiedBedNights: number;
   capacityBedNights: number;
   occupancyRate: number;
 }
 
-export interface FinanceBookingStatusSummary {
+interface FinanceBookingStatusSummary {
   bookingCount: number;
   bookingNights: number;
   guestNights: number;
   bookedRevenueCents: number;
 }
 
-export interface FinanceBookingDailyMetric {
+interface FinanceBookingDailyMetric {
   date: string;
   bookingCount: number;
   guestNights: number;
@@ -152,14 +152,14 @@ export interface FinanceBookingDailyMetric {
   bookedRevenueCents: number;
 }
 
-export interface FinanceBookingPipelineDailyMetric {
+interface FinanceBookingPipelineDailyMetric {
   date: string;
   committed: FinanceBookingDailyMetric;
   atRisk: FinanceBookingDailyMetric;
   totalPipeline: FinanceBookingDailyMetric;
 }
 
-export interface FinanceBookingBucketSummary {
+interface FinanceBookingBucketSummary {
   bookingCount: number;
   bookingNights: number;
   guestNights: number;
@@ -167,7 +167,7 @@ export interface FinanceBookingBucketSummary {
   occupancy: FinanceBookingOccupancySummary;
 }
 
-export interface FinanceBookingMetricsPaymentSummary {
+interface FinanceBookingMetricsPaymentSummary {
   bookingCount: number;
   bookingsWithPayment: number;
   bookingsWithoutPayment: number;
@@ -184,7 +184,7 @@ export interface FinanceBookingMetricsPaymentSummary {
   changeFeeCents: number;
 }
 
-export interface FinanceRealizedStayMetrics {
+interface FinanceRealizedStayMetrics {
   window: FinanceBookingMetricsWindow & {
     cutoffDate: string;
   };
@@ -195,7 +195,7 @@ export interface FinanceRealizedStayMetrics {
   byDate: FinanceBookingDailyMetric[];
 }
 
-export interface FinanceForwardBookingMetrics {
+interface FinanceForwardBookingMetrics {
   window: FinanceBookingMetricsWindow & {
     asOfDate: string;
   };

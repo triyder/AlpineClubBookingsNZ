@@ -37,9 +37,9 @@ import {
 
 export const FINANCE_MONTHLY_FACT_BACKFILL_WORKFLOW =
   "finance-monthly-fact-backfill";
-export const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_BY_MONTH_BACKFILL_DATASET_KEY =
+const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_BY_MONTH_BACKFILL_DATASET_KEY =
   "xero-profit-and-loss-by-month-backfill";
-export const FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_BACKFILL_DATASET_KEY =
+const FINANCE_SYNC_XERO_BALANCE_SHEET_BY_MONTH_BACKFILL_DATASET_KEY =
   "xero-balance-sheet-by-month-backfill";
 
 /**

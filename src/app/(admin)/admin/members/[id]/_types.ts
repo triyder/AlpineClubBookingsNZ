@@ -25,7 +25,7 @@ export interface MemberDeleteEligibility {
   checkedAt: string;
 }
 
-export interface LifecycleActor {
+interface LifecycleActor {
   id: string;
   name: string;
   email: string;
@@ -65,7 +65,7 @@ export interface OpenCancellationRequestSummary {
   requestedByCurrentAdmin: boolean;
 }
 
-export interface ParentMemberSummary {
+interface ParentMemberSummary {
   id: string;
   firstName: string;
   lastName: string;

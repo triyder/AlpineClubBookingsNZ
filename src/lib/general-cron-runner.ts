@@ -10,7 +10,7 @@ import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
 import { sendSchoolAttendeeConfirmationPrompts } from "@/lib/school-attendee-confirmation";
 import { reportCronError } from "@/lib/observability-bridge";
 
-export const GENERAL_CRON_JOB_NAMES = [
+const GENERAL_CRON_JOB_NAMES = [
   "confirm-pending",
   "group-settlement-reaper",
   "pre-arrival-reminders",

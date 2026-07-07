@@ -11,8 +11,6 @@ import { Input, type InputProps } from "@/components/ui/input";
 import { type AddressSelection } from "@/lib/addy-address";
 import { cn } from "@/lib/utils";
 
-export type { AddressSelection } from "@/lib/addy-address";
-
 interface AddySuggestion {
   id: string;
   label: string;

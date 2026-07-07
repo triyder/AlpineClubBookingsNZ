@@ -1,6 +1,6 @@
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
-export const XERO_LOCAL_MODELS = [
+const XERO_LOCAL_MODELS = [
   "Member",
   "Booking",
   "Payment",

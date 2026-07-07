@@ -13,7 +13,8 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only"
-import { OccupancyCalendar } from "@/components/admin/occupancy-calendar"
+import { OccupancyCalendar, type CalendarTone } from "@/components/admin/occupancy-calendar"
+import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 
 interface Guest {
   id: string
@@ -65,6 +66,25 @@ const AGE_TIER_COLORS: Record<string, string> = {
   CHILD: "bg-orange-100 text-orange-800",
 }
 
+// Per-date roster status → calendar overlay tone + compact label. `no-guests`
+// dates are intentionally omitted (they carry no overlay).
+const ROSTER_STATUS_OVERLAY: Record<
+  Exclude<RosterDayStatus, "no-guests">,
+  { tone: CalendarTone; label: string }
+> = {
+  "needs-roster": { tone: "red", label: "Needs roster" },
+  suggested: { tone: "amber", label: "Suggested" },
+  "needs-attention": { tone: "orange", label: "Needs chores" },
+  confirmed: { tone: "green", label: "Confirmed" },
+}
+
+const ROSTER_LEGEND: Array<{ tone: CalendarTone; label: string }> = [
+  { tone: "red", label: "Needs roster" },
+  { tone: "amber", label: "Suggested (unconfirmed)" },
+  { tone: "orange", label: "Confirmed — some guests need chores" },
+  { tone: "green", label: "Confirmed" },
+]
+
 function formatDateForInput(d: Date): string {
   return formatDateOnly(d)
 }
@@ -81,6 +101,36 @@ export default function RosterPage() {
   // the sole lodge) while fewer than two lodges exist (ADR-002).
   const { lodges, loading: lodgesLoading } = useLodgeOptions("admin")
   const [lodgeId, setLodgeId] = useState<string | null>(initialLodgeIdFromLocation)
+  const [overlayByDate, setOverlayByDate] = useState<
+    Record<string, { tone: CalendarTone; label: string }>
+  >({})
+
+  // Load the roster colour statuses for a month and merge them into the
+  // calendar overlay. `no-guests` dates are skipped (no overlay). Failures are
+  // swallowed: the overlay is a non-essential decoration over the calendar.
+  const loadMonthStatus = useCallback(async (month: string) => {
+    try {
+      const res = await fetch(`/api/admin/roster/status?month=${month}`)
+      if (!res.ok) return
+      const data: { month: string; statuses: RosterDayStatusResult[] } = await res.json()
+      // Merge this month's statuses into the overlay, and explicitly DELETE any
+      // date that has dropped to `no-guests` (e.g. a booking cancelled elsewhere)
+      // so a stale coloured badge from a previous load never lingers.
+      setOverlayByDate((prev) => {
+        const next = { ...prev }
+        for (const result of data.statuses ?? []) {
+          if (result.status === "no-guests") {
+            delete next[result.date]
+          } else {
+            next[result.date] = ROSTER_STATUS_OVERLAY[result.status]
+          }
+        }
+        return next
+      })
+    } catch {
+      // Non-essential overlay; ignore load failures.
+    }
+  }, [])
 
   const rosterUrl = useCallback(
     (date: string, params: Record<string, string> = {}) => {
@@ -111,13 +161,16 @@ export default function RosterPage() {
       }
       const data: RosterData = await res.json()
       setRoster(data)
+      // Refresh the month overlay so an auto-suggest on opening a needs-roster
+      // date (and every mutation that re-fetches) is reflected on the calendar.
+      void loadMonthStatus(date.slice(0, 7))
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setLoading(false)
     }
-  }, [includeNonEssential, rosterUrl])
+  }, [includeNonEssential, rosterUrl, loadMonthStatus])
 
   useEffect(() => {
     if (!selectedDate) return
@@ -300,6 +353,16 @@ export default function RosterPage() {
   const isConfirmed = roster?.assignments.length
     ? roster.assignments.every((a) => a.status === "CONFIRMED" || a.status === "COMPLETED")
     : false
+
+  // Booking-granularity coverage for the selected night: a staying booking is
+  // "uncovered" if no assignment carries its bookingId. Surfaced as a banner
+  // only when the roster is otherwise fully confirmed.
+  const stayingBookingIds = new Set((roster?.guests ?? []).map((g) => g.bookingId))
+  const coveredBookingIds = new Set((roster?.assignments ?? []).map((a) => a.bookingId))
+  const uncoveredCount = [...stayingBookingIds].filter(
+    (id) => !coveredBookingIds.has(id)
+  ).length
+
   const selectedDatePathSegment = encodeURIComponent(selectedDate)
 
   function getGuestHistoryDisplay(guestId: string): string {
@@ -390,6 +453,9 @@ export default function RosterPage() {
               selectedStartDate={selectedDate}
               selectedEndDate={selectedDate}
               onSelectionChange={({ startDate }) => setSelectedDate(startDate)}
+              overlayByDate={overlayByDate}
+              overlayLegend={ROSTER_LEGEND}
+              onVisibleMonthChange={loadMonthStatus}
             />
           </div>
         </CardContent>
@@ -433,6 +499,14 @@ export default function RosterPage() {
               </div>
             </CardHeader>
           </Card>
+
+          {isConfirmed && uncoveredCount > 0 && (
+            <div className="rounded-md border border-orange-300 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+              {uncoveredCount} booking{uncoveredCount === 1 ? "" : "s"} staying this
+              night {uncoveredCount === 1 ? "has" : "have"} no chores — click
+              Regenerate Roster to include {uncoveredCount === 1 ? "it" : "them"}.
+            </div>
+          )}
 
           {roster.guests.length === 0 ? (
             <Card>

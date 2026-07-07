@@ -568,7 +568,7 @@ export async function settleGroupBookingOnOrganiserCancel(
   );
 }
 
-export type GroupSettlementRefundReplayOutcome =
+type GroupSettlementRefundReplayOutcome =
   | "refunded"
   | "already_refunded"
   | "nothing_to_do"

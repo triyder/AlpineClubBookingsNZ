@@ -31,7 +31,7 @@ export interface PotentialXeroContactMatch {
   xeroLink: string;
 }
 
-export interface DuplicateContact {
+interface DuplicateContact {
   contactID: string;
   name: string;
   firstName?: string;

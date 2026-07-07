@@ -17,7 +17,7 @@ import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import { isXeroConnected } from "@/lib/xero-token-store";
 
-export const XERO_CRON_TASKS = [
+const XERO_CRON_TASKS = [
   "memberships",
   "outbox",
   "retries",
@@ -30,7 +30,7 @@ export const XERO_CRON_TASKS = [
 export type XeroCronTask = (typeof XERO_CRON_TASKS)[number];
 export type XeroCronTaskSelection = XeroCronTask | "all";
 
-export const XERO_CRON_JOB_NAMES: Record<XeroCronTask, string> = {
+const XERO_CRON_JOB_NAMES: Record<XeroCronTask, string> = {
   memberships: "xero-membership-refresh",
   outbox: "xero-outbox",
   retries: "xero-operation-replay",

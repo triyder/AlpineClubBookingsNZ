@@ -1,4 +1,4 @@
-export interface DashboardBed {
+interface DashboardBed {
   id: string;
   roomId: string;
   name: string;
@@ -47,7 +47,7 @@ export interface DashboardGuestNight {
   stayDate: string;
 }
 
-export interface DashboardRequestedRoom {
+interface DashboardRequestedRoom {
   id: string;
   name: string;
   active: boolean;
@@ -70,7 +70,7 @@ export interface DashboardBookingSummary {
   parentBookingId: string | null;
 }
 
-export interface DashboardWarning {
+interface DashboardWarning {
   id: string;
   type: "BOOKING_SPLIT" | "MINOR_WITHOUT_BOOKING_ADULT";
   bookingId: string;

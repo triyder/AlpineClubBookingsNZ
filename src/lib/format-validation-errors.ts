@@ -9,7 +9,7 @@
  * Friendly labels for the member create/update field keys. Anything not listed
  * falls back to {@link humanizeFieldKey}, so new fields still render sensibly.
  */
-export const MEMBER_FIELD_LABELS: Record<string, string> = {
+const MEMBER_FIELD_LABELS: Record<string, string> = {
   email: "Email",
   title: "Title",
   firstName: "First name",

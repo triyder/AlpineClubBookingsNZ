@@ -10,7 +10,7 @@ export function isXeroLiveMemberGroupLookupsEnabled(): boolean {
   return isEnabled(process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS);
 }
 
-export function isXeroAutoloadContactGroupsEnabled(): boolean {
+function isXeroAutoloadContactGroupsEnabled(): boolean {
   return isEnabled(process.env.XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS);
 }
 

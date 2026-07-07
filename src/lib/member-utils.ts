@@ -3,7 +3,7 @@ import {
   type EmailResolvableMember,
 } from "@/lib/member-email";
 
-export { resolveEffectiveEmail, type EmailResolvableMember } from "@/lib/member-email";
+export { type EmailResolvableMember } from "@/lib/member-email";
 
 /**
  * Returns the effective email address for a member.

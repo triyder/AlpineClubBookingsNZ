@@ -6,11 +6,11 @@ type ErrorBody = {
   warning?: string
 }
 
-export async function readJson<T>(res: Response): Promise<T> {
+async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
-export async function readOptionalJson<T>(res: Response, fallback: T): Promise<T> {
+async function readOptionalJson<T>(res: Response, fallback: T): Promise<T> {
   try {
     return (await res.json()) as T
   } catch {
@@ -18,7 +18,7 @@ export async function readOptionalJson<T>(res: Response, fallback: T): Promise<T
   }
 }
 
-export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   const data = await readOptionalJson<ErrorBody | null>(res, null)
   return data?.error || data?.message || fallback
 }

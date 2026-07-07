@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 /**
@@ -152,11 +152,94 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Widen the coverage query window to span every member's actual stay, so an
+  // assignment that starts before rangeStart (or ends after rangeEnd) is still
+  // considered when deciding which stay nights already have a leader.
+  let earliestStayStart = rangeStart;
+  let latestStayEnd = rangeEnd;
+  let hasAnyBooking = false;
+  for (const m of memberBookings.values()) {
+    for (const b of m.bookings) {
+      if (!hasAnyBooking) {
+        earliestStayStart = b.checkIn;
+        latestStayEnd = b.checkOut;
+        hasAnyBooking = true;
+        continue;
+      }
+      if (b.checkIn.getTime() < earliestStayStart.getTime()) earliestStayStart = b.checkIn;
+      if (b.checkOut.getTime() > latestStayEnd.getTime()) latestStayEnd = b.checkOut;
+    }
+  }
+
+  const coverageWindowStart =
+    earliestStayStart.getTime() < rangeStart.getTime() ? earliestStayStart : rangeStart;
+  const coverageWindowEnd =
+    latestStayEnd.getTime() > rangeEnd.getTime() ? latestStayEnd : rangeEnd;
+
+  // Existing hut-leader assignments overlapping the widened window. We reuse the
+  // inclusive covered model from getUnassignedHutLeaderDates (the amber "Upcoming
+  // Dates Without…" panel) so suggestions never point at a night that already has
+  // a leader. Suggested ranges therefore abut existing assignments (never overlap
+  // by more than the 1-day handover boundary the POST route already allows), so
+  // they are always safely POST-able.
+  const coverageAssignments = await prisma.hutLeaderAssignment.findMany({
+    where: { startDate: { lte: coverageWindowEnd }, endDate: { gte: coverageWindowStart } },
+    select: { startDate: true, endDate: true },
+  });
+
+  // Inclusive covered-night predicate — matches isDateCovered in
+  // src/lib/hut-leader-coverage.ts.
+  const isNightCovered = (d: Date) =>
+    coverageAssignments.some(
+      (a) => a.startDate.getTime() <= d.getTime() && a.endDate.getTime() >= d.getTime(),
+    );
+
   const members = Array.from(memberBookings.values())
     .map((m) => {
-      // Find earliest checkIn and latest checkOut as suggested dates
+      // Find earliest checkIn and latest checkOut (the member's overall stay span).
       const earliestCheckIn = m.bookings.reduce((min, b) => b.checkIn < min ? b.checkIn : min, m.bookings[0].checkIn);
       const latestCheckOut = m.bookings.reduce((max, b) => b.checkOut > max ? b.checkOut : max, m.bookings[0].checkOut);
+
+      // Build the set of the member's actual stay nights: the union of the
+      // half-open [checkIn, checkOut) day range of each booking. checkOut is the
+      // departure morning, NOT an occupied night — this matches every occupancy
+      // computation in the repo (getBookingStats / getUnassignedHutLeaderDates,
+      // which feed the amber "Upcoming Dates Without…" panel on this same page).
+      // Only real stay nights count — gap nights between two disjoint bookings do not.
+      const stayNightsByTime = new Map<number, Date>();
+      for (const b of m.bookings) {
+        for (
+          let d = b.checkIn;
+          d.getTime() < b.checkOut.getTime();
+          d = addDaysDateOnly(d, 1)
+        ) {
+          stayNightsByTime.set(d.getTime(), d);
+        }
+      }
+      const stayNights = Array.from(stayNightsByTime.values()).sort(
+        (a, b) => a.getTime() - b.getTime(),
+      );
+
+      const uncoveredNights = stayNights.filter((d) => !isNightCovered(d));
+      const uncoveredNightCount = uncoveredNights.length;
+      const fullyCovered = uncoveredNightCount === 0;
+
+      // Suggested range = the first contiguous run of uncovered nights. If the
+      // member is fully covered, fall back to their overall stay span (fields
+      // stay present; the UI disables Confirm for fully-covered members).
+      let suggestedStart = earliestCheckIn;
+      let suggestedEnd = latestCheckOut;
+      if (!fullyCovered) {
+        suggestedStart = uncoveredNights[0];
+        suggestedEnd = uncoveredNights[0];
+        for (let i = 1; i < uncoveredNights.length; i++) {
+          if (uncoveredNights[i].getTime() === addDaysDateOnly(suggestedEnd, 1).getTime()) {
+            suggestedEnd = uncoveredNights[i];
+          } else {
+            break;
+          }
+        }
+      }
 
       return {
         id: m.id,
@@ -169,12 +252,15 @@ export async function GET(req: NextRequest) {
           : null,
         bookingCheckIn: formatDateOnly(earliestCheckIn),
         bookingCheckOut: formatDateOnly(latestCheckOut),
-        suggestedStartDate: formatDateOnly(earliestCheckIn),
-        suggestedEndDate: formatDateOnly(latestCheckOut),
+        suggestedStartDate: formatDateOnly(suggestedStart),
+        suggestedEndDate: formatDateOnly(suggestedEnd),
+        uncoveredNightCount,
+        fullyCovered,
       };
     })
     .sort(
       (a, b) =>
+        Number(a.fullyCovered) - Number(b.fullyCovered) ||
         Number(b.hutLeaderEligible) - Number(a.hutLeaderEligible) ||
         `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`),
     );

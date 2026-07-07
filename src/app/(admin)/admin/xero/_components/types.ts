@@ -113,7 +113,7 @@ export interface GroupMapping {
   ageTier: AgeTier | "SKIP"
 }
 
-export interface DuplicateContact {
+interface DuplicateContact {
   contactID: string
   name: string
   firstName?: string
@@ -192,7 +192,7 @@ export interface XeroHealthSnapshot {
   apiBudget: { status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"; usagePercent: number | null; totalCalls: number | null; failedCalls: number | null }
 }
 
-export interface MissingInvoiceBooking {
+interface MissingInvoiceBooking {
   bookingId: string
   paymentId: string
   memberId: string
@@ -210,7 +210,7 @@ export interface MissingInvoicesResponse {
   bookings: MissingInvoiceBooking[]
 }
 
-export interface ConfiguredAgeTierContactGroup {
+interface ConfiguredAgeTierContactGroup {
   tier: AgeTier
   label: string
   sortOrder: number
@@ -219,7 +219,7 @@ export interface ConfiguredAgeTierContactGroup {
   isDefault: boolean
 }
 
-export interface ContactGroupMismatch {
+interface ContactGroupMismatch {
   memberId: string
   memberName: string
   memberEmail: string
@@ -248,7 +248,7 @@ export interface ContactGroupMismatch {
 
 // Summary returned by the POST resync-from-Xero branch of the mismatch
 // endpoints (#1441).
-export interface ContactCacheResyncSummary {
+interface ContactCacheResyncSummary {
   requestedContacts: number
   resyncedContacts: number
   removedContacts: number
@@ -264,7 +264,7 @@ export interface ContactGroupMismatchResponse {
   resync?: ContactCacheResyncSummary
 }
 
-export interface ContactLinkMismatch {
+interface ContactLinkMismatch {
   memberId: string
   memberName: string
   memberEmail: string
@@ -337,14 +337,14 @@ export interface XeroInboundEvent {
   canReplay: boolean
 }
 
-export interface XeroUsageBucket {
+interface XeroUsageBucket {
   label: string
   count: number
   successCount: number
   failureCount: number
 }
 
-export interface XeroUsageFailure {
+interface XeroUsageFailure {
   id: string
   operation: string
   workflow: string | null
@@ -383,7 +383,7 @@ export interface XeroUsageSummary {
 
 export type MembershipSyncMode = "incremental" | "backfill"
 
-export type MappingValue = {
+type MappingValue = {
   code: string | null
   itemCode: string | null
 }

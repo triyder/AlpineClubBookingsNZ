@@ -13,7 +13,7 @@ export {
 } from "./policies/cancellation";
 export type { CancellationRule } from "./policies/cancellation";
 
-export type NonMemberHoldPolicySource = "period" | "default";
+type NonMemberHoldPolicySource = "period" | "default";
 
 export type NonMemberHoldPolicy = {
   enabled: boolean;
@@ -29,7 +29,7 @@ export type NonMemberHoldPolicy = {
  * the date is matched. Callers without lodge context omit lodgeId and get the
  * club's default lodge.
  */
-export async function getBookingPeriodForDate(
+async function getBookingPeriodForDate(
   checkIn: Date,
   lodgeId?: string | null
 ) {

@@ -6,7 +6,7 @@ import { type APIRequestContext, expect } from "@playwright/test";
 // context (page.request after signing in a full ADMIN persona).
 export type ModuleSettings = Record<string, boolean>;
 
-export async function getModuleSettings(
+async function getModuleSettings(
   request: APIRequestContext,
 ): Promise<ModuleSettings> {
   const res = await request.get("/api/admin/modules");

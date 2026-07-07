@@ -5,7 +5,7 @@ const WAITLIST_OFFER_TEMPLATE_NAME = "waitlist-offer";
 const EMAIL_RETRY_MAX_ATTEMPTS = 3;
 const WAITLIST_EMAIL_LOOKBACK_MS = 2 * 60 * 1000;
 
-export type WaitlistOfferEmailRetryState =
+type WaitlistOfferEmailRetryState =
   | "delivered"
   | "queued"
   | "retrying"

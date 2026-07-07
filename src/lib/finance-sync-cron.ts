@@ -37,7 +37,7 @@ export interface FinanceSyncCronScheduler {
   ) => unknown;
 }
 
-export interface RecordCronRunInput {
+interface RecordCronRunInput {
   jobName: string;
   startedAt: Date;
   status: CronRunStatus;

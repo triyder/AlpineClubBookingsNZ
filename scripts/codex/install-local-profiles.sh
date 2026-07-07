@@ -9,7 +9,7 @@ usage() {
 Usage:
   scripts/codex/install-local-profiles.sh [--dry-run] [--install] [--codex-home DIR]
 
-Dry-run by default. With --install, copies codex/profiles/*.config.toml into
+Dry-run by default. With --install, copies docs/agents/codex/profiles/*.config.toml into
 the Codex home directory. Review files before installing.
 USAGE
 }
@@ -40,19 +40,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "Profile source: codex/profiles"
+echo "Profile source: docs/agents/codex/profiles"
 echo "Profile target: $CODEX_DIR"
 
 if [[ "$INSTALL" -ne 1 ]]; then
   echo "Dry run only. Re-run with --install to copy profile examples."
-  for file in codex/profiles/*.config.toml; do
+  for file in docs/agents/codex/profiles/*.config.toml; do
     echo "would copy $file -> $CODEX_DIR/$(basename "$file")"
   done
   exit 0
 fi
 
 mkdir -p "$CODEX_DIR"
-for file in codex/profiles/*.config.toml; do
+for file in docs/agents/codex/profiles/*.config.toml; do
   cp "$file" "$CODEX_DIR/$(basename "$file")"
   echo "installed $CODEX_DIR/$(basename "$file")"
 done

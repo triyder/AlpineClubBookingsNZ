@@ -14,7 +14,7 @@
  */
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 
-export interface XeroEntranceFeeInvoicePushOptions {
+interface XeroEntranceFeeInvoicePushOptions {
   createEntranceFeeInvoice: boolean;
   entranceFeeInvoiceDecision?: "CREATE" | "SKIP";
   entranceFeeInvoiceSkipReason?: string;

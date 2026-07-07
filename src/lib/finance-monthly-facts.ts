@@ -26,7 +26,7 @@ import {
   type PnlReportRow,
 } from "@/lib/finance-pnl-snapshot";
 
-export interface FinanceChartAccountInfo {
+interface FinanceChartAccountInfo {
   accountId: string;
   code: string | null;
   name: string | null;
@@ -284,6 +284,16 @@ function rowHasNonZeroAmount(row: PnlReportRow): boolean {
  * filtered by label. Months at or after `provisionalFromMonth` (the month
  * still in progress when the report was pulled) are flagged provisional.
  */
+/**
+ * Xero emits the balance-sheet "Current Year Earnings" line with this fixed
+ * sentinel AccountID for every organisation. It is a derived equity figure (the
+ * year's net profit rolled into equity), not a user GL account: getAccounts
+ * never returns it and it carries no account code, so it cannot become a
+ * per-account fact and is excluded like the other computed totals.
+ */
+export const XERO_CURRENT_YEAR_EARNINGS_ACCOUNT_ID =
+  "abababab-abab-abab-abab-abababababab";
+
 export function extractMonthlyFactsFromReport(input: {
   payload: unknown;
   chart: FinanceMonthlyChartContext;
@@ -306,9 +316,24 @@ export function extractMonthlyFactsFromReport(input: {
 
   for (const row of collectLeafRows(report.rows)) {
     const accountId = readRowAccountId(row);
-    const account = accountId ? input.chart.accountsById.get(accountId) : undefined;
 
-    if (!accountId || !account?.code) {
+    if (!accountId || accountId === XERO_CURRENT_YEAR_EARNINGS_ACCOUNT_ID) {
+      // Derived / synthetic report line, not a GL account, so correctly absent
+      // from the per-account facts:
+      //  - no account attribute at all → cross-section totals such as Gross
+      //    Profit, Net Profit, and Net Assets;
+      //  - Xero's fixed Current Year Earnings sentinel account id → the
+      //    balance-sheet equity roll-up of the year's profit, derived from the
+      //    account rows and not returned by getAccounts (so it has no code).
+      // Skip these (rather than flag unresolved): this matches the documented
+      // "totals are structurally excluded" intent and keeps the unresolved
+      // guard meaningful for rows that name a real account we could not map.
+      continue;
+    }
+
+    const account = input.chart.accountsById.get(accountId);
+
+    if (!account?.code) {
       if (rowHasNonZeroAmount(row)) {
         const label = readRowLabel(row);
         if (label) {

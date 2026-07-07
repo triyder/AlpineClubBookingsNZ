@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
-export const XERO_DAILY_BUDGET = 1000;
+const XERO_DAILY_BUDGET = 1000;
 const XERO_WARNING_THRESHOLDS = [0.7, 0.85, 0.95] as const;
 
 export type XeroRateLimitCategory = "day" | "minute" | "unknown" | null;

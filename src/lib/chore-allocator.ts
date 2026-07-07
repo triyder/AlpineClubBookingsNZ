@@ -13,7 +13,7 @@ import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 // ---------------------------------------------------------------------------
 
 export type ChoreTimeOfDay = "MORNING" | "EVENING" | "ANYTIME";
-export type ChoreFrequencyMode = "DAILY" | "EVERY_X_DAYS" | "SPECIFIC_DAYS";
+type ChoreFrequencyMode = "DAILY" | "EVERY_X_DAYS" | "SPECIFIC_DAYS";
 
 export interface ChoreTemplateInput {
   id: string;

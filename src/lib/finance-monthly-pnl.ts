@@ -34,7 +34,7 @@ import {
 
 type FinanceReportKind = "REVENUE" | "EXPENSE";
 
-export interface FinanceMonthlyPnlTrendPoint {
+interface FinanceMonthlyPnlTrendPoint {
   monthKey: string;
   /** Short month label for chart axes, e.g. "Jun 2026". */
   label: string;

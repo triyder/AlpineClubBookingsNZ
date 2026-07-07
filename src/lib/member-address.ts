@@ -26,7 +26,7 @@ const POSTAL_ADDRESS_MATERIAL_FIELDS = [
   "postalPostalCode",
 ] as const;
 
-export const MEMBER_ADDRESS_FIELDS = [
+const MEMBER_ADDRESS_FIELDS = [
   ...STREET_ADDRESS_FIELDS,
   ...POSTAL_ADDRESS_FIELDS,
 ] as const;
@@ -100,7 +100,7 @@ export function postalMatchesPhysical(
   });
 }
 
-export function hasMaterialPostalAddressValues(
+function hasMaterialPostalAddressValues(
   values: Partial<Record<PostalAddressField, AddressValue>>
 ) {
   return POSTAL_ADDRESS_MATERIAL_FIELDS.some((postalField) =>

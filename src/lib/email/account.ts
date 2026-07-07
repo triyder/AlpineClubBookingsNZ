@@ -1,5 +1,4 @@
 import {
-  welcomeTemplate,
   passwordResetTemplate,
   emailVerificationTemplate,
   emailChangeVerificationTemplate,
@@ -90,16 +89,6 @@ export async function sendTwoFactorCodeEmail(params: {
       code: params.code,
       expiresAt: formatNZDateTime(params.expiresAt),
     },
-  });
-}
-
-export async function sendWelcomeEmail(email: string, firstName: string) {
-  await sendEmail({
-    to: email,
-    subject: `Welcome to ${CLUB_BOOKINGS_NAME}`,
-    html: welcomeTemplate(firstName),
-    templateName: "welcome",
-    templateData: { firstName },
   });
 }
 

@@ -2,8 +2,8 @@ import { prisma } from "@/lib/prisma";
 
 import { DEFAULT_SCHOOL_GROUP_SOFT_CAP } from "@/lib/school-booking-constants";
 
-export const LODGE_SETTINGS_ID = "default";
-export const DEFAULT_HUT_LEADER_LOOKAHEAD_DAYS = 14;
+const LODGE_SETTINGS_ID = "default";
+const DEFAULT_HUT_LEADER_LOOKAHEAD_DAYS = 14;
 
 type LodgeSettingsRecord = {
   capacity: number | null;

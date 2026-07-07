@@ -237,17 +237,6 @@ function formatOperationalDateTime(value: Date): string {
   return value.toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE });
 }
 
-export function welcomeTemplate(firstName: string): string {
-  const name = escapeHtml(firstName);
-  return layout(`
-    ${heading("Welcome, " + name + "!")}
-    ${paragraph(`Your ${escapeHtml(CLUB_NAME)} booking account has been created successfully.`)}
-    ${paragraph("You can now log in to book stays at the lodge, manage your bookings, and view your upcoming trips.")}
-    ${button("Log In to Your Account", BASE_URL + "/login")}
-    ${muted("If you did not create this account, please ignore this email.")}
-  `);
-}
-
 export function passwordResetTemplate(resetUrl: string): string {
   return layout(`
     ${heading("Password Reset")}
@@ -448,28 +437,6 @@ export function bookingCancelledTemplate(
     ${creditRestoredInfo}
     ${paragraph("You can make a new booking at any time from your account.")}
     ${button("Make a New Booking", BASE_URL + "/book")}
-  `);
-}
-
-export function bookingGuestsRemovedTemplate(
-  firstName: string,
-  checkIn: Date,
-  checkOut: Date,
-  guestCount: number,
-  newTotalCents: number
-): string {
-  return layout(`
-    ${heading("Booking Update")}
-    ${paragraph("Hi " + escapeHtml(firstName) + ", the lodge filled up with member bookings, so we couldn't keep the non-member guests on your booking. The rest of your booking continues.")}
-    ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
-      { label: "Guests", value: String(guestCount) },
-      { label: "New Total", value: formatCents(newTotalCents) },
-    ])}
-    ${alertBox("Only your non-member guests were removed — your booking has not been cancelled.", "info")}
-    ${paragraph("Your updated total reflects the remaining guests. You're welcome to rebook the non-member guests for different dates where availability exists.")}
-    ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }
 
@@ -1134,9 +1101,9 @@ export function adminDailyDigestTemplate(sections: {
   `);
 }
 
-export type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
+type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
 
-export interface XeroReconciliationIssueItemEmail {
+interface XeroReconciliationIssueItemEmail {
   label: string;
   localModel: string | null;
   localId: string | null;
@@ -1154,7 +1121,7 @@ export interface XeroReconciliationIssueItemEmail {
   createdAt: Date | null;
 }
 
-export interface XeroReconciliationIssueSectionEmail {
+interface XeroReconciliationIssueSectionEmail {
   id: string;
   title: string;
   severity: XeroReconciliationIssueSeverityEmail;

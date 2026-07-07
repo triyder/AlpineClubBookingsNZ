@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/thatskiff33/AlpineClubBookingsNZ/security/advisories/new
     about: Report suspected vulnerabilities privately.
   - name: Production support
-    url: https://www.example.org/
+    url: https://github.com/thatskiff33/AlpineClubBookingsNZ/blob/main/SUPPORT.md
     about: Use club support channels for live service or account questions.

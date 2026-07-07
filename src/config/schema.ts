@@ -122,8 +122,6 @@ export const clubConfigSchema = z
   });
 
 export type ClubConfig = z.infer<typeof clubConfigSchema>;
-export type Bed = z.infer<typeof bedSchema>;
-export type AgeTier = z.infer<typeof ageTierSchema>;
 
 export const featureFlagsSchema = z
   .object({

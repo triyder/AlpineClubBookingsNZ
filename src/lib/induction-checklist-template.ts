@@ -10,9 +10,9 @@ import type {
   InductionSectionPriority,
 } from "@prisma/client";
 
-export const DEFAULT_INDUCTION_TEMPLATE_NAME = "Lodge Induction Checklist";
-export const DEFAULT_INDUCTION_TEMPLATE_VERSION = "2008.1";
-export const DEFAULT_INDUCTION_TEMPLATE_SOURCE_LABEL =
+const DEFAULT_INDUCTION_TEMPLATE_NAME = "Lodge Induction Checklist";
+const DEFAULT_INDUCTION_TEMPLATE_VERSION = "2008.1";
+const DEFAULT_INDUCTION_TEMPLATE_SOURCE_LABEL =
   "Lodge Induction Sheet (2008)";
 
 // Final sponsor/inductor declaration shown above the sign-off action. Each
@@ -22,7 +22,7 @@ export const INDUCTION_SIGN_OFF_DECLARATION =
   "the above matters to the member and I am satisfied that they are " +
   "fully competent and familiar with the lodge system.";
 
-export interface InductionTemplateItemSeed {
+interface InductionTemplateItemSeed {
   /** Stable slug used as a logical key in code and tests (not the DB id). */
   key: string;
   label: string;
@@ -33,7 +33,7 @@ export interface InductionTemplateItemSeed {
   legacySourceText?: string;
 }
 
-export interface InductionTemplateSectionSeed {
+interface InductionTemplateSectionSeed {
   priority: InductionSectionPriority;
   title: string;
   description?: string;

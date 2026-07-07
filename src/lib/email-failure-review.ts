@@ -1,7 +1,7 @@
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
-export const EMAIL_FAILURE_REVIEW_ACTION = "email.failure.reviewed";
+const EMAIL_FAILURE_REVIEW_ACTION = "email.failure.reviewed";
 const EMAIL_FAILURE_MAX_ATTEMPTS = 3;
 const MAX_EXHAUSTED_FAILURE_SCAN = 200;
 
@@ -15,7 +15,7 @@ export class EmailFailureReviewError extends Error {
   }
 }
 
-export interface ExhaustedEmailFailure {
+interface ExhaustedEmailFailure {
   id: string;
   to: string;
   subject: string;
