@@ -12,6 +12,9 @@ The code is MIT licensed. Project branding, logos, copy, domains, and
 operational content are included for context only; replace them before using a
 fork for another organisation. See `NOTICE.md`.
 
+Start with [docs/README.md](docs/README.md) for the documentation hub and
+recommended reading paths.
+
 ## What It Does
 
 - Member registration, profile management, family/dependent relationships, and
@@ -101,7 +104,7 @@ fork for another organisation. See `NOTICE.md`.
    role email alias configured on the master role, or to the linked member's
    personal email when the role email is blank. Phone numbers display only when
    **show phone** is enabled.
-8. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
+9. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 
 You can use the setup helpers for a guided path:
@@ -314,6 +317,11 @@ forks or public CI. Configure your own service accounts and secrets.
   archive database behaviour
 - `docs/finance-dashboard/README.md` - finance reporting architecture and
   contract index
+
+## Community
+
+Use [SUPPORT.md](SUPPORT.md) for help and support channels, and follow
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) in project spaces.
 
 ## Contributing and Security
 
