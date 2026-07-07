@@ -59,6 +59,7 @@ enum FinanceSnapshotType {
   PROFIT_AND_LOSS_BY_MONTH
   ACCOUNTS_RECEIVABLE_INVOICES
   ACCOUNTS_PAYABLE_INVOICES
+  /// retired (2026-07 audit, #1525 S4): never produced or consumed in code; kept because Postgres enum-value removal requires a type rebuild. Do not write new rows with this value.
   BANK_TRANSACTIONS
   AGED_RECEIVABLES
   AGED_PAYABLES
@@ -146,8 +147,11 @@ enum MembershipTypeSubscriptionBehavior {
 
 enum MembershipAssignmentSource {
   ADMIN
+  /// retired (2026-07 audit, #1525 S4): never written in code (`source` always defaults to ADMIN); kept because Postgres enum-value removal requires a type rebuild.
   IMPORT
+  /// retired (2026-07 audit, #1525 S4): never written in code; kept — see IMPORT.
   FAMILY_SUBSCRIPTION
+  /// retired (2026-07 audit, #1525 S4): never written in code; kept — see IMPORT.
   ROLL_FORWARD
   SYSTEM
 }
