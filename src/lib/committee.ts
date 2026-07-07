@@ -109,7 +109,7 @@ export function normalizeCommitteeEmail(value?: string | null): string | null {
   return normalized ? normalized : null;
 }
 
-export function buildCommitteeRoleKey(name: string) {
+function buildCommitteeRoleKey(name: string) {
   const normalized = name
     .trim()
     .toLowerCase()
@@ -134,7 +134,7 @@ export async function buildUniqueCommitteeRoleKey(
   return key;
 }
 
-export function formatCommitteeMemberName(member: {
+function formatCommitteeMemberName(member: {
   firstName: string;
   lastName: string;
   email?: string | null;
@@ -142,7 +142,7 @@ export function formatCommitteeMemberName(member: {
   return `${member.firstName} ${member.lastName}`.trim() || member.email || "Member";
 }
 
-export function formatCommitteeMemberPhone(member: {
+function formatCommitteeMemberPhone(member: {
   phoneCountryCode?: string | null;
   phoneAreaCode?: string | null;
   phoneNumber?: string | null;

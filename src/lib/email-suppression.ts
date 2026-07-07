@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
-export type EmailSuppressionReason = "BOUNCE" | "COMPLAINT";
+type EmailSuppressionReason = "BOUNCE" | "COMPLAINT";
 
 export type SesEmailFeedbackEvent = {
   email: string;
@@ -11,20 +11,6 @@ export type SesEmailFeedbackEvent = {
   bounceType?: string | null;
   bounceSubType?: string | null;
   complaintFeedbackType?: string | null;
-};
-
-export type ActiveEmailSuppression = {
-  id: string;
-  email: string;
-  reason: EmailSuppressionReason;
-  eventCount: number;
-  suppressedAt: Date | null;
-  lastEventAt: Date;
-  lastEventType: string;
-  lastBounceType: string | null;
-  lastBounceSubType: string | null;
-  lastComplaintFeedbackType: string | null;
-  lastSesMessageId: string | null;
 };
 
 const TRANSIENT_BOUNCE_SUPPRESSION_THRESHOLD = 2;

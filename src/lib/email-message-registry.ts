@@ -4,7 +4,7 @@ import {
 } from "@/lib/email-message-audit-defaults";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
-export type EmailTemplateAudience = "member" | "admin" | "system";
+type EmailTemplateAudience = "member" | "admin" | "system";
 export type NotificationDeliveryModeValue = "always" | "content_only" | "disabled";
 
 export interface EmailTemplateDefinition {
@@ -403,13 +403,13 @@ export const EMAIL_TEMPLATE_DEFINITIONS: EmailTemplateDefinition[] = (
   };
 });
 
-export const EMAIL_TEMPLATE_KEYS = EMAIL_TEMPLATE_DEFINITIONS.map(
+const EMAIL_TEMPLATE_KEYS = EMAIL_TEMPLATE_DEFINITIONS.map(
   (definition) => definition.key,
 );
 
 export const EMAIL_TEMPLATE_KEY_SET = new Set<string>(EMAIL_TEMPLATE_KEYS);
 
-export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
+const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "BASE_URL",
   "CLUB_BOOKINGS_NAME",
   "CLUB_EMAIL_FROM_NAME",
@@ -571,7 +571,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKEN_SET = new Set<string>(
 // Subjects are persisted in EmailLog for every template (including the
 // sensitive ones whose HTML bodies are deliberately not retained) and travel
 // in clear mail headers, so secret values are restricted to message bodies.
-export const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
+const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
   "confirmationUrl",
   "doorCode",
   "payUrl",

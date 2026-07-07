@@ -18,7 +18,7 @@ function serializeResultSummary(resultSummary: unknown) {
     : JSON.parse(JSON.stringify(resultSummary));
 }
 
-export async function recordCronJobRun({
+async function recordCronJobRun({
   jobName,
   startedAt,
   completedAt = new Date(),

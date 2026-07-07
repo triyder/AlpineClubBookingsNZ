@@ -33,7 +33,7 @@ type Html2CanvasColorProperty =
 
 type ColorConverter = (colorExpression: string) => string | null;
 
-export class BlankScreenshotError extends Error {
+class BlankScreenshotError extends Error {
   constructor() {
     super("Screenshot capture produced a blank image. Please try again.");
   }

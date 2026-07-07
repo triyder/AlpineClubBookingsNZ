@@ -34,7 +34,7 @@ export async function refreshFinancialYearConfig(): Promise<number> {
  * Resolve the effective year-end month without touching the cache. Returns the
  * pieces needed by the admin UI as well.
  */
-export async function resolveFinancialYearEndMonth(): Promise<number> {
+async function resolveFinancialYearEndMonth(): Promise<number> {
   const { effectiveMonth } = await getFinancialYearResolution();
   return effectiveMonth;
 }

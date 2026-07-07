@@ -13,12 +13,12 @@ import { prisma } from "@/lib/prisma";
 
 export const CLUB_MODULE_SETTINGS_ID = "default";
 
-export type ModuleReadinessStatus =
+type ModuleReadinessStatus =
   | "ready"
   | "admin_disabled"
   | "credentials_missing";
 
-export interface ModuleStatus {
+interface ModuleStatus {
   key: ModuleKey;
   label: string;
   description: string;
@@ -91,7 +91,7 @@ function readinessMessage(params: {
   };
 }
 
-export function buildModuleStatusList(
+function buildModuleStatusList(
   settings: ModuleSettingsValues,
 ): ModuleStatus[] {
   return MODULE_KEYS.map((key) => {

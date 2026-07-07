@@ -118,7 +118,7 @@ export function isValidThemeColour(value: string): boolean {
   return HEX_COLOUR_PATTERN.test(trimmed) || OKLCH_COLOUR_PATTERN.test(trimmed);
 }
 
-export function logoDataUrlByteLength(value: string): number | null {
+function logoDataUrlByteLength(value: string): number | null {
   const match = value.trim().match(LOGO_DATA_URL_PATTERN);
   if (!match) {
     return null;
@@ -165,7 +165,7 @@ export function sanitiseRawCss(value: string): string {
   return value.replace(/<\/style[^>]*>/gi, "");
 }
 
-export function sanitiseThemeColour(
+function sanitiseThemeColour(
   value: unknown,
   field: ClubThemeColourKey,
 ): string {
@@ -174,13 +174,13 @@ export function sanitiseThemeColour(
     : DEFAULT_CLUB_THEME_VALUES[field];
 }
 
-export function sanitiseThemeFont(value: unknown, fallback: ClubThemeFontKey) {
+function sanitiseThemeFont(value: unknown, fallback: ClubThemeFontKey) {
   return CLUB_THEME_FONT_KEYS.includes(value as ClubThemeFontKey)
     ? (value as ClubThemeFontKey)
     : fallback;
 }
 
-export function sanitiseLogoDataUrl(value: unknown): string | null {
+function sanitiseLogoDataUrl(value: unknown): string | null {
   return typeof value === "string" && isValidLogoDataUrl(value)
     ? value.trim()
     : null;

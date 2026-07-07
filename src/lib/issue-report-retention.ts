@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-export const ISSUE_REPORT_SENSITIVE_DATA_RETENTION_DAYS = 30;
+const ISSUE_REPORT_SENSITIVE_DATA_RETENTION_DAYS = 30;
 
 type IssueReportRetentionClient = Pick<typeof prisma, "issueReport">;
 

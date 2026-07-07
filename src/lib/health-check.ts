@@ -3,7 +3,7 @@ import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 
-export interface CheckResult {
+interface CheckResult {
   status: "ok" | "error";
   latencyMs: number;
   error?: string;

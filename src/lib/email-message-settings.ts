@@ -54,7 +54,7 @@ export function normalizeEmailMessagePublicUrl(
   return trimmed.replace(/\/+$/, "");
 }
 
-export function getDefaultEmailMessageSettings(): EmailMessageSettings {
+function getDefaultEmailMessageSettings(): EmailMessageSettings {
   const clubName = clubConfig.name;
   const publicUrl =
     normalizeEmailMessagePublicUrl(process.env.NEXTAUTH_URL) ??

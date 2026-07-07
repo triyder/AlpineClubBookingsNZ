@@ -9,7 +9,7 @@ import type { XeroEntranceFeeInvoiceOptions } from "@/lib/admin-xero-entrance-fe
 import type { AppAccessRole } from "@/lib/access-roles";
 import type { AppRole } from "@/lib/member-roles";
 
-export type MemberRole = AppRole;
+type MemberRole = AppRole;
 
 export interface Member {
   id: string;
@@ -121,25 +121,6 @@ export interface Filters {
   xeroLinked: string;
   subscription: string;
   xeroContactGroup: string;
-}
-
-export interface ImportRow {
-  fullName?: string;
-  title?: string;
-  firstName: string;
-  lastName: string;
-  gender?: string;
-  occupation?: string;
-  email: string;
-  phone?: string;
-  phoneCountryCode?: string;
-  phoneAreaCode?: string;
-  phoneNumber?: string;
-  dateOfBirth?: string;
-  joinedDate?: string;
-  role?: string;
-  sourceLineNumber?: number;
-  sourceColumnLabels?: Record<string, string>;
 }
 
 export interface ImportResult {

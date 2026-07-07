@@ -1,6 +1,6 @@
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
-export const NZ_TIME_ZONE = APP_TIME_ZONE;
+const NZ_TIME_ZONE = APP_TIME_ZONE;
 
 const NZ_DATE_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
   timeZone: NZ_TIME_ZONE,
