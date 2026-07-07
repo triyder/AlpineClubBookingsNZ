@@ -164,6 +164,12 @@ describe("feature route map", () => {
         { ...allOn, financeDashboard: false }
       )
     ).toBe("financeDashboard");
+    expect(
+      isFeatureHrefVisible("/admin/xero#xero-section-mappings", {
+        ...allOn,
+        xeroIntegration: false,
+      })
+    ).toBe(false);
   });
 
   it("uses the admin module toggle for effective state", () => {

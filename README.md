@@ -120,13 +120,15 @@ npm run setup:wizard
 The CLI only writes `config/club.json`. API keys, OAuth secrets, SMTP secrets,
 and deployment secrets stay in environment variables. After migrations and seed
 data are in place, log in as an admin and finish the in-app checklist at
-`/admin/setup`, including booking policy, membership cancellation, email, and
-provider readiness settings. Admin Setup and Admin Notifications also expose
-the editable lifecycle email templates and delivery policies used for
-membership cancellation, archive, and safe-delete review alerts. Emails also
-inherit their brand palette from the club theme set in `/admin/site-style`
-(via a cache that refreshes at most every five minutes), so they match the live
-site; see `CONFIGURATION.md` → Branding Assets.
+`/admin/setup`, using the setup hub cards for booking policy, finance,
+membership cancellation, email, and provider readiness settings. Finance report
+mappings live in the Finance drill-down at `/admin/setup/finance` and are
+collapsed by default. Admin Setup and Admin Notifications also expose the
+editable lifecycle email templates and delivery policies used for membership
+cancellation, archive, and safe-delete review alerts. Emails also inherit their
+brand palette from the club theme set in `/admin/site-style` (via a cache that
+refreshes at most every five minutes), so they match the live site; see
+`CONFIGURATION.md` → Branding Assets.
 
 See `CONFIGURATION.md` for the full environment and `config/club.json` schema
 reference.

@@ -3,15 +3,23 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
+  BadgeCheck,
+  Bell,
+  BookOpenCheck,
   CheckCircle2,
   CircleAlert,
   CircleDashed,
   ExternalLink,
+  Landmark,
+  ListChecks,
   Loader2,
   PlayCircle,
+  Plug,
   RefreshCw,
   RotateCcw,
   SkipForward,
+  UserX,
+  type LucideIcon,
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,8 +31,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
-import { FinanceReportMappingsPanel } from "@/components/admin/finance-report-mappings-panel";
-import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import { isFeatureHrefVisible } from "@/config/feature-routes";
+import type { FeatureFlags } from "@/config/schema";
+import type {
+  AdminPermissionArea,
+  AdminPermissionMatrix,
+} from "@/lib/admin-permissions";
 
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type ProgressStatus = "open" | "completed" | "skipped";
@@ -87,6 +99,73 @@ interface ProviderTestResult {
   message: string;
 }
 
+interface SetupHubCard {
+  href: string;
+  title: string;
+  description: string;
+  icon: LucideIcon;
+  requiredAreas: AdminPermissionArea[];
+}
+
+const setupHubCards: SetupHubCard[] = [
+  {
+    href: "/admin/setup/foundations",
+    title: "Initial Setup",
+    description:
+      "Start with the installation checklist, modules, lodge records, and system health.",
+    icon: ListChecks,
+    requiredAreas: ["support"],
+  },
+  {
+    href: "/admin/setup/finance",
+    title: "Finance",
+    description:
+      "Open finance reporting, Xero setup, sync tools, and the collapsed report-mapping editor.",
+    icon: Landmark,
+    requiredAreas: ["finance"],
+  },
+  {
+    href: "/admin/setup/booking-rules",
+    title: "Booking Rules",
+    description:
+      "Review booking policy, seasons, age groups, promo codes, inventory, and booking copy.",
+    icon: BookOpenCheck,
+    requiredAreas: ["bookings", "lodge"],
+  },
+  {
+    href: "/admin/setup/integrations",
+    title: "Operational Integrations",
+    description:
+      "Check external-provider readiness, Xero connection, modules, and delivery health.",
+    icon: Plug,
+    requiredAreas: ["support", "finance"],
+  },
+  {
+    href: "/admin/membership-setup",
+    title: "Membership & Members",
+    description:
+      "Configure membership types, member fields, and subscription lockout policy.",
+    icon: BadgeCheck,
+    requiredAreas: ["membership"],
+  },
+  {
+    href: "/admin/setup/cancellation",
+    title: "Cancellation",
+    description:
+      "Review cancellation settings, cancellation request queues, and related message copy.",
+    icon: UserX,
+    requiredAreas: ["membership", "support"],
+  },
+  {
+    href: "/admin/notifications",
+    title: "Email Messages / Notifications",
+    description:
+      "Manage delivery rules, recipients, email templates, and member-facing message text.",
+    icon: Bell,
+    requiredAreas: ["support"],
+  },
+];
+
 function responseErrorMessage(body: unknown, fallback: string) {
   if (
     typeof body === "object" &&
@@ -125,10 +204,74 @@ function progressLabel(progress: ProgressStatus) {
   return null;
 }
 
-export function SetupPageClient({
+function canSeeAnyRequiredArea(
+  permissionMatrix: AdminPermissionMatrix,
+  areas: AdminPermissionArea[],
+) {
+  return areas.some((area) => permissionMatrix[area] !== "none");
+}
+
+function getVisibleSetupHubCards(
+  cards: SetupHubCard[],
+  features: FeatureFlags,
+  permissionMatrix: AdminPermissionMatrix,
+) {
+  return cards.filter(
+    (card) =>
+      isFeatureHrefVisible(card.href, features) &&
+      canSeeAnyRequiredArea(permissionMatrix, card.requiredAreas),
+  );
+}
+
+function SetupHubCards({
+  features,
   permissionMatrix,
 }: {
+  features: FeatureFlags;
   permissionMatrix: AdminPermissionMatrix;
+}) {
+  const visibleCards = getVisibleSetupHubCards(
+    setupHubCards,
+    features,
+    permissionMatrix,
+  );
+
+  if (visibleCards.length === 0) return null;
+
+  return (
+    <section id="setup-hubs" className="space-y-3">
+      <div>
+        <h2 className="text-xl font-semibold text-slate-900">Setup hubs</h2>
+        <p className="text-sm text-slate-600">
+          Open the relevant drill-down before editing lower-frequency
+          configuration.
+        </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {visibleCards.map(({ href, title, description, icon: Icon }) => (
+          <Link key={href} href={href} className="group block">
+            <Card className="h-full transition-colors hover:border-brand-gold/70">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Icon className="h-5 w-5 shrink-0 text-brand-charcoal" />
+                  <CardTitle className="text-base">{title}</CardTitle>
+                </div>
+                <CardDescription>{description}</CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function SetupPageClient({
+  permissionMatrix,
+  features,
+}: {
+  permissionMatrix: AdminPermissionMatrix;
+  features: FeatureFlags;
 }) {
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
@@ -328,16 +471,6 @@ export function SetupPageClient({
         </div>
       ) : null}
 
-      {/* A cross-area card is hidden when the viewer lacks `view` on its
-          backing API's area (`/api/admin/lodge-settings` → lodge;
-          `/api/admin/setup/finance-report-mappings` +
-          `/api/admin/xero/chart-of-accounts` → finance), matching the admin
-          sidebar's hide precedent so a support-area viewer without lodge or
-          finance access never fetches into a 403 (#1548 / owner finding 11). */}
-      {permissionMatrix.lodge !== "none" ? <LodgeCapacityCard /> : null}
-
-      {permissionMatrix.finance !== "none" ? <FinanceReportMappingsPanel /> : null}
-
       {readiness ? (
         <>
           <div className="grid gap-3 md:grid-cols-4">
@@ -376,7 +509,26 @@ export function SetupPageClient({
             </div>
           ) : null}
 
-          <div className="space-y-6">
+          <SetupHubCards
+            features={features}
+            permissionMatrix={permissionMatrix}
+          />
+
+          {/* The lodge-capacity card remains on the setup page and keeps the
+              #1548 matrix gate because its backing API is lodge-area while
+              /admin/setup itself is support-area. */}
+          {permissionMatrix.lodge !== "none" ? <LodgeCapacityCard /> : null}
+
+          <section id="setup-checks" className="space-y-6">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">
+                Readiness checks
+              </h2>
+              <p className="text-sm text-slate-600">
+                Work through the live checks after choosing the matching setup
+                hub.
+              </p>
+            </div>
             {readiness.categories.map((category) => (
               <section key={category.id} className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -519,43 +671,7 @@ export function SetupPageClient({
                 </div>
               </section>
             ))}
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Membership Cancellation</CardTitle>
-              <CardDescription>
-                Configure cancellation copy and Xero handling before member cancellation requests go live.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link
-                href="/admin/membership-cancellation"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-              >
-                Open Membership Cancellation settings
-                <ExternalLink className="h-4 w-4" />
-              </Link>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Email Messages</CardTitle>
-              <CardDescription>
-                Configure email variables and audited message templates before the site goes live.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link
-                href="/admin/email-messages"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-              >
-                Open Email Messages settings
-                <ExternalLink className="h-4 w-4" />
-              </Link>
-            </CardContent>
-          </Card>
+          </section>
         </>
       ) : null}
     </div>

@@ -79,7 +79,7 @@ export interface FinanceSyncHealthSourceData {
 }
 
 const XERO_ADMIN_HREF = "/admin/xero";
-const MAPPINGS_HREF = "/admin/setup";
+const MAPPINGS_HREF = "/admin/setup/finance";
 
 const STATEMENT_KIND_LABELS: Record<FinanceMonthlyStatementKind, string> = {
   PROFIT_AND_LOSS: "Profit and loss",

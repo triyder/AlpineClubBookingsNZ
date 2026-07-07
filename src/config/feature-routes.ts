@@ -167,7 +167,7 @@ export function isFeatureHrefVisible(
 ): boolean {
   const pathname = href.startsWith("http")
     ? new URL(href).pathname
-    : href.split("?")[0] || "/";
+    : href.split(/[?#]/)[0] || "/";
 
   return getDisabledFeatureForPath(pathname, flags) === null;
 }

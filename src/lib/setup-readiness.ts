@@ -563,8 +563,10 @@ function buildMembershipCancellationCheck(
         status: "warning",
         required: false,
         message: "Membership cancellation settings were not checked.",
-        details: ["Review this in /admin/setup after migrations have run."],
-        href: "/admin/setup",
+        details: [
+          "Review this in /admin/setup/cancellation after migrations have run.",
+        ],
+        href: "/admin/setup/cancellation",
       },
       progress,
     );
@@ -589,7 +591,7 @@ function buildMembershipCancellationCheck(
           db.membershipCancellationArchiveContacts ? "enabled" : "disabled"
         }`,
       ],
-      href: "/admin/setup",
+      href: "/admin/setup/cancellation",
     },
     progress,
   );
