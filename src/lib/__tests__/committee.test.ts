@@ -63,6 +63,7 @@ vi.mock("@/lib/email-templates", () => ({ escapeHtml: vi.fn((s: string) => s) })
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { sendEmail } from "@/lib/email";
+import logger from "@/lib/logger";
 import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
 import { GET as listMembers, POST as createMember } from "@/app/api/admin/committee/route";
 import { PUT as updateMember, DELETE as deleteMember } from "@/app/api/admin/committee/[id]/route";
@@ -693,6 +694,402 @@ describe("Committee Assignment API", () => {
   });
 });
 
+describe("Committee Assignment API - contact email mode", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const makeParams = (id: string) => Promise.resolve({ id });
+
+  function mockMemberAndRole() {
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "member1",
+      firstName: "Alex",
+      lastName: "Admin",
+      email: "alex@example.org",
+    } as any);
+    vi.mocked(prisma.committeeRole.findUnique).mockResolvedValue({
+      id: "role1",
+      name: "President",
+      isActive: true,
+    } as any);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.committeeAssignment.create).mockResolvedValue(
+      sampleAssignment as any,
+    );
+  }
+
+  it("POST persists a CUSTOM contact email mode and normalized override", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    mockMemberAndRole();
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({
+        memberId: "member1",
+        committeeRoleId: "role1",
+        contactable: true,
+        contactEmailMode: "CUSTOM",
+        contactEmailOverride: "Custom@Example.Org",
+      }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(201);
+    expect(prisma.committeeAssignment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactEmailMode: "CUSTOM",
+          contactEmailOverride: "custom@example.org",
+        }),
+      }),
+    );
+  });
+
+  it("POST forces the override to null for non-CUSTOM modes", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    mockMemberAndRole();
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({
+        memberId: "member1",
+        committeeRoleId: "role1",
+        contactable: true,
+        contactEmailMode: "MEMBER",
+        contactEmailOverride: "stale@example.org",
+      }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(201);
+    expect(prisma.committeeAssignment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactEmailMode: "MEMBER",
+          contactEmailOverride: null,
+        }),
+      }),
+    );
+  });
+
+  it("POST defaults to ROLE mode when unspecified (back-compat)", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    mockMemberAndRole();
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({ memberId: "member1", committeeRoleId: "role1" }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(201);
+    expect(prisma.committeeAssignment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactEmailMode: "ROLE",
+          contactEmailOverride: null,
+        }),
+      }),
+    );
+  });
+
+  it("POST rejects an invalid custom committee email", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    mockMemberAndRole();
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({
+        memberId: "member1",
+        committeeRoleId: "role1",
+        contactable: true,
+        contactEmailMode: "CUSTOM",
+        contactEmailOverride: "not-an-email",
+      }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(400);
+    expect(prisma.committeeAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("POST rejects CUSTOM mode without an override", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    mockMemberAndRole();
+
+    const req = new NextRequest("http://localhost/api/admin/committee/assignments", {
+      method: "POST",
+      body: JSON.stringify({
+        memberId: "member1",
+        committeeRoleId: "role1",
+        contactable: true,
+        contactEmailMode: "CUSTOM",
+      }),
+    });
+    const res = await createAssignment(req);
+
+    expect(res.status).toBe(400);
+    expect(prisma.committeeAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("PATCH updates the contact email mode and normalized override", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue({
+      ...sampleAssignment,
+      contactEmailMode: "ROLE",
+      contactEmailOverride: null,
+    } as any);
+    vi.mocked(prisma.committeeAssignment.update).mockResolvedValue({
+      ...sampleAssignment,
+      contactEmailMode: "CUSTOM",
+      contactEmailOverride: "custom@example.org",
+    } as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          contactEmailMode: "CUSTOM",
+          contactEmailOverride: "Custom@Example.Org",
+        }),
+      },
+    );
+    const res = await updateAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(200);
+    expect(prisma.committeeAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactEmailMode: "CUSTOM",
+          contactEmailOverride: "custom@example.org",
+        }),
+      }),
+    );
+  });
+
+  it("PATCH leaves an existing CUSTOM override untouched when only unrelated fields change", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue({
+      ...sampleAssignment,
+      contactEmailMode: "CUSTOM",
+      contactEmailOverride: "custom@example.org",
+    } as any);
+    vi.mocked(prisma.committeeAssignment.update).mockResolvedValue({
+      ...sampleAssignment,
+      published: true,
+      contactEmailMode: "CUSTOM",
+      contactEmailOverride: "custom@example.org",
+    } as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ published: true }),
+      },
+    );
+    const res = await updateAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(200);
+    const updateArgs = vi.mocked(prisma.committeeAssignment.update).mock
+      .calls[0][0] as { data: Record<string, unknown> };
+    expect(updateArgs.data.published).toBe(true);
+    // The override column must not be touched (not nulled/wiped) by an
+    // unrelated toggle while the assignment stays in CUSTOM mode.
+    expect("contactEmailOverride" in updateArgs.data).toBe(false);
+    expect("contactEmailMode" in updateArgs.data).toBe(false);
+  });
+
+  it("PATCH clears the override when moving away from CUSTOM", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue({
+      ...sampleAssignment,
+      contactEmailMode: "CUSTOM",
+      contactEmailOverride: "custom@example.org",
+    } as any);
+    vi.mocked(prisma.committeeAssignment.update).mockResolvedValue({
+      ...sampleAssignment,
+      contactEmailMode: "ROLE",
+      contactEmailOverride: null,
+    } as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ contactEmailMode: "ROLE" }),
+      },
+    );
+    const res = await updateAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(200);
+    expect(prisma.committeeAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          contactEmailMode: "ROLE",
+          contactEmailOverride: null,
+        }),
+      }),
+    );
+  });
+
+  it("PATCH rejects switching to CUSTOM without a resolvable override", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeAssignment.findUnique).mockResolvedValue({
+      ...sampleAssignment,
+      contactEmailMode: "ROLE",
+      contactEmailOverride: null,
+    } as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ contactEmailMode: "CUSTOM" }),
+      },
+    );
+    const res = await updateAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(400);
+    expect(prisma.committeeAssignment.update).not.toHaveBeenCalled();
+  });
+
+  it("PATCH rejects an invalid custom committee email", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/committee/assignments/assign1",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ contactEmailOverride: "not-an-email" }),
+      },
+    );
+    const res = await updateAssignment(req, { params: makeParams("assign1") });
+
+    expect(res.status).toBe(400);
+    expect(prisma.committeeAssignment.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("Contact API - committee contact email mode routing", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  const contactReq = (recipient: string) =>
+    new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: "test@example.com",
+        message: "Hello",
+        recipient,
+      }),
+    });
+
+  it("ROLE mode routes to the role email", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      contactEmailMode: "ROLE",
+      contactEmailOverride: null,
+      committeeRole: { name: "President", contactEmail: "role@example.org" },
+      member: { email: "member@example.org" },
+    } as any);
+
+    const res = await POST(contactReq("assign1"));
+    expect(res.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "role@example.org" }),
+    );
+  });
+
+  it("MEMBER mode routes to the member email", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      contactEmailMode: "MEMBER",
+      contactEmailOverride: null,
+      committeeRole: { name: "President", contactEmail: "role@example.org" },
+      member: { email: "member@example.org" },
+    } as any);
+
+    const res = await POST(contactReq("assign1"));
+    expect(res.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "member@example.org" }),
+    );
+  });
+
+  it("CUSTOM mode routes to the override email", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      contactEmailMode: "CUSTOM",
+      contactEmailOverride: "custom@example.org",
+      committeeRole: { name: "President", contactEmail: "role@example.org" },
+      member: { email: "member@example.org" },
+    } as any);
+
+    const res = await POST(contactReq("assign1"));
+    expect(res.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "custom@example.org" }),
+    );
+  });
+
+  it("CUSTOM with a blank override falls back to role then member and warns", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      contactEmailMode: "CUSTOM",
+      contactEmailOverride: null,
+      committeeRole: { name: "President", contactEmail: "role@example.org" },
+      member: { email: "member@example.org" },
+    } as any);
+
+    const res = await POST(contactReq("assign1"));
+    expect(res.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "role@example.org",
+        logRecipient: "committee-contact:assign1",
+      }),
+    );
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("MEMBER mode with no member email falls back to the role email and warns", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      contactEmailMode: "MEMBER",
+      contactEmailOverride: null,
+      committeeRole: { name: "President", contactEmail: "role@example.org" },
+      member: { email: null },
+    } as any);
+
+    const res = await POST(contactReq("assign1"));
+    expect(res.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "role@example.org" }),
+    );
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("MEMBER mode with no role or member email falls back to the CONTACT_EMAIL default and warns", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeAssignment.findFirst).mockResolvedValue({
+      contactEmailMode: "MEMBER",
+      contactEmailOverride: null,
+      committeeRole: { name: "President", contactEmail: null },
+      member: { email: null },
+    } as any);
+
+    const res = await POST(contactReq("assign1"));
+    expect(res.status).toBe(200);
+    const emailArgs = vi.mocked(sendEmail).mock.calls[0][0];
+    // Never an empty `to`: routing lands on the ultimate club default.
+    expect(emailArgs.to).toBe(CLUB_CONTACT_EMAIL);
+    expect(emailArgs.to).toBeTruthy();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
 describe("Committee Public API - GET /api/committee", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
@@ -804,6 +1201,8 @@ describe("Contact API - recipient lookup from database", () => {
         member: { active: true },
       },
       select: {
+        contactEmailMode: true,
+        contactEmailOverride: true,
         committeeRole: { select: { name: true, contactEmail: true } },
         member: { select: { email: true } },
       },

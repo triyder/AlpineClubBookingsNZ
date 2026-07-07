@@ -143,10 +143,13 @@ describe("email header CRLF injection protections", () => {
   it("redacts committee recipient emails from contact EmailLog rows", async () => {
     vi.stubEnv("NODE_ENV", "production");
     mockPrisma.committeeAssignment.findFirst.mockResolvedValueOnce({
+      contactEmailMode: "ROLE",
+      contactEmailOverride: null,
       committeeRole: {
         name: "Secretary",
         contactEmail: "secretary@example.org",
       },
+      member: { email: "secretary.member@example.org" },
     });
 
     const response = await POST(

@@ -117,7 +117,7 @@ export function CancelBookingButton({
         </p>
         {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
           <p className="text-sm text-green-700">
-            {formatDollars(result.creditRestoredCents)} of previously applied credit has been restored to {onBehalfOfMember ? "the member's" : "your"} account (per the cancellation policy).
+            {formatDollars(result.creditRestoredCents)} of previously applied credit has been returned to {onBehalfOfMember ? "the member's" : "your"} account.
           </p>
         )}
         {refund > 0 && isCredit ? (
@@ -179,9 +179,18 @@ export function CancelBookingButton({
         )}
 
         {!preview.hasPayment ? (
-          <p className="text-sm text-slate-700">
-            No payment has been taken for this booking. No refund applies.
-          </p>
+          <div className="space-y-1">
+            <p className="text-sm text-slate-700">
+              No payment has been taken for this booking. No refund applies.
+            </p>
+            {preview.creditRestoredCents > 0 && (
+              <p className="text-sm text-green-700">
+                {formatDollars(preview.creditRestoredCents)} of previously applied
+                account credit will be returned to{" "}
+                {onBehalfOfMember ? "the member's" : "your"} account.
+              </p>
+            )}
+          </div>
         ) : !hasRefund ? (
           <p className="text-sm text-slate-700">
             No refund applies per cancellation policy.

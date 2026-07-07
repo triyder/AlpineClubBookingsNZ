@@ -182,6 +182,30 @@ that commits after it. Callers cancelling a genuine member-created `PENDING`
 booking (member self-cancel, account-deletion cleanup) never set the flag and
 are unaffected.
 
+Every cancel path restores previously applied account credit (#1547) — all
+`cancelBooking` branches plus the Internet-Banking hold-expiry release
+(`internet-banking-payment-cron.ts`), the one automatic cancel outside
+`cancelBooking`. A member can apply account credit to a booking (a negative
+`BOOKING_APPLIED` ledger row); if the booking is then cancelled that row MUST
+be reversed or the credit is silently lost. The paid path restores the applied slice at the
+cancellation tier (#1164). The never-captured / no-refund path
+(`PAYMENT_PENDING`/`CONFIRMED`/`PAID` with no paid-path payment) and the
+`PENDING` and no-payment paths restore it at **100%** — nothing was captured, so
+no cancellation-policy tiering applies (the same capacity-failure system-void
+precedent). To make that restore exactly-once, the never-captured branch and the
+generic `PENDING` branch are now themselves status-guarded claim-first under the
+same booking advisory lock (previously the `PENDING` branch was unlocked with no
+status re-guard); `restoreCreditFromBooking` carries no internal replay guard, so
+each branch's atomic status flip is its only idempotency guarantee. A CANCELLED
+booking may legitimately hold consumed credit with no restore row ONLY when its
+payment captured money (0%-tier paid cancels write no restore row; held-as-credit
+refunds keep the applied rows) or settled without cash (the fully-credit-covered
+$0 SUCCEEDED payment, whose cancel takes the paid path and may tier the restore
+to 0). The daily credit-reconciliation cron alerts
+(alert-only, no auto-heal — a post-fix hit is a new regression) on any CANCELLED
+booking still holding orphaned applied credit, and
+`scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans.
+
 ### BookingEvent Scope
 
 `BookingEvent` is a durable narrative fact store, not the complete transition
@@ -220,7 +244,14 @@ Cancelled-booking soft-delete is an admin cleanup state, not hard erasure. It
 keeps the booking record and remains blocked by captured/refunded/credited
 payment, refund, member-credit, payment-recovery, or Xero history. Internal
 modification rows with positive and negative cent deltas may be soft-deleted
-when those deltas net to zero and no external financial history exists.
+when those deltas net to zero and no external financial history exists. The
+member-credit blocker follows the same net-zero rule (#1547, owner decision
+2026-07-07): applied credit that was fully reversed (net-zero, only
+`BOOKING_APPLIED`/`CANCELLATION_REFUND` rows, and no row carrying a Xero
+credit-note id) no longer blocks — and the coincident `payment.creditAppliedCents`
+mirror is waived with it — but an `ADMIN_ADJUSTMENT`/`BOOKING_MODIFICATION_REFUND`
+row, a net-non-zero ledger, or any Xero-linked credit note still blocks, as does
+any independently captured/refunded payment.
 
 ## Public Booking Request Quote Lifecycle
 

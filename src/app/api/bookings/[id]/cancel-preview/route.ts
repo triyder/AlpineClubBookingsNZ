@@ -1,3 +1,4 @@
+import { CreditType } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -67,6 +68,23 @@ export async function GET(
       !booking.payment ||
       !(await paymentEligibleForPaidCancelPath(booking.payment))
     ) {
+      // #1547: the no-refund / never-captured executed path restores applied
+      // credit at 100% (ledger truth, no override) — so the preview must show
+      // the same figure or it would understate the outcome as $0. Derive it
+      // straight from the ledger: Σ(−amountCents) over the booking's
+      // BOOKING_APPLIED rows, floored at 0.
+      const appliedAggregate = await prisma.memberCredit.aggregate({
+        where: {
+          appliedToBookingId: booking.id,
+          type: CreditType.BOOKING_APPLIED,
+        },
+        _sum: { amountCents: true },
+      });
+      const creditRestoredCents = Math.max(
+        0,
+        -(appliedAggregate._sum.amountCents ?? 0)
+      );
+
       return NextResponse.json({
         refundAmountCents: 0,
         keptAmountCents: 0,
@@ -74,7 +92,7 @@ export async function GET(
         refundPercentage: 0,
         creditRefundAmountCents: 0,
         creditRefundPercentage: 0,
-        creditRestoredCents: 0,
+        creditRestoredCents,
         totalPaidCents: 0,
         hasPayment: false,
       });

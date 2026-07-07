@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/email-templates";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
 
 const noEmailHeaderCrlf = (value: string) => !/[\r\n]/.test(value);
@@ -35,6 +36,8 @@ async function resolveCommitteeRecipient(recipient: string) {
       member: { active: true },
     },
     select: {
+      contactEmailMode: true,
+      contactEmailOverride: true,
       committeeRole: { select: { name: true, contactEmail: true } },
       member: { select: { email: true } },
     },
@@ -80,9 +83,32 @@ export async function POST(request: Request) {
         recipientLabel = buildRecipientLabel(
           committeeAssignment.committeeRole.name,
         );
-        const committeeRecipientEmail =
-          committeeAssignment.committeeRole.contactEmail?.trim() ||
-          committeeAssignment.member.email?.trim();
+        const roleEmail =
+          committeeAssignment.committeeRole.contactEmail?.trim() || null;
+        const memberEmail = committeeAssignment.member.email?.trim() || null;
+        const overrideEmail =
+          committeeAssignment.contactEmailOverride?.trim() || null;
+        let committeeRecipientEmail: string | null;
+        switch (committeeAssignment.contactEmailMode) {
+          case "CUSTOM":
+            committeeRecipientEmail = overrideEmail;
+            break;
+          case "MEMBER":
+            committeeRecipientEmail = memberEmail;
+            break;
+          default:
+            committeeRecipientEmail = roleEmail; // ROLE
+            break;
+        }
+        if (!committeeRecipientEmail) {
+          // Selected mode's address is missing/deactivated — fall back
+          // ROLE -> member so public contact mail is never black-holed.
+          committeeRecipientEmail = roleEmail || memberEmail;
+          logger.warn(
+            { assignmentId: recipient, mode: committeeAssignment.contactEmailMode },
+            "Committee contact email fell back to role/member address",
+          );
+        }
         if (committeeRecipientEmail) {
           toEmail = committeeRecipientEmail;
           logRecipient = `committee-contact:${recipient}`;

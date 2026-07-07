@@ -100,10 +100,12 @@ recommended reading paths.
 8. Use **Admin > Committee** to review seeded committee master roles and
    member-linked committee assignments. Assignments remain hidden/unpublished
    until an admin explicitly enables their presentation flags; public contact
-   options use only published, contactable assignments and deliver to the
-   role email alias configured on the master role, or to the linked member's
-   personal email when the role email is blank. Phone numbers display only when
-   **show phone** is enabled.
+   options use only published, contactable assignments. Each contactable
+   assignment chooses per assignment whether messages route to the committee
+   **role** email alias, the linked **member's** own email, or a **custom**
+   address; when the selected address is blank the delivery falls back to the
+   role alias and then the member's personal email so contact mail is never
+   lost. Phone numbers display only when **show phone** is enabled.
 9. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
    ready for a controlled deployment of your own environment.
 

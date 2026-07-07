@@ -4,7 +4,9 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
   coerceWhakapapaCurlData,
+  coerceWhakapapaSectionVisibility,
   emptyWhakapapaCurlData,
+  type WhakapapaSectionVisibility,
 } from "@/lib/whakapapa-report";
 import { fetchWhakapapaCurlData } from "@/lib/whakapapa-report.server";
 
@@ -151,7 +153,19 @@ export async function POST() {
     return guard.response;
   }
 
+  const existing = await whakapapaReportCache.findUnique({
+    where: { source: WHAKAPAPA_SOURCE },
+  });
+
   const payload = await fetchWhakapapaCurlData();
+
+  // Section visibility is admin-controlled config stored in the payload; keep
+  // the current choices instead of resetting them on an upstream refresh.
+  const existingData = coerceWhakapapaCurlData(existing?.payload);
+  if (existingData) {
+    payload.visibility = existingData.visibility;
+  }
+
   const now = new Date();
 
   const record = await whakapapaReportCache.upsert({
@@ -172,5 +186,67 @@ export async function POST() {
   return NextResponse.json({
     record: toResponseRecord(record),
     message: "Mountain conditions refreshed from Whakapapa.",
+  });
+}
+
+export async function PATCH(request: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) {
+    return guard.response;
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const rawVisibility =
+    body && typeof body === "object" && "visibility" in body
+      ? (body as { visibility?: unknown }).visibility
+      : undefined;
+
+  if (!rawVisibility || typeof rawVisibility !== "object") {
+    return NextResponse.json(
+      { error: "visibility object is required" },
+      { status: 400 },
+    );
+  }
+
+  const visibility: WhakapapaSectionVisibility =
+    coerceWhakapapaSectionVisibility(rawVisibility);
+
+  const existing = await whakapapaReportCache.findUnique({
+    where: { source: WHAKAPAPA_SOURCE },
+  });
+
+  // Toggling visibility only changes display config, so preserve the cached
+  // report data, its fetch timestamp, and any active freeze window.
+  const payload =
+    coerceWhakapapaCurlData(existing?.payload) ?? emptyWhakapapaCurlData();
+  payload.visibility = visibility;
+
+  const fetchedAt = existing?.fetchedAt ?? new Date();
+  const frozenUntil = existing?.frozenUntil ?? null;
+
+  const record = await whakapapaReportCache.upsert({
+    where: { source: WHAKAPAPA_SOURCE },
+    create: {
+      source: WHAKAPAPA_SOURCE,
+      payload: payload as unknown as Prisma.InputJsonValue,
+      fetchedAt,
+      frozenUntil,
+    },
+    update: {
+      payload: payload as unknown as Prisma.InputJsonValue,
+      fetchedAt,
+      frozenUntil,
+    },
+  });
+
+  return NextResponse.json({
+    record: toResponseRecord(record),
+    message: "Section visibility saved.",
   });
 }

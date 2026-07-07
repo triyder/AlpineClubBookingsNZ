@@ -1,5 +1,6 @@
 import {
   BookingStatus,
+  CreditType,
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
@@ -322,7 +323,7 @@ async function getCancelledBookingDeleteBlockers(
     financialPaymentTransactionCount,
     paymentRefundCount,
     refundRequestCount,
-    memberCreditCount,
+    memberCreditRows,
     paymentRecoveryCount,
     xeroObjectLinkCount,
     xeroSyncOperationCount,
@@ -340,13 +341,14 @@ async function getCancelledBookingDeleteBlockers(
       : Promise.resolve(0),
     paymentId ? tx.paymentRefund.count({ where: { paymentId } }) : Promise.resolve(0),
     tx.refundRequest.count({ where: { bookingId: booking.id } }),
-    tx.memberCredit.count({
+    tx.memberCredit.findMany({
       where: {
         OR: [
           { sourceBookingId: booking.id },
           { appliedToBookingId: booking.id },
         ],
       },
+      select: { amountCents: true, type: true, xeroCreditNoteId: true },
     }),
     tx.paymentRecoveryOperation.count({
       where: { bookingId: booking.id },
@@ -359,11 +361,35 @@ async function getCancelledBookingDeleteBlockers(
     }),
   ]);
 
+  // #1547 (owner decision 2026-07-07, net-zero unblock, FINAL): a CANCELLED
+  // booking whose applied credit was fully reversed no longer blocks deletion.
+  const creditNetCents = memberCreditRows.reduce((sum, row) => sum + row.amountCents, 0);
+  // net-zero = the applied credit was fully reversed (−X BOOKING_APPLIED + X
+  // CANCELLATION_REFUND).
+  // type restriction = an ADMIN_ADJUSTMENT / BOOKING_MODIFICATION_REFUND
+  // referencing this booking is real financial history that must still block,
+  // even if it happens to net to zero against the applied rows.
+  const creditRowsAreReversalOnly = memberCreditRows.every(
+    (row) =>
+      row.type === CreditType.BOOKING_APPLIED ||
+      row.type === CreditType.CANCELLATION_REFUND
+  );
+  // xeroCreditNoteId = an external accounting artifact (a Xero credit note
+  // exists / was allocated) that must still block regardless of ledger netting.
+  const creditRowsCarryXeroNote = memberCreditRows.some(
+    (row) => row.xeroCreditNoteId !== null
+  );
+  const creditFullyRestored =
+    memberCreditRows.length > 0 &&
+    creditNetCents === 0 &&
+    creditRowsAreReversalOnly &&
+    !creditRowsCarryXeroNote;
+
   addBlocker(
     blockers,
     "captured_payment",
     "Captured, refunded, or credited payment exists",
-    hasCapturedOrCreditedPayment(booking.payment) ? 1 : 0
+    hasCapturedOrCreditedPayment(booking.payment, creditFullyRestored) ? 1 : 0
   );
   addBlocker(
     blockers,
@@ -386,8 +412,10 @@ async function getCancelledBookingDeleteBlockers(
   addBlocker(
     blockers,
     "member_credit",
-    "Member credit history exists",
-    memberCreditCount
+    `Member credit history exists (${memberCreditRows.length} row${
+      memberCreditRows.length === 1 ? "" : "s"
+    }, net ${formatNetCents(creditNetCents)})`,
+    memberCreditRows.length > 0 && !creditFullyRestored ? memberCreditRows.length : 0
   );
   addBlocker(
     blockers,
@@ -456,7 +484,8 @@ function addBlocker(
 }
 
 function hasCapturedOrCreditedPayment(
-  payment: BookingForDelete["payment"]
+  payment: BookingForDelete["payment"],
+  creditFullyRestored = false
 ): boolean {
   if (!payment) {
     return false;
@@ -465,9 +494,21 @@ function hasCapturedOrCreditedPayment(
   return (
     CAPTURED_PAYMENT_STATUSES.has(payment.status) ||
     payment.refundedAmountCents > 0 ||
-    payment.creditAppliedCents > 0 ||
+    // #1547: the applied-credit mirror no longer blocks once the ledger proves
+    // that applied credit was fully reversed (net-zero, reversal-only, no Xero
+    // note). Waive ONLY this clause. The SUCCEEDED / refund / additional-payment
+    // clauses stay untouched — they independently block any coincidental
+    // net-zero that also involves captured money.
+    (payment.creditAppliedCents > 0 && !creditFullyRestored) ||
     payment.additionalPaymentStatus === "SUCCEEDED"
   );
+}
+
+// #1547: render a signed net-cents figure for the member_credit blocker label,
+// e.g. -$5.00 / $0.00. Money stays in integer cents internally.
+function formatNetCents(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
 }
 
 function hasXeroPaymentReference(payment: BookingForDelete["payment"]): boolean {

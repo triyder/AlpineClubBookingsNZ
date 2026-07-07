@@ -459,6 +459,37 @@ describe("member-credit helpers", () => {
       expect(restored).toBe(0);
       expect(prisma.memberCredit.create).not.toHaveBeenCalled();
     });
+
+    it("conserves the ledger: a never-captured cancel restore nets applied credit to 0 (#1547)", async () => {
+      // Real restore math with no override: apply X (a −X BOOKING_APPLIED row),
+      // then restore on cancel writes exactly +X as CANCELLATION_REFUND with the
+      // booking as sourceBookingId, so Σ(applied) + restored === 0.
+      const { prisma } = await import("@/lib/prisma");
+      const appliedRows = [
+        { id: "c1", amountCents: -8000, type: "BOOKING_APPLIED" },
+        { id: "c2", amountCents: -4000, type: "BOOKING_APPLIED" },
+      ];
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue(
+        appliedRows as never
+      );
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as never);
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      const restored = await restoreCreditFromBooking("member-1", "booking-nc");
+
+      const appliedSum = appliedRows.reduce((s, r) => s + r.amountCents, 0);
+      expect(restored).toBe(12000);
+      const createdRow = vi.mocked(prisma.memberCredit.create).mock.calls[0][0]
+        .data;
+      expect(createdRow).toMatchObject({
+        amountCents: 12000,
+        type: "CANCELLATION_REFUND",
+        sourceBookingId: "booking-nc",
+      });
+      // Ledger conservation: the negative applied rows plus the positive restore
+      // net exactly to zero.
+      expect(appliedSum + restored).toBe(0);
+    });
   });
 
   describe("createAdminAdjustment", () => {

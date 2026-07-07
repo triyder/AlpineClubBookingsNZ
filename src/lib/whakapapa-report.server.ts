@@ -1,9 +1,9 @@
 import { JSDOM } from "jsdom";
 import {
   emptyWhakapapaCurlData,
-  type WhakapapaChairlift,
   type WhakapapaCondition,
   type WhakapapaCurlData,
+  type WhakapapaFacilityItem,
   type WhakapapaRoadStatus,
 } from "@/lib/whakapapa-report";
 
@@ -15,6 +15,17 @@ function normalizeText(value: string | null | undefined): string {
 
 function normalizeLabel(value: string): string {
   return value.replace(/:\s*$/, "").trim().toLowerCase();
+}
+
+function parseFacilityItems(section: ParentNode): WhakapapaFacilityItem[] {
+  return Array.from(section.querySelectorAll("div.item_3CiH98"))
+    .map((node) => ({
+      name: normalizeText(node.querySelector("div.name_3CiH98")?.textContent),
+      status: normalizeText(
+        node.querySelector("div.status_3CiH98")?.textContent,
+      ),
+    }))
+    .filter((item) => item.name.length > 0 || item.status.length > 0);
 }
 
 function findMetricValue(container: ParentNode, title: string): string {
@@ -88,17 +99,35 @@ export async function fetchWhakapapaCurlData(): Promise<WhakapapaCurlData> {
     ),
   };
 
-  const chairliftNodes = Array.from(
-    document.querySelectorAll("div.items_2hnOFJ div.item_3CiH98"),
+  const facilities: WhakapapaFacilityItem[] = [];
+  const foodAndDrink: WhakapapaFacilityItem[] = [];
+  const lifts: WhakapapaFacilityItem[] = [];
+
+  // The report groups status items into Facilities, Food & Drink, and Lifts.
+  // Each group is a `wrapper_2hnOFJ` section with a titled heading and an
+  // `items_2hnOFJ` list. Route items by the heading id, falling back to the
+  // heading text so a markup id change does not silently drop a group.
+  const sectionWrappers = Array.from(
+    document.querySelectorAll("div.wrapper_2hnOFJ"),
   );
-  const chairlifts: WhakapapaChairlift[] = chairliftNodes
-    .map((node) => ({
-      name: normalizeText(node.querySelector("div.name_3CiH98")?.textContent),
-      status: normalizeText(
-        node.querySelector("div.status_3CiH98")?.textContent,
-      ),
-    }))
-    .filter((item) => item.name.length > 0 || item.status.length > 0);
+  for (const wrapper of sectionWrappers) {
+    const heading = wrapper.querySelector(".title_2hnOFJ");
+    const headingId = heading?.id ?? "";
+    const headingLabel = normalizeLabel(normalizeText(heading?.textContent));
+    const itemsContainer = wrapper.querySelector("div.items_2hnOFJ");
+    if (!itemsContainer) {
+      continue;
+    }
+
+    const items = parseFacilityItems(itemsContainer);
+    if (headingId === "facilities" || headingLabel === "facilities") {
+      facilities.push(...items);
+    } else if (headingId === "food-drink" || headingLabel === "food & drink") {
+      foodAndDrink.push(...items);
+    } else if (headingId === "lifts" || headingLabel === "lifts") {
+      lifts.push(...items);
+    }
+  }
 
   const conditionNodes = Array.from(
     document.querySelectorAll("div.locationRow_1pp0Bo"),
@@ -121,7 +150,9 @@ export async function fetchWhakapapaCurlData(): Promise<WhakapapaCurlData> {
   const curlData = emptyWhakapapaCurlData();
   curlData.updated = new Date().toISOString();
   curlData.roadStatus = roadStatus;
-  curlData.chairlifts = chairlifts;
+  curlData.facilities = facilities;
+  curlData.foodAndDrink = foodAndDrink;
+  curlData.lifts = lifts;
   curlData.conditions = conditions;
 
   return curlData;
