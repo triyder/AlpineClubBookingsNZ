@@ -49,7 +49,12 @@ function mapLegacyAdditionalPaymentStatus(
   }
 }
 
-function applyLegacyRefundStatus(
+// The repair pass's legacy-fallback status synthesis: when a payment has no
+// ledger rows, its captured/refunded state is derived from the aggregate
+// refund mirror (#1208 item 2). Exported so the #1506 cancel-flatten backfill
+// restores the exact captured status this read path already synthesizes,
+// rather than duplicating the derivation.
+export function applyLegacyRefundStatus(
   baseStatus: PaymentStatus,
   amountCents: number,
   refundedAmountCents: number
