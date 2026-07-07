@@ -58,6 +58,10 @@ vi.mock("@/lib/prisma", () => ({
     payment: {
       update: mocks.paymentUpdate,
     },
+    // #1547: the outer capture-evidence lookup on the never-captured branch.
+    paymentTransaction: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     promoRedemption: {
       findUnique: mocks.promoRedemptionFindUnique,
     },
@@ -259,6 +263,16 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             payment: {
               update: mocks.paymentUpdate,
             },
+            // #1547: the never-captured claim reads capture evidence and any
+            // Xero-linked applied credit under the lock.
+            paymentTransaction: {
+              findFirst: vi.fn().mockResolvedValue(null),
+            },
+            memberCredit: {
+              aggregate: vi
+                .fn()
+                .mockResolvedValue({ _sum: { amountCents: null } }),
+            },
           };
           return arg(mockTx);
         }
@@ -418,5 +432,63 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
 
     expect(cancelPayout).toBe(10000);
     expect(modPayout + cancelPayout).toBe(15000);
+  });
+
+  it("restores applied credit at 100% (no override) on a never-captured cancel, conserving the ledger (#1547)", async () => {
+    // Apply X of credit, abandon payment, then cancel while never-captured: the
+    // member's ledger delta must be 0. This file mocks restoreCreditFromBooking,
+    // so we assert it runs exactly once with NO override arg and that the
+    // returned amount surfaces on the response (the real-math ledger
+    // conservation is pinned in member-credit.test.ts).
+    const APPLIED_CENTS = 12000;
+    mocks.daysUntilDate.mockReturnValue(30);
+    mocks.restoreCreditFromBooking.mockResolvedValue(APPLIED_CENTS);
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "booking_nc",
+      memberId: "member_1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 20000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_nc",
+        bookingId: "booking_nc",
+        amountCents: 20000,
+        refundedAmountCents: 0,
+        status: "PROCESSING",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: APPLIED_CENTS,
+        stripePaymentIntentId: "pi_nc",
+        xeroInvoiceId: null,
+      },
+    });
+
+    const result = await cancelBooking(
+      "booking_nc",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    if (!("data" in result)) {
+      throw new Error("expected a success response");
+    }
+    // Exactly one restore, with the tx client and NO 4th (override) arg — the
+    // never-captured path never tiers the restore.
+    expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
+    expect(mocks.restoreCreditFromBooking.mock.calls[0]).toHaveLength(3);
+    expect(mocks.restoreCreditFromBooking.mock.calls[0][0]).toBe("member_1");
+    expect(mocks.restoreCreditFromBooking.mock.calls[0][1]).toBe("booking_nc");
+    // The full applied amount is returned to the member (ledger delta 0).
+    expect(result.data.creditRestoredCents).toBe(APPLIED_CENTS);
+    expect(result.data.refundAmountCents).toBe(0);
   });
 });

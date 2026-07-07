@@ -141,6 +141,34 @@ Future reviews and issues should cite this file when proposing changes.
   `--apply --apply-action <key>` (#1491). Rows already flattened by the old
   defect are not backfilled (the repair pass synthesizes captured state from
   the STRIPE mirror).
+- Applied account credit is conserved across cancellation (#1547): EVERY
+  `cancelBooking` branch — and the Internet-Banking hold-expiry release
+  (`internet-banking-payment-cron.ts`), the one automatic cancel outside
+  `cancelBooking` — reverses the negative `BOOKING_APPLIED` ledger rows a
+  member applied to the booking. The never-captured / no-refund branches and the
+  `PENDING` / no-payment branches restore at **100%** (nothing was captured, so
+  no cancellation-policy tiering — the same capacity-failure system-void
+  precedent); the paid path restores the applied slice at the cancellation tier
+  (#1164 / D7). Because `restoreCreditFromBooking` has no internal replay guard,
+  restore runs ONLY inside each branch's claim/lock, whose atomic status flip is
+  the exactly-once guarantee — so the never-captured and `PENDING` branches are
+  now status-guarded claim-first under the booking advisory lock too. A CANCELLED
+  booking may legitimately hold consumed credit with NO restore row only when its
+  payment captured money (0%-tier paid cancels write no restore row;
+  held-as-credit refunds keep the applied rows) or settled without cash (the
+  fully-credit-covered $0 SUCCEEDED payment — its cancel takes the paid path,
+  where a 0%-tier / fee-swallowed restore of 0 is the policy retaining the
+  credit). The daily credit-reconciliation
+  cron alerts (alert-only, no auto-heal — post-fix, any hit is a new regression)
+  on any CANCELLED booking still holding orphaned applied credit, and
+  `scripts/backfill-orphaned-applied-credits.ts` heals pre-fix orphans. The
+  cancelled-booking delete guard mirrors this: fully-reversed applied credit
+  (net-zero, only `BOOKING_APPLIED`/`CANCELLATION_REFUND` rows, no Xero
+  credit-note id) no longer blocks deletion — and the coincident
+  `payment.creditAppliedCents` mirror is waived with it — while any
+  `ADMIN_ADJUSTMENT`/`BOOKING_MODIFICATION_REFUND` row, net-non-zero ledger,
+  Xero-linked note, or independently captured/refunded payment still blocks
+  (owner decision 2026-07-07, FINAL).
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357) — but a PAID invoice event alone proves
   nothing: Xero also reports PAID when OUR OWN clearing credit note is

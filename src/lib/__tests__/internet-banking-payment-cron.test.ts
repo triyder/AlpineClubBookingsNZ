@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   reconcileBedAllocationsForBooking: vi.fn(),
   recordBookingEvent: vi.fn(),
   sendBookingCancelledEmail: vi.fn(),
+  restoreCreditFromBooking: vi.fn(),
   revokePaymentLinksForBooking: vi.fn(),
   processWaitlistForDates: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
@@ -44,6 +45,10 @@ vi.mock("@/lib/email", () => ({
 
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock("@/lib/member-credit", () => ({
+  restoreCreditFromBooking: mocks.restoreCreditFromBooking,
 }));
 
 vi.mock("@/lib/payment-link", () => ({
@@ -124,6 +129,8 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     mocks.recordBookingEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    // #1547: default = no applied credit on the released booking.
+    mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.processWaitlistForDates.mockResolvedValue(undefined);
     mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op_refund_note_1",
@@ -193,6 +200,43 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     expect(result.skipped).toBe(1);
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).not.toHaveBeenCalled();
+    // #1547: a skipped hold never touches the credit ledger.
+    expect(mocks.restoreCreditFromBooking).not.toHaveBeenCalled();
+  });
+
+  it("restores applied credit inside the release transaction and threads it through the narrative (#1547)", async () => {
+    mocks.restoreCreditFromBooking.mockResolvedValue(2000);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(1);
+    // Exactly one restore, on the SAME transaction client as the claim, with
+    // NO override arg (100% — nothing was captured).
+    expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
+    expect(mocks.restoreCreditFromBooking).toHaveBeenCalledWith(
+      "mem_1",
+      "booking_ib_1",
+      txRef.current,
+    );
+    expect(mocks.restoreCreditFromBooking.mock.calls[0]).toHaveLength(3);
+    // The CANCELLED narrative, audit metadata, and email all carry the amount.
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CANCELLED",
+        reason: expect.stringContaining(
+          "NZ$20.00 of applied account credit was returned.",
+        ),
+        snapshot: expect.objectContaining({ creditRestoredCents: 2000 }),
+      }),
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.internet_banking_hold_expired",
+        metadata: expect.objectContaining({ creditRestoredCents: 2000 }),
+      }),
+    );
+    const emailCall = mocks.sendBookingCancelledEmail.mock.calls[0];
+    expect(emailCall[6]).toBe(2000);
   });
 
   it("skips the kick when the enqueue deduped to no new operation", async () => {

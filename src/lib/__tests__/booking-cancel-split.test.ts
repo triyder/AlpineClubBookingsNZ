@@ -83,7 +83,15 @@ describe("cancelBooking split cascade (#738)", () => {
       async (fnOrActions: unknown) => {
         if (typeof fnOrActions === "function") {
           return (fnOrActions as (tx: unknown) => Promise<unknown>)({
-            booking: { update: mocks.bookingUpdate },
+            // #1547: the generic PENDING branch is now a claim-first tx that
+            // takes lock(1) and re-reads the booking under it. Wire the under-
+            // lock read to the same outer read so the parent's PENDING claim
+            // commits; the child sweep still only needs booking.update.
+            $executeRaw: vi.fn().mockResolvedValue(undefined),
+            booking: {
+              findUnique: mocks.bookingFindUnique,
+              update: mocks.bookingUpdate,
+            },
             payment: { update: vi.fn() },
           });
         }
@@ -91,6 +99,7 @@ describe("cancelBooking split cascade (#738)", () => {
       }
     );
     mocks.bookingUpdate.mockResolvedValue({});
+    mocks.restoreCreditFromBooking.mockResolvedValue(0);
     mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.revokePaymentLinksForBooking.mockResolvedValue(0);

@@ -252,6 +252,52 @@ Only after reviewing the dry-run report, apply inside a transaction:
 DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-cancel-flattened-payments.ts --apply
 ```
 
+### Backfill orphaned applied credit (#1547)
+
+`scripts/backfill-orphaned-applied-credits.ts` is a one-off, idempotent,
+local-only heal for account credit a member applied to a booking that was never
+restored when the booking was cancelled. Before #1547, applying credit to a
+booking, abandoning payment, then cancelling left the negative `BOOKING_APPLIED`
+`MemberCredit` row on the ledger — the credit was permanently lost, and the
+delete guard then blocked deletion on that very row. #1547 fixed the cancel
+paths going forward (every branch now restores applied credit); this heals rows
+orphaned before the fix.
+
+It detects, per `CANCELLED` booking (including soft-deleted): a `BOOKING_APPLIED`
+row with NO matching `CANCELLATION_REFUND` row and (no payment, or a payment
+with no capture evidence per the shared discriminator AND an aggregate status
+other than `SUCCEEDED`). The absence-of-refund clause excludes healthy restores
+and held-as-credit cancels; the capture clause excludes the legitimately
+unrestored captured shapes (0%-tier paid cancels and held-credit refunds); the
+`SUCCEEDED` clause excludes settlement without cash (a fully-credit-covered $0
+payment settles the booking, and its 0%-tier cancel legitimately retains the
+credit). Known false negative, conservative by design: a pre-fix orphan whose
+cancelled booking later received late cash carries an inbound-minted
+`CANCELLATION_REFUND` row that compensates the cash, not the applied credit —
+the predicate skips it (a missed heal, never a double restore); such bookings
+need manual review. It restores 100% of
+the applied credit (ledger truth), writing a `CANCELLATION_REFUND` reversal row,
+a critical finance audit row, and a `CREDITED` booking event — each booking in
+its own transaction under the member's credit-ledger advisory lock, re-checking
+the predicate under that lock so a re-run heals nothing. It makes ZERO
+Xero/Stripe/SES calls. The daily credit-reconciliation cron also alerts
+(alert-only, no auto-heal) under the tag
+`credit-reconciliation:orphaned-applied-credits`; a post-fix hit means a NEW
+regression — diagnose before running this script.
+
+Always start with a dry run (the default) against a non-production copy:
+
+```bash
+DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-orphaned-applied-credits.ts
+```
+
+Only after reviewing the dry-run report, apply (each booking in its own
+transaction):
+
+```bash
+DATABASE_URL=<non-prod copy> npx tsx scripts/backfill-orphaned-applied-credits.ts --apply
+```
+
 ## Quarterly Backup Restore Drill
 
 A backup you have never restored is a hope, not a backup. `scripts/backup-restore-drill.sh`

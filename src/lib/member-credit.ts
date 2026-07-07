@@ -446,7 +446,14 @@ export async function getAdminAdjustmentRequests(
   });
 }
 
-async function lockMemberCreditLedger(
+/**
+ * Serialize all writers of one member's credit ledger. Take this advisory lock
+ * (transaction-scoped) at the top of any transaction that reads-then-writes a
+ * member's MemberCredit rows so balance validations and restores cannot
+ * interleave. Exported for the orphaned-applied-credit backfill (#1547), which
+ * re-checks its heal predicate under this lock to stay idempotent.
+ */
+export async function lockMemberCreditLedger(
   memberId: string,
   tx: Prisma.TransactionClient
 ) {
