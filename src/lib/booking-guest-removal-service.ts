@@ -39,6 +39,8 @@ import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-clean
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getSeasonYear } from "@/lib/utils";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   getTodayDateOnly,
   normalizeDateOnlyForTimeZone,
@@ -99,6 +101,7 @@ type PromoRedemptionWithTargets = {
   promoCode: {
     assignedMembersOnlyOwnNights?: boolean | null;
     assignments: Array<{ memberId: string }>;
+    lodges?: Array<{ lodgeId: string }>;
   };
   guestTargets?: Array<{ bookingGuestId: string }>;
 };
@@ -255,8 +258,6 @@ export async function removeBookingGuestInTransaction({
   actorRole: string;
   settlementMethod?: BookingModificationSettlementMethod;
 }): Promise<RemoveBookingGuestResult> {
-  await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
-
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -271,7 +272,10 @@ export async function removeBookingGuestInTransaction({
           include: {
             guestTargets: { select: { bookingGuestId: true } },
             promoCode: {
-              include: { assignments: { select: { memberId: true } } },
+              include: {
+                assignments: { select: { memberId: true } },
+                lodges: { select: { lodgeId: true } },
+              },
             },
           },
         },
@@ -281,6 +285,9 @@ export async function removeBookingGuestInTransaction({
   if (!booking) {
     throw new BookingGuestRemovalError("Booking not found", 404);
   }
+
+  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+  await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
   const guestToRemove = booking.guests.find((guest) => guest.id === guestId);
   const isOwnerOrAdmin = booking.memberId === actorMemberId || actorRole === "ADMIN";
@@ -366,7 +373,7 @@ export async function removeBookingGuestInTransaction({
   await tx.bookingGuest.delete({ where: { id: guestId } });
 
   const remainingGuests = booking.guests.filter((guest) => guest.id !== guestId);
-  const seasonRateData = await loadSeasonRateData(tx);
+  const seasonRateData = await loadSeasonRateData(tx, bookingLodgeId);
 
   const guestsForPricing = remainingGuests.map((guest) => ({
     bookingGuestId: guest.id,
@@ -609,9 +616,12 @@ export async function removeBookingGuestInTransaction({
   };
 }
 
-export async function loadSeasonRateData(tx: Prisma.TransactionClient): Promise<SeasonRateData[]> {
+export async function loadSeasonRateData(
+  tx: Prisma.TransactionClient,
+  lodgeId?: string,
+): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
-    where: { active: true },
+    where: { active: true, ...(lodgeId ? lodgeNullTolerantScope(lodgeId) : {}) },
     include: { rates: true },
   });
 
@@ -670,7 +680,10 @@ export async function recalculateBookingPromo({
             include: {
               guestTargets: { select: { bookingGuestId: true } };
               promoCode: {
-                include: { assignments: { select: { memberId: true } } };
+                include: {
+                  assignments: { select: { memberId: true } };
+                  lodges: { select: { lodgeId: true } };
+                };
               };
             };
           };
@@ -695,6 +708,7 @@ export async function recalculateBookingPromo({
       booking.promoRedemption,
       guestNightRates
     );
+    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
     const application = await validateAndCalculatePromoDiscount(
       promo,
       {
@@ -706,7 +720,7 @@ export async function recalculateBookingPromo({
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
         : null,
-      { excludeBookingId: bookingId, db: tx, selectedGuestIndexes },
+      { excludeBookingId: bookingId, db: tx, selectedGuestIndexes, lodgeId: bookingLodgeId },
     );
 
     if (application.error || !application.discount) {

@@ -20,6 +20,8 @@ import {
   executeBookingModificationRefund,
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
+import { acquireLodgeCapacityLock, checkCapacity } from "@/lib/capacity";
+import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
@@ -30,7 +32,6 @@ import {
 } from "@/lib/booking-modify";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { createBookingModificationCredit } from "@/lib/member-credit";
-import { checkCapacity } from "@/lib/capacity";
 import {
   daysUntilDate,
   getNonMemberHoldPolicy,
@@ -105,6 +106,7 @@ type PromoRedemptionWithTargets = {
   promoCode: {
     assignedMembersOnlyOwnNights?: boolean | null;
     assignments: Array<{ memberId: string }>;
+    lodges?: Array<{ lodgeId: string }>;
   };
   guestTargets?: Array<{ bookingGuestId: string }>;
 };
@@ -177,8 +179,6 @@ export async function modifyBookingDates({
   } = input;
 
   const result = await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
-
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
@@ -193,7 +193,10 @@ export async function modifyBookingDates({
           include: {
             guestTargets: { select: { bookingGuestId: true } },
             promoCode: {
-              include: { assignments: { select: { memberId: true } } },
+              include: {
+                assignments: { select: { memberId: true } },
+                lodges: { select: { lodgeId: true } },
+              },
             },
           },
         },
@@ -203,6 +206,9 @@ export async function modifyBookingDates({
     if (!booking) {
       throw new ApiError("Booking not found", 404);
     }
+
+    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
     if (booking.memberId !== actor.id && actor.role !== "ADMIN") {
       throw new ApiError("Forbidden", 403);
@@ -275,6 +281,7 @@ export async function modifyBookingDates({
     }
 
     const capacity = await checkCapacity(
+      bookingLodgeId,
       newCheckIn,
       newCheckOut,
       booking.guests.length,
@@ -290,7 +297,7 @@ export async function modifyBookingDates({
     }
 
     const seasons = await tx.season.findMany({
-      where: { active: true },
+      where: { active: true, ...lodgeNullTolerantScope(bookingLodgeId) },
       include: { rates: true },
     });
 
@@ -356,7 +363,7 @@ export async function modifyBookingDates({
     // is already on another live booking. Mirror the ranges the service is about
     // to persist — stayStart/stayEnd = the new envelope, nights = the priced
     // night set — so the guard evaluates exactly what will exist. This runs
-    // under the pg_advisory_xact_lock(1) taken above and before any
+    // under the per-lodge acquireLodgeCapacityLock taken above and before any
     // BookingGuest/BookingGuestNight/Booking writes, so a conflict rolls back
     // with nothing written.
     await assertNoBookingMemberNightConflicts(tx, {
@@ -407,7 +414,7 @@ export async function modifyBookingDates({
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
           : null,
-        { excludeBookingId: bookingId, db: tx, selectedGuestIndexes },
+        { excludeBookingId: bookingId, db: tx, selectedGuestIndexes, lodgeId: bookingLodgeId },
       );
 
       if (application.error || !application.discount) {
@@ -443,7 +450,7 @@ export async function modifyBookingDates({
 
     if (checkInChanged) {
       const now = new Date();
-      const policy = await loadCancellationPolicy(booking.checkIn);
+      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
       const feeResult = calculateChangeFee({
         daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
         daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
@@ -494,7 +501,10 @@ export async function modifyBookingDates({
     let newStatus = booking.status;
 
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn);
+      const holdPolicy = await getNonMemberHoldPolicy(
+        newCheckIn,
+        booking.lodgeId,
+      );
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
@@ -821,6 +831,7 @@ async function dispatchDatePostTransactionSideEffects({
             : undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
+      lodgeId: result.booking.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
     );
@@ -833,6 +844,7 @@ async function dispatchDatePostTransactionSideEffects({
     processWaitlistForDates({
       checkIn: result.oldCheckIn,
       checkOut: result.oldCheckOut,
+      lodgeId: result.booking.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to process waitlist after date modification"),
     );

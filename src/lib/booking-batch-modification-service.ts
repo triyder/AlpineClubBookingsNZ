@@ -32,6 +32,8 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
   createModificationAdditionalPaymentIntent,
@@ -147,8 +149,6 @@ export async function modifyBookingBatch({
   ipAddress: string;
 }): Promise<BatchModificationResponse> {
   const result = await prisma.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
-
     const booking = (await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
@@ -160,7 +160,10 @@ export async function modifyBookingBatch({
         promoRedemption: {
           include: {
             promoCode: {
-              include: { assignments: { select: { memberId: true } } },
+              include: {
+                assignments: { select: { memberId: true } },
+                lodges: { select: { lodgeId: true } },
+              },
             },
             guestTargets: { select: { bookingGuestId: true } },
           },
@@ -191,6 +194,9 @@ export async function modifyBookingBatch({
     if (!requestIsIdentityOnly && quotePriced) {
       throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
     }
+
+    const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
     const dates = resolveTargetDates({
       booking,
@@ -248,7 +254,8 @@ export async function modifyBookingBatch({
           removeGuestIds: input.removeGuestIds,
           guestsForPricing: guestPlan.guestsForPricing,
           skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
-          seasonRateData: await loadActiveSeasonRates(tx),
+          // Multi-lodge: season rates are resolved for the booking's lodge.
+          seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
         });
 
     const promo = identityOnlyModification
@@ -647,6 +654,7 @@ async function dispatchBatchPostTransactionSideEffects({
           : undefined,
     paymentReference: result.paymentReference,
     xeroInvoiceNumber: result.xeroInvoiceNumber,
+    lodgeId: result.booking.lodgeId,
   }).catch((err) =>
     logger.error(
       { err, bookingId },
