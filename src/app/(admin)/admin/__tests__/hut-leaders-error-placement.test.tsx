@@ -87,15 +87,15 @@ describe("hut leaders assignment error placement", () => {
 
     render(<HutLeadersPage />);
 
-    // Open the form, then pick a range to trigger the eligible-members fetch.
-    fireEvent.click(await screen.findByRole("button", { name: /new assignment/i }));
-    fireEvent.click(screen.getByRole("button", { name: /pick range/i }));
+    // Calendar-first: pick a range to trigger the eligible-members fetch.
+    fireEvent.click(await screen.findByRole("button", { name: /pick range/i }));
 
-    // Wait for the member card to render.
+    // Wait for the member card to render, then select the member (step 2).
     const nameNode = await screen.findByText("Dana Diaz");
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
 
-    // Confirm -> POST returns the overlap error.
-    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    // Confirm (step 3) -> POST returns the overlap error.
+    fireEvent.click(await screen.findByRole("button", { name: /confirm assignment/i }));
 
     // Page-level alert shows the error immediately (the core fix).
     await waitFor(() => {

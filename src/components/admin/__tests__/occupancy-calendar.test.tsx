@@ -241,6 +241,21 @@ function OverlayHarness({
   );
 }
 
+function VioletRingHarness() {
+  const [selectedDate, setSelectedDate] = useState("2099-07-01");
+  return (
+    <OccupancyCalendar
+      mode="single"
+      selectedStartDate={selectedDate}
+      selectedEndDate={selectedDate}
+      onSelectionChange={({ startDate }) => setSelectedDate(startDate)}
+      overlayByDate={{
+        "2099-07-11": { tone: "violet", label: "Smith", emphasis: "ring" },
+      }}
+    />
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -395,6 +410,20 @@ describe("OccupancyCalendar", () => {
     await waitFor(() =>
       expect(onVisibleMonthChange).toHaveBeenCalledWith("2099-08"),
     );
+  });
+
+  it("paints a ring-emphasis violet overlay as a low-emphasis outline, not a solid fill", async () => {
+    stubFetch();
+    render(<VioletRingHarness />);
+
+    const dayButton = await screen.findByRole("button", {
+      name: /11 Jul.*Smith/i,
+    });
+    // Ring variant: violet outline over a white cell, never the solid tint.
+    expect(dayButton.className).toContain("ring-violet-300");
+    expect(dayButton.className).not.toContain("bg-violet-100");
+    // Badge still renders the label.
+    expect(screen.getByText("Smith")).toBeInTheDocument();
   });
 
   it("leaves day cells, aria-labels, and badges unchanged with no overlay props", async () => {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { isLodgeKioskAccount } from "@/lib/member-roles";
 
-interface PickedMember {
+export interface PickedMember {
   id: string;
   firstName: string;
   lastName: string;
@@ -18,9 +18,21 @@ interface MemberPickerProps {
   onSelect: (member: PickedMember) => void;
   selected?: PickedMember | null;
   onClear?: () => void;
+  // Copy overrides. Default to the original book-on-behalf strings so the
+  // existing consumer is unchanged.
+  label?: string;
+  placeholder?: string;
+  selectedPrefix?: string;
 }
 
-export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps) {
+export function MemberPicker({
+  onSelect,
+  selected,
+  onClear,
+  label = "Search for a member to book on behalf of",
+  placeholder = "Type a name or email...",
+  selectedPrefix = "Booking on behalf of:",
+}: MemberPickerProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PickedMember[]>([]);
   // True when the search matched only lodge kiosk accounts, which are
@@ -88,7 +100,7 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
           {/* Explicit dark text: the card keeps its light background in dark
               mode, where inherited text is near-white and unreadable. */}
           <p className="font-medium text-sm text-slate-900">
-            Booking on behalf of: {selected.firstName} {selected.lastName}
+            {selectedPrefix} {selected.firstName} {selected.lastName}
           </p>
           <p className="text-xs text-slate-500">{selected.email}</p>
         </div>
@@ -105,10 +117,10 @@ export function MemberPicker({ onSelect, selected, onClear }: MemberPickerProps)
   return (
     <div ref={wrapperRef} className="relative">
       <label className="block text-sm font-medium text-gray-700 mb-1">
-        Search for a member to book on behalf of
+        {label}
       </label>
       <Input
-        placeholder="Type a name or email..."
+        placeholder={placeholder}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => results.length > 0 && setShowDropdown(true)}

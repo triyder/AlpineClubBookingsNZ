@@ -43,21 +43,36 @@ export async function getUnassignedHutLeaderDates(input?: {
   db?: HutLeaderCoverageDb;
   lookAheadDays?: number;
   today?: Date;
+  // Explicit date-only window. When BOTH are supplied they replace the
+  // today→today+lookahead window (used to paint a calendar month, including
+  // past nights for history). When absent, behaviour is exactly as before.
+  from?: Date;
+  to?: Date;
 }): Promise<UnassignedHutLeaderDate[]> {
   const db = input?.db ?? (prisma as unknown as HutLeaderCoverageDb);
   const today = input?.today ?? getTodayDateOnly();
-  const lookAheadDays =
-    input?.lookAheadDays ?? (await loadHutLeaderLookaheadDays(db));
-  const endDate = addDaysDateOnly(
-    today,
-    normalizeHutLeaderLookaheadDays(lookAheadDays),
-  );
+
+  const hasWindow = input?.from != null && input?.to != null;
+  let windowStart: Date;
+  let endDate: Date;
+  if (hasWindow) {
+    windowStart = input!.from!;
+    endDate = input!.to!;
+  } else {
+    const lookAheadDays =
+      input?.lookAheadDays ?? (await loadHutLeaderLookaheadDays(db));
+    windowStart = today;
+    endDate = addDaysDateOnly(
+      today,
+      normalizeHutLeaderLookaheadDays(lookAheadDays),
+    );
+  }
 
   const [assignments, bookings] = await Promise.all([
     db.hutLeaderAssignment.findMany({
       where: {
         startDate: { lte: endDate },
-        endDate: { gte: today },
+        endDate: { gte: windowStart },
       },
       select: { startDate: true, endDate: true },
     }),
@@ -66,7 +81,7 @@ export async function getUnassignedHutLeaderDates(input?: {
         status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
         deletedAt: null,
         checkIn: { lte: endDate },
-        checkOut: { gt: today },
+        checkOut: { gt: windowStart },
       },
       select: {
         checkIn: true,
@@ -118,7 +133,7 @@ export async function getUnassignedHutLeaderDates(input?: {
   const unassignedDates: UnassignedHutLeaderDate[] = [];
 
   for (
-    let day = today;
+    let day = windowStart;
     day.getTime() <= endDate.getTime();
     day = addDaysDateOnly(day, 1)
   ) {
