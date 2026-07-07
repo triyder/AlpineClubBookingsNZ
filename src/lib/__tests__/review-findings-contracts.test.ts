@@ -50,6 +50,27 @@ function assertLockBeforeGuard(block: string, label: string) {
   ).toBeGreaterThan(lockIdx);
 }
 
+// #1529: the two request-approval pipelines delegate the person-night guard to
+// buildApprovalGuestCreates (booking-request-shared.ts), which runs it against
+// the caller's tx — lock-first stays the caller's responsibility, same
+// two-half idiom as the modify pipeline's delegated-guard test below.
+function assertLockBeforeDelegatedGuard(
+  block: string,
+  delegateMarker: string,
+  label: string
+) {
+  const lockMarkers = ["acquireLodgeCapacityLock", "pg_advisory_xact_lock"]
+    .map((marker) => block.indexOf(marker))
+    .filter((idx) => idx >= 0);
+  const lockIdx = lockMarkers.length > 0 ? Math.min(...lockMarkers) : -1;
+  const delegateIdx = block.indexOf(delegateMarker);
+  expect(lockIdx, `${label}: advisory lock present`).toBeGreaterThanOrEqual(0);
+  expect(
+    delegateIdx,
+    `${label}: ${delegateMarker} delegated after the advisory lock`
+  ).toBeGreaterThan(lockIdx);
+}
+
 function createTempMigration(sql: string, ledger: string) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
   const migrationDir = path.join(tempDir, "20990101000000_test_migration");
@@ -194,12 +215,17 @@ describe("review finding source/schema contracts", () => {
       "modifyBookingDates"
     );
 
-    assertLockBeforeGuard(
+    // #1529: both approval pipelines now delegate the guard to
+    // buildApprovalGuestCreates inside the same transaction; freeze
+    // lock -> delegation per caller here, and the guard inside the shared
+    // helper once (below, after the callers).
+    assertLockBeforeDelegatedGuard(
       sliceFrom(
         readRepoFile("src/lib/booking-request.ts"),
         "export async function approveBookingRequest",
         "export async function purgeExpiredBookingRequests"
       ),
+      "buildApprovalGuestCreates(",
       "approveBookingRequest"
     );
 
@@ -211,13 +237,25 @@ describe("review finding source/schema contracts", () => {
       "holdBookingRequestSlots"
     );
 
-    assertLockBeforeGuard(
+    assertLockBeforeDelegatedGuard(
       sliceFrom(
         readRepoFile("src/lib/school-booking-request.ts"),
         "export async function approveSchoolBookingRequest"
       ),
+      "buildApprovalGuestCreates(",
       "approveSchoolBookingRequest"
     );
+
+    // Second half of the #1529 delegation contract: the shared helper both
+    // pipelines call actually runs the person-night guard.
+    const requestShared = readRepoFile("src/lib/booking-request-shared.ts");
+    expect(
+      sliceFrom(
+        requestShared,
+        "export async function buildApprovalGuestCreates",
+        "export async function sendOwnerSubstitutionAdminAlert"
+      )
+    ).toContain("assertNoBookingMemberNightConflicts");
 
     assertLockBeforeGuard(
       sliceFrom(

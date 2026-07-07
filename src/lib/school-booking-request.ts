@@ -48,11 +48,16 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestGuest,
 } from "@/lib/booking-request";
-import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
+import {
+  buildApprovalGuestCreates,
+  claimAlreadyConvertedBookingRequest,
+  getCapacityFullNights,
+  sendOwnerSubstitutionAdminAlert,
+  type OwnerSubstitution,
+} from "@/lib/booking-request-shared";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
-  sendAdminOwnerSubstitutionAlert,
   sendAdminSchoolManualInvoiceEmail,
   sendBookingRequestVerificationEmail,
   sendHutLeaderAssignmentEmail,
@@ -60,7 +65,6 @@ import {
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { generateHutLeaderPin, hashHutLeaderPin } from "@/lib/lodge-pin-session";
 import logger from "@/lib/logger";
-import { assertMembershipTypeBookingAllowed } from "@/lib/membership-type-policy";
 import {
   priceBookingGuests,
   toGroupDiscountConfig,
@@ -74,7 +78,6 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { nameField } from "@/lib/zod-helpers";
-import { getSeasonYear } from "@/lib/utils";
 
 /** Age tiers a school can request counts for. Teachers are always ADULT. */
 const SCHOOL_CHILD_TIERS = [
@@ -144,14 +147,6 @@ function cleanString(value?: string | null) {
 
 function cleanNullableString(value?: string | null) {
   return cleanString(value) || null;
-}
-
-function getCapacityFullNights(
-  nightDetails: Array<{ date: Date; availableBeds: number }>
-): string[] {
-  return nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => night.date.toISOString().split("T")[0]);
 }
 
 /**
@@ -562,22 +557,14 @@ export async function approveSchoolBookingRequest(input: {
       // invoice. Under the advisory lock we now observe its committed
       // convertedBookingId, so return that booking WITHOUT raising a second
       // school Xero invoice.
-      const existing = await tx.bookingRequest.findUnique({
-        where: { id: request.id },
-        select: { convertedBookingId: true, convertedMemberId: true, status: true },
-      });
-      if (existing?.convertedBookingId && existing.convertedMemberId) {
-        if (existing.status !== BookingRequestStatus.CONVERTED) {
-          // A caller re-armed the request to PRICED after it had already
-          // converted; re-assert the true terminal status (we hold the lock).
-          await tx.bookingRequest.update({
-            where: { id: request.id },
-            data: { status: BookingRequestStatus.CONVERTED },
-          });
-        }
+      const alreadyConverted = await claimAlreadyConvertedBookingRequest(
+        tx,
+        request.id
+      );
+      if (alreadyConverted) {
         return {
-          bookingId: existing.convertedBookingId,
-          schoolMemberId: existing.convertedMemberId,
+          bookingId: alreadyConverted.convertedBookingId,
+          schoolMemberId: alreadyConverted.convertedMemberId,
           teacherAssignments: [],
           ownerSubstitution: null,
           alreadyConverted: true as const,
@@ -605,35 +592,14 @@ export async function approveSchoolBookingRequest(input: {
         );
       }
 
-      const guestCreates = guests.map((guest, index) => {
-        const memberId = linkedMembers.get(index);
-        return {
-          firstName: guest.firstName,
-          lastName: guest.lastName,
-          ageTier: guest.ageTier,
-          isMember: Boolean(memberId),
-          memberId,
-          stayStart: request.checkIn,
-          stayEnd: request.checkOut,
-          priceCents: guestPriceCents[index],
-        };
-      });
-      await assertMembershipTypeBookingAllowed(tx, {
-        guests: guestCreates,
-        seasonYear: getSeasonYear(request.checkIn),
-      });
-
-      // Block admin-mediated double-books: a request whose guests an admin
-      // linked to real members must not put a member on overlapping nights
-      // (issue #1158, invariant DOMAIN_INVARIANTS.md:35-40). On the reuse path
-      // exclude the held booking's own soon-to-be-deleted guests.
-      await assertNoBookingMemberNightConflicts(tx, {
-        actorMemberId: input.adminMemberId,
-        actorRole: "ADMIN",
+      const guestCreates = await buildApprovalGuestCreates(tx, {
+        guests,
+        linkedMembers,
+        guestPriceCents,
         checkIn: request.checkIn,
         checkOut: request.checkOut,
-        guests: guestCreates,
-        excludeBookingId: request.heldBookingId ?? undefined,
+        adminMemberId: input.adminMemberId,
+        heldBookingId: request.heldBookingId ?? null,
       });
 
       let booking: { id: string };
@@ -641,9 +607,7 @@ export async function approveSchoolBookingRequest(input: {
       // Set when the held school owner failed re-validation at conversion and a
       // fresh contact was substituted (issue #1255 residual-risk decision 1);
       // drives a post-commit admin alert.
-      let ownerSubstitution:
-        | { invalidMemberId: string; substituteMemberId: string; reason: string }
-        | null = null;
+      let ownerSubstitution: OwnerSubstitution | null = null;
 
       if (request.heldBookingId) {
         const held = await tx.booking.findUnique({
@@ -1044,54 +1008,13 @@ export async function approveSchoolBookingRequest(input: {
       // conversion (the booking is already committed), so it mirrors the
       // teacher-PIN/manual-invoice try/catch above. Names are a best-effort
       // readability lookup outside the tx; ids are the source of truth.
-      try {
-        const [intendedMember, substituteMember] = await Promise.all([
-          prisma.member
-            .findUnique({
-              where: { id: ownerSubstitution.invalidMemberId },
-              select: { firstName: true, lastName: true },
-            })
-            .catch(() => null),
-          prisma.member
-            .findUnique({
-              where: { id: ownerSubstitution.substituteMemberId },
-              select: { firstName: true, lastName: true },
-            })
-            .catch(() => null),
-        ]);
-        const fullName = (
-          member: { firstName?: string | null; lastName?: string | null } | null
-        ): string | null => {
-          const name = [member?.firstName, member?.lastName]
-            .filter((part): part is string => Boolean(part && part.trim()))
-            .join(" ")
-            .trim();
-          return name.length > 0 ? name : null;
-        };
-        await sendAdminOwnerSubstitutionAlert({
-          requestId: request.id,
-          bookingId: conversion.bookingId,
-          intendedMemberId: ownerSubstitution.invalidMemberId,
-          intendedMemberName: fullName(intendedMember),
-          substituteMemberId: ownerSubstitution.substituteMemberId,
-          substituteMemberName: fullName(substituteMember),
-          reason: ownerSubstitution.reason,
-          requesterName:
-            `${request.contactFirstName} ${request.contactLastName}`.trim(),
-          requesterEmail: request.contactEmail,
-          checkIn: request.checkIn,
-          checkOut: request.checkOut,
-        });
-      } catch (err) {
-        logger.error(
-          {
-            err,
-            bookingRequestId: request.id,
-            bookingId: conversion.bookingId,
-          },
-          "Failed to send owner-substitution admin alert for school conversion"
-        );
-      }
+      await sendOwnerSubstitutionAdminAlert({
+        request,
+        bookingId: conversion.bookingId,
+        ownerSubstitution,
+        failureLogMessage:
+          "Failed to send owner-substitution admin alert for school conversion",
+      });
     }
   } else {
     // Observability-only note that a duplicate accept was absorbed (#1232).
