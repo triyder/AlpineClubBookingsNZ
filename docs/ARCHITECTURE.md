@@ -533,6 +533,14 @@ Stripe call. Retries replay those exact slices with their original
 idempotency keys — Stripe answers repeats with the original refund and the
 `PaymentRefund` ledger dedupes by refund id — instead of re-deriving a
 shifted allocation from whatever progress happens to be recorded. The
+booking-cancellation (#1349) and refund-request (#1510) inline paths go
+further and freeze the exact slices they execute on the row at **enqueue**
+time — before any Stripe call — passing one frozen plan to both the inline
+refund and the recovery enqueue, so a multi-transaction partial-progress
+replay re-requests byte-identical slices under identical keys rather than a
+re-derived allocation. A refund-request row enqueued before #1510 carries no
+frozen plan and derives-at-replay (unchanged; post-#1507 single-transaction
+payments — the dominant case — already share slice keys). The
 recovery row also carries the originating route's Stripe key prefix
 (`stripeKeyPrefix`, #1152), so even a refund that succeeded on Stripe but was
 never recorded locally is replayed under its original keys rather than

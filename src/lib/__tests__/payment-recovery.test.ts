@@ -158,6 +158,7 @@ import {
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueGroupSettlementRefundRecovery,
+  enqueueRefundRequestRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 
@@ -918,6 +919,156 @@ describe("payment recovery worker", () => {
           refundRequestId: "refund-1",
         },
         idempotencyKeyPrefix: "refund_request_refund-1",
+      }),
+    );
+  });
+
+  it("replays a multi-transaction refund-request recovery from its frozen plan, sending slices deep-equal to the frozen plan rather than re-deriving (#1510)", async () => {
+    // #1510: the approve route freezes the inline attempt's per-transaction
+    // slices on the operation BEFORE the Stripe call. On a multi-transaction
+    // payment with partial refund progress, re-deriving a newest-first plan at
+    // replay time — over ledger state a completed slice has already moved —
+    // would shift the slice amounts and mint fresh
+    // refund_request_<id>_<txn>_<amount> keys, creating NEW refunds instead of
+    // replaying the originals. The frozen plan is replayed verbatim.
+    const frozenPlan = [
+      { paymentTransactionId: "txn-new", amountCents: 3000 },
+      { paymentTransactionId: "txn-old", amountCents: 1000 },
+    ];
+    const crashed = makeOperation({
+      id: "recovery-refund-request-multi",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: frozenPlan,
+      idempotencyKey: "refund_request_refund_refund-11",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+    // The current payment state has DIFFERENT refundable amounts than when the
+    // plan was frozen: the inline attempt already fully refunded txn-new, so a
+    // re-derivation would skip it and put all 4000 on txn-old — different
+    // slices, different keys.
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_new",
+      transactions: [
+        {
+          id: "txn-new",
+          stripePaymentIntentId: "pi_new",
+          amountCents: 3000,
+          refundedAmountCents: 3000,
+          status: PaymentStatus.REFUNDED,
+          createdAt: new Date("2026-05-10T00:00:00.000Z"),
+        },
+        {
+          id: "txn-old",
+          stripePaymentIntentId: "pi_old",
+          amountCents: 5000,
+          refundedAmountCents: 0,
+          status: PaymentStatus.SUCCEEDED,
+          createdAt: new Date("2026-05-01T00:00:00.000Z"),
+        },
+      ],
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    // Verbatim frozen slices — NOT a re-derivation over the moved ledger state.
+    expect(refundArgs.allocation).toEqual(frozenPlan);
+    expect(refundArgs.amountCents).toBe(4000);
+    expect(refundArgs.idempotencyKeyPrefix).toBe("refund_request_refund-11");
+    expect(refundArgs.metadata).toEqual(
+      buildRefundRequestRefundMetadata("booking-1", "refund-11"),
+    );
+    // The frozen plan is authoritative — no re-derivation/re-freeze.
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ allocationPlan: expect.anything() }),
+      }),
+    );
+  });
+
+  it("falls back to derive-at-replay for a pre-#1510 refund-request recovery with no frozen plan", async () => {
+    // Operations enqueued before #1510 carry no allocationPlan. The replay
+    // derives a newest-first plan from current payment state and freezes it —
+    // unchanged behaviour, and post-#1507 single-transaction payments already
+    // share slice keys with the inline refund, so old rows are no worse off.
+    const legacy = makeOperation({
+      id: "recovery-refund-request-legacy",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: null,
+      idempotencyKey: "refund_request_refund_refund-legacy",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(legacy);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...legacy, status: "PENDING" }]);
+      },
+    );
+    // Default payment: a single captured txn-1 (10000, refunded 0).
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // Derived newest-first from current state and frozen on the row.
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-refund-request-legacy" },
+        data: {
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        },
+      }),
+    );
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-1", amountCents: 4000 },
+    ]);
+    // Still the shared refund_request prefix + byte-identical inline body.
+    expect(refundArgs.idempotencyKeyPrefix).toBe("refund_request_refund-legacy");
+    expect(refundArgs.metadata).toEqual(
+      buildRefundRequestRefundMetadata("booking-1", "refund-legacy"),
+    );
+  });
+
+  it("enqueueRefundRequestRefundRecovery persists the route-frozen allocation plan (#1510)", async () => {
+    await enqueueRefundRequestRefundRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      refundRequestId: "refund-1",
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: "refund_request_refund_refund-1" },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "booking-1",
+          paymentId: "payment-1",
+          amountCents: 4000,
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
+        update: expect.objectContaining({
+          amountCents: 4000,
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
       }),
     );
   });

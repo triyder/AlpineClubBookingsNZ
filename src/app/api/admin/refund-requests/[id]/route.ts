@@ -13,7 +13,7 @@ import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 import {
-  PartialRefundError,
+  planStripeRefundAllocation,
   refundPaymentTransactions,
 } from "@/lib/payment-transactions";
 import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
@@ -116,10 +116,45 @@ export async function PUT(
       );
     }
 
+    // #1510: freeze the refund allocation the inline attempt will execute and
+    // pass the SAME slices to both the inline refund and the durable recovery
+    // enqueue below, mirroring the booking-cancellation frozen plan (#1349).
+    // For a multi-transaction payment with partial refund progress, deriving a
+    // fresh newest-first plan at replay time — over ledger state the completed
+    // slices have already moved — would compute different slice amounts, and
+    // therefore different `refund_request_<id>_<txn>_<amount>` Stripe
+    // idempotency keys, so the replay would mint NEW refunds instead of
+    // replaying the originals. Freezing the plan makes the replay re-request
+    // byte-identical slices under identical keys, which Stripe answers with the
+    // original refunds (the PaymentRefund ledger dedupes on refund id). This
+    // also makes the inline path deterministic.
+    const { slices: refundPlan, plannedAmountCents } =
+      await planStripeRefundAllocation({
+        paymentId: payment.id,
+        amountCents: approvedAmountCents,
+      });
+
+    if (plannedAmountCents < approvedAmountCents) {
+      // Stripe-refundable is less than the approved amount (e.g. a mixed
+      // Stripe + Internet Banking payment, whose IB portion is settled by the
+      // Xero credit note below, not Stripe): refund what the ledger shows
+      // Stripe-refundable, mirroring the booking-cancel drift log (#1349).
+      logger.error(
+        {
+          refundRequestId: id,
+          paymentId: payment.id,
+          approvedAmountCents,
+          plannedAmountCents,
+        },
+        "Approved refund appeal plan covers less than the approved amount; refunding what the payment ledger shows Stripe-refundable"
+      );
+    }
+
     try {
       await refundPaymentTransactions({
         paymentId: payment.id,
-        amountCents: approvedAmountCents,
+        amountCents: plannedAmountCents,
+        allocation: refundPlan,
         // #1507: build the Stripe metadata from the shared helper so the
         // recovery cron's replay (under the same refund_request_<id> key) sends
         // a byte-identical body and Stripe replays the original refund instead
@@ -140,20 +175,22 @@ export async function PUT(
         { err, refundRequestId: id },
         "Stripe refund failed for approved appeal - enqueueing durable recovery"
       );
-      // Enqueue only what is still owed (#1097): slices already refunded and
-      // recorded before the failure stay out of the recovery amount so a
-      // multi-transaction retry cannot re-derive a shifted allocation over
-      // the full approved amount.
-      const completedRefundCents =
-        err instanceof PartialRefundError ? err.completedRefundCents : 0;
-      const remainingRefundCents = approvedAmountCents - completedRefundCents;
+      // Persist the SAME frozen slices the inline attempt executed (#1510), not
+      // a remainder or a re-derivation: the recovery cron replays the full plan
+      // under the identical `refund_request_<id>_<txn>_<amount>` Stripe keys, so
+      // a slice the inline path already completed is replayed by Stripe (not
+      // repeated) and the PaymentRefund ledger dedupes on refund id, while an
+      // uncompleted slice moves the remaining money. This is the #1349 booking-
+      // cancellation guarantee applied to refund appeals; it supersedes the
+      // #1097 remainder heuristic, which could still re-derive a shifted plan.
       try {
-        if (remainingRefundCents > 0) {
+        if (plannedAmountCents > 0) {
           await enqueueRefundRequestRefundRecovery({
             bookingId: booking.id,
             paymentId: payment.id,
             refundRequestId: id,
-            amountCents: remainingRefundCents,
+            amountCents: plannedAmountCents,
+            allocationPlan: refundPlan,
           });
         }
       } catch (enqueueErr) {

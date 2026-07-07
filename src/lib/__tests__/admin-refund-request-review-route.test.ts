@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   processRefund: vi.fn(),
   refundPaymentTransactions: vi.fn(),
+  planStripeRefundAllocation: vi.fn(),
   isXeroConnected: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
@@ -83,6 +84,7 @@ vi.mock("@/lib/payment-recovery", () => ({
 
 vi.mock("@/lib/payment-transactions", () => ({
   refundPaymentTransactions: mocks.refundPaymentTransactions,
+  planStripeRefundAllocation: mocks.planStripeRefundAllocation,
   PartialRefundError: class PartialRefundError extends Error {
     completedRefundCents = 0;
   },
@@ -101,6 +103,13 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     mocks.processRefund.mockResolvedValue({ id: "re_1" });
     mocks.refundPaymentTransactions.mockResolvedValue({
       refunds: [{ refundId: "re_1", paymentIntentId: "pi_1", amountCents: 2500 }],
+    });
+    // #1510: the route freezes the allocation before the inline refund and
+    // passes the same slices to both the refund and the recovery enqueue.
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: [{ paymentTransactionId: "txn_1", amountCents: 2500 }],
+      plannedAmountCents: 2500,
+      totalRefundableCents: 10000,
     });
     mocks.isXeroConnected.mockResolvedValue(true);
     mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
@@ -191,6 +200,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith({
       paymentId: "payment_1",
       amountCents: 2500,
+      // #1510: the inline refund executes the frozen slices.
+      allocation: [{ paymentTransactionId: "txn_1", amountCents: 2500 }],
       metadata: {
         bookingId: "booking_1",
         reason: "refund_appeal_approved",
@@ -278,14 +289,56 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     expect(response.status).toBe(200);
     // Only the claiming updateMany runs; the claim is never reverted.
     expect(mocks.refundRequestUpdateMany).toHaveBeenCalledTimes(1);
+    // #1510: the recovery row carries the frozen plan (the exact slices the
+    // inline attempt executed), not a remainder, so the cron replays byte-
+    // identical keys.
     expect(mocks.enqueueRefundRequestRefundRecovery).toHaveBeenCalledWith(
       expect.objectContaining({
         refundRequestId: "refund_1",
-        amountCents: expect.any(Number),
+        amountCents: 2500,
+        allocationPlan: [{ paymentTransactionId: "txn_1", amountCents: 2500 }],
       })
     );
     // The Xero credit note still queues: the refund will complete durably.
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalled();
+  });
+
+  // #1510: one frozen plan drives BOTH the inline refund and the durable
+  // recovery, so a multi-transaction partial-progress replay re-requests the
+  // identical `refund_request_<id>_<txn>_<amount>` Stripe keys instead of a
+  // re-derived, shifted allocation that would mint new refunds.
+  it("passes the identical frozen slices to both the inline refund and the recovery enqueue on failure", async () => {
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+    const frozenPlan = [
+      { paymentTransactionId: "txn_new", amountCents: 1500 },
+      { paymentTransactionId: "txn_old", amountCents: 1000 },
+    ];
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: frozenPlan,
+      plannedAmountCents: 2500,
+      totalRefundableCents: 8000,
+    });
+    mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+    mocks.enqueueRefundRequestRefundRecovery.mockResolvedValue({ id: "op_1" });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const [inlineArgs] = mocks.refundPaymentTransactions.mock.calls[0] as [
+      { allocation: unknown; amountCents: number; idempotencyKeyPrefix: string },
+    ];
+    expect(inlineArgs.allocation).toEqual(frozenPlan);
+    expect(inlineArgs.amountCents).toBe(2500);
+    expect(inlineArgs.idempotencyKeyPrefix).toBe("refund_request_refund_1");
+    const [enqueueArgs] = mocks.enqueueRefundRequestRefundRecovery.mock
+      .calls[0] as [{ allocationPlan: unknown; amountCents: number }];
+    expect(enqueueArgs.allocationPlan).toEqual(frozenPlan);
+    expect(enqueueArgs.amountCents).toBe(2500);
+    // Literally one frozen plan object, shared by both paths.
+    expect(enqueueArgs.allocationPlan).toBe(inlineArgs.allocation);
   });
 
   it("falls back to releasing the claim when the recovery enqueue also fails", async () => {
