@@ -23,9 +23,10 @@ Each Codex-ready issue should include:
 - Dependencies or blockers
 - Residual-risk reporting requirements
 
-Use `.github/ISSUE_TEMPLATE/codex_task.yml` for implementation issues and
-`.github/ISSUE_TEMPLATE/codex_finding.yml` for review findings that still need
-triage or splitting.
+Use the internal `.github/ISSUE_TEMPLATE/internal_codex_task.yml` template for
+implementation issues and the internal
+`.github/ISSUE_TEMPLATE/internal_codex_finding.yml` template for review
+findings that still need triage or splitting.
 
 ## Branch And PR Rule
 

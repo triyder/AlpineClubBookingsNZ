@@ -59,7 +59,7 @@ paths = [
     *Path(".github/ISSUE_TEMPLATE").glob("*.yml"),
     *Path(".github/labels").glob("*.yml"),
     *Path(".github/workflows").glob("*.yml"),
-    *Path(".github/workflow-examples").glob("*.yml"),
+    *Path("docs/agents/examples").glob("**/*.yml"),
 ]
 
 for path in paths:
