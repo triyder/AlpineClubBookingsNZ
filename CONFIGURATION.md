@@ -718,6 +718,11 @@ callback consumes a single-use, short-lived challenge token minted server-side
 after a successful code check (stored hashed in `TwoFactorSessionChallenge`);
 client-initiated session updates cannot flip the flag.
 
+The member Profile page shows its Two-factor authentication security card only
+when the module is enabled or the member is already enrolled. If the club later
+turns the module off, enrolled members still see their enabled state and recovery
+code controls, while non-enrolled members do not see an enrollment prompt.
+
 Users enroll either an authenticator app (TOTP) or an email one-time code. TOTP
 secrets are encrypted at rest using key material derived from `AUTH_SECRET` (or
 `NEXTAUTH_SECRET` fallback), so rotating that secret invalidates stored TOTP
