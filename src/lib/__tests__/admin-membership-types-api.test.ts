@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   membershipTypeAgeTierCreateMany: vi.fn(),
   xeroContactGroupRuleDeleteMany: vi.fn(),
   xeroContactGroupRuleCreateMany: vi.fn(),
+  seasonalMembershipAssignmentFindMany: vi.fn(),
+  seasonalMembershipAssignmentUpdateMany: vi.fn(),
   auditLogCreate: vi.fn(),
   transaction: vi.fn(),
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
@@ -69,6 +71,8 @@ vi.mock("@/lib/prisma", () => ({
     },
     seasonalMembershipAssignment: {
       createMany: vi.fn(),
+      findMany: mocks.seasonalMembershipAssignmentFindMany,
+      updateMany: mocks.seasonalMembershipAssignmentUpdateMany,
     },
     $transaction: mocks.transaction,
   },
@@ -82,6 +86,7 @@ import {
   DELETE as deleteMembershipType,
   PATCH as updateMembershipType,
 } from "@/app/api/admin/membership-types/[id]/route";
+import { POST as mergeMembershipType } from "@/app/api/admin/membership-types/[id]/merge/route";
 import { POST as reorderMembershipTypes } from "@/app/api/admin/membership-types/reorder/route";
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
@@ -188,6 +193,8 @@ describe("Admin membership types API", () => {
     mocks.membershipTypeAgeTierCreateMany.mockResolvedValue({ count: 1 });
     mocks.xeroContactGroupRuleDeleteMany.mockResolvedValue({ count: 0 });
     mocks.xeroContactGroupRuleCreateMany.mockResolvedValue({ count: 1 });
+    mocks.seasonalMembershipAssignmentFindMany.mockResolvedValue([]);
+    mocks.seasonalMembershipAssignmentUpdateMany.mockResolvedValue({ count: 0 });
     mocks.auditLogCreate.mockResolvedValue({});
     mocks.transaction.mockImplementation(async (callback) =>
       callback({
@@ -204,6 +211,9 @@ describe("Admin membership types API", () => {
         xeroContactGroupRule: {
           deleteMany: mocks.xeroContactGroupRuleDeleteMany,
           createMany: mocks.xeroContactGroupRuleCreateMany,
+        },
+        seasonalMembershipAssignment: {
+          updateMany: mocks.seasonalMembershipAssignmentUpdateMany,
         },
         auditLog: {
           create: mocks.auditLogCreate,
@@ -632,5 +642,301 @@ describe("Admin membership types API", () => {
     expect(response.status).toBe(409);
     expect(body.error).toContain("Built-in");
     expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+  });
+
+  it("deletes a zero-assignment custom membership type", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({
+        id: "type-custom",
+        key: "SOCIAL_MEMBER",
+        name: "Social member",
+        isBuiltIn: false,
+        _count: { assignments: 0 },
+      }),
+    );
+
+    const response = await deleteMembershipType(
+      new NextRequest(
+        "http://localhost/api/admin/membership-types/type-custom",
+        { method: "DELETE" },
+      ),
+      params("type-custom"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(mocks.membershipTypeDelete).toHaveBeenCalledWith({
+      where: { id: "type-custom" },
+    });
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: "MEMBERSHIP_TYPE_DELETED" }),
+      }),
+    );
+  });
+
+  it("blocks deleting a custom type that still has assignments (routes to merge)", async () => {
+    mocks.membershipTypeFindUnique.mockResolvedValue(
+      membershipType({
+        id: "type-custom",
+        key: "SOCIAL_MEMBER",
+        name: "Social member",
+        isBuiltIn: false,
+        _count: { assignments: 4 },
+      }),
+    );
+
+    const response = await deleteMembershipType(
+      new NextRequest(
+        "http://localhost/api/admin/membership-types/type-custom",
+        { method: "DELETE" },
+      ),
+      params("type-custom"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain("seasonal assignments");
+    expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+  });
+
+  describe("merge", () => {
+    function mockTypesById(byId: Record<string, unknown>) {
+      mocks.membershipTypeFindUnique.mockImplementation(
+        async ({ where }: { where: { id: string } }) => byId[where.id] ?? null,
+      );
+    }
+
+    const source = () =>
+      membershipType({
+        id: "type-source",
+        key: "SOCIAL_MEMBER",
+        name: "Social member",
+        isBuiltIn: false,
+        isActive: true,
+        allowedAgeTiers: [{ ageTier: "ADULT" }],
+        _count: { assignments: 3 },
+      });
+
+    const target = () =>
+      membershipType({
+        id: "type-target",
+        key: "ASSOCIATE",
+        name: "Associate",
+        isBuiltIn: true,
+        isActive: true,
+        allowedAgeTiers: [{ ageTier: "ADULT" }],
+        _count: { assignments: 5 },
+      });
+
+    it("reassigns every source assignment to the target then deletes the source", async () => {
+      mockTypesById({ "type-source": source(), "type-target": target() });
+      mocks.seasonalMembershipAssignmentFindMany.mockResolvedValue([
+        { id: "a1", memberId: "m1", seasonYear: 2026, member: { ageTier: "ADULT" } },
+        { id: "a2", memberId: "m2", seasonYear: 2026, member: { ageTier: "ADULT" } },
+        {
+          id: "a3",
+          memberId: "m3",
+          seasonYear: 2025,
+          member: { ageTier: "NOT_APPLICABLE" },
+        },
+      ]);
+      mocks.seasonalMembershipAssignmentUpdateMany.mockResolvedValue({
+        count: 3,
+      });
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-target" },
+        ),
+        params("type-source"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        ok: true,
+        reassignedCount: 3,
+        sourceId: "type-source",
+        targetId: "type-target",
+      });
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).toHaveBeenCalledWith({
+        where: { membershipTypeId: "type-source" },
+        data: { membershipTypeId: "type-target" },
+      });
+      expect(mocks.membershipTypeDelete).toHaveBeenCalledWith({
+        where: { id: "type-source" },
+      });
+      expect(mocks.auditLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "MEMBERSHIP_TYPE_MERGED",
+            metadata: expect.objectContaining({
+              sourceId: "type-source",
+              targetId: "type-target",
+              reassignedCount: 3,
+              reassignedAssignmentsTruncated: false,
+              reassignedAssignments: [
+                { assignmentId: "a1", memberId: "m1", seasonYear: 2026 },
+                { assignmentId: "a2", memberId: "m2", seasonYear: 2026 },
+                { assignmentId: "a3", memberId: "m3", seasonYear: 2025 },
+              ],
+            }),
+          }),
+        }),
+      );
+      expect(mocks.auditLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "MEMBERSHIP_TYPE_DELETED",
+          }),
+        }),
+      );
+    });
+
+    it("rolls back with no partial writes when the reassignment fails", async () => {
+      mockTypesById({ "type-source": source(), "type-target": target() });
+      mocks.seasonalMembershipAssignmentFindMany.mockResolvedValue([
+        { id: "a1", memberId: "m1", member: { ageTier: "ADULT" } },
+      ]);
+      mocks.seasonalMembershipAssignmentUpdateMany.mockRejectedValue(
+        new Error("db exploded"),
+      );
+
+      await expect(
+        mergeMembershipType(
+          request(
+            "http://localhost/api/admin/membership-types/type-source/merge",
+            { targetId: "type-target" },
+          ),
+          params("type-source"),
+        ),
+      ).rejects.toThrow("db exploded");
+
+      // All-or-nothing: the delete and audits never ran.
+      expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+      expect(mocks.auditLogCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects a built-in source", async () => {
+      mockTypesById({
+        "type-source": source(),
+        "type-target": target(),
+        "type-full": membershipType({ id: "type-full", isBuiltIn: true }),
+      });
+
+      const response = await mergeMembershipType(
+        request("http://localhost/api/admin/membership-types/type-full/merge", {
+          targetId: "type-target",
+        }),
+        params("type-full"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error).toContain("Built-in");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+    });
+
+    it("rejects an archived target", async () => {
+      mockTypesById({
+        "type-source": source(),
+        "type-target": membershipType({
+          id: "type-target",
+          isBuiltIn: false,
+          isActive: false,
+          allowedAgeTiers: [{ ageTier: "ADULT" }],
+        }),
+      });
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-target" },
+        ),
+        params("type-source"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error).toContain("Archived");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects merging a type into itself", async () => {
+      mockTypesById({ "type-source": source() });
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-source" },
+        ),
+        params("type-source"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error).toContain("itself");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("blocks a merge when an affected member's age tier is not allowed by the target", async () => {
+      mockTypesById({ "type-source": source(), "type-target": target() });
+      mocks.seasonalMembershipAssignmentFindMany.mockResolvedValue([
+        { id: "a1", memberId: "m1", member: { ageTier: "ADULT" } },
+        { id: "a2", memberId: "m2", member: { ageTier: "YOUTH" } },
+      ]);
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-target" },
+        ),
+        params("type-source"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body.error).toContain("YOUTH");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.membershipTypeDelete).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the target does not exist", async () => {
+      mockTypesById({ "type-source": source() });
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-source/merge",
+          { targetId: "type-missing" },
+        ),
+        params("type-source"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(404);
+      expect(body.error).toContain("Target");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the source does not exist", async () => {
+      mockTypesById({ "type-target": target() });
+
+      const response = await mergeMembershipType(
+        request(
+          "http://localhost/api/admin/membership-types/type-missing/merge",
+          { targetId: "type-target" },
+        ),
+        params("type-missing"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(404);
+      expect(body.error).toContain("Source");
+      expect(mocks.seasonalMembershipAssignmentUpdateMany).not.toHaveBeenCalled();
+    });
   });
 });
