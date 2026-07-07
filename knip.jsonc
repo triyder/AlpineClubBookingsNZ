@@ -42,6 +42,9 @@
     "src/lib/member-profile-completeness.ts": ["types", "duplicates"],
     // Intentional backward-compat alias FALLBACK_LODGE_CAPACITY = CLUB_CONFIG_LODGE_CAPACITY.
     "src/lib/lodge-capacity.ts": ["duplicates"],
+    // Intentional documented alias SCHOOL_GROUP_SOFT_CAP = DEFAULT_SCHOOL_GROUP_SOFT_CAP
+    // (both names live; landed 2026-07-08 school-bookings work).
+    "src/lib/school-booking-constants.ts": ["duplicates"],
     // WhakapapaChairlift type alias landed 2026-07-08 (snow-conditions refactor)
     // with zero refs; kept pending owner triage at the #1526 PR — see PR body.
     "src/lib/whakapapa-report.ts": ["types"]
