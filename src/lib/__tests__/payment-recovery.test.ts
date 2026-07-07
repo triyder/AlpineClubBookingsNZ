@@ -151,6 +151,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  buildBookingCancellationRefundMetadata,
   enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
   enqueueGroupSettlementRefundRecovery,
@@ -814,17 +815,72 @@ describe("payment recovery worker", () => {
     expect(result.succeeded).toBe(1);
     // The recovery reconstructs booking_cancel_refund_<bookingId> (the inline
     // cancel key), so a refund Stripe already holds under those keys is
-    // replayed, not re-minted.
+    // replayed, not re-minted. #1494: the metadata is ALSO byte-identical to
+    // the inline body — { bookingId, reason: "cancellation" }, no
+    // refundPercentage — so Stripe replays the original refund instead of
+    // rejecting the reused key with idempotency_error.
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentId: "payment-1",
         amountCents: 4000,
         metadata: {
           bookingId: "booking-1",
-          reason: "booking_cancellation_refund_recovery",
+          reason: "cancellation",
         },
         idempotencyKeyPrefix: "booking_cancel_refund_booking-1",
       }),
+    );
+  });
+
+  it("replays a byte-identical Stripe body (metadata + key) after a lost inline recording, so it converges instead of hitting idempotency_error (#1494)", async () => {
+    // Regression for #1494. The frozen-plan design promises that if the inline
+    // Stripe refund succeeds but the local recording is lost (crash window),
+    // the cron replays the identical slices under the identical idempotency
+    // key and Stripe answers with the ORIGINAL refund. That only holds if the
+    // request BODY matches byte-for-byte too. Before #1494 the cron sent
+    // metadata.reason = "booking_cancellation_refund_recovery" (and no
+    // refundPercentage) while the inline path sent reason = "cancellation" +
+    // refundPercentage, so Stripe rejected the reused key with
+    // idempotency_error and the operation retried to exhaustion. Both callers
+    // now build the body from buildBookingCancellationRefundMetadata, so the
+    // replay is exactly what the inline path first sent.
+    const crashed = makeOperation({
+      id: "recovery-cancel-lost-recording",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+      idempotencyKey: "booking_cancel_refund_recovery_booking-1",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // Exact-object assertion (not objectContaining): the body is byte-identical
+    // to the inline cancel body asserted in booking-cancel.test.ts.
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    expect(refundArgs.metadata).toEqual({
+      bookingId: "booking-1",
+      reason: "cancellation",
+    });
+    expect(refundArgs.idempotencyKeyPrefix).toBe("booking_cancel_refund_booking-1");
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-1", amountCents: 4000 },
+    ]);
+    // The shape reconstructs purely from the persisted bookingId, so an
+    // operation enqueued BEFORE this fix (no persisted metadata) replays the
+    // same converged body through this same path — no fallback branch needed.
+    expect(refundArgs.metadata).toEqual(
+      buildBookingCancellationRefundMetadata("booking-1"),
     );
   });
 

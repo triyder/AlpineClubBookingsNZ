@@ -149,16 +149,26 @@ vi.mock("@/lib/payment-transactions", () => ({
   planStripeRefundAllocation: mocks.planStripeRefundAllocation,
 }));
 
-vi.mock("@/lib/payment-recovery", () => ({
-  enqueueBookingCancellationRefundRecovery:
-    mocks.enqueueBookingCancellationRefundRecovery,
-  enqueuePaymentIntentCancellationRecovery:
-    mocks.enqueuePaymentIntentCancellationRecovery,
-  markBookingCancellationRefundRecoverySucceeded:
-    mocks.markBookingCancellationRefundRecoverySucceeded,
-  recordBookingCancellationRefundRecoveryInlineError:
-    mocks.recordBookingCancellationRefundRecoveryInlineError,
-}));
+vi.mock("@/lib/payment-recovery", async () => {
+  // buildBookingCancellationRefundMetadata is a pure (Prisma-free) builder in
+  // payment-recovery-keys; use the REAL implementation so this test exercises
+  // the genuine inline metadata shape (#1494) rather than a stale copy.
+  const keys = await vi.importActual<
+    typeof import("@/lib/payment-recovery-keys")
+  >("@/lib/payment-recovery-keys");
+  return {
+    buildBookingCancellationRefundMetadata:
+      keys.buildBookingCancellationRefundMetadata,
+    enqueueBookingCancellationRefundRecovery:
+      mocks.enqueueBookingCancellationRefundRecovery,
+    enqueuePaymentIntentCancellationRecovery:
+      mocks.enqueuePaymentIntentCancellationRecovery,
+    markBookingCancellationRefundRecoverySucceeded:
+      mocks.markBookingCancellationRefundRecoverySucceeded,
+    recordBookingCancellationRefundRecoveryInlineError:
+      mocks.recordBookingCancellationRefundRecoveryInlineError,
+  };
+});
 
 vi.mock("@/lib/payment-link", () => ({
   revokePaymentLinksForBooking: mocks.revokePaymentLinksForBooking,
@@ -1391,7 +1401,12 @@ describe("cancelBooking credit refunds", () => {
         mocks.refundPaymentTransactions.mock.invocationCallOrder[0]
       );
       // The inline refund executes the SAME frozen slices, so inline and cron
-      // replay mint identical Stripe idempotency keys.
+      // replay mint identical Stripe idempotency keys — AND (#1494) send a
+      // byte-identical request body: the metadata is the shared
+      // { bookingId, reason: "cancellation" } shape with NO refundPercentage,
+      // so the cron replay (which cannot reconstruct that per-cancellation
+      // value) matches this original and Stripe replays instead of rejecting
+      // the reused key with idempotency_error. Asserted as an exact object.
       expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith({
         paymentId: "payment_1",
         amountCents: 5000,
@@ -1399,7 +1414,6 @@ describe("cancelBooking credit refunds", () => {
         metadata: {
           bookingId: "booking_1",
           reason: "cancellation",
-          refundPercentage: "50",
         },
         idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
       });

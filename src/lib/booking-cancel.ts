@@ -29,6 +29,7 @@ import {
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
 import {
+  buildBookingCancellationRefundMetadata,
   enqueueBookingCancellationRefundRecovery,
   enqueuePaymentIntentCancellationRecovery,
   markBookingCancellationRefundRecoverySucceeded,
@@ -1186,11 +1187,15 @@ async function performBookingCancellation(
           paymentId,
           amountCents: plannedCardRefundCents,
           allocation: cardRefundPlan,
-          metadata: {
-            bookingId,
-            reason: "cancellation",
-            refundPercentage: refundPercentage.toString(),
-          },
+          // #1494: shared with the recovery cron's replay so the two send a
+          // byte-identical request body under the same
+          // `booking_cancel_refund_<bookingId>` idempotency key. The metadata
+          // deliberately no longer carries refundPercentage — a per-cancellation
+          // value the cron cannot reconstruct from the persisted operation,
+          // which is what made a lost-recording replay diverge and hit Stripe's
+          // idempotency_error. refundPercentage still drives the audit/event/
+          // email narrative below; it just no longer rides in the Stripe body.
+          metadata: buildBookingCancellationRefundMetadata(bookingId),
           idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
         });
         stripeRefundId = refundResult.refunds[0]?.refundId;

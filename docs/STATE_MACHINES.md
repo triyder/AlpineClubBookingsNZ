@@ -129,9 +129,14 @@ process death anywhere between the claim commit and the refund leaves a
 silently lost refund (the pre-#1349 catch-only enqueue recorded the debt only
 if the refund *threw*). The inline refund executes the operation's frozen
 slices and marks it `SUCCEEDED` on completion; inline and cron therefore mint
-identical `booking_cancel_refund_<bookingId>` Stripe idempotency keys, so a
-Stripe-succeeded-but-unrecorded refund (or a cron tick racing the inline call)
-is replayed by Stripe, never repeated. An outstanding additional
+identical `booking_cancel_refund_<bookingId>` Stripe idempotency keys **and send
+a byte-identical request body** (#1494) — both build the refund metadata from
+the shared `buildBookingCancellationRefundMetadata` helper
+(`{ bookingId, reason: "cancellation" }`, deliberately carrying no
+per-cancellation value the cron cannot reconstruct from the persisted
+operation), so a Stripe-succeeded-but-unrecorded refund (or a cron tick racing
+the inline call) is replayed by Stripe, never repeated and never rejected as an
+`idempotency_error` for a reused key with mismatched parameters. An outstanding additional
 PaymentIntent is retired durably (#1350): the claim transaction persists a
 `CANCEL_PAYMENT_INTENT` recovery operation alongside the FAILED flip, the
 Phase-2 inline Stripe cancel stays best-effort (logged, never allowed to

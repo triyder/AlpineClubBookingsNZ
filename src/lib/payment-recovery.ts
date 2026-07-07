@@ -335,8 +335,14 @@ export async function enqueueRefundRequestRefundRecovery({
   });
 }
 
-import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
-export { buildBookingCancellationRefundIdempotencyKey };
+import {
+  buildBookingCancellationRefundIdempotencyKey,
+  buildBookingCancellationRefundMetadata,
+} from "./payment-recovery-keys";
+export {
+  buildBookingCancellationRefundIdempotencyKey,
+  buildBookingCancellationRefundMetadata,
+};
 
 /**
  * Durable recovery for a booking cancellation whose inline Stripe card refund
@@ -1074,16 +1080,34 @@ async function processBookingModificationRefundOperation(
     "booking_cancel_refund_recovery_",
   );
 
-  let reason: string;
+  let metadata: Record<string, string>;
   let idempotencyKeyPrefix: string;
   if (refundRequestId) {
-    reason = "refund_request_refund_recovery";
+    metadata = {
+      bookingId: operation.bookingId,
+      reason: "refund_request_refund_recovery",
+      refundRequestId,
+    };
     idempotencyKeyPrefix = `refund_request_${refundRequestId}`;
   } else if (isBookingCancellationRecovery) {
-    reason = "booking_cancellation_refund_recovery";
+    // #1494: replay the inline cancel body VERBATIM. Both callers build the
+    // metadata from the same buildBookingCancellationRefundMetadata helper, so
+    // this replay's request body is byte-identical to the one the inline path
+    // sent when it created the Stripe refund. Under the shared
+    // `booking_cancel_refund_<bookingId>` idempotency key that makes Stripe
+    // replay the original refund rather than reject the key with
+    // idempotency_error (which previously sent this exact scenario — inline
+    // refund succeeded, recording lost — to retry-exhaustion + a manual
+    // reconcile). The metadata reconstructs purely from the persisted
+    // bookingId, so an operation enqueued BEFORE this fix replays through the
+    // same code path (there is no separate persisted-metadata to miss).
+    metadata = buildBookingCancellationRefundMetadata(operation.bookingId);
     idempotencyKeyPrefix = `booking_cancel_refund_${operation.bookingId}`;
   } else {
-    reason = "booking_modification_refund_recovery";
+    metadata = {
+      bookingId: operation.bookingId,
+      reason: "booking_modification_refund_recovery",
+    };
     idempotencyKeyPrefix =
       operation.stripeKeyPrefix ??
       `payment_recovery_modification_refund_${operation.id}`;
@@ -1093,11 +1117,7 @@ async function processBookingModificationRefundOperation(
     paymentId: operation.paymentId,
     amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
     allocation: plan,
-    metadata: {
-      bookingId: operation.bookingId,
-      reason,
-      ...(refundRequestId ? { refundRequestId } : {}),
-    },
+    metadata,
     idempotencyKeyPrefix,
   });
 
