@@ -38,7 +38,7 @@ export const BED_ALLOCATABLE_BOOKING_STATUSES = [
   BookingStatus.WAITLIST_OFFERED,
 ] as const;
 
-export interface BedAllocationLifecycleRange {
+interface BedAllocationLifecycleRange {
   checkIn: Date;
   checkOut: Date;
 }

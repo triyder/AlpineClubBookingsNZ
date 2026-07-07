@@ -742,7 +742,7 @@ export async function joinGroupBookingAsMember(
 // ---------------------------------------------------------------------------
 
 /** Verification link lifetime, matching the public booking-request flow. */
-export const GROUP_JOIN_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
+const GROUP_JOIN_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 
 export interface NonMemberJoinGuest {
   firstName: string;

@@ -198,7 +198,7 @@ export function resolveBookingDateEnvelope(
   };
 }
 
-export function normalizeNightEntryDate(entry: GuestNightInput): Date {
+function normalizeNightEntryDate(entry: GuestNightInput): Date {
   if (typeof entry === "string") {
     return normalizeDateOnlyForTimeZone(new Date(`${entry}T00:00:00.000Z`));
   }

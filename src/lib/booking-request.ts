@@ -67,7 +67,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * the claim-first hold-release below (#1365) frees. Terminal/converted states
  * (APPROVED/CONVERTED/DECLINED/CANCELLED) and NEW are intentionally excluded.
  */
-export const DECLINABLE_BOOKING_REQUEST_STATUSES = [
+const DECLINABLE_BOOKING_REQUEST_STATUSES = [
   BookingRequestStatus.VERIFIED,
   BookingRequestStatus.PRICED,
   BookingRequestStatus.QUOTED,
@@ -120,7 +120,7 @@ export function parseBookingRequestGuests(raw: unknown): BookingRequestGuest[] {
   return parsed.data;
 }
 
-export function parseBookingRequestLinkedGuestMembers(
+function parseBookingRequestLinkedGuestMembers(
   raw: unknown
 ): BookingRequestLinkedGuestMember[] {
   if (!raw) return [];

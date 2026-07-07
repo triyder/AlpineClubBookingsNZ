@@ -22,8 +22,6 @@ import { BookingEventType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
-export { BookingEventType };
-
 /** Frozen cancellation facts stored on a CANCELLED event. */
 export interface CancellationEventSnapshot {
   /** Human summary of the policy tier in effect at cancellation time. */
