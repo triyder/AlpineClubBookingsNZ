@@ -92,7 +92,7 @@ export interface AssignedPromoCodeSummary extends AvailablePromoCode {
  * internal work party promo's night window; without it those guests'
  * nights are excluded from the discount (fail safe, never over-discount).
  */
-export interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
+interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
   firstNight?: Date | null;
   // Actual dates of each entry in perNightRates (issue #713), parallel to that
   // array. Used to restrict an internal work-party promo to its night window
@@ -370,7 +370,7 @@ function selectPromoBeneficiaryGuests(
   return selectedGuests.filter(({ guest }) => guest.perNightRates.length > 0);
 }
 
-export function getPromoBeneficiaryMemberIds(
+function getPromoBeneficiaryMemberIds(
   promo: PromoCodeInput,
   bookingMemberId: string,
   guests: PromoDiscountGuest[],
@@ -406,7 +406,7 @@ export function shouldPersistPromoRedemption(result: PromoDiscountResult | null 
  * Get the total number of free nights a member has already consumed
  * from a specific promo code across all their redemptions.
  */
-export async function getMemberFreeNightsUsed(
+async function getMemberFreeNightsUsed(
   promoCodeId: string,
   memberId: string,
   excludeBookingId?: string,
@@ -433,7 +433,7 @@ export async function getMemberFreeNightsUsed(
  * Count distinct members who have redeemed this promo code.
  * Excludes a specific booking id when updating an existing booking.
  */
-export async function getUniqueMemberRedemptionCount(
+async function getUniqueMemberRedemptionCount(
   promoCodeId: string,
   excludeBookingId?: string,
   db: PromoUsageClient = prisma
@@ -452,7 +452,7 @@ export async function getUniqueMemberRedemptionCount(
   return rows.length;
 }
 
-export async function getMemberPromoRedemptionCount(
+async function getMemberPromoRedemptionCount(
   promoCodeId: string,
   memberId: string,
   excludeBookingId?: string,

@@ -354,7 +354,6 @@ import {
   bookingModificationRefundReasonForKeyPrefix,
 } from "./payment-recovery-keys";
 export {
-  buildBookingCancellationRefundIdempotencyKey,
   buildBookingCancellationRefundMetadata,
   buildBookingModificationRefundMetadata,
   buildRefundRequestRefundMetadata,
@@ -453,7 +452,7 @@ export async function recordBookingCancellationRefundRecoveryInlineError({
 const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX =
   "group_settlement_refund_recovery_";
 
-export function buildGroupSettlementRefundRecoveryIdempotencyKey(
+function buildGroupSettlementRefundRecoveryIdempotencyKey(
   settlementId: string,
 ) {
   return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
