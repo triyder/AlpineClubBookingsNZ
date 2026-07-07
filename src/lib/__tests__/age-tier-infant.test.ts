@@ -158,7 +158,9 @@ describe("ageTierEnum (shared Zod validator)", () => {
     expect(prismaValues).toContain("CHILD");
     expect(prismaValues).toContain("YOUTH");
     expect(prismaValues).toContain("ADULT");
-    expect(prismaValues).toHaveLength(4);
+    // NOT_APPLICABLE is the organisation/school tier (#1440).
+    expect(prismaValues).toContain("NOT_APPLICABLE");
+    expect(prismaValues).toHaveLength(5);
   });
 });
 

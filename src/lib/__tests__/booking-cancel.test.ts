@@ -43,7 +43,23 @@ const mocks = vi.hoisted(() => {
   applyLocalRefundAllocation: vi.fn(),
   markPaymentIntentTransactionFailed: vi.fn(),
   refundPaymentTransactions: vi.fn(),
+  planStripeRefundAllocation: vi.fn(),
   enqueueBookingCancellationRefundRecovery: vi.fn(),
+  enqueuePaymentIntentCancellationRecovery: vi.fn(),
+  markBookingCancellationRefundRecoverySucceeded: vi.fn(),
+  recordBookingCancellationRefundRecoveryInlineError: vi.fn(),
+  txPaymentTransactionFindFirst: vi.fn(),
+  // #1491: the fold-materialization reads/writes inside the claim tx.
+  txPaymentTransactionFindMany: vi.fn(),
+  txPaymentTransactionUpdate: vi.fn(),
+  // #1473: the captured-ledger lookup in the not-SUCCEEDED cancel branch.
+  paymentTransactionFindFirst: vi.fn(),
+  // #1406: spy on the payment-link revoke so the guard test can prove a
+  // just-accepted booking's brand-new payment links are NEVER revoked.
+  revokePaymentLinksForBooking: vi.fn(),
+  // The tx client handed to the paid-path claim callback, captured so tests
+  // can prove the #1349 recovery enqueue ran INSIDE the claim transaction.
+  lastTx: null as unknown,
   };
 });
 
@@ -61,6 +77,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       update: mocks.paymentUpdate,
+    },
+    paymentTransaction: {
+      findFirst: mocks.paymentTransactionFindFirst,
     },
     promoRedemption: {
       findUnique: mocks.promoRedemptionFindUnique,
@@ -127,11 +146,32 @@ vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
+  planStripeRefundAllocation: mocks.planStripeRefundAllocation,
 }));
 
-vi.mock("@/lib/payment-recovery", () => ({
-  enqueueBookingCancellationRefundRecovery:
-    mocks.enqueueBookingCancellationRefundRecovery,
+vi.mock("@/lib/payment-recovery", async () => {
+  // buildBookingCancellationRefundMetadata is a pure (Prisma-free) builder in
+  // payment-recovery-keys; use the REAL implementation so this test exercises
+  // the genuine inline metadata shape (#1494) rather than a stale copy.
+  const keys = await vi.importActual<
+    typeof import("@/lib/payment-recovery-keys")
+  >("@/lib/payment-recovery-keys");
+  return {
+    buildBookingCancellationRefundMetadata:
+      keys.buildBookingCancellationRefundMetadata,
+    enqueueBookingCancellationRefundRecovery:
+      mocks.enqueueBookingCancellationRefundRecovery,
+    enqueuePaymentIntentCancellationRecovery:
+      mocks.enqueuePaymentIntentCancellationRecovery,
+    markBookingCancellationRefundRecoverySucceeded:
+      mocks.markBookingCancellationRefundRecoverySucceeded,
+    recordBookingCancellationRefundRecoveryInlineError:
+      mocks.recordBookingCancellationRefundRecoveryInlineError,
+  };
+});
+
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinksForBooking: mocks.revokePaymentLinksForBooking,
 }));
 
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -184,7 +224,13 @@ describe("cancelBooking credit refunds", () => {
             payment: {
               update: mocks.paymentUpdate,
             },
+            paymentTransaction: {
+              findFirst: mocks.txPaymentTransactionFindFirst,
+              findMany: mocks.txPaymentTransactionFindMany,
+              update: mocks.txPaymentTransactionUpdate,
+            },
           };
+          mocks.lastTx = mockTx;
           return arg(mockTx);
         }
         return Promise.all(arg);
@@ -192,6 +238,11 @@ describe("cancelBooking credit refunds", () => {
     );
     mocks.paymentUpdate.mockResolvedValue({});
     mocks.bookingUpdate.mockResolvedValue({});
+    // #1473: default = no captured transaction rows on the ledger.
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+    // #1491: fold materialization defaults — no captured rows to attribute to.
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([]);
+    mocks.txPaymentTransactionUpdate.mockResolvedValue({});
     mocks.promoRedemptionFindUnique.mockResolvedValue(null);
     mocks.daysUntilDate.mockReturnValue(30);
     mocks.loadCancellationPolicy.mockResolvedValue({
@@ -229,6 +280,29 @@ describe("cancelBooking credit refunds", () => {
     });
     mocks.enqueueBookingCancellationRefundRecovery.mockResolvedValue({
       id: "recovery_op_1",
+    });
+    mocks.enqueuePaymentIntentCancellationRecovery.mockResolvedValue({
+      id: "recovery_cancel_op_1",
+    });
+    // The tx1 lookup of the outstanding ADDITIONAL transaction (#1350).
+    mocks.txPaymentTransactionFindFirst.mockResolvedValue({
+      id: "ptx_additional_1",
+      amountCents: 2500,
+    });
+    // #1349: the claim tx freezes the refund plan before any Stripe call. The
+    // default echoes the requested amount as a single fully-refundable slice.
+    mocks.planStripeRefundAllocation.mockImplementation(
+      async ({ amountCents }: { amountCents: number }) => ({
+        slices: [{ paymentTransactionId: "ptx_1", amountCents }],
+        plannedAmountCents: amountCents,
+        totalRefundableCents: amountCents,
+      }),
+    );
+    mocks.markBookingCancellationRefundRecoverySucceeded.mockResolvedValue({
+      count: 1,
+    });
+    mocks.recordBookingCancellationRefundRecoveryInlineError.mockResolvedValue({
+      count: 1,
     });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue({
       found: 1,
@@ -414,6 +488,481 @@ describe("cancelBooking credit refunds", () => {
     );
   });
 
+  // #1473: a (PARTIALLY_)REFUNDED payment captured real money. It reaches the
+  // "no successful payment" branch (only SUCCEEDED takes the paid path), but
+  // its aggregate status is money truth: the cancel must not flatten it to
+  // FAILED, must not try to cancel the captured Stripe intent, and must not
+  // queue an invoice-clearing credit note against a paid invoice.
+  // #1491 (owner decision, Option 1): a genuinely captured PARTIALLY_REFUNDED
+  // payment no longer parks in the preserve branch — it takes the paid path
+  // and the member gets the policy tier of the REMAINING captured value.
+  it("routes a captured PARTIALLY_REFUNDED payment through the tiered paid path — credit method (#1491)", async () => {
+    const bookingPr = {
+      id: "booking_pr",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_pr",
+        bookingId: "booking_pr",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_pr",
+        additionalPaymentIntentId: null,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_pr",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingPr);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingPr);
+    // Capture evidence on the outer gate (and the under-lock re-check rides
+    // the tx client's default truthy findFirst).
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_pr" });
+    mocks.calculateRefundAmount.mockReturnValue({
+      refundAmountCents: 3500,
+      refundPercentage: 50,
+    });
+
+    const result = await cancelBooking(
+      "booking_pr",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "credit"
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      data: expect.objectContaining({
+        refundAmountCents: 3500,
+        refundPercentage: 50,
+      }),
+    });
+    // The tier was computed off the REMAINING captured value (10000 − 3000).
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      7000,
+      30,
+      expect.anything(),
+      "credit"
+    );
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_pr", amountCents: 3500 })
+    );
+    expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      "member_1",
+      3500,
+      "booking_pr",
+      undefined,
+      expect.anything()
+    );
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_pr" },
+      data: { status: "CANCELLED" },
+    });
+    // No FAILED flattening and no unpaid-branch clearing note.
+    for (const [args] of mocks.paymentUpdate.mock.calls) {
+      expect(args.data.status).toBeUndefined();
+    }
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("routes a captured PARTIALLY_REFUNDED payment through the tiered paid path — card method with frozen recovery plan (#1491)", async () => {
+    const bookingPr = {
+      id: "booking_prc",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_prc",
+        bookingId: "booking_prc",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 500,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_prc",
+        additionalPaymentIntentId: null,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_prc",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingPr);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingPr);
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_prc" });
+    mocks.calculateRefundAmount.mockReturnValue({
+      refundAmountCents: 3250,
+      refundPercentage: 50,
+    });
+
+    const result = await cancelBooking(
+      "booking_prc",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    // Change fee stays non-refundable (FEE-03): base =
+    // min(10000 − 3000, 10000 + 500) − 500 = 6500.
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      6500,
+      30,
+      expect.anything(),
+      "card"
+    );
+    // The card plan is frozen in tx1 as the durable refund decision (#1349) —
+    // this is also the artifact the repair pass reads as "policy retained".
+    expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_prc", amountCents: 3250 })
+    );
+    expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_prc",
+        paymentId: "payment_prc",
+        amountCents: 3250,
+      })
+    );
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("coerces a captured IB PARTIALLY_REFUNDED cancel to the credit method and materializes the folded refund into the ledger (#1491)", async () => {
+    // Captured bank-transfer payment whose modification refund was FOLDED into
+    // the mirror only (ledger row still shows refunded 0). A "card" cancel
+    // must (a) route on the ledger row alone (no STRIPE mirror arm), (b)
+    // coerce to the credit method BEFORE the tier is computed, and (c) seed
+    // the fold into the ledger so the post-refund aggregate reconcile cannot
+    // erase it.
+    const bookingIb = {
+      id: "booking_ibpr",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-08-10"),
+      checkOut: new Date("2026-08-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_ibpr",
+        bookingId: "booking_ibpr",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "INTERNET_BANKING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: null,
+        additionalPaymentIntentId: null,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_ibpr",
+      },
+    };
+    mocks.bookingFindUnique.mockResolvedValueOnce(bookingIb);
+    mocks.txBookingFindUnique.mockResolvedValueOnce(bookingIb);
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_ibpr" });
+    mocks.txPaymentTransactionFindMany.mockResolvedValue([
+      {
+        id: "ptx_ibpr",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+      },
+    ]);
+    mocks.calculateRefundAmount.mockReturnValue({
+      refundAmountCents: 3500,
+      refundPercentage: 50,
+    });
+
+    const result = await cancelBooking(
+      "booking_ibpr",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    // Coercion proven: the tier was computed for the CREDIT method.
+    expect(mocks.calculateRefundAmount).toHaveBeenCalledWith(
+      7000,
+      30,
+      expect.anything(),
+      "credit"
+    );
+    // The folded 3000 was attributed to the captured ledger row in tx1.
+    expect(mocks.txPaymentTransactionUpdate).toHaveBeenCalledWith({
+      where: { id: "ptx_ibpr" },
+      data: { refundedAmountCents: 3000 },
+    });
+    // Credit path executed; no Stripe planning, no phantom card refund.
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment_ibpr", amountCents: 3500 })
+    );
+    expect(mocks.createCancellationCredit).toHaveBeenCalledWith(
+      "member_1",
+      3500,
+      "booking_ibpr",
+      undefined,
+      expect.anything()
+    );
+    expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
+  });
+
+  it("keeps a fully REFUNDED payment in the preserve branch — no writes, no clearing note (#1473/#1491)", async () => {
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_fr",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_fr",
+        bookingId: "booking_fr",
+        amountCents: 10000,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_fr",
+        xeroInvoiceId: "inv_fr",
+        additionalPaymentStatus: null,
+      },
+    });
+    // Ledger evidence: the capture's refunded PRIMARY row.
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_fr" });
+
+    const result = await cancelBooking(
+      "booking_fr",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      data: expect.objectContaining({
+        success: true,
+        refundAmountCents: 0,
+        message: expect.stringContaining("refund history is unchanged"),
+      }),
+    });
+
+    // The booking is cancelled, but the payment row is untouched — no status
+    // write of any kind.
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_fr" },
+      data: { status: "CANCELLED" },
+    });
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    // No clearing note against a settled invoice, and no Stripe cancel of a
+    // captured intent.
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+    expect(mocks.markPaymentIntentTransactionFailed).not.toHaveBeenCalled();
+  });
+
+  it("treats a pre-ledger STRIPE refund mirror as captured even when the status was already flattened (#1473)", async () => {
+    // Defense-in-depth for legacy mirror-only STRIPE rows (no transaction
+    // ledger): a Stripe refund requires a captured charge, so
+    // refundedAmountCents > 0 on a STRIPE payment is capture evidence even
+    // after the old defect flattened the status. (No live flow re-cancels a
+    // CANCELLED booking today; this arm exists so any future path over these
+    // rows cannot repeat the damage.)
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_legacy",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_legacy",
+        bookingId: "booking_legacy",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "FAILED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_legacy",
+        xeroInvoiceId: "inv_legacy",
+        additionalPaymentStatus: null,
+      },
+    });
+    // No ledger rows at all — the STRIPE mirror arm must carry it.
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+
+    const result = await cancelBooking(
+      "booking_legacy",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.cancelPaymentIntentIfCancellable).not.toHaveBeenCalled();
+  });
+
+  it("still flattens and clears a never-captured IB payment whose mirror was folded to PARTIALLY_REFUNDED (#1473)", async () => {
+    // The mirror lies: inbound reconciliation folds an invoice-applied
+    // modification credit note into refundedAmountCents/PARTIALLY_REFUNDED on
+    // an IB payment that never captured a cent (reduced-then-cancelled unpaid
+    // booking). With no captured ledger row, the cancel must treat it as
+    // never-captured: flatten to FAILED and clear the invoice's true
+    // outstanding (finalPrice, per #1015) — NOT strand the invoice open.
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_fold",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 7000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_fold",
+        bookingId: "booking_fold",
+        amountCents: 10000,
+        refundedAmountCents: 3000,
+        status: "PARTIALLY_REFUNDED",
+        source: "INTERNET_BANKING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_fold",
+        additionalPaymentStatus: null,
+      },
+    });
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+
+    const result = await cancelBooking(
+      "booking_fold",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.paymentTransactionFindFirst).toHaveBeenCalledWith({
+      where: {
+        paymentId: "payment_fold",
+        status: { in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"] },
+      },
+      select: { id: true },
+    });
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment_fold" },
+      data: { status: "FAILED" },
+    });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "booking_fold",
+        refundAmountCents: 7000,
+      },
+      {
+        createdByMemberId: "member_1",
+      }
+    );
+  });
+
+  it("flips only the outstanding additional intent while preserving a captured primary's status (#1473)", async () => {
+    // Fully REFUNDED captured primary (ledger row) + an outstanding additional
+    // intent from a pending price increase: the additional flips FAILED and is
+    // cancelled at Stripe, but the aggregate status write is omitted. (A
+    // PARTIALLY_REFUNDED captured payment now takes the paid path instead —
+    // #1491.)
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_addl",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 12000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_addl",
+        bookingId: "booking_addl",
+        amountCents: 10000,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+        source: "STRIPE",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_addl_primary",
+        additionalPaymentIntentId: "pi_addl_extra",
+        additionalPaymentStatus: "PENDING",
+        xeroInvoiceId: "inv_addl",
+      },
+    });
+    mocks.paymentTransactionFindFirst.mockResolvedValue({ id: "ptx_addl" });
+
+    const result = await cancelBooking(
+      "booking_addl",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment_addl" },
+      data: { additionalPaymentStatus: "FAILED" },
+    });
+    // Only the outstanding additional intent is cancelled at Stripe; the
+    // captured primary is left alone.
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_addl_extra");
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
   it("waits for Stripe cancellation before finalising an unpaid booking cancellation", async () => {
     let releaseCancellation: (() => void) | null = null;
 
@@ -458,7 +1007,11 @@ describe("cancelBooking credit refunds", () => {
       "card"
     );
 
-    await Promise.resolve();
+    // Flush enough microtasks to reach the Stripe cancel (the branch now
+    // awaits the #1473 captured-ledger lookup first) without resolving it.
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     expect(releaseCancellation).not.toBeNull();
 
@@ -632,7 +1185,7 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalled();
   });
 
-  it("keeps the booking CANCELLED and enqueues only the remainder when a card refund fails partway (#1160)", async () => {
+  it("keeps the booking CANCELLED and leaves the pre-persisted recovery op to replay when a card refund fails partway (#1160/#1349)", async () => {
     // Frozen refund = 50c; Stripe refunded and recorded 40c before failing.
     mocks.calculateRefundAmount.mockReturnValueOnce({
       refundAmountCents: 50,
@@ -659,16 +1212,360 @@ describe("cancelBooking credit refunds", () => {
         refundMethod: "card",
       }),
     });
+    // #1349: the debt was persisted inside tx1 with the FULL frozen plan; the
+    // catch must NOT re-enqueue a remainder-sized operation — the cron replays
+    // the identical slices/keys, so the completed 40c is replayed by Stripe
+    // (not repeated) and only the outstanding 10c moves money.
+    expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledWith({
       bookingId: "booking_1",
       paymentId: "payment_1",
-      amountCents: 10,
+      amountCents: 50,
+      allocationPlan: [{ paymentTransactionId: "ptx_1", amountCents: 50 }],
+      store: mocks.lastTx,
+    });
+    // The operation is NOT closed, and the inline failure is recorded on it.
+    expect(
+      mocks.markBookingCancellationRefundRecoverySucceeded
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.recordBookingCancellationRefundRecoveryInlineError
+    ).toHaveBeenCalledWith({
+      bookingId: "booking_1",
+      message: expect.any(String),
     });
     // Status flipped exactly once, inside tx1.
     expect(mocks.bookingUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.bookingUpdate).toHaveBeenCalledWith({
       where: { id: "booking_1" },
       data: { status: "CANCELLED" },
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F1 (#1350): an outstanding ADDITIONAL payment intent gets a durable
+  // CANCEL_PAYMENT_INTENT recovery operation INSIDE the claim transaction, so
+  // the recovery cron (and the webhook's superseded-intent hook) cancel or
+  // refund it even when the Phase-2 best-effort Stripe cancel fails.
+  // ---------------------------------------------------------------------------
+  describe("durable additional-intent cancellation recovery (#1350)", () => {
+    const bookingWithOutstandingAdditional = {
+      id: "booking_1",
+      memberId: "member_1",
+      status: "PAID",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+      payment: {
+        id: "payment_1",
+        bookingId: "booking_1",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_1",
+        additionalPaymentIntentId: "pi_additional_1",
+        additionalPaymentStatus: "PENDING",
+      },
+    };
+
+    it("enqueues the durable cancellation op inside tx1, keyed to the additional transaction", async () => {
+      mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.txPaymentTransactionFindFirst).toHaveBeenCalledWith({
+        where: {
+          paymentId: "payment_1",
+          stripePaymentIntentId: "pi_additional_1",
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, amountCents: true },
+      });
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).toHaveBeenCalledWith({
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        paymentTransactionId: "ptx_additional_1",
+        paymentIntentId: "pi_additional_1",
+        amountCents: 2500,
+        store: mocks.lastTx,
+      });
+      // Ordered before any external Stripe work.
+      expect(
+        mocks.enqueuePaymentIntentCancellationRecovery.mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        mocks.cancelPaymentIntentIfCancellable.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("keeps the durable op even when the Phase-2 best-effort Stripe cancel fails", async () => {
+      mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.cancelPaymentIntentIfCancellable.mockRejectedValueOnce(
+        new Error("stripe unavailable")
+      );
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      // The claim stands and the debt to cancel the intent is durable.
+      expect(result.status).toBe(200);
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not enqueue when there is no outstanding additional intent", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
+    });
+
+    it("skips the enqueue (webhook guard remains the backstop) when no transaction row exists for the intent", async () => {
+      mocks.bookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txBookingFindUnique.mockResolvedValueOnce(bookingWithOutstandingAdditional);
+      mocks.txPaymentTransactionFindFirst.mockResolvedValueOnce(null);
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.enqueuePaymentIntentCancellationRecovery).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // F2 (#1349): the refund debt is persisted INSIDE the claim transaction,
+  // BEFORE any external call, so a process death between the claim commit and
+  // the Stripe refund leaves a pending recovery operation (with the frozen
+  // allocation plan) instead of a silently lost refund. The processor-side
+  // replay of that operation is covered in payment-recovery.test.ts.
+  // ---------------------------------------------------------------------------
+  describe("card refund debt persisted inside the claim transaction (#1349)", () => {
+    it("enqueues the recovery operation with the frozen plan inside tx1, before the Stripe call", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      // Enqueued exactly once, ON THE TX CLIENT (atomic with the CANCELLED
+      // flip), carrying the plan frozen from the under-lock read.
+      expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledWith({
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        amountCents: 5000,
+        allocationPlan: [{ paymentTransactionId: "ptx_1", amountCents: 5000 }],
+        store: mocks.lastTx,
+      });
+      // The plan derivation also ran on the tx client.
+      expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith({
+        paymentId: "payment_1",
+        amountCents: 5000,
+        store: mocks.lastTx,
+      });
+      // Ordering: debt persisted BEFORE the external Stripe call.
+      expect(
+        mocks.enqueueBookingCancellationRefundRecovery.mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(
+        mocks.refundPaymentTransactions.mock.invocationCallOrder[0]
+      );
+      // The inline refund executes the SAME frozen slices, so inline and cron
+      // replay mint identical Stripe idempotency keys — AND (#1494) send a
+      // byte-identical request body: the metadata is the shared
+      // { bookingId, reason: "cancellation" } shape with NO refundPercentage,
+      // so the cron replay (which cannot reconstruct that per-cancellation
+      // value) matches this original and Stripe replays instead of rejecting
+      // the reused key with idempotency_error. Asserted as an exact object.
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith({
+        paymentId: "payment_1",
+        amountCents: 5000,
+        allocation: [{ paymentTransactionId: "ptx_1", amountCents: 5000 }],
+        metadata: {
+          bookingId: "booking_1",
+          reason: "cancellation",
+        },
+        idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
+      });
+      // Happy path closes the operation.
+      expect(
+        mocks.markBookingCancellationRefundRecoverySucceeded
+      ).toHaveBeenCalledWith({ bookingId: "booking_1" });
+      expect(
+        mocks.markBookingCancellationRefundRecoverySucceeded.mock
+          .invocationCallOrder[0]
+      ).toBeGreaterThan(
+        mocks.refundPaymentTransactions.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("simulated process death between claim commit and Stripe call: the debt already exists and nothing closes it (crash-window regression)", async () => {
+      // The closest a unit test gets to a hard process kill: the Stripe call
+      // never runs (rejects immediately). The invariant under test is that the
+      // recovery operation was ALREADY persisted in tx1 — so a real crash at
+      // this point leaves a PENDING op the cron replays — and that no code
+      // path marks it SUCCEEDED or double-enqueues afterwards.
+      mocks.refundPaymentTransactions.mockRejectedValueOnce(
+        new Error("process died before the Stripe call")
+      );
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      // The cancel claim stands (booking CANCELLED)...
+      expect(result.status).toBe(200);
+      expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+        where: { id: "booking_1" },
+        data: { status: "CANCELLED" },
+      });
+      // ...and the debt was persisted in-tx BEFORE the refund attempt, with
+      // the plan the cron will replay under the same
+      // booking_cancel_refund_<bookingId> Stripe key prefix.
+      expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookingId: "booking_1",
+          amountCents: 5000,
+          allocationPlan: [{ paymentTransactionId: "ptx_1", amountCents: 5000 }],
+          store: mocks.lastTx,
+        })
+      );
+      expect(
+        mocks.markBookingCancellationRefundRecoverySucceeded
+      ).not.toHaveBeenCalled();
+    });
+
+    it("does not enqueue a recovery operation for credit refunds (ledger writes are already in-tx)", async () => {
+      const credit = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "credit"
+      );
+      expect(credit.status).toBe(200);
+      expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+      expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
+    });
+
+    it("does not enqueue a recovery operation for a zero-refund cancel (nothing is due)", async () => {
+      mocks.calculateRefundAmount.mockReturnValueOnce({
+        refundAmountCents: 0,
+        refundPercentage: 0,
+      });
+
+      const zero = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+      expect(zero.status).toBe(200);
+      expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+      expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
+    });
+
+    it("refunds only what the ledger shows refundable when the frozen plan falls short of the policy-due amount (mirror drift)", async () => {
+      // The Payment mirror says 5000c is due but the transaction ledger can
+      // only cover 3000c. The plan freezes 3000c; the inline refund executes
+      // exactly that; the shortfall is logged, never thrown.
+      mocks.planStripeRefundAllocation.mockResolvedValueOnce({
+        slices: [{ paymentTransactionId: "ptx_1", amountCents: 3000 }],
+        plannedAmountCents: 3000,
+        totalRefundableCents: 3000,
+      });
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.enqueueBookingCancellationRefundRecovery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 3000,
+          allocationPlan: [{ paymentTransactionId: "ptx_1", amountCents: 3000 }],
+        })
+      );
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCents: 3000,
+          allocation: [{ paymentTransactionId: "ptx_1", amountCents: 3000 }],
+        })
+      );
+    });
+
+    it("enqueues nothing when the single-flight claim is lost (409 loser moves no money and records no debt)", async () => {
+      mocks.txBookingFindUnique.mockResolvedValueOnce({
+        id: "booking_1",
+        memberId: "member_1",
+        status: "CANCELLED",
+        finalPriceCents: 10000,
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        member: { id: "member_1", email: "member@example.com", firstName: "Alice" },
+        payment: {
+          id: "payment_1",
+          bookingId: "booking_1",
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+          changeFeeCents: 0,
+          creditAppliedCents: 0,
+          stripePaymentIntentId: "pi_1",
+        },
+      });
+
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(409);
+      expect(mocks.planStripeRefundAllocation).not.toHaveBeenCalled();
+      expect(mocks.enqueueBookingCancellationRefundRecovery).not.toHaveBeenCalled();
     });
   });
 
@@ -1248,5 +2145,177 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
     expect(auditMetadata.checkIn).toBe(freshCheckIn.toISOString());
     expect(auditMetadata.checkOut).toBe(freshCheckOut.toISOString());
     expect(auditMetadata.checkIn).not.toBe(staleCheckIn.toISOString());
+  });
+});
+
+// #1406: opt-in caller guard (`requireRequestHold`) for the two "release a held
+// request" paths — the admin "Release hold" route and `declineBookingRequest`.
+// They expect an AWAITING_REVIEW hold. cancelBooking dispatches its branch from
+// an OUTER, un-locked read, so a concurrent quote-accept can flip the hold
+// AWAITING_REVIEW -> PENDING before that read runs. Without the guard the
+// PENDING snapshot would fall into the generic PENDING branch — which is
+// UNLOCKED and has NO status re-guard — and cancel the just-accepted booking,
+// revoking its brand-new payment links. The guard refuses (409, no side effect)
+// BEFORE branch dispatch. It is opt-in: callers cancelling genuine PENDING
+// bookings never pass it and are unaffected.
+describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
+  const heldBooking = {
+    id: "held-1",
+    memberId: "owner-1",
+    status: "AWAITING_REVIEW" as const,
+    finalPriceCents: 1000,
+    checkIn: new Date("2026-08-01"),
+    checkOut: new Date("2026-08-03"),
+    member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+    payment: null,
+  };
+
+  function lockWasAcquired() {
+    return mocks.txExecuteRaw.mock.calls.some((call) =>
+      String((call as unknown[])[0]).includes("pg_advisory_xact_lock"),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
+    mocks.prismaTransaction.mockImplementation(
+      async (
+        arg: ((tx: unknown) => Promise<unknown>) | Array<Promise<unknown>>,
+      ) => {
+        if (typeof arg === "function") {
+          const mockTx = {
+            $executeRaw: mocks.txExecuteRaw,
+            booking: {
+              findUnique: mocks.txBookingFindUnique,
+              update: mocks.bookingUpdate,
+            },
+            bookingRequest: { updateMany: mocks.bookingRequestUpdateMany },
+            payment: { update: mocks.paymentUpdate },
+          };
+          return arg(mockTx);
+        }
+        return Promise.all(arg);
+      },
+    );
+    mocks.bookingUpdate.mockResolvedValue({});
+    mocks.bookingRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.promoRedemptionFindUnique.mockResolvedValue(null);
+    mocks.sendBookingCancelledEmail.mockResolvedValue(undefined);
+    mocks.processWaitlistForDates.mockResolvedValue(undefined);
+    mocks.revokePaymentLinksForBooking.mockResolvedValue(undefined);
+  });
+
+  it("refuses with 409 and clobbers NOTHING when the outer read shows the hold already accepted (PENDING)", async () => {
+    // A concurrent quote-accept already flipped the hold AWAITING_REVIEW ->
+    // PENDING, so cancelBooking's own outer read sees PENDING. Absent the guard
+    // this would dispatch into the unlocked generic PENDING branch and cancel
+    // the just-accepted booking + revoke its brand-new payment links.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking, status: "PENDING" });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { requireRequestHold: true },
+    );
+
+    // Real 409 loser, never a false 200.
+    expect(result.status).toBe(409);
+    // The guard fired BEFORE any branch dispatch: no transaction, no status
+    // flip to CANCELLED, and — critically — no payment-link revocation on the
+    // just-accepted booking. Nothing was clobbered.
+    expect(mocks.prismaTransaction).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.revokePaymentLinksForBooking).not.toHaveBeenCalled();
+    expect(mocks.bookingRequestUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    expect(mocks.processWaitlistForDates).not.toHaveBeenCalled();
+  });
+
+  it("cancels a genuine AWAITING_REVIEW hold normally and detaches heldBookingId", async () => {
+    // Both reads see AWAITING_REVIEW: the guard passes, the no-payment
+    // claim-first branch runs, the hold is released and its pointer detached.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ ...heldBooking });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { requireRequestHold: true },
+    );
+
+    expect(result.status).toBe(200);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "held-1" },
+      data: {
+        status: "CANCELLED",
+        waitlistOfferedAt: null,
+        waitlistOfferExpiresAt: null,
+        waitlistPosition: null,
+      },
+    });
+    // The booking-request pointer to this hold is detached at the source (#1254).
+    expect(mocks.bookingRequestUpdateMany).toHaveBeenCalledWith({
+      where: { heldBookingId: "held-1" },
+      data: { heldBookingId: null },
+    });
+  });
+
+  it("still refuses with 409 (no clobber) when the outer read is AWAITING_REVIEW but the under-lock re-read finds PENDING", async () => {
+    // The accept committed AFTER cancel's outer read but BEFORE cancel won the
+    // advisory lock. The guard passed (outer read was AWAITING_REVIEW); the
+    // existing #1311 under-lock re-read (NO_PAYMENT_CANCELLABLE_STATUSES guard)
+    // is the second half of the fix and catches it here.
+    mocks.bookingFindUnique.mockResolvedValue({ ...heldBooking });
+    mocks.txBookingFindUnique.mockResolvedValue({ status: "PENDING" });
+
+    const result = await cancelBooking(
+      "held-1",
+      "admin-1",
+      "ADMIN",
+      "127.0.0.1",
+      "card",
+      { requireRequestHold: true },
+    );
+
+    expect(result.status).toBe(409);
+    expect(lockWasAcquired()).toBe(true);
+    expect(mocks.txBookingFindUnique).toHaveBeenCalled();
+    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    expect(mocks.revokePaymentLinksForBooking).not.toHaveBeenCalled();
+    expect(mocks.bookingRequestUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("regression: WITHOUT the option, a genuine PENDING member booking is still cancelled via the generic PENDING branch", async () => {
+    // The opt-in guard must not touch the legitimate PENDING callers (member
+    // self-cancel, deletion cleanup, split-cascade). A member cancelling their
+    // own PENDING booking with no option passed still flows through the generic
+    // PENDING branch and cancels normally.
+    mocks.bookingFindUnique.mockResolvedValue({
+      id: "pending-1",
+      memberId: "owner-1",
+      status: "PENDING",
+      finalPriceCents: 1000,
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      member: { id: "owner-1", email: "req@example.com", firstName: "Req" },
+      payment: null,
+    });
+
+    const result = await cancelBooking("pending-1", "owner-1", "USER", "127.0.0.1");
+
+    expect(result.status).toBe(200);
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "pending-1" },
+      data: { status: "CANCELLED" },
+    });
   });
 });

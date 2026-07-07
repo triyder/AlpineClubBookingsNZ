@@ -19,6 +19,7 @@ describe("loadAdminXeroContactGroups", () => {
         payload: {
           groups: [{ id: "group_1", name: "Adults", contactCount: 12 }],
           refreshed: false,
+          lastRefreshedAt: "2026-07-05T09:30:00.000Z",
         },
       })
     );
@@ -33,7 +34,26 @@ describe("loadAdminXeroContactGroups", () => {
     expect(result).toEqual({
       groups: [{ id: "group_1", name: "Adults", contactCount: 12 }],
       refreshed: false,
+      lastRefreshedAt: "2026-07-05T09:30:00.000Z",
     });
+  });
+
+  it("reports a null lastRefreshedAt when the cache has never been populated", async () => {
+    const fetchImpl = vi.fn<ContactGroupsFetch>().mockResolvedValue(
+      mockResponse({
+        ok: true,
+        payload: {
+          groups: [],
+          refreshed: false,
+          lastRefreshedAt: null,
+        },
+      })
+    );
+
+    const result = await loadAdminXeroContactGroups({ fetchImpl });
+
+    expect(result.lastRefreshedAt).toBeNull();
+    expect(result.groups).toEqual([]);
   });
 
   it("falls back to a live refresh when the cache is empty", async () => {
@@ -72,6 +92,7 @@ describe("loadAdminXeroContactGroups", () => {
     expect(result).toEqual({
       groups: [{ id: "group_2", name: "Youth", contactCount: 8 }],
       refreshed: true,
+      lastRefreshedAt: null,
     });
   });
 

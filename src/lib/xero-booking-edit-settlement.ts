@@ -102,9 +102,15 @@ export function classifyXeroBookingEditSettlement(
   } else if (xeroNetAmountCents > 0) {
     const waitForPaymentIntentId =
       input.requiresAdditionalStripePayment ? input.additionalPaymentIntentId ?? null : null;
+    // The components stay SIGNED (#1356): a mixed-sign edit (price reduction
+    // plus a larger late-change fee) must invoice the fee AND the negative
+    // price adjustment so the supplementary invoice total and its recorded
+    // payment equal the net the member is actually charged. Clamping the
+    // reduction to zero over-records Xero income and the Stripe clearing
+    // account by the dropped component and breaks bank reconciliation.
     financialAction = {
       type: "supplementary-invoice",
-      priceDiffCents: Math.max(input.priceDiffCents, 0),
+      priceDiffCents: input.priceDiffCents,
       changeFeeCents,
       recordPayment: input.requiresAdditionalStripePayment
         ? Boolean(waitForPaymentIntentId)

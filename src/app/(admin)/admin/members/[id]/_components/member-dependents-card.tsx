@@ -11,6 +11,7 @@ import {
   formatMemberDateNz,
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers"
+import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import type { MemberDetail } from "../_types"
 
 interface MemberDependentsCardProps {
@@ -21,6 +22,7 @@ interface MemberDependentsCardProps {
   unlinkingDependentId: string | null
   onOpenDependentDialog: () => void
   onUnlinkDependent: (parentId: string, dependentId: string, dependentName: string) => void
+  className?: string
 }
 
 export function MemberDependentsCard({
@@ -31,11 +33,12 @@ export function MemberDependentsCard({
   unlinkingDependentId,
   onOpenDependentDialog,
   onUnlinkDependent,
+  className,
 }: MemberDependentsCardProps) {
   const router = useRouter()
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base font-medium">Dependents</CardTitle>
         {isAdultMember && !memberIsArchived && (
@@ -75,7 +78,7 @@ export function MemberDependentsCard({
                     <Badge variant="secondary">{parentLinkTypeLabel(dependent.parentLinkType)}</Badge>
                   </TableCell>
                   <TableCell>
-                    {dependent.ageTier.charAt(0) + dependent.ageTier.slice(1).toLowerCase()}
+                    {formatAgeTierName(dependent.ageTier)}
                   </TableCell>
                   <TableCell>
                     <Badge

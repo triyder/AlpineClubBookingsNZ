@@ -3,6 +3,7 @@ import {
   getQueuedOutboxExpectedOperation,
   readQueuedOutboxPayload,
   readQueueType,
+  XERO_OUTBOX_QUEUE_TYPES,
 } from "@/lib/xero-operation-outbox-payload";
 
 describe("xero operation outbox payload parsing", () => {
@@ -114,5 +115,52 @@ describe("xero operation outbox payload parsing", () => {
     );
     expect(readQueueType(null)).toBeNull();
     expect(readQueueType(["BOOKING_INVOICE"])).toBeNull();
+  });
+
+  it("exposes the exact set of outbox queue types the pending scan dispatches (#1272)", () => {
+    // Single source of truth: the pending-outbox scan filters `queueType IN`
+    // this list and the dispatch switch routes exactly these members. Locking
+    // the wire values guards the scan/dispatch domain against drift.
+    expect([...XERO_OUTBOX_QUEUE_TYPES]).toEqual([
+      "ENTRANCE_FEE_INVOICE",
+      "BOOKING_INVOICE",
+      "BOOKING_INVOICE_UPDATE",
+      "REFUND_CREDIT_NOTE",
+      "ACCOUNT_CREDIT_NOTE",
+      "SUPPLEMENTARY_INVOICE",
+      "MODIFICATION_CREDIT_NOTE",
+      "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+      "CREDIT_NOTE_ALLOCATION",
+      "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
+      "MEMBERSHIP_CANCELLATION_CONTACT",
+      "GROUP_SETTLEMENT_INVOICE",
+    ]);
+    expect(new Set(XERO_OUTBOX_QUEUE_TYPES).size).toBe(
+      XERO_OUTBOX_QUEUE_TYPES.length
+    );
+  });
+
+  it("routes every scanned queue type through the guarded expected-operation map (#1272)", () => {
+    // Every queueType the scan selects must resolve to a concrete claim guard,
+    // so the column scan can never surface a type the dispatch path lacks.
+    const expectedEntityTypes = new Map<string, string>([
+      ["ENTRANCE_FEE_INVOICE", "INVOICE"],
+      ["BOOKING_INVOICE", "INVOICE"],
+      ["BOOKING_INVOICE_UPDATE", "INVOICE"],
+      ["REFUND_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["ACCOUNT_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["SUPPLEMENTARY_INVOICE", "INVOICE"],
+      ["MODIFICATION_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["MODIFICATION_ACCOUNT_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["CREDIT_NOTE_ALLOCATION", "ALLOCATION"],
+      ["MEMBERSHIP_CANCELLATION_CREDIT_NOTE", "CREDIT_NOTE"],
+      ["MEMBERSHIP_CANCELLATION_CONTACT", "CONTACT"],
+      ["GROUP_SETTLEMENT_INVOICE", "INVOICE"],
+    ]);
+    for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
+      expect(getQueuedOutboxExpectedOperation(queueType).entityType).toBe(
+        expectedEntityTypes.get(queueType)
+      );
+    }
   });
 });

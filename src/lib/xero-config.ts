@@ -31,6 +31,22 @@ const OPERATIONAL_XERO_OAUTH_SCOPES = [
 const DEFAULT_OPERATIONAL_XERO_REDIRECT_URI =
   "http://localhost:3000/api/admin/xero/callback";
 
+// xero-node defaults its OAuth-layer HTTP timeout (identity.xero.com
+// discovery and token requests) to 3500ms, which is tight enough that a
+// routine slow round trip fails the whole client build.
+const DEFAULT_XERO_HTTP_TIMEOUT_MS = 10_000;
+
+function getXeroHttpTimeoutMs(): number {
+  const raw = readEnv("XERO_HTTP_TIMEOUT_MS");
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_XERO_HTTP_TIMEOUT_MS;
+}
+
 interface XeroClientConfigOptions {
   clientIdEnv: string;
   clientSecretEnv: string;
@@ -51,6 +67,7 @@ function buildXeroClientConfig({
     clientSecret: readEnv(clientSecretEnv) ?? "",
     redirectUris: [readEnv(redirectUriEnv) ?? defaultRedirectUri],
     scopes: [...scopes],
+    httpTimeout: getXeroHttpTimeoutMs(),
   };
 }
 

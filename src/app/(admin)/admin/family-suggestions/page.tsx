@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { useConfirm } from "@/components/confirm-dialog"
 
 interface SuggestedMember {
   id: string
@@ -17,6 +18,7 @@ interface SuggestedMember {
 }
 
 interface Suggestion {
+  signature: string
   suggestedName: string
   reason: string
   score: number
@@ -27,6 +29,7 @@ interface SuggestionsData {
   suggestions: Suggestion[]
   ungroupedCount: number
   totalMembers: number
+  hiddenCount: number
 }
 
 export default function FamilySuggestionsPage() {
@@ -34,9 +37,13 @@ export default function FamilySuggestionsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [creating, setCreating] = useState<string | null>(null)
-  const [editNames, setEditNames] = useState<Record<number, string>>({})
-  const [dismissed, setDismissed] = useState<Set<number>>(new Set())
-  const [created, setCreated] = useState<Set<number>>(new Set())
+  const [hiding, setHiding] = useState<string | null>(null)
+  const [resetting, setResetting] = useState(false)
+  const [editNames, setEditNames] = useState<Record<string, string>>({})
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const [created, setCreated] = useState<Set<string>>(new Set())
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const { confirm, confirmDialog } = useConfirm()
 
   const fetchSuggestions = useCallback(async () => {
     setLoading(true)
@@ -48,6 +55,7 @@ export default function FamilySuggestionsPage() {
       setData(json)
       setDismissed(new Set())
       setCreated(new Set())
+      setHidden(new Set())
       setEditNames({})
     } catch {
       setError("Failed to load suggestions")
@@ -60,8 +68,8 @@ export default function FamilySuggestionsPage() {
     fetchSuggestions()
   }, [fetchSuggestions])
 
-  async function handleCreate(index: number, suggestion: Suggestion) {
-    const name = editNames[index] ?? suggestion.suggestedName
+  async function handleCreate(suggestion: Suggestion) {
+    const name = editNames[suggestion.signature] ?? suggestion.suggestedName
     const memberIds = suggestion.members.map((m) => m.id)
 
     setCreating(name)
@@ -73,7 +81,7 @@ export default function FamilySuggestionsPage() {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || "Failed to create group")
-      setCreated((prev) => new Set(prev).add(index))
+      setCreated((prev) => new Set(prev).add(suggestion.signature))
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create group")
     } finally {
@@ -81,12 +89,69 @@ export default function FamilySuggestionsPage() {
     }
   }
 
+  async function handleHide(suggestion: Suggestion) {
+    const memberIds = suggestion.members.map((m) => m.id)
+
+    setHiding(suggestion.signature)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/family-suggestions/hide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberIds }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || "Failed to hide suggestion")
+      setHidden((prev) => new Set(prev).add(suggestion.signature))
+      setData((prev) =>
+        prev ? { ...prev, hiddenCount: prev.hiddenCount + 1 } : prev
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to hide suggestion")
+    } finally {
+      setHiding(null)
+    }
+  }
+
+  async function handleResetHidden() {
+    if (!data?.hiddenCount) return
+    const confirmed = await confirm({
+      title: "Reset hidden family suggestions?",
+      description:
+        "This will restore every permanently hidden family suggestion for all admins.",
+      confirmLabel: "Reset hidden",
+      destructive: true,
+    })
+    if (!confirmed) return
+
+    setResetting(true)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/family-suggestions/reset", {
+        method: "POST",
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to reset hidden suggestions")
+      }
+      await fetchSuggestions()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset hidden suggestions")
+    } finally {
+      setResetting(false)
+    }
+  }
+
   const activeSuggestions = data?.suggestions.filter(
-    (_, i) => !dismissed.has(i) && !created.has(i)
+    (suggestion) =>
+      !dismissed.has(suggestion.signature) &&
+      !created.has(suggestion.signature) &&
+      !hidden.has(suggestion.signature)
   ) ?? []
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Family Group Suggestions</h1>
@@ -94,9 +159,18 @@ export default function FamilySuggestionsPage() {
             Review suggested family groups based on shared emails and last names among ungrouped members.
           </p>
         </div>
-        <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
-          {loading ? "Loading..." : "Refresh"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleResetHidden}
+            disabled={loading || resetting || !data?.hiddenCount}
+            variant="outline"
+          >
+            {resetting ? "Resetting..." : `Reset hidden (${data?.hiddenCount ?? 0})`}
+          </Button>
+          <Button onClick={fetchSuggestions} disabled={loading} variant="outline">
+            {loading ? "Loading..." : "Refresh"}
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -132,7 +206,7 @@ export default function FamilySuggestionsPage() {
         <div className="text-center py-12 text-muted-foreground">Loading suggestions...</div>
       )}
 
-      {data && data.suggestions.length === 0 && (
+      {data && activeSuggestions.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             No suggestions found. All members are already in family groups, or there are no patterns to suggest.
@@ -140,26 +214,34 @@ export default function FamilySuggestionsPage() {
         </Card>
       )}
 
-      {data?.suggestions.map((suggestion, index) => {
-        if (dismissed.has(index)) return null
-        if (created.has(index)) {
+      {data?.suggestions.map((suggestion) => {
+        if (
+          dismissed.has(suggestion.signature) ||
+          hidden.has(suggestion.signature)
+        ) return null
+        if (created.has(suggestion.signature)) {
           return (
-            <Card key={index} className="border-green-200 bg-green-50">
+            <Card key={suggestion.signature} className="border-green-200 bg-green-50">
               <CardContent className="py-4 text-center text-green-800">
-                Family group &ldquo;{editNames[index] ?? suggestion.suggestedName}&rdquo; created successfully.
+                Family group &ldquo;{editNames[suggestion.signature] ?? suggestion.suggestedName}&rdquo; created successfully.
               </CardContent>
             </Card>
           )
         }
 
         return (
-          <Card key={index}>
+          <Card key={suggestion.signature}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Input
-                    value={editNames[index] ?? suggestion.suggestedName}
-                    onChange={(e) => setEditNames((prev) => ({ ...prev, [index]: e.target.value }))}
+                    value={editNames[suggestion.signature] ?? suggestion.suggestedName}
+                    onChange={(e) =>
+                      setEditNames((prev) => ({
+                        ...prev,
+                        [suggestion.signature]: e.target.value,
+                      }))
+                    }
                     className="font-semibold text-lg w-64"
                   />
                   <Badge variant={suggestion.score >= 10 ? "default" : "secondary"}>
@@ -170,16 +252,28 @@ export default function FamilySuggestionsPage() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setDismissed((prev) => new Set(prev).add(index))}
+                    onClick={() =>
+                      setDismissed((prev) =>
+                        new Set(prev).add(suggestion.signature)
+                      )
+                    }
                   >
                     Skip
                   </Button>
                   <Button
                     size="sm"
-                    onClick={() => handleCreate(index, suggestion)}
+                    variant="outline"
+                    onClick={() => handleHide(suggestion)}
+                    disabled={hiding !== null}
+                  >
+                    {hiding === suggestion.signature ? "Hiding..." : "Permanently Hide"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => handleCreate(suggestion)}
                     disabled={creating !== null}
                   >
-                    {creating === (editNames[index] ?? suggestion.suggestedName) ? "Creating..." : "Create Group"}
+                    {creating === (editNames[suggestion.signature] ?? suggestion.suggestedName) ? "Creating..." : "Create Group"}
                   </Button>
                 </div>
               </div>

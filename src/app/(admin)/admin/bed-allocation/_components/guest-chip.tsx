@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import {
   Select,
   SelectContent,
@@ -27,6 +28,7 @@ interface GuestChipProps {
   onAllocate: () => void;
   pending: boolean;
   highlighted?: boolean;
+  canEdit?: boolean;
 }
 
 export function GuestChip({
@@ -37,11 +39,13 @@ export function GuestChip({
   onAllocate,
   pending,
   highlighted,
+  canEdit = true,
 }: GuestChipProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: bucketDraggableId(group.bookingGuestId),
       data: { type: "bucket-guest", bookingGuestId: group.bookingGuestId },
+      disabled: !canEdit,
     });
 
   const nightsLabel =
@@ -63,6 +67,8 @@ export function GuestChip({
         <button
           type="button"
           aria-label={`Drag ${group.guestName} to a bed`}
+          disabled={!canEdit}
+          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
           className="mt-0.5 cursor-grab touch-none rounded p-1 text-muted-foreground hover:bg-accent active:cursor-grabbing"
           {...attributes}
           {...listeners}
@@ -80,7 +86,11 @@ export function GuestChip({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Select value={selectedBedId || "none"} onValueChange={onSelectBed}>
+        <Select
+          value={selectedBedId || "none"}
+          onValueChange={onSelectBed}
+          disabled={!canEdit}
+        >
           <SelectTrigger className="w-44">
             <SelectValue placeholder="Select bed" />
           </SelectTrigger>
@@ -96,7 +106,10 @@ export function GuestChip({
         <Button
           size="sm"
           onClick={onAllocate}
-          disabled={pending || !selectedBedId || selectedBedId === "none"}
+          disabled={
+            !canEdit || pending || !selectedBedId || selectedBedId === "none"
+          }
+          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         >
           Allocate
         </Button>

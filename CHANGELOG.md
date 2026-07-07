@@ -4,11 +4,20 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- Release classification: anticipated minor public reference release. The change
-  set since `0.9.0` is a large quality-and-hardening wave layered on top of new
-  public booking, membership, and finance capabilities, preserving the existing
-  public deployment shape. Highlights below; individual behavior changes are
-  called out inline.
+- No changes yet.
+
+## 0.10.0 - 2026-07-07
+
+- Release classification: minor public reference release. The change set since
+  `0.9.0` is a large quality-and-hardening wave layered on top of new public
+  booking, membership, and finance capabilities, followed by a remediation wave
+  (epic #1348) that closed the post-wave audit findings and a live-feedback
+  admin-UX wave (epic #1438), all preserving the existing public deployment
+  shape. Highlights below; individual behavior changes are called out inline.
+  Forks upgrading from `0.9.0` must read `docs/UPGRADING.md` and the
+  Migration/deployment notes at the end of this section before deploying: this
+  release includes two destructive/behaviour migrations (module defaults switch
+  off, in-flight induction results cleared) and other hot-table migrations.
 - Ran a best-in-class quality wave (epic #1125): dead-code sweeps and a bundle
   audit, large file splits for the booking wizard, booking create/modify,
   member detail, and email modules, native UI primitives (confirm/prompt
@@ -139,6 +148,177 @@ All notable public reference-release changes should be recorded here.
   `x-real-ip` under the "Caddy always fronts" deployment invariant; deferring a
   finer split of `booking-modify-plan.ts` until after #1159; and holding the
   Node 26 LTS + `@types/node` 26 upgrade for its own maintenance window (#1176).
+- Completed the configurable site-style dark-mode contrast work started in the
+  quality wave: fixed colored-opacity tokens that failed contrast in dark mode
+  (#1307) and the `red-500` dark-mode contrast on destructive controls (#1310).
+- Behaviour change — Booking Officer and on-behalf booking authorization scope:
+  the member-detail admin route and booking-detail viewer now gate on
+  area-level admin access (`hasAdminAreaAccess`/`canViewAsAdmin`) instead of
+  Full-Admin-only, so Booking Officers regain the booking views their seeded
+  matrix grants (#1325, #1343); admin and member payment controls were separated
+  on the booking-detail surface (#1326); the member booking and quote APIs were
+  widened so `bookings:edit` holders can create and quote on behalf of members,
+  with the caller's own bookings still routed through normal member payment
+  paths and a quote that refuses to silently price the caller when `forMemberId`
+  is supplied (#1345, with the dual-hat booking follow-up #1467); custom
+  access-role definitions now flow through the session (#1388) and view-role
+  admins get the correct read-only controls (#1394).
+- Behaviour change — email preference enforcement: transactional preference
+  checks (`shouldSendEmail`) are now wired into the cron check-in reminders and
+  the chores email paths so member opt-outs are honoured, and the
+  chore/roster dependent-preference handling was aligned (#1328, #1344).
+- Behaviour change — non-member hold policy: added the admin toggle governing
+  whether public/non-member bookings may hold capacity, with the matching
+  stale-copy nudge and copy updates (#1329, #1337).
+- Booking-request and approval flows: mapped approval contacts correctly when
+  converting requests into bookings (#1304); surfaced a confirm-guests success
+  toast (#1312); and made the decline flow record its "quote sent" transition
+  cleanly (#1434).
+- Bed allocation: reworked the allocation-board UX (#1324), added
+  capacity-holding priority so a booking that needs a bed deprioritises
+  provisional occupants (#1410), hid the manual-hold control where it did not
+  apply (#1405), and gated the bed-allocation board behind its Admin Module
+  toggle (#1454); added the link-time conflict advisory and its on-load
+  sequencing (#1332, #1340).
+- Quote and hold lifecycle: corrected the lapsed-hold banner copy (#1331),
+  documented the quote-hold semantics (#1338), and released the hold on a
+  declined booking request (#1421).
+- Xero and books integrity: split the Xero inbound-reconciliation module into
+  cohesive units behaviour-identically (#1330); ran a Xero invoice-line rounding
+  audit (#1341); added a persisted `queueType` column to the Xero operation
+  outbox, switched the outbox scan to it, and extracted a shared claim helper
+  (#1347, #1380, #1381); floored the inbound-repair ledger so a repair cannot
+  drive a balance negative (#1408); built a refund-delta pipeline for
+  modification refunds (#1414); rejected stale cached Xero refresh tokens
+  instead of looping on them (#1416); moved Xero writes out of the booking
+  transaction (#1420); handled mixed-sign booking edits (#1428); closed a
+  missing refund-credit-note gap (#1477); and hardened mixed cash-plus-credit
+  settlement minting (#1486).
+- Cancellation and refund money-path (remediation epic #1348): made the
+  no-payment cancel claim-first with a fresh re-read under the advisory lock
+  (#1334, #1339); closed a cancel-refund crash window with a frozen refund plan
+  (#1384); recovered late captures on already-cancelled bookings (#1390); made
+  group-settlement refunds retry durably (#1396); closed a cancel
+  time-of-check/time-of-use race (#1426); made Internet-Banking hold-expiry
+  durable (#1436); guarded the cancelled-booking uncollected path (#1437); sized
+  operator repair credit notes correctly and made them manual-review (#1472);
+  preserved payment status/refund history through a cancel instead of
+  flattening it (#1489); converged the inline and recovery-cron Stripe refund
+  request bodies so a frozen-plan cancel-refund replay after a lost recording
+  converges at Stripe instead of retrying to exhaustion (#1499); and queued the
+  Xero refund credit note for the completed slices when a forced late-capture
+  repair refund partially fails (#1501). Behaviour/policy change (decision D7
+  refinement): a
+  booking cancelled with a captured-but-partially-refunded payment now takes the
+  paid cancellation path and receives the policy tier of the remaining captured
+  value, instead of forfeiting it until an operator repair run refunded it at
+  100%; the repair pass's late-capture refund is now confirm-only and never
+  auto-applied (#1493). The committee heads-up on the underlying tiered
+  credit-restore cancellation policy is owed before wider rollout.
+- Capacity, family, and booking hardening: reused capacity from school-held
+  bookings correctly (#1398); confirmed capacity on the confirm-guests path
+  (#1413); scoped family lookups on the bookings surface (#1415); blocked minor
+  check-ins and followed up on the guard (#1417, #1424); cleaned up orphaned
+  family links (#1425); and made confirm-guests recovery resumable (#1432).
+- Admin member-detail and members-list UX (live-feedback epic #1438): a
+  multi-part member-detail refresh (header, grouped sections, inline edit, and a
+  final polish pass) (#1429, #1430, #1431, #1433); a derived User Type dropdown
+  with progressive Access Roles disclosure and an "Also a club member" toggle
+  (#1460); a single Access column showing the login-journey stage (#1488); a
+  real Membership Type filter and a combined "Type – Tier" column (#1490);
+  in-dialog bulk-invite errors and progress with the 10-minute cooldown removed
+  (#1470); surfaced zod field-validation errors on the member edit/create paths
+  (#1461); a global "permanently hide" for family suggestions with a master
+  reset (#1466); a shared admin occupancy calendar adopted by Hut Leaders and
+  Roster (#1463); a full sidebar restructure into Setup & Configuration hubs
+  with Chores moved (#1457); and a Membership Types page redesign (#1464).
+- Membership lifecycle — AgeTier N/A (epic #1438): added a `NOT_APPLICABLE`
+  age tier for organisation-type members via a two-step enum + backfill
+  migration, with server-forced N/A for organisations (422 for people), a
+  DOB-derived restore on reclassification, and audits of the age-up cron, Xero
+  age-tier groups, and subscription paths to skip N/A (#1484); organisations are
+  now exempt from entrance fees (#1492). See the Migration/deployment notes
+  below for the quiet-window/deferral deploy plan.
+- Xero admin surfaces (epic #1438): the mismatch panels' Refresh now resyncs the
+  listed contacts from Xero (targeted, batched, budget-metered) (#1487); a
+  contextual "groups last refreshed" hint replaced the persistent banner
+  (#1481); and Xero operation payloads gained plain-English request/response
+  summaries with a raw-JSON toggle (#1456).
+- Finance dashboard rework and hardening: rebuilt the finance dashboard on a
+  monthly-facts dataset (#1455), cut over to the reworked dashboard (#1474),
+  swept finance number formatting (#1482), added finance-sync health signals
+  (#1485), moved the admin payment windows onto the club timezone (#1496), and
+  fixed six verified minors from the monthly-facts adversarial review — loud
+  partial-parse/partial-resolution sync failures instead of silent data loss,
+  bounded backfills that walk through dormant years, and dashboard consistency
+  fixes (#1500).
+- Settlement and payments: gated settlement behind a cash check (#1458).
+- Platform, security, and operations hardening (remediation epic #1348):
+  recorded the blue/green migration-safety ledger entry whose absence had
+  hard-blocked a fork upgrade from `v0.9.0` (#1382); guarded the demo seed from
+  running against real data (#1383); refreshed the deployment docs (#1391);
+  surfaced account-deletion state (#1399); documented the custodian workaround
+  (#1401); added backup-health signals (#1403); tightened the agent
+  guardrails/docs (#1404); fixed a paid-status name typo (#1409); added
+  dashboard deep-links (#1395); fixed the `www` canonical redirect (#1412);
+  root-caused and fixed a streamed duplicate-mount that broke post-reload
+  assertions (#1462); ran a member-UX pass with unpaid-refund copy and
+  hard-reload race fixes (#1389, #1392, #1397); polished the hut-leader label
+  and fixed its CMS token (#1335, #1342); lazy-loaded the site-style zod bundle
+  (#1323); and documented `AUTH_SECRET` rotation plus an owner subscription
+  alert (#1465, #1476).
+- Planning and research (owner-ratified as research-only, no runtime change):
+  recorded the Node 26 LTS upgrade plan (#1497) and the better-auth evaluation
+  (#1498).
+- Added the fork-facing production upgrade runbook
+  (`docs/PRODUCTION_UPGRADE_RUNBOOK.md`) for the v0.9.0-era → v0.10.0 window:
+  pre-flight backup and prediction queries, blue/green migrate with the AgeTier
+  quiet-window plan, post-upgrade checklist, rollback, and rehearsal/execution
+  records (#1502).
+- Testing, CI, and release hygiene: added end-to-end coverage for the
+  bed-allocation module gate (#1314), route-map drift tests (#1333), email/2FA
+  E2E coverage (#1336), made Playwright E2E blocking in CI (#1346), added E2E
+  matrix concurrency handling and new journey specs (#1393, #1453), deflaked the
+  Internet-Banking E2E (#1407), and landed the Wave-4 independent-review
+  regression fixes (#1480).
+- Refreshed dependencies with a minor/patch update batch (#1309).
+- Migration/deployment notes (read `docs/UPGRADING.md` first; always back up the
+  database before migrating):
+  - `20260627120000_core_module_defaults_off` switches the high-risk capability
+    modules — kiosk, chores, finance dashboard, waitlist, Xero integration, bed
+    allocation, and Internet Banking payments — to default `false` and repairs
+    only the untouched singleton `ClubModuleSettings` default row (where
+    `updatedByMemberId IS NULL`). Any fork whose Module settings were never
+    admin-saved will see these features switch OFF on upgrade; re-enable them in
+    Admin > Modules after provider/setup readiness. Rows an admin has saved are
+    preserved, and general-purpose modules stay default-on.
+  - `20260702100000_induction_workflow_types` adds the `HUT_LEADER` induction
+    kind and per-kind template activation, and **clears in-flight
+    (`DRAFT`/`IN_PROGRESS`) self-assessment and per-item induction result state**
+    that the new single-Pass flow no longer uses; completed historical rows are
+    preserved. Complete or export any in-flight inductions before upgrading.
+  - `20260630120000_rename_member_role_to_user` (contract) collapses the legacy
+    `Member.role` `MEMBER`/`ASSOCIATE`/`LIFE` values into `USER` and recreates
+    the `Role` enum. It assumes no live deployment used the intermediate
+    Access-Roles window; forks that deployed intermediate `main` between
+    2026-06-28 and 2026-06-30 should run `npm run db:audit-access-role-cleanup`
+    after upgrading.
+  - `20260707000000_add_age_tier_not_applicable` and
+    `20260707000100_backfill_org_age_tier_not_applicable` add the
+    `NOT_APPLICABLE` age tier and flip ADULT organisation-type members to it.
+    Pre-#1440 app colors cannot deserialize `NOT_APPLICABLE`, so old-color reads
+    of the flipped rows (admin members list, that member's detail, school flows)
+    can error between migrate and cutover. Per the owner decision on epic #1438
+    (2026-07-07), deploy both migrations in a **quiet window** and cut over
+    promptly, or **defer** the backfill migration until the old color drains
+    (the UPDATE is idempotent and safe to run late). See
+    `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` and `docs/UPGRADING.md`.
+  - Verified blue/green-safe, no re-audit needed: the `ClubTheme` sub-AA gold
+    theme bump is conditional on the persisted value (#1244), the
+    `BookingGuestNight` backfill is automatic and old-code-compatible, and the
+    access-role backfills keep old code reading
+    `Member.role`/`financeAccessLevel` unchanged. All are recorded in
+    `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
 
 ## 0.9.0 - 2026-06-27
 

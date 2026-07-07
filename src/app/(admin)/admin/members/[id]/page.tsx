@@ -7,7 +7,16 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
 import {
+  formatMemberAccountPreview,
   formatMemberAuditLogSummary as formatMemberAuditLogSummaryHelper,
+  formatMemberDateNz,
+  formatMemberCommitteePreview,
+  formatMemberContactPreview,
+  formatMemberFamilyPreview,
+  formatMemberFinancePreview,
+  formatMemberHistoryPreview,
+  formatMemberLifecyclePreview,
+  formatMemberMembershipPreview,
   getAuditActorDisplayName as getAuditActorDisplayNameHelper,
   getMemberDetailBackLabel,
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
@@ -16,20 +25,34 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { hasAccessRole, isFullAdmin } from "@/lib/access-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useXeroStatus } from "@/hooks/use-xero-status";
+import { Accordion } from "@/components/ui/accordion";
+import { subscriptionStatusLabel } from "@/lib/status-colors";
 import { MemberDetailHeader } from "./_components/member-detail-header";
-import { MemberStatsCards } from "./_components/member-stats-cards";
-import { MemberInfoCard } from "./_components/member-info-card";
+import { MemberGroupCard } from "./_components/member-group-card";
+import { MemberSummaryStrip } from "./_components/member-summary-strip";
+import { MemberContactGroup } from "./_components/member-contact-group";
+import { MemberAccountAccessGroup } from "./_components/member-account-access-group";
+import { MemberXeroContactSummary } from "./_components/member-xero-contact-summary";
+import { MemberSubscriptionHistoryTable } from "./_components/member-subscription-history-table";
+import { MemberHistoryGroup } from "./_components/member-history-group";
 import { MemberDeletionCard } from "./_components/member-deletion-card";
 import { MemberLifecycleCard } from "./_components/member-lifecycle-card";
 import { MemberParentLinksCard } from "./_components/member-parent-links-card";
 import { MemberPromoCodesCard } from "./_components/member-promo-codes-card";
 import { MemberDependentsCard } from "./_components/member-dependents-card";
 import { MemberCreditCard } from "./_components/member-credit-card";
-import { MemberHistoryAccordion } from "./_components/member-history-accordion";
 import { MemberSeasonalMembershipCard } from "./_components/member-seasonal-membership-card";
 import { MemberCommitteeAssignmentsCard } from "./_components/member-committee-assignments-card";
-import { MemberEditDialog } from "./_components/member-edit-dialog";
 import { MemberXeroLinkDialog } from "./_components/member-xero-link-dialog";
+import {
+  buildAccountEditForm,
+  buildAccountPayload,
+  buildContactEditForm,
+  buildContactPayload,
+  type MemberAccountEditForm,
+  type MemberContactEditForm,
+} from "@/lib/admin-member-edit-groups";
 import { MemberXeroCreateDialog } from "./_components/member-xero-create-dialog";
 import { MemberXeroDecisionDialog } from "./_components/member-xero-decision-dialog";
 import { MemberParentLinkDialog } from "./_components/member-parent-link-dialog";
@@ -44,7 +67,8 @@ import { useMemberRelationships } from "./_hooks/use-member-relationships";
 import { useMemberParentLink } from "./_hooks/use-member-parent-link";
 import { useMemberDependentDialog } from "./_hooks/use-member-dependent-dialog";
 import { useMemberXero } from "./_hooks/use-member-xero";
-import { useMemberEdit } from "./_hooks/use-member-edit";
+import { useInheritEmailSearch } from "./_hooks/use-inherit-email-search";
+import { useMemberGroupEdit } from "./_hooks/use-member-group-edit";
 import type { MemberDetail } from "./_types";
 
 // Re-exports preserve the existing import paths used by tests and other callers
@@ -206,9 +230,7 @@ export default function MemberDetailPage({
     xeroSearchQuery,
     xeroSearchResults,
     xeroSearching,
-    xeroChoice,
     xeroLinking,
-    selectedXeroContactId,
     xeroUnlinking,
     xeroPushing,
     xeroCreateOpen,
@@ -222,9 +244,6 @@ export default function MemberDetailPage({
     xeroDecisionError,
     setXeroSearchOpen,
     setXeroSearchQuery,
-    setXeroSearchResults,
-    setXeroChoice,
-    setSelectedXeroContactId,
     setXeroCreateOpen,
     setXeroCreateEntranceFeeInvoice,
     setXeroEntranceFeeSkipReason,
@@ -243,41 +262,39 @@ export default function MemberDetailPage({
     openCreateXero,
   } = useMemberXero({ id, fetchMember, setLoading, setXeroError });
 
-  // Edit dialog state
-  const {
-    editOpen,
-    form,
-    editPostalSameAsPhysical,
-    saving,
-    formError,
-    inheritEmailSearch,
-    inheritEmailSearchResults,
-    inheritEmailSearchError,
-    inheritEmailSearching,
-    selectedInheritEmailSource,
-    setEditOpen,
-    setForm,
-    setEditPostalSameAsPhysical,
-    setInheritEmailSearch,
-    openEditDialog,
-    handleSave,
-    updateEditAddressFields,
-    selectInheritEmailSource,
-    clearInheritEmailSource,
-  } = useMemberEdit({
-    id,
-    member,
-    loading,
-    shouldAutoOpenEdit,
-    fetchMember,
-    setLoading,
-    setXeroError,
-    setXeroChoice,
-    setSelectedXeroContactId,
-    setXeroSearchQuery,
-    setXeroSearchResults,
-    setXeroCreateEntranceFeeInvoice,
+  // Per-group inline edit state: each group unlocks and saves only its own
+  // fields (the member PUT schema is fully partial).
+  const refreshMemberAfterSave = async () => {
+    setLoading(true);
+    await fetchMember();
+  };
+  const contactEdit = useMemberGroupEdit<MemberContactEditForm>({
+    memberId: id,
+    buildForm: () => (member ? buildContactEditForm(member) : null),
+    buildPayload: buildContactPayload,
+    successMessage: "Member updated successfully",
+    onSaved: refreshMemberAfterSave,
   });
+  const accountEditBase = useMemberGroupEdit<MemberAccountEditForm>({
+    memberId: id,
+    buildForm: () => (member ? buildAccountEditForm(member) : null),
+    buildPayload: buildAccountPayload,
+    successMessage: "Member updated successfully",
+    onSaved: refreshMemberAfterSave,
+  });
+  const inheritEmail = useInheritEmailSearch({
+    memberId: member?.id,
+    enabled: accountEditBase.editing && accountEditBase.form?.canLogin === false,
+  });
+  // Entering account edit re-seeds the recipient picker from the member's
+  // current inheritance so a cancelled edit leaves nothing stale behind.
+  const accountEdit = {
+    ...accountEditBase,
+    startEdit: () => {
+      inheritEmail.resetTo(member?.inheritEmailFrom ?? null);
+      accountEditBase.startEdit();
+    },
+  };
 
   // Delete state
   const {
@@ -304,8 +321,12 @@ export default function MemberDetailPage({
     onDeleted: () => router.push(backHref),
   });
 
-  const { openSections, onValueChange: onSectionsChange } =
-    useCollapsibleMemberSections();
+  const {
+    openSections,
+    onValueChange: onSectionsChange,
+    openSection,
+  } = useCollapsibleMemberSections();
+  const { connected: xeroConnected } = useXeroStatus();
 
   const isAdultMember = member?.ageTier === "ADULT";
   const memberIsArchived = Boolean(member?.archivedAt);
@@ -330,14 +351,12 @@ export default function MemberDetailPage({
     if (
       xeroError &&
       !xeroSearchOpen &&
-      !editOpen &&
       !xeroCreateOpen &&
       !xeroCreateDecisionOpen
     ) {
       scrollToError(xeroErrorRef);
     }
   }, [
-    editOpen,
     scrollToError,
     xeroCreateDecisionOpen,
     xeroCreateOpen,
@@ -348,6 +367,48 @@ export default function MemberDetailPage({
   useEffect(() => {
     fetchMember();
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The refund-requests page deep-links to /admin/members/[id]#account-credit;
+  // the anchor now lives inside the collapsed Finance group, so open it and
+  // scroll once the member has loaded (after the accordion expand animation).
+  const handledAccountCreditHash = useRef(false);
+  useEffect(() => {
+    if (loading || !member || handledAccountCreditHash.current) return;
+    if (window.location.hash !== "#account-credit") return;
+    handledAccountCreditHash.current = true;
+    openSection("finance");
+    window.setTimeout(() => {
+      document
+        .getElementById("account-credit")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 250);
+  }, [loading, member, openSection]);
+
+  // The members-list row Edit button navigates here with ?edit=true. The old
+  // behavior opened the edit dialog; now it expands the Contact & Personal
+  // group, unlocks it, and scrolls to it — once per member id.
+  const handledInitialEditParam = useRef(false);
+  useEffect(() => {
+    handledInitialEditParam.current = false;
+  }, [id]);
+  useEffect(() => {
+    if (
+      handledInitialEditParam.current ||
+      !shouldAutoOpenEdit ||
+      loading ||
+      !member
+    ) {
+      return;
+    }
+    handledInitialEditParam.current = true;
+    openSection("contact");
+    contactEdit.startEdit();
+    window.setTimeout(() => {
+      document
+        .getElementById("member-group-contact")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 250);
+  }, [contactEdit, loading, member, openSection, shouldAutoOpenEdit]);
 
   const isSelf = session?.user?.id === id;
   const actorIsFullAdmin = isFullAdmin({
@@ -411,6 +472,57 @@ export default function MemberDetailPage({
     !openCancellationRequest,
   );
 
+  const currentSeasonAssignment =
+    (member.seasonalMembershipAssignments ?? []).find(
+      (assignment) => assignment.seasonYear === member.currentSeasonYear,
+    ) ?? null;
+  const currentSeasonSubscription =
+    (member.subscriptions ?? []).find(
+      (subscription) => subscription.seasonYear === member.currentSeasonYear,
+    ) ?? null;
+  const embeddedCardClassName = "rounded-none border-0 shadow-none";
+  const groupPreviews = {
+    contact: formatMemberContactPreview(member),
+    account: formatMemberAccountPreview({
+      canLogin: member.canLogin,
+      accessRoleCount: (member.accessRoles ?? []).length,
+      active: member.active,
+    }),
+    family: formatMemberFamilyPreview({
+      parentCount: member.parentLinks?.length ?? 0,
+      dependentCount: member.dependents?.length ?? 0,
+      familyGroupCount: member.familyGroups?.length ?? 0,
+    }),
+    membership: formatMemberMembershipPreview({
+      currentSeasonYear: member.currentSeasonYear,
+      currentSeasonTypeName:
+        currentSeasonAssignment?.membershipType.name ?? null,
+      currentSeasonSubscriptionLabel: currentSeasonSubscription
+        ? subscriptionStatusLabel(currentSeasonSubscription.status)
+        : null,
+    }),
+    finance: formatMemberFinancePreview({
+      creditBalanceCents: creditLoading ? null : creditBalance,
+      promoCodeCount: member.promoCodes?.length ?? 0,
+      xeroLinked: Boolean(member.xeroContactId),
+    }),
+    committee: formatMemberCommitteePreview({
+      assignmentCount: (member.committeeAssignments ?? []).filter(
+        (assignment) => assignment.isActive,
+      ).length,
+    }),
+    history: formatMemberHistoryPreview({
+      totalBookings: member.stats.totalBookings,
+      lastStay: member.stats.lastStay,
+    }),
+    lifecycle: formatMemberLifecyclePreview({
+      active: member.active,
+      cancelledAt: member.cancelledAt,
+      archivedAt: member.archivedAt,
+      hasPendingDeleteRequest: Boolean(pendingDeleteRequest),
+    }),
+  };
+
   return (
     <div className="space-y-6">
       <MemberDetailHeader
@@ -420,13 +532,13 @@ export default function MemberDetailPage({
         isAdultMember={isAdultMember}
         memberIsArchived={memberIsArchived}
         pendingDeleteRequest={pendingDeleteRequest}
+        xeroConnected={xeroConnected}
         xeroPushing={xeroPushing}
         xeroUnlinking={xeroUnlinking}
         onOpenDependentDialog={openDependentDialog}
         onOpenLinkXero={openLinkXero}
         onOpenCreateXero={openCreateXero}
         onUnlinkXero={handleXeroUnlink}
-        onOpenEditDialog={openEditDialog}
       />
 
       {relationshipError && (
@@ -441,7 +553,6 @@ export default function MemberDetailPage({
       )}
       {xeroError &&
         !xeroSearchOpen &&
-        !editOpen &&
         !xeroCreateOpen &&
         !xeroCreateDecisionOpen && (
           <div
@@ -454,123 +565,250 @@ export default function MemberDetailPage({
           </div>
         )}
 
-      <MemberStatsCards member={member} />
-
-      <MemberInfoCard
+      <MemberSummaryStrip
         member={member}
-        onEditFamilyGroup={setFamilyGroupEditorId}
+        membershipLabel={currentSeasonAssignment?.membershipType.name ?? "None"}
+        creditBalance={creditBalance}
+        creditLoading={creditLoading}
       />
 
-      <MemberSeasonalMembershipCard
-        member={member}
-        onSaved={async () => {
-          setLoading(true);
-          await fetchMember();
-        }}
-      />
-
-      <MemberCommitteeAssignmentsCard
-        member={member}
-        onSaved={async () => {
-          setLoading(true);
-          await fetchMember();
-        }}
-      />
-
-      <MemberParentLinksCard
-        member={member}
-        memberIsArchived={memberIsArchived}
-        currentMemberPath={currentMemberPath}
-        unlinkingDependentId={unlinkingDependentId}
-        onOpenParentLinkDialog={openParentLinkDialog}
-        onUnlinkParent={handleUnlinkDependent}
-      />
-
-      <MemberPromoCodesCard promoCodes={member.promoCodes} />
-
-      <MemberDependentsCard
-        member={member}
-        isAdultMember={isAdultMember}
-        memberIsArchived={memberIsArchived}
-        currentMemberPath={currentMemberPath}
-        unlinkingDependentId={unlinkingDependentId}
-        onOpenDependentDialog={openDependentDialog}
-        onUnlinkDependent={handleUnlinkDependent}
-      />
-
-      <MemberHistoryAccordion
-        memberId={id}
-        subscriptions={member.subscriptions}
-        bookings={member.bookings}
-        openSections={openSections}
+      <Accordion
+        type="multiple"
+        value={openSections}
         onValueChange={onSectionsChange}
-        creditCard={
-          <MemberCreditCard
-            creditBalance={creditBalance}
-            creditHistory={creditHistory}
-            creditLoading={creditLoading}
-            creditError={creditError}
-            pendingAdjustmentRequests={pendingAdjustmentRequests}
-            reviewingAdjustmentId={reviewingAdjustmentId}
-            showAdjustmentForm={showAdjustmentForm}
-            adjustmentError={adjustmentError}
-            adjustmentAmount={adjustmentAmount}
-            adjustmentDescription={adjustmentDescription}
-            adjustmentSaving={adjustmentSaving}
-            onToggleAdjustmentForm={toggleAdjustmentForm}
-            onChangeAdjustmentAmount={setAdjustmentAmount}
-            onChangeAdjustmentDescription={setAdjustmentDescription}
-            onSubmitAdjustment={handleAdjustmentSubmit}
-            onReviewAdjustment={handleReviewAdjustmentRequest}
+        className="space-y-6"
+      >
+        <MemberGroupCard
+          id="contact"
+          title="Contact & Personal"
+          preview={groupPreviews.contact}
+        >
+          <MemberContactGroup
+            member={member}
+            isSelf={isSelf}
+            actorIsFullAdmin={actorIsFullAdmin}
+            edit={contactEdit}
           />
-        }
-      />
+        </MemberGroupCard>
 
-      <MemberLifecycleCard
-        member={member}
-        pendingArchiveRequest={pendingArchiveRequest}
-        reviewedArchiveRequests={reviewedArchiveRequests}
-        isArchiveRequester={isArchiveRequester}
-        canRequestArchive={canRequestArchive}
-        canRequestCancellation={canRequestCancellation}
-        openCancellationRequest={openCancellationRequest}
-        archiveError={archiveError}
-        archiveReason={archiveReason}
-        archiveReviewNotes={archiveReviewNotes}
-        archiveActionLoading={archiveActionLoading}
-        cancellationError={cancellationError}
-        cancellationReason={cancellationReason}
-        cancellationSubmitting={cancellationSubmitting}
-        onChangeArchiveReason={setArchiveReason}
-        onChangeArchiveReviewNote={(requestId, value) =>
-          setArchiveReviewNotes((current) => ({
-            ...current,
-            [requestId]: value,
-          }))
-        }
-        onChangeCancellationReason={setCancellationReason}
-        onSubmitArchive={handleSubmitArchiveRequest}
-        onSubmitCancellation={handleSubmitCancellationRequest}
-        onReviewArchive={handleReviewArchiveRequest}
-      />
+        <MemberGroupCard
+          id="account"
+          title="Account & Access"
+          preview={groupPreviews.account}
+        >
+          <MemberAccountAccessGroup
+            member={member}
+            isSelf={isSelf}
+            actorIsFullAdmin={actorIsFullAdmin}
+            memberLifecycleLocked={memberLifecycleLocked}
+            edit={accountEdit}
+            inheritEmail={inheritEmail}
+          />
+        </MemberGroupCard>
 
-      <MemberDeletionCard
-        deleteEligibility={member.deleteEligibility}
-        deleteRequests={deleteRequests}
-        pendingDeleteRequest={pendingDeleteRequest}
-        approvalBlockerCount={approvalBlockers.length}
-        canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
-        onOpenRequestDialog={() => {
-          setDeleteDialogOpen(true);
-          setDeleteReason("");
-          setDeleteError("");
-        }}
-        onOpenReviewDialog={(request, action) => {
-          setDeleteReviewDialog({ request, action });
-          setDeleteReviewNote("");
-          setDeleteReviewError("");
-        }}
-      />
+        <MemberGroupCard
+          id="family"
+          title="Family"
+          preview={groupPreviews.family}
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <div className="px-6 pb-6 text-sm">
+              <p className="text-slate-500">Family Groups</p>
+              <div className="mt-1 font-medium">
+                {member.familyGroups && member.familyGroups.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {member.familyGroups.map((fg) => (
+                      <Button
+                        key={fg.id}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800"
+                        onClick={() => setFamilyGroupEditorId(fg.id)}
+                      >
+                        {fg.name || "Unnamed"}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-500">None</span>
+                )}
+              </div>
+            </div>
+            <MemberParentLinksCard
+              className={embeddedCardClassName}
+              member={member}
+              memberIsArchived={memberIsArchived}
+              currentMemberPath={currentMemberPath}
+              unlinkingDependentId={unlinkingDependentId}
+              onOpenParentLinkDialog={openParentLinkDialog}
+              onUnlinkParent={handleUnlinkDependent}
+            />
+            <MemberDependentsCard
+              className={embeddedCardClassName}
+              member={member}
+              isAdultMember={isAdultMember}
+              memberIsArchived={memberIsArchived}
+              currentMemberPath={currentMemberPath}
+              unlinkingDependentId={unlinkingDependentId}
+              onOpenDependentDialog={openDependentDialog}
+              onUnlinkDependent={handleUnlinkDependent}
+            />
+          </div>
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="membership"
+          title="Membership"
+          preview={groupPreviews.membership}
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            {member.lifeMemberDate && (
+              <div className="p-6 text-sm">
+                <span className="text-slate-500">Life member since </span>
+                <span className="font-medium">
+                  {formatMemberDateNz(member.lifeMemberDate)}
+                </span>
+              </div>
+            )}
+            <MemberSeasonalMembershipCard
+              className={embeddedCardClassName}
+              member={member}
+              onSaved={async () => {
+                setLoading(true);
+                await fetchMember();
+              }}
+            />
+            <div className="p-6">
+              <h3 className="mb-3 text-sm font-medium">
+                Subscription History
+              </h3>
+              <MemberSubscriptionHistoryTable
+                subscriptions={member.subscriptions}
+              />
+            </div>
+          </div>
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="finance"
+          title="Finance"
+          preview={groupPreviews.finance}
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <MemberCreditCard
+              className={`${embeddedCardClassName} scroll-mt-20`}
+              creditBalance={creditBalance}
+              creditHistory={creditHistory}
+              creditLoading={creditLoading}
+              creditError={creditError}
+              pendingAdjustmentRequests={pendingAdjustmentRequests}
+              reviewingAdjustmentId={reviewingAdjustmentId}
+              showAdjustmentForm={showAdjustmentForm}
+              adjustmentError={adjustmentError}
+              adjustmentAmount={adjustmentAmount}
+              adjustmentDescription={adjustmentDescription}
+              adjustmentSaving={adjustmentSaving}
+              onToggleAdjustmentForm={toggleAdjustmentForm}
+              onChangeAdjustmentAmount={setAdjustmentAmount}
+              onChangeAdjustmentDescription={setAdjustmentDescription}
+              onSubmitAdjustment={handleAdjustmentSubmit}
+              onReviewAdjustment={handleReviewAdjustmentRequest}
+            />
+            <MemberPromoCodesCard
+              className={embeddedCardClassName}
+              promoCodes={member.promoCodes}
+            />
+            <div className="p-6">
+              <MemberXeroContactSummary member={member} />
+            </div>
+          </div>
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="committee"
+          title="Committee"
+          preview={groupPreviews.committee}
+          contentClassName="px-0 pb-0"
+        >
+          <MemberCommitteeAssignmentsCard
+            className={embeddedCardClassName}
+            member={member}
+            onSaved={async () => {
+              setLoading(true);
+              await fetchMember();
+            }}
+          />
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="history"
+          title="History & Activity"
+          preview={groupPreviews.history}
+        >
+          <MemberHistoryGroup memberId={id} bookings={member.bookings} />
+        </MemberGroupCard>
+
+        <MemberGroupCard
+          id="lifecycle"
+          title="Lifecycle & Deletion"
+          preview={groupPreviews.lifecycle}
+          className="border-red-200"
+          contentClassName="px-0 pb-0"
+        >
+          <div className="divide-y">
+            <MemberLifecycleCard
+              className={embeddedCardClassName}
+              member={member}
+              pendingArchiveRequest={pendingArchiveRequest}
+              reviewedArchiveRequests={reviewedArchiveRequests}
+              isArchiveRequester={isArchiveRequester}
+              canRequestArchive={canRequestArchive}
+              canRequestCancellation={canRequestCancellation}
+              openCancellationRequest={openCancellationRequest}
+              archiveError={archiveError}
+              archiveReason={archiveReason}
+              archiveReviewNotes={archiveReviewNotes}
+              archiveActionLoading={archiveActionLoading}
+              cancellationError={cancellationError}
+              cancellationReason={cancellationReason}
+              cancellationSubmitting={cancellationSubmitting}
+              onChangeArchiveReason={setArchiveReason}
+              onChangeArchiveReviewNote={(requestId, value) =>
+                setArchiveReviewNotes((current) => ({
+                  ...current,
+                  [requestId]: value,
+                }))
+              }
+              onChangeCancellationReason={setCancellationReason}
+              onSubmitArchive={handleSubmitArchiveRequest}
+              onSubmitCancellation={handleSubmitCancellationRequest}
+              onReviewArchive={handleReviewArchiveRequest}
+            />
+            <MemberDeletionCard
+              className={embeddedCardClassName}
+              deleteEligibility={member.deleteEligibility}
+              deleteRequests={deleteRequests}
+              pendingDeleteRequest={pendingDeleteRequest}
+              approvalBlockerCount={approvalBlockers.length}
+              canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
+              onOpenRequestDialog={() => {
+                setDeleteDialogOpen(true);
+                setDeleteReason("");
+                setDeleteError("");
+              }}
+              onOpenReviewDialog={(request, action) => {
+                setDeleteReviewDialog({ request, action });
+                setDeleteReviewNote("");
+                setDeleteReviewError("");
+              }}
+            />
+          </div>
+        </MemberGroupCard>
+      </Accordion>
 
       <FamilyGroupEditorDialog
         groupId={familyGroupEditorId}
@@ -731,49 +969,6 @@ export default function MemberDetailPage({
         }}
         onChangeReviewNote={setDeleteReviewNote}
         onSubmit={handleReviewDeleteRequest}
-      />
-
-      <MemberEditDialog
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        member={member}
-        form={form}
-        formError={formError}
-        saving={saving}
-        isSelf={isSelf}
-        actorIsFullAdmin={actorIsFullAdmin}
-        memberLifecycleLocked={memberLifecycleLocked}
-        postalSameAsPhysical={editPostalSameAsPhysical}
-        selectedInheritEmailSource={selectedInheritEmailSource}
-        inheritEmailSearch={inheritEmailSearch}
-        inheritEmailSearching={inheritEmailSearching}
-        inheritEmailSearchError={inheritEmailSearchError}
-        inheritEmailSearchResults={inheritEmailSearchResults}
-        xeroError={xeroError}
-        xeroChoice={xeroChoice}
-        xeroSearchQuery={xeroSearchQuery}
-        xeroSearchResults={xeroSearchResults}
-        xeroSearching={xeroSearching}
-        xeroLinking={xeroLinking}
-        xeroUnlinking={xeroUnlinking}
-        xeroPushing={xeroPushing}
-        selectedXeroContactId={selectedXeroContactId}
-        onChangeForm={setForm}
-        onChangeAddressFields={updateEditAddressFields}
-        onChangePostalSameAsPhysical={setEditPostalSameAsPhysical}
-        onChangeInheritEmailSearch={setInheritEmailSearch}
-        onSelectInheritEmailSource={selectInheritEmailSource}
-        onClearInheritEmailSource={clearInheritEmailSource}
-        onChangeXeroSearchQuery={setXeroSearchQuery}
-        onChangeSelectedXeroContactId={setSelectedXeroContactId}
-        onChangeXeroChoice={setXeroChoice}
-        onClearXeroError={() => setXeroError("")}
-        onOpenLinkXero={openLinkXero}
-        onOpenCreateXero={openCreateXero}
-        onXeroSearch={handleXeroSearch}
-        onXeroLink={handleXeroLink}
-        onXeroUnlink={handleXeroUnlink}
-        onSubmit={handleSave}
       />
     </div>
   );

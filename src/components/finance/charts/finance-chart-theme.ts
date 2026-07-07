@@ -1,4 +1,4 @@
-import { formatCents } from "@/lib/utils";
+import { formatDollarsDisplay } from "@/lib/finance-format";
 
 /** Ordered palette for mix/breakdown charts (pies, stacked bars). */
 export const FINANCE_MIX_COLORS = [
@@ -31,14 +31,14 @@ const ratioFormatter = new Intl.NumberFormat("en-NZ", {
   maximumFractionDigits: 2,
 });
 
-/** Full-precision value for tooltips and labels. */
+/** Display value for tooltips and labels (currency: whole dollars). */
 export function formatFinanceValue(
   value: number,
   valueType: FinanceValueType
 ): string {
   switch (valueType) {
     case "currency":
-      return formatCents(value);
+      return formatDollarsDisplay(value);
     case "percent":
       return percentFormatter.format(value);
     case "ratio":

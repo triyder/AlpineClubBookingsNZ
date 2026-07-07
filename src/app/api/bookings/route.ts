@@ -9,7 +9,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -60,9 +60,10 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
-  authorizationRoleFromAccessRoles,
+  hasAccessRole,
   hasAdminAccess,
 } from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -76,7 +77,7 @@ const createBookingSchema = z.object({
       z.object({
         firstName: nameField(),
         lastName: nameField(),
-        ageTier: ageTierEnum,
+        ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
         stayStart: z.string().optional(),
@@ -120,7 +121,14 @@ export async function POST(request: NextRequest) {
     return inactiveResponse;
   }
   const isAdmin = hasAdminAccess(session.user);
-  const actorRole = authorizationRoleFromAccessRoles(session.user);
+  // Dual-hat detection: a USER token alongside admin roles means this account
+  // books for itself through the member flow under full member rules (#1442).
+  const isMember = hasAccessRole(session.user, "USER");
+  // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
+  // create on-behalf bookings — aligned with the modification path (#1313).
+  const canManageBookings =
+    bookingManagementAuthorizationRole(session.user) === "ADMIN";
+  const actorRole = bookingManagementAuthorizationRole(session.user);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -136,12 +144,14 @@ export async function POST(request: NextRequest) {
 
   const xeroIntegrationEnabled = (await loadEffectiveModuleFlags()).xeroIntegration;
 
-  // Resolve effective member: admin booking on behalf of another member.
+  // Resolve effective member: authorized on-behalf booking for another member.
   let effectiveMemberId = session.user.id;
-  let isOnBehalf = false;
+  let isAuthorizedOnBehalf = false;
   let effectiveMemberAgeTier: AgeTier | null = null;
 
-  if (isAdmin && !parsed.data.forMemberId) {
+  // Only admin-only accounts (no USER token) are forced onto the on-behalf
+  // page; dual-hat admins self-book here under full member rules (#1442).
+  if (isAdmin && !isMember && !parsed.data.forMemberId) {
     return NextResponse.json(
       { error: "Admins must book on behalf of a member. Use the admin booking page.", code: "ADMIN_MUST_BOOK_ON_BEHALF" },
       { status: 403 }
@@ -149,11 +159,13 @@ export async function POST(request: NextRequest) {
   }
 
   if (parsed.data.forMemberId) {
-    if (!isAdmin) {
+    if (!canManageBookings) {
       return NextResponse.json({ error: "Only admins can book on behalf of another member" }, { status: 403 });
     }
+    // Separation of duties: no on-behalf actor may target themselves — their
+    // own bookings go through the member flow and normal payment paths.
     if (parsed.data.forMemberId === session.user.id) {
-      return NextResponse.json({ error: "Admins cannot book for themselves — use the admin booking page to book on behalf of a member" }, { status: 400 });
+      return NextResponse.json({ error: "Booking managers cannot book for themselves — book your own stay through the member booking page" }, { status: 400 });
     }
     const targetMember = await prisma.member.findUnique({
       where: { id: parsed.data.forMemberId },
@@ -163,10 +175,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Target member not found or inactive" }, { status: 400 });
     }
     effectiveMemberId = parsed.data.forMemberId;
-    isOnBehalf = true;
+    isAuthorizedOnBehalf = true;
   }
 
-  if (!isOnBehalf) {
+  if (!isAuthorizedOnBehalf) {
     const member = await prisma.member.findUnique({
       where: { id: session.user.id },
       select: { emailVerified: true, xeroContactId: true, ageTier: true },
@@ -177,7 +189,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Email not verified" }, { status: 403 });
     }
 
-    if (xeroIntegrationEnabled && !member?.xeroContactId && !isAdmin) {
+    // Self-bookings get no admin leniency: the Xero-link requirement applies
+    // to every booking owner, dual-hat admins included (#1442).
+    if (xeroIntegrationEnabled && !member?.xeroContactId) {
       return NextResponse.json(
         {
           error: "Your account is not yet linked to Xero. Please contact the club administrator to link your membership before booking.",
@@ -229,7 +243,7 @@ export async function POST(request: NextRequest) {
       prisma,
       effectiveMemberId,
       guests.map((guest) => guest.memberId),
-      { skipAuthorization: isOnBehalf }
+      { skipAuthorization: isAuthorizedOnBehalf }
     );
     await assertLinkedBookingMembersCanBeBooked(
       prisma,
@@ -237,7 +251,7 @@ export async function POST(request: NextRequest) {
       session.user.id,
       {
         actorRole,
-        onBehalfOfMemberId: isOnBehalf ? effectiveMemberId : null,
+        onBehalfOfMemberId: isAuthorizedOnBehalf ? effectiveMemberId : null,
       }
     );
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
@@ -301,7 +315,7 @@ export async function POST(request: NextRequest) {
   // Subscription gate for the booking owner. Bypassed when the Xero module
   // is effectively off, because subscriptions are invoiced through Xero.
   if (
-    !isAdmin &&
+    !isAuthorizedOnBehalf &&
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: effectiveMemberId,
       seasonYear: getSeasonYear(checkIn),
@@ -330,8 +344,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Subscription gate for member guests (skip for admins).
-  if (!isAdmin) {
+  // Subscription gate for member guests (skipped only for authorized
+  // on-behalf bookings — self-bookings always enforce it, #1442).
+  if (!isAuthorizedOnBehalf) {
     const unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
       bookingMemberId: effectiveMemberId,
       checkIn,
@@ -358,8 +373,9 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Minimum stay policy (skip for admins).
-  if (!isAdmin) {
+  // Minimum stay policy (skipped only for authorized on-behalf bookings —
+  // self-bookings always enforce it, #1442).
+  if (!isAuthorizedOnBehalf) {
     const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
     const stayResult = await validateMinimumStay(checkIn, checkOut);
     if (!stayResult.valid) {
@@ -382,7 +398,7 @@ export async function POST(request: NextRequest) {
     try {
       const newBooking = await createDraftBooking({
         effectiveMemberId,
-        isOnBehalf,
+        isOnBehalf: isAuthorizedOnBehalf,
         sessionUserId: session.user.id,
         checkIn,
         checkOut,
@@ -475,7 +491,7 @@ export async function POST(request: NextRequest) {
   try {
     const outcome = await createConfirmedBooking({
       effectiveMemberId,
-      isOnBehalf,
+      isOnBehalf: isAuthorizedOnBehalf,
       sessionUserId: session.user.id,
       checkIn,
       checkOut,
@@ -518,7 +534,7 @@ export async function POST(request: NextRequest) {
     try {
       const waitlisted = await createWaitlistedBooking({
         effectiveMemberId,
-        isOnBehalf,
+        isOnBehalf: isAuthorizedOnBehalf,
         sessionUserId: session.user.id,
         checkIn,
         checkOut,

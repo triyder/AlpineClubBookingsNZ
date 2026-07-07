@@ -13,7 +13,7 @@ import {
 } from "@/lib/booking-error-payment-targets";
 import { formatLocalDateOnly } from "@/lib/date-only";
 import { shouldShowInviteFamilyGroupMembersLink } from "@/lib/family-booking";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { MEMBER_ONBOARDING_CONFIRMED_EVENT } from "@/lib/member-onboarding-events";
 import {
@@ -310,9 +310,16 @@ export function useBookingWizard() {
     }
   }, [guests.length, perGuestDatesEnabled]);
 
-  // Redirect admins to the admin booking page — admins must book on behalf of members
+  // Redirect only admin-only accounts (no USER token) to the admin booking
+  // page. Dual-hat admins (USER + ADMIN) book themselves and family here
+  // under full member rules — the create API applies no admin bypasses to
+  // self-bookings (#1442).
   useEffect(() => {
-    if (session?.user && hasAdminAccess(session.user)) {
+    if (
+      session?.user &&
+      hasAdminAccess(session.user) &&
+      !hasAccessRole(session.user, "USER")
+    ) {
       router.replace("/admin/book");
     }
   }, [session, router]);

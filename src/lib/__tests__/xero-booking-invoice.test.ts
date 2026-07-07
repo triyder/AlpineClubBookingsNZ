@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => {
 
   const prisma = {
     $transaction: vi.fn(async (callback) => callback(tx)),
+    // #1355: contact resolution now reads the member on the GLOBAL client
+    // (phase 0/1) and re-reads via the tx client (phase 2). Alias the same
+    // mock fns so every existing fixture serves both phases.
+    member: tx.member,
     booking: {
       findUnique: vi.fn(),
     },
@@ -840,6 +844,7 @@ describe("createXeroCreditNote", () => {
       id: "pay_1",
       xeroInvoiceId: "inv_1",
       xeroRefundCreditNoteId: null,
+      refundedAmountCents: 8000,
       booking: {
         id: "booking_1",
         memberId: "mem_1",
@@ -878,6 +883,7 @@ describe("createXeroCreditNote", () => {
       id: "pay_1",
       xeroInvoiceId: "inv_1",
       xeroRefundCreditNoteId: "cn_delta",
+      refundedAmountCents: 11000,
       booking: {
         id: "booking_1",
         memberId: "mem_1",
@@ -933,5 +939,180 @@ describe("createXeroCreditNote", () => {
       undefined,
       "payment:pay_1:refund-credit-note:11000:v2"
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // F4 (#1354): delta amounts are derived from EXECUTION-TIME state. The
+  // enqueue-time watermark can be stale (two refunds in one outbox interval),
+  // and pre-#1354 a stale-low watermark made an existing higher note look
+  // covering — the delta was marked done without creating anything.
+  // ---------------------------------------------------------------------------
+  describe("execution-time watermark recompute (#1354)", () => {
+    function armCreatePath(refundedAmountCents: number, linkRows: unknown[]) {
+      mocks.prisma.payment.findUnique.mockResolvedValue({
+        id: "pay_1",
+        xeroInvoiceId: "inv_1",
+        xeroRefundCreditNoteId: null,
+        refundedAmountCents,
+        booking: {
+          id: "booking_1",
+          memberId: "mem_1",
+          member: { id: "mem_1" },
+          guests: [],
+          checkIn: "2026-07-31T00:00:00.000Z",
+          checkOut: "2026-08-02T00:00:00.000Z",
+        },
+      });
+      mocks.prisma.xeroObjectLink.findMany.mockResolvedValue(linkRows);
+      mocks.tx.member.findUnique.mockResolvedValue({
+        id: "mem_1",
+        email: "member@example.com",
+        xeroContactId: "contact_1",
+      });
+      mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+        id: "token_1",
+        accessToken: encryptToken("access"),
+        refreshToken: encryptToken("refresh"),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        tenantId: "tenant_1",
+      });
+      mocks.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+      mocks.prisma.xeroItemCodeMapping.findMany.mockResolvedValue([]);
+      mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
+      mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_delta_x" });
+      mocks.xeroClientInstance.accountingApi.createPayments.mockResolvedValue({
+        body: { payments: [{ paymentID: "xpay_x" }] },
+      });
+    }
+
+    it("creates the uncovered delta even when the enqueue-time watermark is stale-low (the F4 swallow)", async () => {
+      // Ledger says 8000c refunded; one 5000c note exists (watermark 5000).
+      // The second refund's op carries the STALE watermark 3000 — pre-#1354
+      // the 5000-watermark note looked covering (5000 >= 3000) and the 3000c
+      // delta was silently swallowed.
+      armCreatePath(8000, [
+        {
+          xeroObjectId: "cn_first",
+          xeroObjectNumber: "CN-1",
+          metadata: { amountCents: 5000, watermarkCents: 5000 },
+        },
+      ]);
+      mocks.xeroClientInstance.accountingApi.createCreditNotes.mockResolvedValue({
+        body: { creditNotes: [{ creditNoteID: "cn_second", creditNoteNumber: "CN-2" }] },
+      });
+
+      await expect(
+        createXeroCreditNote("pay_1", 3000, {
+          watermarkCents: 3000,
+          syncOperationId: "op_delta_x",
+        })
+      ).resolves.toBe("cn_second");
+
+      // The note is created for the true uncovered amount, keyed by the
+      // EXECUTION-TIME watermark (5000 covered + 3000 = 8000).
+      expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).toHaveBeenCalledWith(
+        "tenant_1",
+        expect.objectContaining({
+          creditNotes: [
+            expect.objectContaining({
+              lineItems: [expect.objectContaining({ unitAmount: 30 })],
+            }),
+          ],
+        }),
+        undefined,
+        undefined,
+        "payment:pay_1:refund-credit-note:8000:v2"
+      );
+      // Completion records the execution-time amounts for future coverage math.
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_delta_x",
+        expect.objectContaining({
+          extraLinks: expect.arrayContaining([
+            expect.objectContaining({
+              role: "REFUND_CREDIT_NOTE",
+              metadata: { amountCents: 3000, watermarkCents: 8000 },
+            }),
+          ]),
+        })
+      );
+    });
+
+    it("caps the note at the ledger's uncovered amount when a competing note landed first", async () => {
+      // Requested 5000 but the ledger only shows 2000 uncovered.
+      armCreatePath(7000, [
+        {
+          xeroObjectId: "cn_first",
+          xeroObjectNumber: "CN-1",
+          metadata: { amountCents: 5000, watermarkCents: 5000 },
+        },
+      ]);
+      mocks.xeroClientInstance.accountingApi.createCreditNotes.mockResolvedValue({
+        body: { creditNotes: [{ creditNoteID: "cn_cap", creditNoteNumber: "CN-3" }] },
+      });
+
+      await createXeroCreditNote("pay_1", 5000, {
+        watermarkCents: 10000,
+        syncOperationId: "op_delta_x",
+      });
+
+      expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).toHaveBeenCalledWith(
+        "tenant_1",
+        expect.objectContaining({
+          creditNotes: [
+            expect.objectContaining({
+              lineItems: [expect.objectContaining({ unitAmount: 20 })],
+            }),
+          ],
+        }),
+        undefined,
+        undefined,
+        "payment:pay_1:refund-credit-note:7000:v2"
+      );
+    });
+
+    it("two stepped refunds sum to the exact refunded total whatever order their operations execute (#1354 validation)", async () => {
+      // Stripe refunded 5000 then 3000 (ledger 8000). The ops execute in the
+      // BUG order: the 3000 op (stale watermark) runs FIRST here, then the
+      // 5000 op — the created notes must still sum to exactly 8000.
+      armCreatePath(8000, []);
+      mocks.xeroClientInstance.accountingApi.createCreditNotes.mockResolvedValueOnce({
+        body: { creditNotes: [{ creditNoteID: "cn_a", creditNoteNumber: "CN-A" }] },
+      });
+      await createXeroCreditNote("pay_1", 3000, {
+        watermarkCents: 3000,
+        syncOperationId: "op_delta_x",
+      });
+      const firstCall =
+        mocks.xeroClientInstance.accountingApi.createCreditNotes.mock.calls[0];
+      const firstCents = Math.round(
+        firstCall[1].creditNotes[0].lineItems[0].unitAmount * 100
+      );
+
+      // The first note (3000c, watermark 3000) is now an active link.
+      mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([
+        {
+          xeroObjectId: "cn_a",
+          xeroObjectNumber: "CN-A",
+          metadata: { amountCents: firstCents, watermarkCents: firstCents },
+        },
+      ]);
+      mocks.xeroClientInstance.accountingApi.createCreditNotes.mockResolvedValueOnce({
+        body: { creditNotes: [{ creditNoteID: "cn_b", creditNoteNumber: "CN-B" }] },
+      });
+      await createXeroCreditNote("pay_1", 5000, {
+        watermarkCents: 8000,
+        syncOperationId: "op_delta_x",
+      });
+      const secondCall =
+        mocks.xeroClientInstance.accountingApi.createCreditNotes.mock.calls[1];
+      const secondCents = Math.round(
+        secondCall[1].creditNotes[0].lineItems[0].unitAmount * 100
+      );
+
+      expect(firstCents + secondCents).toBe(8000);
+      expect(
+        mocks.xeroClientInstance.accountingApi.createCreditNotes
+      ).toHaveBeenCalledTimes(2);
+    });
   });
 });

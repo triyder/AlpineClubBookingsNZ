@@ -17,6 +17,7 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
@@ -83,6 +84,10 @@ export async function POST(
             stayEnd: { gt: date },
           },
         },
+        // Don't roster a booking blocked by a pending admin review (#1372 /
+        // #1422); it can't check in until an admin clears the review, so it
+        // shouldn't get chore assignments.
+        ...checkinNotBlockedByPendingReviewFilter(),
       },
       include: {
         guests: {

@@ -6,6 +6,7 @@ import {
   serializeBookingRequestForAdmin,
 } from "@/lib/booking-request";
 import { requireAdmin } from "@/lib/session-guards";
+import { getClientIp } from "@/lib/rate-limit";
 
 const declineSchema = z.object({
   reason: z.string().max(2000).optional().nullable(),
@@ -40,6 +41,9 @@ export async function POST(
       requestId: id,
       adminMemberId: session.user.id,
       reason: parsed.data.reason,
+      // #1365: declining releases any capacity hold via cancelBooking, which
+      // needs the actor's client IP for its cancellation audit.
+      ipAddress: getClientIp(req),
     });
 
     return NextResponse.json(serializeBookingRequestForAdmin(updated!));

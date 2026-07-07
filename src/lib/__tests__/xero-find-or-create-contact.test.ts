@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => {
 
   const prisma = {
     $transaction: vi.fn(async (callback) => callback(tx)),
+    // #1355: contact resolution reads the member on the GLOBAL client
+    // (phase 0/1) and re-reads via the tx client (phase 2). Alias the same
+    // mock fns so every existing fixture serves both phases.
+    member: tx.member,
     xeroToken: {
       findFirst: vi.fn(),
     },

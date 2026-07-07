@@ -121,10 +121,11 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 
 | Module | Owns |
 | --- | --- |
-| `xero-operation-outbox` | `enqueueXero*Operation` (12 queue types) and the worker `processQueuedXeroOutboxOperations`; also WAITING_PAYMENT release/reap for supplementary invoices. |
-| `xero-operation-outbox-payload` | The 12 queue-type constants, payload schemas, and payload→expected-operation mapping used to claim rows safely. |
+| `xero-operation-outbox` | `enqueueXero*Operation` (12 queue types) and the worker `processQueuedXeroOutboxOperations` (scans the indexed `queueType` column via `XERO_OUTBOX_QUEUE_TYPES`); also WAITING_PAYMENT release/reap for supplementary invoices. |
+| `xero-operation-outbox-payload` | The 12 queue-type constants (plus the `XERO_OUTBOX_QUEUE_TYPES` list the pending scan filters on), payload schemas, and payload→expected-operation mapping used to claim rows safely. |
 | `xero-operation-retry` | `retryXeroSyncOperation`: immediate replay of a failed operation (admin "Retry"), including contact-payload rebuild for member contact ops. |
 | `xero-operation-queue` | Background replay: a REQUEUE `XeroSyncOperation` wraps the original id; `processQueuedXeroOperationRetries` claims and executes them via `retryXeroSyncOperation`. |
+| `xero-operation-claim` | The shared `claimXeroSyncOperationToRunning(id, guard)` single-flight (#1272 part 2): one conditional `updateMany` that flips a PENDING row to RUNNING (with the four error/timestamp resets) only when `count === 1`. Both the outbox scan and the retry scan delegate their claim to it; only the caller's guard predicate differs. |
 | `xero-booking-invoice-queue` | Thin helper: enqueue booking invoice + immediate kick, for callers that want one line. |
 | `xero-booking-edit-settlement` | Classifies an admin booking edit into the right financial follow-up (update invoice / supplementary invoice / credit note) and queues it. |
 
@@ -184,7 +185,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | Table | Role |
 | --- | --- |
 | `XeroToken` | Single-row encrypted OAuth token set + `refreshInProgressUntil` lease. |
-| `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields. **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
+| `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
 | `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
@@ -263,7 +264,20 @@ group-settlement invoice.
 Xero pushes CONTACT and INVOICE events; the webhook stores them and returns
 fast. Reconciliation happens in a bounded worker kicked after the response and
 swept by cron. Internet-banking settlement rides this flow: when an invoice is
-paid in Xero, the matching local payments/bookings are flipped here.
+paid in Xero **with cash evidence** (`amountPaid` > 0, falling back to actual
+payment records; operator-applied overpayments/prepayments count), the
+matching local payments/bookings are flipped here. A PAID event produced by
+credit-note allocation — the app's own invoice-clearing notes do exactly that
+on every unpaid-IB cancellation — settles nothing (#1435): identifiers are
+stamped for linkage only, admins are alerted if the booking is still live,
+and a payload carrying neither cash field fails the event into the
+FAILED-retry sweep rather than settling blind. Both credit-minting arms —
+cash landing on an already-cancelled booking's stale invoice, and the
+late-capacity-failure cancel — mint member credit sized by the invoice's
+quantified cash, clamped to the payment amount (#1357/#1459): a mixed
+cash+allocation invoice credits only the cash portion, the admin alert names
+both amounts so the allocation source gets verified, and verified cash
+arriving after a mint alerts with the delta (it never credits automatically).
 
 ```mermaid
 sequenceDiagram
@@ -290,8 +304,8 @@ sequenceDiagram
         alt CONTACT
             REC->>BIZ: refresh contact cache + member link,<br/>managed group sync, membership backfill
         else INVOICE (paid)
-            REC->>BIZ: syncInternetBankingPaymentsForPaidInvoice:<br/>flip IB payments → PAID, confirm booking,<br/>bed allocation, waitlist, emails
-            REC->>BIZ: syncGroupSettlementForPaidInvoice:<br/>flip all joiner bookings on the organiser invoice
+            REC->>BIZ: syncInternetBankingPaymentsForPaidInvoice:<br/>cash-gated (#1435) — with cash evidence flip IB<br/>payments → PAID, confirm booking, bed allocation,<br/>waitlist, emails; allocation-only PAID settles nothing<br/>(identifier stamp + live-booking admin alert)
+            REC->>BIZ: syncGroupSettlementForPaidInvoice:<br/>same cash gate; with cash evidence flip all<br/>joiner bookings on the organiser invoice
             REC->>BIZ: refresh linked subscriptions
         else PAYMENT / CREDIT-NOTE
             REC->>BIZ: reconcile payment / credit note:<br/>refund business-state repair,<br/>account-credit allocation repair
@@ -361,6 +375,33 @@ non-replayable), the health snapshot lists paid bookings missing invoices and
 refunds missing credit notes (flagged when the refunded amount still exceeds the
 cents already covered by active refund credit notes, so multi-note refunds are
 handled), and per-record activity shows the ledger for one booking/payment/member.
+
+Owner-substitution alert (operator runbook): when a booking request's held owner
+is no longer a valid non-login contact at conversion, the accept substitutes a
+fresh contact rather than failing the requester, and the invoice bills that fresh
+contact instead of the intended organisation. This raises the
+`admin-owner-substitution` admin email alert (gated by the "Xero sync errors"
+preference) alongside a durable `booking_request.owner_substituted` audit row.
+On this alert the finance admin reconciles the invoice's Xero contact: repoint the
+booking's invoice from the newly-created contact to the intended organisation in
+Xero (and archive/merge the stray contact if appropriate). The alert names the
+booking request, the booking, the intended vs. substituted contact, and the
+substitution reason to guide the fix.
+
+Expanding an operation in the admin Xero operations panel shows a plain-English
+summary by default instead of raw JSON (#1448). `summarizeXeroOperation`
+(`src/lib/xero-operation-summaries.ts`, a framework-agnostic pure module the
+client panel imports) keys on `(entityType, operationType)` plus payload-shape
+sniffing: it reads `requestPayload.queueType` when it is still present
+(PENDING / failed-before-dispatch rows) and otherwise recognises the persisted
+Xero request/response shapes (invoice, credit note, allocation, managed
+contact-group sync). It builds facts from data already run through the
+object-level `redactSensitiveJson`, so a summary can never surface a value the
+redacted raw view would mask, and money is formatted only through the shared
+`formatCents` helper (integer cents; Xero decimal dollars are converted to cents
+first). Unknown or unmapped shapes return `null`, and the panel falls back to
+the redacted raw request/response JSON exactly as before. A per-row **Show raw
+JSON** toggle reveals the same redacted `<pre>` blocks for any mapped row.
 
 ### Historical rounding-drift audit (#1318, read-only)
 
@@ -497,14 +538,48 @@ These are candidates for future issues, not commitments.
    functions repeat the same insert shape. A registry map
    (`queueType → {expectedOperation, handler}`) plus deriving the filter from
    the payload module's constant list removes three copies of the same
-   knowledge; promoting `queueType` to an indexed column is the full fix but
-   needs a migration (coordinate with schema owners).
-4. **Unify the operation-replay stack.** `xero-operation-retry`,
-   `xero-operation-queue`, and `xero-stale-operations` plus the
-   claim-to-RUNNING `updateMany` pattern (duplicated in outbox and queue)
-   describe one lifecycle across four files. A single operation-lifecycle
-   module owning claim/complete/fail/requeue/stale semantics would shrink the
-   surface admins and agents must understand.
+   knowledge. **Done (#1271):** `queueType` is now a denormalized, indexed
+   `XeroSyncOperation` column (`@@index([queueType, status, createdAt])`),
+   captured once at enqueue in `startXeroSyncOperation` (and backfilled from
+   `requestPayload->>'queueType'`) and never updated afterward. The payload field
+   stays canonical — the PENDING-scan `OR` and the parsing switch still read it.
+   **Why the column mirrors the payload only pre-dispatch:** the column mirrors
+   the payload only for rows still awaiting dispatch (`PENDING`/`WAITING_PAYMENT`);
+   once a row is dispatched some handlers (e.g. the booking-invoice create/update)
+   overwrite `requestPayload` wholesale and drop `queueType`, so the column and
+   payload diverge post-dispatch. That is safe because the only consumer is the
+   PENDING outbox scan (switched to the column in #1272 part 1), whose set is
+   exactly the pre-dispatch set where column and payload still agree; the
+   dispatcher and the parsing switch still read `queueType` from the payload.
+   Making the column the sole discriminator everywhere is the remaining #1272
+   consolidation (see item 4).
+4. **Unify the operation-replay stack.** `xero-operation-outbox`,
+   `xero-operation-outbox-payload`, `xero-operation-queue`, and
+   `xero-operation-retry` describe one lifecycle (enqueue → scan/dispatch →
+   execute → retry/replay → payload). _Done (#1272), in two owner-reviewed
+   parts:_
+   - _Part 1:_ the PENDING outbox scan
+     (`processQueuedXeroOutboxOperations`) now filters on the indexed
+     `queueType` column (using the `(queueType, status, createdAt)` index)
+     instead of a hand-written 12-branch `requestPayload->>'queueType'` OR
+     predicate, and the 12 queue-type values are consolidated into one exported
+     `XERO_OUTBOX_QUEUE_TYPES` list in `xero-operation-outbox-payload` that the
+     scan's `IN` consumes (single source of truth; per-type dispatch routing and
+     the payload parse switch are byte-identical).
+   - _Part 2:_ the duplicated claim-to-RUNNING `updateMany` in the outbox scan
+     and the retry scan is extracted verbatim into one shared
+     `claimXeroSyncOperationToRunning(id, guard)` primitive
+     (`xero-operation-claim`); both callers delegate, passing only their
+     guard predicate, so each resulting `WHERE` (and the atomic `count === 1`
+     single-flight) is identical to before. A dispatch-domain test now drives the
+     real if/else chain to prove it routes exactly `XERO_OUTBOX_QUEUE_TYPES`.
+
+   _Deliberately not pursued (owner decision):_ physically co-locating the four
+   files behind one `xero-operation-replay` boundary and folding
+   `xero-stale-operations` plus complete/fail/requeue/stale into a single
+   lifecycle god-helper — the column scan (part 1) and the shared claim helper
+   (part 2) are the consolidations that de-duplicate real logic and close #1272;
+   the rest would be churn without a behavioral payoff.
 5. **Split `xero-hardening.ts` (1,606 lines).** _Done (#1208 item 5):_ the
    private helpers were extracted verbatim (behavior preserving) into cohesive
    `xero-hardening-<concern>.ts` sub-modules with an acyclic import graph —

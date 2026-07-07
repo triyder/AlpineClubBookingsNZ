@@ -10,6 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
@@ -109,6 +111,7 @@ interface BookingChangeRequestsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
   showHeading?: boolean;
+  canEdit?: boolean;
 }
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
@@ -137,6 +140,7 @@ export function BookingChangeRequestsPanel({
   basePath = "/admin/booking-requests",
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
+  canEdit = true,
 }: BookingChangeRequestsPanelProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -377,6 +381,8 @@ export function BookingChangeRequestsPanel({
                         <Textarea
                           id={`admin-notes-${request.id}`}
                           value={reviewingId === request.id ? adminNotes : ""}
+                          disabled={!canEdit}
+                          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                           onChange={(event) => {
                             setReviewingId(request.id);
                             setAdminNotes(event.target.value);
@@ -395,6 +401,8 @@ export function BookingChangeRequestsPanel({
                               ? linkedModificationIdInput
                               : ""
                           }
+                          disabled={!canEdit}
+                          title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                           onChange={(event) => {
                             setReviewingId(request.id);
                             setLinkedModificationIdInput(event.target.value);
@@ -403,21 +411,23 @@ export function BookingChangeRequestsPanel({
                         />
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Button
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           size="sm"
                           onClick={() => reviewRequest(request, "APPROVED")}
                           disabled={reviewingId === request.id && !adminNotes.trim()}
                         >
                           Acknowledge as approved
-                        </Button>
-                        <Button
+                        </ViewOnlyActionButton>
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           size="sm"
                           variant="outline"
                           onClick={() => reviewRequest(request, "REJECTED")}
                           disabled={reviewingId === request.id && !adminNotes.trim()}
                         >
                           Reject
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
                     </div>
                   ) : (

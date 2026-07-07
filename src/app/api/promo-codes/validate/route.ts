@@ -17,8 +17,8 @@ import {
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
-import { hasAdminAccess } from "@/lib/access-roles";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   BookingGuestStayRangeValidationError,
   type NormalizedBookingGuestStayRange,
@@ -43,7 +43,7 @@ const validateSchema = z
     guests: z
       .array(
         z.object({
-          ageTier: ageTierEnum,
+          ageTier: bookableAgeTierEnum,
           isMember: z.boolean(),
           memberId: z.string().min(1).optional(),
           stayStart: z.string().optional(),
@@ -93,10 +93,19 @@ export async function POST(req: NextRequest) {
     }
     throw error;
   }
-  // Use target member for admin on-behalf bookings
-  const effectiveMemberId = (parsed.data.forMemberId && hasAdminAccess(session.user))
-    ? parsed.data.forMemberId
-    : session.user.id;
+  // On-behalf promo validation follows the booking create/quote rule (#1442):
+  // bookings:edit holders validate against the target member; an unauthorized
+  // forMemberId is rejected rather than silently checked against the caller.
+  if (
+    parsed.data.forMemberId &&
+    bookingManagementAuthorizationRole(session.user) !== "ADMIN"
+  ) {
+    return NextResponse.json(
+      { error: "Only admins can book on behalf of another member" },
+      { status: 403 }
+    );
+  }
+  const effectiveMemberId = parsed.data.forMemberId ?? session.user.id;
 
   let promoCode:
     | (Awaited<ReturnType<typeof prisma.promoCode.findUnique>> & {

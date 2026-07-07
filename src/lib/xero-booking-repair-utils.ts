@@ -2,9 +2,63 @@
 // repair tool. Extracted verbatim from xero-booking-repair.ts (#1208 item 2).
 // Per #1208, this file's readJson* guards are intentionally kept local (NOT
 // merged into @/lib/xero-json) to preserve behavior.
+import {
+  XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+  readQueueType,
+} from "@/lib/xero-operation-outbox-payload";
 
 export function makeLocalKey(localModel: string, localId: string) {
   return `${localModel}:${localId}`;
+}
+
+// #1427: which outbox queue type did this operation belong to? The immutable
+// column first (#1347), then the payload's own name — but the pre-column
+// EXECUTED ledger has neither: executors overwrite requestPayload at
+// dispatch (the account-credit executor leaves a bare document naming no
+// queueType), and the #1347 backfill copied the column from those
+// already-overwritten payloads. For exactly those rows the correlation/
+// idempotency key is decisive: the enqueue embedded a kind segment
+// ("mod-credit-note" for the invoice-applied note; "mod-unapplied-credit-
+// note" / "mod-account-credit-note" for the account-credit note) and no
+// executor ever rewrites the key. Null only for rows carrying none of these
+// (REQUEUE/backfill/inbound rows, or the pre-outbox era).
+const OPERATION_KEY_SEGMENT_QUEUE_TYPES: Record<string, string> = {
+  "mod-credit-note": XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+  "mod-unapplied-credit-note":
+    XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+  "mod-account-credit-note":
+    XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+};
+
+export function getOperationQueueTypeHint(operation: {
+  queueType: string | null;
+  requestPayload: unknown;
+  correlationKey: string | null;
+  idempotencyKey: string | null;
+}): string | null {
+  if (operation.queueType) {
+    return operation.queueType;
+  }
+
+  const payloadQueueType = readQueueType(operation.requestPayload);
+  if (payloadQueueType) {
+    return payloadQueueType;
+  }
+
+  for (const key of [operation.correlationKey, operation.idempotencyKey]) {
+    if (!key) {
+      continue;
+    }
+    for (const segment of key.split(":")) {
+      const queueType = OPERATION_KEY_SEGMENT_QUEUE_TYPES[segment];
+      if (queueType) {
+        return queueType;
+      }
+    }
+  }
+
+  return null;
 }
 
 export function toIsoDate(value: Date) {

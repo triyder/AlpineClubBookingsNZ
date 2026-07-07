@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getXeroContactGroupMismatchSnapshot: vi.fn(),
   getXeroContactLinkMismatchSnapshot: vi.fn(),
   getXeroContactGroups: vi.fn(),
+  getXeroContactGroupCacheLastRefreshedAt: vi.fn(),
   syncContactsFromXero: vi.fn(),
   importMembersFromXeroGroups: vi.fn(),
   logger: {
@@ -33,6 +34,8 @@ vi.mock("@/lib/xero-contact-link-mismatches", () => ({
 }));
 vi.mock("@/lib/xero", () => ({
   getXeroContactGroups: mocks.getXeroContactGroups,
+  getXeroContactGroupCacheLastRefreshedAt:
+    mocks.getXeroContactGroupCacheLastRefreshedAt,
   syncContactsFromXero: mocks.syncContactsFromXero,
   importMembersFromXeroGroups: mocks.importMembersFromXeroGroups,
   XeroDailyLimitError: class XeroDailyLimitError extends Error {},
@@ -51,6 +54,7 @@ describe("Phase 4 Xero admin routes", () => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({ user: { id: "admin_1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
+    mocks.getXeroContactGroupCacheLastRefreshedAt.mockResolvedValue(null);
   });
 
   it("defaults sync contacts to incremental mode when no body is provided", async () => {
@@ -160,6 +164,47 @@ describe("Phase 4 Xero admin routes", () => {
     expect(mocks.getXeroContactGroups).toHaveBeenCalledWith({
       refreshFromXero: true,
       repairMissingContactCache: true,
+    });
+  });
+
+  it("returns the cache's last-refresh timestamp with the contact groups", async () => {
+    mocks.getXeroContactGroups.mockResolvedValue([
+      { id: "group_1", name: "Adults", contactCount: 2 },
+    ]);
+    mocks.getXeroContactGroupCacheLastRefreshedAt.mockResolvedValue(
+      "2026-07-05T09:30:00.000Z"
+    );
+
+    const { GET } = await import("@/app/api/admin/xero/contact-groups/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/admin/xero/contact-groups")
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.getXeroContactGroupCacheLastRefreshedAt).toHaveBeenCalledTimes(
+      1
+    );
+    await expect(res.json()).resolves.toEqual({
+      groups: [{ id: "group_1", name: "Adults", contactCount: 2 }],
+      refreshed: false,
+      lastRefreshedAt: "2026-07-05T09:30:00.000Z",
+    });
+  });
+
+  it("returns a null last-refresh timestamp when the cache is empty", async () => {
+    mocks.getXeroContactGroups.mockResolvedValue([]);
+    mocks.getXeroContactGroupCacheLastRefreshedAt.mockResolvedValue(null);
+
+    const { GET } = await import("@/app/api/admin/xero/contact-groups/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/admin/xero/contact-groups")
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      groups: [],
+      refreshed: false,
+      lastRefreshedAt: null,
     });
   });
 

@@ -62,6 +62,16 @@ export const E2E_ADMIN = {
   lastName: "Admin",
 } as const;
 
+// Dual-hat committee member: USER + ADMIN access-role tokens, complete
+// confirmed profile, PAID subscription. Books their own stay through the
+// member /book wizard under full member rules — the wizard must NOT redirect
+// them to /admin/book (e2e/dual-hat-booking.spec.ts, issue #1442).
+export const DUAL_HAT_ADMIN = {
+  email: demoEmail("dana-dualhat"),
+  firstName: "Dana",
+  lastName: "Dualhat",
+} as const;
+
 // Second paid-up, nomination-eligible member (alice is the first). Needed so
 // the public membership-application POST has two valid nominators.
 export const NOMINATOR_TWO = {
@@ -131,6 +141,25 @@ export const IB_WINDOW = {
   checkIn: "2026-09-07",
   checkOut: "2026-09-09",
   nights: ["2026-09-07", "2026-09-08"],
+};
+
+// --- Cancellation-with-refund fixture (e2e/booking-cancel-refund.spec.ts) --
+// A future-dated PAID booking owned by Nadia (NOMINATOR_TWO) on a December
+// (Summer 2026-27 season) window that no other seeded booking or spec touches,
+// so the cancel spec can cancel it for a positive account-credit refund. The
+// seeded payment is a single SUCCEEDED Stripe charge with NO additional- or
+// setup-intent fields, so the credit-method cancel writes the account credit
+// with zero external (Stripe) calls (src/lib/booking-cancel.ts credit branch).
+// Nadia — not Wanda (heavily used by waitlist/IB) or Alice (kept unconfirmed
+// for booking.spec's #1124 gate) — owns it: no other spec asserts Nadia's
+// bookings or account credit (she only drives a nomination in
+// membership-application.spec), so crediting her account cannot perturb the
+// serial suite.
+export const PAID_CANCEL_BOOKING_ID = "e2e-paid-cancel";
+export const PAID_CANCEL_WINDOW = {
+  checkIn: "2026-12-15",
+  checkOut: "2026-12-17",
+  nights: ["2026-12-15", "2026-12-16"],
 };
 
 // --- Membership application fixture (e2e/membership-application.spec.ts) --

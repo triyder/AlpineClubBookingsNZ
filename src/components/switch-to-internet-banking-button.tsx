@@ -1,15 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
 /**
  * Lets the owner of a card (Stripe) PAYMENT_PENDING booking switch to Internet
- * Banking instead. Posts to /api/payments/switch-to-internet-banking, then
- * refreshes so the page re-renders with the emailed-invoice reference (the detail
- * page already shows the Internet Banking card for an IB booking). Only rendered
- * when the Internet Banking module is on.
+ * Banking instead. Posts to /api/payments/switch-to-internet-banking, then does
+ * a full document reload so the page re-renders with the emailed-invoice
+ * reference (the detail page already shows the Internet Banking card for an IB
+ * booking). Only rendered when the Internet Banking module is on.
+ *
+ * The reload is deliberately a hard `window.location.reload()` rather than a
+ * soft `router.refresh()`: the switch changes payment.source to
+ * INTERNET_BANKING, and a fresh server render then deterministically shows the
+ * Internet Banking card and drops the switch affordance. A soft refresh raced
+ * the server re-render and intermittently flashed the pre-switch layout back for
+ * a paint or left the button stuck on "Switching…" (render inconsistency #1148;
+ * the soft-refresh version regressed the E2E for #1371 F28).
  */
 export function SwitchToInternetBankingButton({
   bookingId,
@@ -18,7 +25,6 @@ export function SwitchToInternetBankingButton({
   bookingId: string;
   description?: string;
 }) {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -35,7 +41,10 @@ export function SwitchToInternetBankingButton({
       if (!res.ok) {
         throw new Error(data.error || "Unable to switch to internet banking right now.");
       }
-      router.refresh();
+      // Hard reload: guarantees a fresh server render of the Internet Banking
+      // card and removes the switch affordance. `busy` stays true until the
+      // reload navigates, so the button can never re-fire or stick.
+      window.location.reload();
     } catch (err) {
       setError(
         err instanceof Error
@@ -48,9 +57,7 @@ export function SwitchToInternetBankingButton({
 
   return (
     <div className="mt-4 border-t pt-4">
-      <p className="mb-2 text-sm text-muted-foreground">
-        {description}
-      </p>
+      <p className="mb-2 text-sm text-muted-foreground">{description}</p>
       <Button variant="outline" onClick={switchToInternetBanking} disabled={busy}>
         {busy ? "Switching..." : "Pay by internet banking instead"}
       </Button>

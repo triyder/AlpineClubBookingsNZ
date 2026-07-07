@@ -7,6 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AdminViewOnlyNotice,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -225,6 +229,7 @@ interface PublicBookingRequestsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
   showHeading?: boolean;
+  canEdit?: boolean;
 }
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
@@ -270,6 +275,7 @@ export function PublicBookingRequestsPanel({
   basePath = "/admin/booking-requests",
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
+  canEdit = true,
 }: PublicBookingRequestsPanelProps) {
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
@@ -1021,6 +1027,7 @@ export function PublicBookingRequestsPanel({
                   ) : null}
 
                   {LINKING_EDITOR_STATUSES.has(request.status) ? (
+                    canEdit ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
                       {request.heldBookingId ? (
                         <div className="space-y-2 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
@@ -1361,14 +1368,25 @@ export function PublicBookingRequestsPanel({
                         >
                           Send quote
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleHoldSlots(request)}
-                          disabled={isActioning || Boolean(request.heldBookingId)}
-                        >
-                          {request.heldBookingId ? "Slots held" : "Hold slots"}
-                        </Button>
+                        {/*
+                          #1385: the manual Hold slots entry is SCHOOL-only.
+                          Sending a quote auto-holds the beds across the whole
+                          quote lifecycle (#1280), so a separate manual hold is
+                          redundant on the generic quote flow. SCHOOL requests can
+                          be approved DIRECTLY (without a sent quote) and school
+                          approval reuses the held booking (#1352), so the manual
+                          hold remains meaningful there.
+                        */}
+                        {request.type === "SCHOOL" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleHoldSlots(request)}
+                            disabled={isActioning || Boolean(request.heldBookingId)}
+                          >
+                            {request.heldBookingId ? "Slots held" : "Hold slots"}
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           variant="outline"
@@ -1391,14 +1409,26 @@ export function PublicBookingRequestsPanel({
                           Decline
                         </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Hold slots reserves the beds before a quote is sent
-                        (sending a quote auto-holds them, so use Hold slots to
-                        reserve capacity while you price or set the contact). An
-                        accepted-but-unpaid booking can still be bumped by the
-                        confirm-pending job if the lodge capacity for these nights
-                        is later lowered below what is booked.
-                      </p>
+                      {request.type === "SCHOOL" ? (
+                        <p className="text-xs text-muted-foreground">
+                          Hold slots reserves the beds for this school request
+                          before it is approved or quoted — approving a school
+                          reuses the held booking (#1352), and sending a quote
+                          auto-holds too, so use Hold slots to reserve capacity
+                          while you set group numbers or the contact. An
+                          accepted-but-unpaid booking can still be bumped by the
+                          confirm-pending job if the lodge capacity for these
+                          nights is later lowered below what is booked.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Sending a quote auto-holds the beds for this request, so
+                          there is no separate hold step. An accepted-but-unpaid
+                          booking can still be bumped by the confirm-pending job if
+                          the lodge capacity for these nights is later lowered
+                          below what is booked.
+                        </p>
+                      )}
                       {request.status === "VERIFIED" ? (
                         <p className="text-xs text-muted-foreground">
                           {request.type === "SCHOOL"
@@ -1407,6 +1437,12 @@ export function PublicBookingRequestsPanel({
                         </p>
                       ) : null}
                     </div>
+                    ) : (
+                      <AdminViewOnlyNotice>
+                        Your admin role can view this request but cannot price,
+                        hold, approve, decline, or change its linked contact.
+                      </AdminViewOnlyNotice>
+                    )
                   ) : null}
 
                   {request.status === "DECLINED" ? (
@@ -1445,7 +1481,8 @@ export function PublicBookingRequestsPanel({
                           </p>
                         ) : (
                           <div className="mt-2">
-                            <Button
+                            <ViewOnlyActionButton
+                              canEdit={canEdit}
                               variant="outline"
                               size="sm"
                               disabled={actioningId === request.id}
@@ -1454,7 +1491,7 @@ export function PublicBookingRequestsPanel({
                               {actioningId === request.id
                                 ? "Sending…"
                                 : "Re-send attendee confirmation link"}
-                            </Button>
+                            </ViewOnlyActionButton>
                             <p className="mt-1 text-xs text-slate-500">
                               Rotates the secure link and emails it to the school
                               contact now, outside the reminder cadence.

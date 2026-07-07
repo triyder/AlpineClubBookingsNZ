@@ -72,6 +72,40 @@ function runMigrationSafetyValidator(
   });
 }
 
+const LEDGER_HEADER =
+  "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan";
+
+function createTempMigrationsTree(
+  migrations: { name: string; sql: string }[],
+  ledger: string
+) {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-coverage-"));
+  const migrationsDir = path.join(tempDir, "migrations");
+  const ledgerPath = path.join(tempDir, "safety.tsv");
+
+  for (const migration of migrations) {
+    const dir = path.join(migrationsDir, migration.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "migration.sql"), migration.sql);
+  }
+  writeFileSync(ledgerPath, ledger);
+
+  return { tempDir, migrationsDir, ledgerPath };
+}
+
+function runMigrationSafetyCoverage(
+  env: Record<string, string> = {}
+) {
+  return spawnSync("bash", ["scripts/check-migration-safety-coverage.sh"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      ...env,
+    },
+    encoding: "utf8",
+  });
+}
+
 describe("review finding source/schema contracts", () => {
   it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
@@ -522,5 +556,198 @@ describe("review finding source/schema contracts", () => {
     } finally {
       rmSync(fixture.tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("flags hot-table trigger operations in the blue/green validator", () => {
+    // #1359 (finding F8): 20260704100000 ran DROP TRIGGER / CREATE CONSTRAINT
+    // TRIGGER on hot tables Booking/BookingGuest, but the validator's hot-table
+    // regex did not cover TRIGGER operations, so it passed the deploy gate with
+    // no ledger entry. The regex must now require a ledger entry for them.
+    const missing = createTempMigration(
+      'DROP TRIGGER "Booking_dates_consistent_with_guests" ON "Booking";\n',
+      `${LEDGER_HEADER}\n`
+    );
+    try {
+      const result = runMigrationSafetyValidator(
+        missing.migrationPath,
+        missing.ledgerPath
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("blue/green migration safety review");
+    } finally {
+      rmSync(missing.tempDir, { recursive: true, force: true });
+    }
+
+    const documented = createTempMigration(
+      'DROP TRIGGER "Booking_dates_consistent_with_guests" ON "Booking";\n',
+      [
+        LEDGER_HEADER,
+        "20990101000000_test_migration\texpand\tn/a\tyes\tSwaps a Booking trigger for a deferred constraint trigger; brief lock, no row scan.",
+      ].join("\n")
+    );
+    try {
+      const result = runMigrationSafetyValidator(
+        documented.migrationPath,
+        documented.ledgerPath
+      );
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(documented.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    "keeps the committed migration tree covered by the blue/green safety ledger",
+    // Shells out over the full committed migration tree; under a loaded
+    // parallel suite run this regularly exceeds the default 5s.
+    { timeout: 20000 },
+    () => {
+      // Regression guard for #1359: the real prisma/migrations tree + real ledger
+      // must pass the PR-time coverage gate (both backfilled rows present, and no
+      // new duplicate timestamp prefix beyond the grandfathered set).
+      const result = runMigrationSafetyCoverage();
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
+  it("fails ledger coverage when a hot-table migration at/after baseline is unledgered", () => {
+    const fixture = createTempMigrationsTree(
+      [
+        {
+          name: "20990101000000_unledgered_hot",
+          sql: 'ALTER TABLE "Payment" ADD COLUMN "processorRef" TEXT;\n',
+        },
+      ],
+      [LEDGER_HEADER, "20260507000000_base\texpand\tn/a\tyes\tbaseline row"].join(
+        "\n"
+      )
+    );
+    try {
+      const result = runMigrationSafetyCoverage({
+        MIGRATIONS_DIR: fixture.migrationsDir,
+        MIGRATION_SAFETY_LEDGER: fixture.ledgerPath,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Ledger coverage check FAILED");
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails the timestamp ratchet when a new migration reuses a timestamp prefix", () => {
+    const fixture = createTempMigrationsTree(
+      [
+        { name: "20990101000000_alpha", sql: 'CREATE TABLE "Foo" ("id" TEXT);\n' },
+        { name: "20990101000000_beta", sql: 'CREATE TABLE "Bar" ("id" TEXT);\n' },
+      ],
+      [LEDGER_HEADER, "20260507000000_base\texpand\tn/a\tyes\tbaseline row"].join(
+        "\n"
+      )
+    );
+    try {
+      const result = runMigrationSafetyCoverage({
+        MIGRATIONS_DIR: fixture.migrationsDir,
+        MIGRATION_SAFETY_LEDGER: fixture.ledgerPath,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Timestamp hygiene check FAILED");
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("remaps the darkest neutral text tier so the door code is legible in dark mode (F28)", () => {
+    // #1371 F28: the lodge door code renders text-slate-950 on a dark card, but
+    // the dark neutral remap only covered the -900/-800..-300 tiers, leaving -950
+    // near-black on dark. The -950 tier must map to --foreground.
+    const globals = readRepoFile("src/app/globals.css");
+    const foregroundRemap = sliceFrom(
+      globals,
+      ".text-slate-950",
+      "color: var(--foreground)",
+    );
+    expect(foregroundRemap).toContain(".text-gray-950");
+    expect(foregroundRemap).toContain(".text-neutral-950");
+    expect(foregroundRemap).toContain(".text-stone-950");
+  });
+
+  it("gives the promo review-step callout a dark-mode text colour (F28)", () => {
+    const reviewStep = readRepoFile(
+      "src/app/(authenticated)/book/_components/review-step.tsx",
+    );
+    expect(reviewStep).toContain("text-brand-charcoal dark:text-brand-gold");
+    expect(reviewStep).toContain("text-brand-charcoal/75 dark:text-brand-gold/75");
+  });
+
+  it("hard-reloads the waitlist confirm success path so the CTA can't stick on Confirming (F28)", () => {
+    const card = readRepoFile("src/components/waitlist-offer-card.tsx");
+    // On success a full document reload re-renders the page from the server, so
+    // the CTA can never stay stuck on "Confirming…" waiting on a soft refresh
+    // that raced the re-render. No useRouter import means no soft router.refresh.
+    expect(card).toContain("window.location.reload()");
+    expect(card).not.toContain("useRouter");
+  });
+
+  it("hard-reloads the internet-banking switch success path so the IB card renders deterministically (F28)", () => {
+    const button = readRepoFile(
+      "src/components/switch-to-internet-banking-button.tsx",
+    );
+    // A fresh server render cannot show the pre-switch layout once payment.source
+    // is INTERNET_BANKING, so a hard reload is deterministic where the soft
+    // refresh raced (#1148). No useRouter import means no soft router.refresh.
+    expect(button).toContain("window.location.reload()");
+    expect(button).not.toContain("useRouter");
+  });
+
+  it("guards the public quote cancel behind a confirmation dialog (F28)", () => {
+    const respondPage = readRepoFile(
+      "src/app/(public)/booking-requests/respond/[token]/page.tsx",
+    );
+    expect(respondPage).toContain("useConfirm");
+    expect(respondPage).toContain("cancelWithConfirmation");
+    // The one-click destructive path must be gone.
+    expect(respondPage).not.toContain('onClick={() => respond("CANCEL")}');
+  });
+
+  it("surfaces the booking status glossary and cancellation schedule to members (F28)", () => {
+    const contextualHelp = readRepoFile("src/lib/contextual-help.ts");
+    expect(contextualHelp).toContain("export const BOOKING_STATUS_GLOSSARY");
+    // Admin help still renders the same shared glossary (no divergent copy).
+    expect(contextualHelp).toContain("details: BOOKING_STATUS_GLOSSARY,");
+
+    const helpDialog = readRepoFile("src/components/booking-help-dialog.tsx");
+    expect(helpDialog).toContain("BOOKING_STATUS_GLOSSARY");
+    expect(helpDialog).toContain("Cancellation refund schedule");
+    // An unpaid-but-cancellable booking must not imply a refund it can't get
+    // (owner review of PR #1389): say no payment received / no refund instead.
+    expect(helpDialog).toContain(
+      "No payment has been received for this booking, so no refund",
+    );
+
+    const bookingDetail = readRepoFile(
+      "src/app/(authenticated)/bookings/[id]/page.tsx",
+    );
+    expect(bookingDetail).toContain("<BookingHelpDialog");
+    expect(bookingDetail).toContain("describeCancellationSchedule");
+    // The refund schedule is gated on a captured payment; unpaid bookings get the
+    // no-refund message instead.
+    expect(bookingDetail).toContain("originalPaymentCaptured");
+    expect(bookingDetail).toContain("cancellationHasNoPayment");
+  });
+
+  it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {
+    // The components now hard-reload on success, so the specs assert the
+    // freshly-rendered server state directly — no reload-retry ride-through loop
+    // in the spec masking a soft-refresh race.
+    const waitlistSpec = readRepoFile("e2e/waitlist.spec.ts");
+    expect(waitlistSpec).not.toContain("assert the durable server state via reload");
+    expect(waitlistSpec).not.toContain("await memberPage.reload()");
+    expect(waitlistSpec).toContain("await expect(offerCard).toHaveCount(0, { timeout: 30_000 })");
+
+    const ibSpec = readRepoFile("e2e/internet-banking.spec.ts");
+    expect(ibSpec).not.toContain(
+      "Assert the whole post-switch card atomically per",
+    );
+    expect(ibSpec).not.toContain("await page.reload()");
   });
 });

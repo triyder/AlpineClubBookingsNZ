@@ -10,7 +10,7 @@ import {
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { recordBookingEvent } from "./booking-events";
-import { BookingEventType } from "@prisma/client";
+import { BookingEventType, type Prisma } from "@prisma/client";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
@@ -23,10 +23,18 @@ import logger from "@/lib/logger";
 import {
   applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed,
+  planStripeRefundAllocation,
   refundPaymentTransactions,
   PartialRefundError,
+  type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { enqueueBookingCancellationRefundRecovery } from "@/lib/payment-recovery";
+import {
+  buildBookingCancellationRefundMetadata,
+  enqueueBookingCancellationRefundRecovery,
+  enqueuePaymentIntentCancellationRecovery,
+  markBookingCancellationRefundRecoverySucceeded,
+  recordBookingCancellationRefundRecoveryInlineError,
+} from "@/lib/payment-recovery";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { revokePaymentLinksForBooking } from "@/lib/payment-link";
@@ -112,6 +120,16 @@ type CancelBookingResponse =
  * Stripe / email / audit logic never reads it beyond the gate below, so the
  * money outcome is independent of which authorized actor triggered the cancel.
  * Defaults to `false`, so every existing caller is unchanged.
+ *
+ * `options.requireRequestHold` (#1406): when `true`, the caller asserts it is
+ * releasing a held booking-request slot that MUST still be AWAITING_REVIEW (the
+ * admin "Release hold" route and `declineBookingRequest`). If the outer read
+ * finds any other status — e.g. a concurrent quote-accept already flipped the
+ * hold AWAITING_REVIEW -> PENDING — cancel refuses with a 409 BEFORE branch
+ * dispatch and takes no side effect, so a just-accepted booking is never routed
+ * into the unlocked generic PENDING branch and clobbered (its brand-new payment
+ * links revoked). Defaults to `false`, so callers cancelling genuine PENDING
+ * bookings (member self-cancel, deletion cleanup) are unaffected.
  */
 export async function cancelBooking(
   bookingId: string,
@@ -122,6 +140,7 @@ export async function cancelBooking(
   options: {
     suppressCustomerNotification?: boolean;
     hasBookingsEditAccess?: boolean;
+    requireRequestHold?: boolean;
   } = {}
 ): Promise<CancelBookingResponse> {
   const result = await performBookingCancellation(
@@ -131,7 +150,8 @@ export async function cancelBooking(
     ipAddress,
     refundMethod,
     options.suppressCustomerNotification ?? false,
-    options.hasBookingsEditAccess ?? false
+    options.hasBookingsEditAccess ?? false,
+    options.requireRequestHold ?? false
   );
 
   if (result.status === 200) {
@@ -236,7 +256,8 @@ async function performBookingCancellation(
   ipAddress: string,
   refundMethod: "card" | "credit" = "card",
   suppressCustomerNotification = false,
-  hasBookingsEditAccess = false
+  hasBookingsEditAccess = false,
+  requireRequestHold = false
 ): Promise<CancelBookingResponse> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -266,6 +287,32 @@ async function performBookingCancellation(
     return {
       status: 400,
       error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, WAITLIST_OFFERED, or AWAITING_REVIEW bookings can be cancelled",
+    };
+  }
+
+  // ── #1406: opt-in caller guard for the two "release a held request" paths ──
+  //
+  // The admin "Release hold" route and `declineBookingRequest` release a held
+  // booking-request slot they expect to still be AWAITING_REVIEW. This OUTER
+  // read is UN-locked, so a concurrent quote-accept
+  // (`convertBookingRequestToBooking`) can flip the hold AWAITING_REVIEW ->
+  // PENDING before it runs. Without this guard the PENDING snapshot would be
+  // dispatched straight into the generic PENDING branch below — which is
+  // UNLOCKED and has NO status re-guard — and that branch would clobber the
+  // just-accepted booking to CANCELLED and revoke its brand-new payment links.
+  // Refuse with a 409 loser (NO side effect) BEFORE branch dispatch so a
+  // now-PENDING booking is never cancelled by a hold-release. An accept that
+  // commits AFTER this read but BEFORE the AWAITING_REVIEW branch takes
+  // pg_advisory_xact_lock(1) is caught by that branch's under-lock re-read
+  // (the NO_PAYMENT_CANCELLABLE_STATUSES guard) — the two together fully close
+  // the race. Opt-in only: callers cancelling genuine member-created PENDING
+  // bookings (member self-cancel, deletion cleanup) never pass this option and
+  // reach the generic PENDING branch exactly as before.
+  if (requireRequestHold && booking.status !== "AWAITING_REVIEW") {
+    return {
+      status: 409,
+      error:
+        "This hold can no longer be released (it may have just been accepted).",
     };
   }
 
@@ -501,29 +548,54 @@ async function performBookingCancellation(
     };
   }
 
-  // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without successful payment
-  if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
+  // #1491 (owner decision, Option 1): a genuinely CAPTURED
+  // PARTIALLY_REFUNDED payment takes the paid path below — the member gets
+  // the cancellation-policy tier of the REMAINING captured value
+  // (paidAmountCents already nets out refundedAmountCents). Eligibility is
+  // ledger-only (see the helper), so the folded-mirror never-captured IB
+  // population and mirror-only legacy rows stay out of the refund path.
+  const paidRefundPathEligible = await paymentEligibleForPaidCancelPath(
+    booking.payment
+  );
+
+  // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without a payment the
+  // paid refund path can claim: never-captured payments (including the
+  // folded-mirror shape) and fully-REFUNDED ones (#1473).
+  if (!paidRefundPathEligible) {
+    // #1473: a payment that CAPTURED money can land in this branch too
+    // (fully REFUNDED, or a flattened legacy mirror), and its aggregate
+    // status is money truth that must survive the cancel — only
+    // never-captured payments flip to FAILED. See paymentHasCaptureEvidence
+    // for why the ledger decides, never the aggregate mirror alone.
+    const paymentCaptured = booking.payment
+      ? await paymentHasCaptureEvidence(booking.payment)
+      : false;
+
     if (booking.payment) {
       await cancelOutstandingPaymentIntents({
         primaryPaymentIntentId: booking.payment.stripePaymentIntentId,
         additionalPaymentIntentId: booking.payment.additionalPaymentIntentId,
-        cancelPrimary: true,
+        // A captured primary intent is not cancellable; skip the Stripe call
+        // instead of relying on the downstream captured-status guards.
+        cancelPrimary: !paymentCaptured,
         cancelAdditional: hasOutstandingAdditionalPaymentIntent(booking.payment),
       });
     }
 
     const paymentUpdateData: {
-      status: "FAILED";
+      status?: "FAILED";
       additionalPaymentStatus?: string;
-    } = {
-      status: "FAILED",
-    };
+    } = {};
+
+    if (!paymentCaptured) {
+      paymentUpdateData.status = "FAILED";
+    }
 
     if (hasOutstandingAdditionalPaymentIntent(booking.payment)) {
       paymentUpdateData.additionalPaymentStatus = "FAILED";
     }
 
-    if (booking.payment) {
+    if (booking.payment && Object.keys(paymentUpdateData).length > 0) {
       await prisma.$transaction([
         prisma.payment.update({
           where: { id: booking.payment.id },
@@ -556,9 +628,18 @@ async function performBookingCancellation(
     // `Math.max` only ever picked that stale term in exactly that leak window;
     // for price increases (billed via a separate supplementary invoice) and
     // for unchanged bookings finalPrice already equals the true outstanding.
-    const xeroClearingAmountCents = booking.payment?.xeroInvoiceId
-      ? booking.finalPriceCents + booking.payment.changeFeeCents
-      : 0;
+    // #1473: that reasoning only holds for a NEVER-captured payment. For
+    // captured money, finalPrice+changeFee is not the invoice's open balance:
+    // normally the invoice is settled Xero-side, and in the one window where
+    // it is not (the capture's Xero payment-record op failed and is retrying)
+    // a clearing note would close the invoice underneath that retry and
+    // permanently poison it — recording the payment then fails against a
+    // zeroed invoice. Enqueue nothing; the op retry stack owns the recording,
+    // and the operator repair pass owns anything else.
+    const xeroClearingAmountCents =
+      booking.payment?.xeroInvoiceId && !paymentCaptured
+        ? booking.finalPriceCents + booking.payment.changeFeeCents
+        : 0;
 
     if (booking.payment?.id && xeroClearingAmountCents > 0) {
       try {
@@ -597,13 +678,15 @@ async function performBookingCancellation(
       booking,
       bookingId,
       sessionUserId,
-      details:
-        xeroClearingAmountCents > 0
+      details: paymentCaptured
+        ? "Confirmed booking cancelled; previously captured payment keeps its refund history (status preserved, no Xero clearing note queued)"
+        : xeroClearingAmountCents > 0
           ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
       metadata: {
-        paymentTaken: false,
+        paymentTaken: paymentCaptured,
+        capturedPaymentStatusPreserved: paymentCaptured,
         xeroClearingAmountCents,
         queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
       },
@@ -613,7 +696,9 @@ async function performBookingCancellation(
       bookingId,
       type: BookingEventType.CANCELLED,
       actorMemberId: sessionUserId,
-      reason: "Cancelled before payment was captured. Nothing was charged.",
+      reason: paymentCaptured
+        ? "Cancelled. The previously captured payment keeps its refund history; this cancellation issued no additional refund."
+        : "Cancelled before payment was captured. Nothing was charged.",
     });
 
     sendBookingCancelledEmail(
@@ -635,21 +720,36 @@ async function performBookingCancellation(
         refundAmountCents: 0,
         refundPercentage: 0,
         refundMethod: "card",
-        message:
-          xeroClearingAmountCents > 0
+        message: paymentCaptured
+          ? "Booking cancelled. The payment's existing refund history is unchanged; no additional refund was issued."
+          : xeroClearingAmountCents > 0
             ? "Booking cancelled. Any outstanding Xero invoice balance is being cleared."
             : "Booking cancelled. No refund applicable.",
       },
     };
   }
 
+  // #1491 (review): a captured Internet Banking payment has no Stripe intent
+  // to refund — "card" would plan zero Stripe slices yet still record a
+  // REFUNDED event, email "refund processed", and book a Xero cash-refund
+  // credit note for money that never moved. Bank-transfer money always
+  // refunds as account credit, so the method is coerced BEFORE the tier is
+  // computed (credit and card tiers can differ) and everything downstream —
+  // policy math, branches, events, emails, audit — sees one consistent
+  // method. The cancel-preview surface returns both methods' figures, so
+  // preview parity holds.
+  if (booking.payment?.source === "INTERNET_BANKING") {
+    refundMethod = "credit";
+  }
+
   // ── PAID PATH: single-flight claim-first (#1160) ──────────────────
   //
   // Phase 1 (tx1) is a DB-only critical section under the global booking
   // advisory lock. It re-reads the booking under the lock, freezes the refund
-  // plan from that locked read, flips status to CANCELLED, and — for the
-  // credit path — writes the refund-allocation + credit ledger entries
-  // atomically with that flip. NO Stripe/Xero calls happen inside tx1.
+  // plan from that locked read, flips status to CANCELLED, and — atomically
+  // with that flip — writes the refund-allocation + credit ledger entries
+  // (credit path) or the refund-recovery operation with its frozen allocation
+  // plan (card path, F2 #1349). NO Stripe/Xero calls happen inside tx1.
   //
   // The atomic status flip is the single-flight CLAIM and the only
   // idempotency guarantee this path needs. The credit writers
@@ -675,12 +775,67 @@ async function performBookingCancellation(
     if (
       !fresh ||
       !CANCELLABLE_BOOKING_STATUSES.includes(fresh.status) ||
-      !fresh.payment ||
-      fresh.payment.status !== "SUCCEEDED"
+      !fresh.payment
     ) {
       return { claimed: false as const };
     }
+    // #1491: the same paid-path eligibility as the outer gate, re-derived
+    // under the lock (the outer read is stale by definition here). A
+    // genuinely captured PARTIALLY_REFUNDED payment claims; the folded-mirror
+    // never-captured shape never reaches this transaction (outer gate), and
+    // if racing writes degrade the payment between the reads, refusing the
+    // claim (409) is the safe outcome.
+    const freshPaidPathEligible = await paymentEligibleForPaidCancelPath(
+      fresh.payment,
+      tx
+    );
+    if (!freshPaidPathEligible) {
+      return { claimed: false as const };
+    }
     const payment = fresh.payment;
+
+    // #1491 (review): materialize any folded (mirror-only) refund into the
+    // capture ledger BEFORE executing new refunds. The inbound reconcile
+    // folds invoice-applied modification credit notes into the payment
+    // mirror's refundedAmountCents without touching transaction rows; the
+    // refund writers below end by recomputing the mirror from the ledger sum
+    // (reconcilePaymentAggregates), which would silently erase that folded
+    // history — and the allocation planners would treat the folded money as
+    // still refundable. Attributing the fold to the captured rows (oldest
+    // first, capped at each row's headroom) keeps mirror and ledger telling
+    // the same story and tightens the planners' caps.
+    if (payment.status === "PARTIALLY_REFUNDED") {
+      const capturedRows = await tx.paymentTransaction.findMany({
+        where: {
+          paymentId: payment.id,
+          status: {
+            in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+          },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, amountCents: true, refundedAmountCents: true },
+      });
+      const ledgerRefundedCents = capturedRows.reduce(
+        (sum, row) => sum + row.refundedAmountCents,
+        0
+      );
+      let foldedCents = payment.refundedAmountCents - ledgerRefundedCents;
+      for (const row of capturedRows) {
+        if (foldedCents <= 0) {
+          break;
+        }
+        const headroomCents = row.amountCents - row.refundedAmountCents;
+        if (headroomCents <= 0) {
+          continue;
+        }
+        const bumpCents = Math.min(headroomCents, foldedCents);
+        await tx.paymentTransaction.update({
+          where: { id: row.id },
+          data: { refundedAmountCents: row.refundedAmountCents + bumpCents },
+        });
+        foldedCents -= bumpCents;
+      }
+    }
 
     // Freeze the refund plan from the LOCKED read. Change fees (from prior
     // booking modifications) are non-refundable per FEE-03. The refundable
@@ -746,6 +901,45 @@ async function performBookingCancellation(
           paymentIntentId: payment.additionalPaymentIntentId,
           store: tx,
         });
+        // F1 (#1350): persist a durable CANCEL_PAYMENT_INTENT recovery
+        // operation ATOMICALLY with the claim. The Phase-2 Stripe cancel of
+        // this intent is best-effort only, so without this row a member
+        // confirming the additional payment in a stale tab as/after the
+        // cancel commits was charged for a CANCELLED booking with no refund
+        // and no alert. With the row, the recovery cron cancels the intent
+        // (or, if Stripe already captured, hands it off to a full refund),
+        // and the payment_intent.succeeded webhook's superseded-intent hook
+        // routes a racing capture straight to refund recovery.
+        const additionalTransaction = await tx.paymentTransaction.findFirst({
+          where: {
+            paymentId: payment.id,
+            stripePaymentIntentId: payment.additionalPaymentIntentId,
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, amountCents: true },
+        });
+        if (additionalTransaction) {
+          await enqueuePaymentIntentCancellationRecovery({
+            bookingId,
+            paymentId: payment.id,
+            paymentTransactionId: additionalTransaction.id,
+            paymentIntentId: payment.additionalPaymentIntentId,
+            amountCents: additionalTransaction.amountCents,
+            store: tx,
+          });
+        } else {
+          // No ledger row for the outstanding intent (legacy mirror-only
+          // payment): the webhook status guard (#1350 part 1) remains the
+          // backstop for a late capture.
+          logger.warn(
+            {
+              bookingId,
+              paymentId: payment.id,
+              additionalPaymentIntentId: payment.additionalPaymentIntentId,
+            },
+            "No payment transaction row for outstanding additional intent; skipping durable cancellation recovery enqueue"
+          );
+        }
       }
     }
 
@@ -769,6 +963,40 @@ async function performBookingCancellation(
       );
     }
 
+    // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the
+    // recovery operation — with the refund allocation frozen from this locked
+    // read — BEFORE any external call, mirroring group-cancel's
+    // persist-the-plan-first pattern. A process death anywhere between this
+    // commit and the Stripe refund (a window that includes the Phase-2
+    // best-effort Stripe cancel of any additional intent, i.e. a network
+    // call) now leaves a PENDING operation the recovery cron replays instead
+    // of a silently lost refund; a re-invoked cancel 409s by design and could
+    // never re-drive it. The frozen plan makes inline-vs-cron replay
+    // exactly-once by construction: both execute the identical slices, so
+    // they mint identical `booking_cancel_refund_<bookingId>_<txn>_<amount>`
+    // Stripe keys, Stripe answers repeats with the original refunds, and the
+    // ledger dedupes on refund id.
+    let cardRefundPlan: RefundAllocationSlice[] | null = null;
+    let plannedCardRefundCents = 0;
+    if (refundMethod === "card" && refundAmountCents > 0) {
+      const { slices, plannedAmountCents } = await planStripeRefundAllocation({
+        paymentId: payment.id,
+        amountCents: refundAmountCents,
+        store: tx,
+      });
+      cardRefundPlan = slices;
+      plannedCardRefundCents = plannedAmountCents;
+      if (plannedCardRefundCents > 0) {
+        await enqueueBookingCancellationRefundRecovery({
+          bookingId,
+          paymentId: payment.id,
+          amountCents: plannedCardRefundCents,
+          allocationPlan: slices,
+          store: tx,
+        });
+      }
+    }
+
     return {
       claimed: true as const,
       fresh,
@@ -780,6 +1008,8 @@ async function performBookingCancellation(
       paidAmountCents,
       days,
       shouldFailAdditionalPayment,
+      cardRefundPlan,
+      plannedCardRefundCents,
     };
   });
 
@@ -803,6 +1033,8 @@ async function performBookingCancellation(
     paidAmountCents,
     days,
     shouldFailAdditionalPayment,
+    cardRefundPlan,
+    plannedCardRefundCents,
   } = claim;
   const paymentId = payment.id;
 
@@ -819,7 +1051,11 @@ async function performBookingCancellation(
   // Additional-payment-intent Stripe cancel (best-effort). The DB state was
   // already flipped to FAILED in tx1; a Stripe cancel failure here is logged,
   // not rethrown (behaviour change vs pre-#1160, which re-threw and aborted
-  // the whole cancel).
+  // the whole cancel). Durability no longer rests on this call: tx1 persisted
+  // a CANCEL_PAYMENT_INTENT recovery operation (F1, #1350), so a failure here
+  // is retried by the recovery cron, and a capture that wins the race is
+  // handed off to a full refund by the cron or the webhook's
+  // superseded-intent hook.
   if (shouldFailAdditionalPayment) {
     try {
       await cancelOutstandingPaymentIntents({
@@ -930,43 +1166,75 @@ async function performBookingCancellation(
   // ── Card branch: Stripe refund ────────────────────────────────────
   if (refundAmountCents > 0) {
     let stripeRefundId: string | undefined;
-    try {
-      const refundResult = await refundPaymentTransactions({
-        paymentId,
-        amountCents: refundAmountCents,
-        metadata: {
-          bookingId,
-          reason: "cancellation",
-          refundPercentage: refundPercentage.toString(),
-        },
-        idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
-      });
-      stripeRefundId = refundResult.refunds[0]?.refundId;
-    } catch (err) {
-      // The claim already committed. A refund that failed partway has recorded
-      // `completedRefundCents`; anything still outstanding self-heals through
-      // the durable recovery queue, which replays the SAME Stripe key
-      // (booking_cancel_refund_<bookingId>) so a Stripe-succeeded-but-unrecorded
-      // refund is replayed, not repeated. Do NOT rethrow.
-      const completedRefundCents =
-        err instanceof PartialRefundError ? err.completedRefundCents : 0;
-      const remaining = refundAmountCents - completedRefundCents;
-      if (remaining > 0) {
-        await enqueueBookingCancellationRefundRecovery({
-          bookingId,
+
+    // The refund debt was persisted INSIDE the claim transaction (F2, #1349):
+    // a recovery operation carrying the frozen per-transaction plan committed
+    // atomically with the CANCELLED flip, so nothing below can silently lose
+    // the member's refund. The mirror-vs-ledger drift case where the plan
+    // covers less than the policy-due amount is logged here and refunds what
+    // the ledger actually shows refundable — the same net outcome the old
+    // inline derive reached via its recovery path.
+    if (plannedCardRefundCents < refundAmountCents) {
+      logger.error(
+        { bookingId, paymentId, refundAmountCents, plannedCardRefundCents },
+        "Cancellation refund plan covers less than the policy-due amount; refunding what the payment ledger shows refundable"
+      );
+    }
+
+    if (cardRefundPlan && plannedCardRefundCents > 0) {
+      try {
+        const refundResult = await refundPaymentTransactions({
           paymentId,
-          amountCents: remaining,
-        }).catch((enqueueErr) =>
+          amountCents: plannedCardRefundCents,
+          allocation: cardRefundPlan,
+          // #1494: shared with the recovery cron's replay so the two send a
+          // byte-identical request body under the same
+          // `booking_cancel_refund_<bookingId>` idempotency key. The metadata
+          // deliberately no longer carries refundPercentage — a per-cancellation
+          // value the cron cannot reconstruct from the persisted operation,
+          // which is what made a lost-recording replay diverge and hit Stripe's
+          // idempotency_error. refundPercentage still drives the audit/event/
+          // email narrative below; it just no longer rides in the Stripe body.
+          metadata: buildBookingCancellationRefundMetadata(bookingId),
+          idempotencyKeyPrefix: `booking_cancel_refund_${bookingId}`,
+        });
+        stripeRefundId = refundResult.refunds[0]?.refundId;
+        // Happy-path close of the pre-persisted operation. Best-effort: if
+        // this write is lost the cron replays the frozen plan, Stripe answers
+        // the repeated keys with the original refunds, and the operation
+        // completes with no second money movement.
+        await markBookingCancellationRefundRecoverySucceeded({
+          bookingId,
+        }).catch((markErr) =>
           logger.error(
-            { err: enqueueErr, bookingId, paymentId, remaining },
-            "Failed to enqueue booking cancellation refund recovery"
+            { err: markErr, bookingId, paymentId },
+            "Failed to mark booking cancellation refund recovery succeeded; the cron will replay the frozen plan idempotently"
           )
         );
+      } catch (err) {
+        // The claim already committed and the recovery operation already
+        // exists with the frozen plan, so there is nothing to enqueue here
+        // (pre-#1349 this catch was the ONLY place the debt was recorded —
+        // and its own failure was swallowed). A partial success has recorded
+        // its completed slices; the cron replays the SAME plan and keys, so
+        // completed slices are replayed by Stripe, not repeated, and only the
+        // remainder moves money. Do NOT rethrow.
+        const completedRefundCents =
+          err instanceof PartialRefundError ? err.completedRefundCents : 0;
+        await recordBookingCancellationRefundRecoveryInlineError({
+          bookingId,
+          message: err instanceof Error ? err.message : String(err),
+        }).catch((recordErr) =>
+          logger.error(
+            { err: recordErr, bookingId, paymentId },
+            "Failed to record inline cancellation refund failure on the recovery operation"
+          )
+        );
+        logger.error(
+          { err, bookingId, paymentId, refundAmountCents, completedRefundCents },
+          "Booking cancellation card refund failed; booking stays CANCELLED and the pre-persisted recovery operation replays the remainder"
+        );
       }
-      logger.error(
-        { err, bookingId, paymentId, refundAmountCents, completedRefundCents },
-        "Booking cancellation card refund failed; booking stays CANCELLED and the remainder is enqueued for recovery"
-      );
     }
 
     // Queue the Xero credit note durably (allocated against the original invoice).
@@ -1213,6 +1481,75 @@ async function recordCancellationEvent(params: {
       changeFeeCents: params.changeFeeCents,
     },
   });
+}
+
+// #1491: paid-cancel-path eligibility, shared with the cancel-preview route
+// so the preview can never contradict the executed money outcome. A
+// PARTIALLY_REFUNDED payment is eligible only on LEDGER evidence (a captured
+// transaction row) — never the mirror fallback below — because the paid
+// path's refund executors allocate against ledger rows: a mirror-only legacy
+// payment would claim and then throw (credit method) or plan zero slices
+// (card method). Mirror-only rows stay in the preserve branch (#1473).
+export async function paymentEligibleForPaidCancelPath(
+  payment: { id: string; status: string } | null | undefined,
+  db: Prisma.TransactionClient | typeof prisma = prisma
+) {
+  if (!payment) {
+    return false;
+  }
+  if (payment.status === "SUCCEEDED") {
+    return true;
+  }
+  if (payment.status !== "PARTIALLY_REFUNDED") {
+    return false;
+  }
+  const capturedTransaction = await db.paymentTransaction.findFirst({
+    where: {
+      paymentId: payment.id,
+      status: {
+        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(capturedTransaction);
+}
+
+// #1473/#1491: capture evidence for cancel-time decisions. Ledger truth
+// first — any transaction row that holds/held money — because the aggregate
+// mirror lies in both directions: the inbound reconcile folds invoice-applied
+// modification credit notes into refundedAmountCents/PARTIALLY_REFUNDED on
+// never-captured IB payments (pure bookkeeping, zero cash), and the pre-#1473
+// cancel flow used to flatten captured statuses to FAILED. For STRIPE rows
+// with no ledger rows (pre-ledger data) the refund mirror IS trustworthy:
+// Stripe refunds require a captured charge, and the invoice-side fold cannot
+// reach an uncaptured Stripe booking (its Xero invoice is only issued
+// at/after capture).
+async function paymentHasCaptureEvidence(
+  payment: {
+    id: string;
+    source: string;
+    status: string;
+    refundedAmountCents: number;
+  },
+  db: Prisma.TransactionClient | typeof prisma = prisma
+) {
+  const capturedTransaction = await db.paymentTransaction.findFirst({
+    where: {
+      paymentId: payment.id,
+      status: {
+        in: ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"],
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(
+    capturedTransaction ||
+      (payment.source === "STRIPE" &&
+        (payment.status === "REFUNDED" ||
+          payment.status === "PARTIALLY_REFUNDED" ||
+          payment.refundedAmountCents > 0))
+  );
 }
 
 function hasOutstandingAdditionalPaymentIntent(

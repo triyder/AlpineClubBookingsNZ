@@ -45,7 +45,6 @@ export interface BookingEditorData {
   nights: number;
   status: string;
   guests: Guest[];
-  bookingMemberId: string;
   viewerRole: string;
   totalPriceCents: number;
   discountCents: number;
@@ -55,6 +54,7 @@ export interface BookingEditorData {
   hasNonMembers: boolean;
   nonMemberHoldUntil: string | null;
   canEditNonMemberGuestNames: boolean;
+  canFixNonMemberGuestNameTypos: boolean;
   editPolicy: EditPolicyInfo;
 }
 
@@ -83,7 +83,6 @@ export function BookingEditor({
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guests: booking.guests,
-          bookingMemberId: booking.bookingMemberId,
           viewerRole: booking.viewerRole,
           finalPriceCents: booking.finalPriceCents,
           totalPriceCents: booking.totalPriceCents,
@@ -91,6 +90,7 @@ export function BookingEditor({
           promoAdjustmentCents: booking.promoAdjustmentCents,
           promo: booking.promo,
           canEditNonMemberGuestNames: booking.canEditNonMemberGuestNames,
+          canFixNonMemberGuestNameTypos: booking.canFixNonMemberGuestNameTypos,
           editPolicy: booking.editPolicy,
         }}
         onDone={() => setEditing(false)}

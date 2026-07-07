@@ -31,7 +31,40 @@ an accepted-but-unpaid hold is NOT protected against a *capacity reduction* — 
 an admin lowers the lodge capacity for those nights below what is booked, the
 `cron-confirm-pending` job bumps/cancels the still-unpaid hold at its hold
 deadline (no charge). Only an admin capacity cut can reclaim the bed; competing
-member bookings still cannot.
+member bookings still cannot. The admin "Confirm pending guests" override
+(`/api/admin/bookings/[id]/confirm-pending-guests`) now runs the same
+`pg_advisory_xact_lock(1)` re-read + capacity re-check before flipping a booking
+to a capacity-holding status on its zero-dollar and charge-saved-card branches,
+returning 409 unless an explicit overbook is requested (#1366). Its
+charge-saved-card branch follows the cron's claim-first shape (#1418): claim
+`PENDING -> CONFIRMED` (hold cleared) under the lock, charge outside it, then
+promote to PAID. A failed or requires-action charge releases the claim back to
+`PENDING` with the hold restored and (on failure) alerts admins; a captured
+charge is durably recorded as a PRIMARY payment transaction before promotion,
+so if the promotion fails the booking stays CONFIRMED holding its beds, admins
+are alerted, and the Stripe webhook finishes the promotion idempotently —
+captured money is never silently orphaned.
+
+Lodge check-in gate (F27 / #1372 + #1422) — status-preserving. A booking that
+carries a pending admin review (`requiresAdminReview` true and
+`adminReviewStatus = PENDING`) is BLOCKED from lodge check-in, but the block
+never changes the booking's status. The canonical case is a paid booking edited
+down to only under-18 guests (no adult): it stays PAID (captured-money
+invariant, #1100) yet cannot arrive until an admin clears the review. The block
+is reason-agnostic (#1422): any pending admin review gates check-in — today
+adult-supervision is the only such reason, but a future review type inherits the
+gate automatically. Enforcement is a single shared where-fragment
+(`checkinNotBlockedByPendingReviewFilter` in `src/lib/booking-review.ts`) applied
+to the arrive/depart and roster generate/confirm queries, so a blocked booking's
+guest resolves to null server-side (arrive returns 404, roster-confirm 400) — the
+block is safe because every lodge query already restricts to the operational
+stay statuses (PAID/COMPLETED), so no parked `AWAITING_REVIEW` booking is
+over-blocked. The lodge guest list (the check-in roster staff read on the kiosk)
+INCLUDES the blocked booking but flags it "Blocked from Check-In — see Booking
+Officer" and disables its arrival toggle — shown, not hidden, yet still
+un-arrivable server-side (defense in depth). The check-in reminder cron skips
+blocked bookings, and the review-required admin alert fires on its own
+notification preference so muting routine new-booking alerts does not silence it.
 
 To verify in later review: exact terminal transitions, non-member hold expiry,
 school group `CONFIRMED` semantics, and payment-failure back paths.
@@ -53,7 +86,25 @@ idempotent because the first run persists the per-child refund plan
 reconstructs that plan verbatim (never recomputes — a >24h re-drive can land in
 a different cancellation tier) and applies the per-child `refundedAmountCents`
 mirror, and the `SUCCEEDED` guard plus the Stripe idempotency key fire the
-refund at most once.
+refund at most once. Each child's Xero refund credit-note outbox row is enqueued
+**inside the same transaction** as that child's cancel + refund mirror
+(#1257/#1377), so a crash can never leave a `CANCELLED` child with its mirror
+written but no credit-note operation queued — durable for every source,
+including Internet-Banking children the #1354 self-heal cannot recover. Only the
+outbox worker kick stays best-effort and post-commit.
+
+A transient Stripe failure during that settlement refund no longer abandons it
+(#1351, owner-decided durable auto-retry). A recovery operation is persisted
+**before** the inline refund (closed on the happy path) and the frozen plan is
+kept, never nulled: the payment-recovery cron replays the refund under the
+same `group_cancel_refund_<settlementId>` Stripe key — so an ambiguous failure
+where Stripe actually refunded is replayed, not repeated — flips the
+settlement, applies the per-child `refundedAmountCents` mirrors idempotently
+(only to already-`CANCELLED` plan children whose mirror is still zero; ACTIVE
+children stay owned by the reaper resume path), and enqueues the per-child
+Xero credit notes. Admins are alerted only when the retries exhaust, and the
+stuck-state dashboard flags any `SUCCEEDED` settlement under a `CANCELLED`
+group whose refund plan has not executed.
 
 Booking quote and create paths reject a linked member who is already present on
 another live booking for any requested lodge night. The guard covers draft,
@@ -65,17 +116,44 @@ future booking when they are not the last guest.
 Cancelling a paid booking is single-flight (#1160). The refund plan is frozen
 from a re-read taken under the global booking advisory lock, and the status
 flips to `CANCELLED` atomically with the credit-path ledger writes (refund
-allocation + cancellation credit) inside that same transaction. A concurrent
+allocation + cancellation credit) — or, on the card path, with the durable
+refund-recovery operation carrying the per-transaction allocation frozen from
+that same locked read (#1349) — inside that same transaction. A concurrent
 cancel or a retry that loses the claim re-reads the already-cancelled booking
 and returns HTTP 409 without moving any money — no description-string
 idempotency guard is needed because the claim itself guarantees the credit
-writers run exactly once. Stripe/Xero work runs only after the claim commits: a
-failed card refund still leaves the booking `CANCELLED` and enqueues the
-outstanding remainder to the durable payment-recovery queue (which replays the
-inline `booking_cancel_refund_<bookingId>` Stripe key, so a
-Stripe-succeeded-but-unrecorded refund is replayed, not repeated), and the
-best-effort cancellation of any outstanding additional PaymentIntent is logged
-rather than allowed to abort the committed claim.
+writers run exactly once. Stripe/Xero work runs only after the claim commits.
+Because the card-refund debt is persisted *before* the inline Stripe call, a
+process death anywhere between the claim commit and the refund leaves a
+`PENDING` recovery operation the payment-recovery cron replays — not a
+silently lost refund (the pre-#1349 catch-only enqueue recorded the debt only
+if the refund *threw*). The inline refund executes the operation's frozen
+slices and marks it `SUCCEEDED` on completion; inline and cron therefore mint
+identical `booking_cancel_refund_<bookingId>` Stripe idempotency keys **and send
+a byte-identical request body** (#1494) — both build the refund metadata from
+the shared `buildBookingCancellationRefundMetadata` helper
+(`{ bookingId, reason: "cancellation" }`, deliberately carrying no
+per-cancellation value the cron cannot reconstruct from the persisted
+operation), so a Stripe-succeeded-but-unrecorded refund (or a cron tick racing
+the inline call) is replayed by Stripe, never repeated and never rejected as an
+`idempotency_error` for a reused key with mismatched parameters. An outstanding additional
+PaymentIntent is retired durably (#1350): the claim transaction persists a
+`CANCEL_PAYMENT_INTENT` recovery operation alongside the FAILED flip, the
+Phase-2 inline Stripe cancel stays best-effort (logged, never allowed to
+abort the committed claim), and the recovery cron finishes the job — a
+still-cancellable intent is cancelled, while one Stripe already captured is
+handed off to a full refund. A capture that races the webhook is caught
+twice over: the `payment_intent.succeeded` superseded-intent hook routes
+intents with a cancellation-recovery row straight to refund recovery, and the
+`modification_additional` handler status-guards CANCELLED bookings — the
+capture is recorded truthfully, refunded in full under the idempotent
+`late_cancel_refund_<bookingId>_<intentId>` key, alerted to admins, and the
+supplementary Xero invoice is never released (a race that already released it
+gets a delta-capped corrective refund credit note instead). As a backstop
+detector, the admin stuck-state dashboard flags recent `CANCELLED` bookings
+whose captured payment shows no recorded refund, no recovery operation, and
+no cancellation narrative event — the crash-window signature that previously
+fired nothing.
 
 Cancelling a no-payment booking (`WAITLISTED`, `WAITLIST_OFFERED`,
 `AWAITING_REVIEW`) is likewise status-guarded claim-first under the SAME global
@@ -89,6 +167,20 @@ the status is still one of the three no-payment states; if a concurrent accept
 runs no side effects (no status flip, pointer detach, bed reconcile, audit,
 email, or waitlist re-process), so a just-accepted booking is never clobbered
 back to `CANCELLED`.
+
+That under-lock re-guard catches an accept committing AFTER the cancel's
+under-lock read, but the cancel *dispatches its branch* from an earlier OUTER,
+un-locked read. So the two callers that exist to release a held request — the
+admin **Release hold** route and the decline path — pass a `requireRequestHold`
+flag: if that outer read already shows the hold has left `AWAITING_REVIEW` (e.g.
+a concurrent quote-accept flipped it to `PENDING`), the cancel refuses with HTTP
+409 and takes no side effect, rather than dispatching into the generic `PENDING`
+cancel branch and cancelling the just-accepted booking / revoking its brand-new
+payment links (#1406). The two guards close the race together: the flag covers
+an accept that commits before the outer read, the under-lock re-read covers one
+that commits after it. Callers cancelling a genuine member-created `PENDING`
+booking (member self-cancel, account-deletion cleanup) never set the flag and
+are unaffected.
 
 ### BookingEvent Scope
 
@@ -146,6 +238,9 @@ SENT  -> SUPERSEDED (requester asks a question / requests changes, or admin issu
                the hold is retained across a re-quote for the same dates, but if the request
                settles in MODIFICATION_REQUESTED / QUERY_PENDING with no outstanding quote the
                quote-expiry cron auto-releases the hold once the last response window lapses, #1254)
+SENT  -> SUPERSEDED (admin DECLINES the request; the outstanding quote is retired in the SAME
+               transaction as the DECLINED claim so no requester action or reminder cron can act
+               on it — SUPERSEDED = admin retired it, distinct from a requester-cancel CANCELLED, #1423)
 SENT  -> (link expires; the quote-expiry cron releases the held booking, frees the beds, and
           detaches heldBookingId — the request stays QUOTE_SENT so an admin can re-quote)
 ```
@@ -158,11 +253,73 @@ PENDING booking and keeps holding, see the booking-status section above) and is
 released on cancel, expiry, or a capacity-reduction bump (see the #1317 note in
 the booking-status section above).
 
-Auto-hold-on-send does not retire the manual **Hold slots** admin action — it is
-deliberately kept (owner-ratified, #1317). Holding slots is still valid *before*
-a quote is sent (e.g. reserve the beds while pricing, or while confirming the
-booking contact), so it is a pre-quote manual hold rather than a redundant one;
-sending the quote then reuses that hold idempotently. The hold scope covers every
+Decline and the hold (#1365, broadened #1423): the admin **decline** route
+declines a request in any of the six held/editor states its status-guarded flip
+claims — `VERIFIED`, `PRICED`, `QUOTED`, `QUOTE_SENT`, `QUERY_PENDING`,
+`MODIFICATION_REQUESTED` (`DECLINABLE_BOOKING_REQUEST_STATUSES`). This is the same
+set the admin panel shows the Decline button for, and every one can carry a live
+`AWAITING_REVIEW` hold (a SCHOOL **manual** hold via `holdBookingRequestSlots`, or
+the auto-hold-on-send #1280). A terminal/converted state
+(`APPROVED`/`CONVERTED`/`DECLINED`/`CANCELLED`) or `NEW` is NOT in that set, so
+decline `409`s and leaves any hold untouched. It runs **claim-first**: the
+`DECLINED` flip happens FIRST, so a wrong-state decline never touches the held
+booking; only AFTER the request is actually claimed does it release the hold via
+the shared cancel path — cancelling the `AWAITING_REVIEW` held booking,
+reconciling away its beds, and detaching `heldBookingId`, with the requester's
+cancellation email suppressed (an admin decision, not a requester cancellation).
+A held pointer that is stale or no longer a live `AWAITING_REVIEW` hold is simply
+detached. SCHOOL requests use the same function (no type branch).
+
+Because `QUOTE_SENT` (and other quote-bearing states) DO carry a live `SENT`
+quote a requester could still act on, broadening decline reintroduces a
+decline-vs-requester race. A DECLINED request is made untouchable by every other
+actor:
+
+- **Primary — retire the quote atomically with the claim.** The decline flips the
+  outstanding `SENT` quote to `SUPERSEDED` in the SAME transaction as the
+  `DECLINED` claim (and only when the claim actually landed, so a wrong-state
+  decline still touches nothing). Since `loadSentQuoteByToken` requires
+  `status === SENT`, this alone `409`s all four requester quote actions
+  (accept / modify / query / cancel) on a still-live link, and makes the
+  pre-expiry reminder cron — which selects only `SENT` quotes — skip the declined
+  request instead of nudging it.
+- **accept-wins-first:** the requester accept converts the held booking to a live
+  `PENDING` booking before the decline runs. Decline passes `requireRequestHold:
+  true` to the shared cancel path (#1406), which then refuses (`409`, no side
+  effect) rather than clobber the just-converted booking.
+- **decline-wins-first (defence-in-depth for a POST already past its token
+  load):** the decline claims `DECLINED` and releases the hold first
+  (`heldBookingId` detached, `convertedBookingId` still null). The concurrent
+  requester's accept re-arm to `PRICED`, its modify/query re-status to
+  `MODIFICATION_REQUESTED`/`QUERY_PENDING`, and the losing-accept capacity revert
+  to `QUOTE_SENT` are each a **status-guarded** `updateMany` with `status notIn
+  [DECLINED, CANCELLED]`. A late accept or modify/query `409`s (no new booking and
+  no resurrection), and the revert simply does not un-decline the request. The
+  guards deliberately still allow a re-arm from `CONVERTED`/`APPROVED` so approve's
+  `convertedBookingId` idempotency replay (#1232 double-accept) keeps returning the
+  one existing booking.
+
+**Lock-ordering invariant (#1423):** every transaction that writes both a
+`BookingRequest` row and its `BookingRequestQuote` row(s) — the decline claim +
+quote retirement, quote create, quote send, and the requester cancel /
+modify / query — must lock the `BookingRequest` row FIRST, then the quote row(s).
+Decline is claim-first and cannot swap, so all the others match its order; a
+mismatched order lets a concurrent decline deadlock them (Postgres `40P01`), which
+would surface as an unhandled `500` instead of a clean `409`. Preserve this order
+when editing these paths.
+
+As of #1385 the manual **Hold slots** admin UI entry is hidden on the generic
+(non-SCHOOL) quote flow: auto-hold-on-send (#1280) reserves the beds across the
+whole quote lifecycle, so a separate manual hold there is redundant and confusing.
+This **supersedes** the earlier #1317 stance that the manual hold was deliberately
+kept for all flows — that "kept for all flows" position now applies to SCHOOL only.
+The manual Hold slots button is retained ONLY for SCHOOL requests, where it stays
+meaningful: a school can be approved DIRECTLY without a sent quote and school
+approval reuses the held booking (#1352), so the admin may need to reserve
+capacity before that direct approval. The hold action itself (the
+`/api/admin/booking-requests/[id]/hold` route and `holdBookingRequestSlots`) is
+unchanged and stays type-agnostic — only the UI entry point is gated, and sending
+a quote still reuses any existing hold idempotently. The hold scope covers every
 request-converted PENDING booking, including requests approved DIRECTLY without a
 quote — intended.
 
@@ -174,6 +331,13 @@ Token-link outcomes the requester can see:
 - Past expiry: `410` "This quote has expired." with a recover-by-contacting-the-club path.
 - Accept after the lodge fills: the request reverts to `QUOTE_SENT`, the link stays
   active, and the requester is told which nights are now full.
+- Any action after an admin declined the request (#1423): the decline retired the
+  quote (`SENT` -> `SUPERSEDED`), so the link now returns the `409` "This quote is
+  no longer active." above for accept / modify / query / cancel alike. In the rare
+  case a requester POST loaded the still-`SENT` quote a moment before the
+  retirement committed, the status-guarded re-arm / re-status is the backstop and
+  `409`s ("...has been declined or cancelled."), creating no booking and never
+  resurrecting the request.
 - Accept racing the expiry / hold-release cron (owner-ratified, #1317): harmless.
   The accept and the cron both serialize on the booking advisory lock, so at most
   one side wins; the loser gets a safe conflict response it can retry, the quote
@@ -201,8 +365,9 @@ request that has no outstanding SENT quote, once the latest response window
 "please change X" / "I have a question" bounce would hold a bed indefinitely.
 This release only fires when the held booking was itself placed on or before
 that deadline: a hold that post-dates the lapsed window — e.g. an admin manually
-re-held the request via "Hold slots" after its original quote window had passed —
-is kept, so the next cron tick never undoes the deliberate re-hold (#1296).
+re-held a SCHOOL request via "Hold slots" (now a school-only UI action, #1385)
+after its original quote window had passed — is kept, so the next cron tick never
+undoes the deliberate re-hold (#1296).
 
 Because an admin can cancel a held booking directly (every sent quote leaves one,
 tagged "Held" on the bed board), `heldBookingId` is detached wherever such a hold
@@ -239,6 +404,14 @@ PENDING -> PROCESSING -> SUCCEEDED
 PENDING/PROCESSING -> FAILED
 SUCCEEDED -> PARTIALLY_REFUNDED -> REFUNDED
 ```
+
+Booking cancellation honors these transitions (#1473): only a never-captured
+payment flips to FAILED at cancel, decided on transaction-ledger capture
+evidence — the aggregate mirror alone can lie, because inbound reconciliation
+folds modification credit notes into `refundedAmountCents` /
+`PARTIALLY_REFUNDED` on never-captured Internet Banking payments (see
+`docs/DOMAIN_INVARIANTS.md`). Genuinely captured payments survive the cancel
+unchanged — there is no transition out of the refunded states.
 
 To verify: whether Internet Banking uses the same `PaymentStatus` transitions
 or Xero invoice state as the effective settlement state.

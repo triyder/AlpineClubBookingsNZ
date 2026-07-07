@@ -54,6 +54,11 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     description:
       "Alerts when a public booking request is verified and ready for pricing, or when a request booking's hold expires unpaid.",
   },
+  adminBookingReviewRequired: {
+    label: "Booking review required",
+    description:
+      "Alerts when a booking needs admin review before it can check in, such as a paid booking left with only under-18 guests. Kept separate so muting routine new-booking alerts does not silence this review alert.",
+  },
 } as const;
 
 export type AdminNotificationPreferenceKey =
@@ -82,6 +87,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminRefundRequest: true,
   adminIssueReport: true,
   adminBookingRequest: true,
+  adminBookingReviewRequired: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -101,5 +107,6 @@ export function resolveAdminNotificationPreferences(
     adminRefundRequest: preferences?.adminRefundRequest ?? true,
     adminIssueReport: preferences?.adminIssueReport ?? true,
     adminBookingRequest: preferences?.adminBookingRequest ?? true,
+    adminBookingReviewRequired: preferences?.adminBookingReviewRequired ?? true,
   };
 }

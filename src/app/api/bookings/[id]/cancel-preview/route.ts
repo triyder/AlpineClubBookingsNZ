@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
+import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
@@ -56,11 +57,15 @@ export async function GET(
       );
     }
 
-    // PENDING bookings — no payment taken
+    // PENDING bookings — no payment taken. #1491: paid-path eligibility is
+    // shared with cancelBooking (SUCCEEDED, or PARTIALLY_REFUNDED with a
+    // captured ledger row) so the preview can never show $0 for a cancel
+    // that would refund the policy tier of the remaining captured value —
+    // or phantom money for the folded-mirror never-captured population.
     if (
       booking.status === "PENDING" ||
       !booking.payment ||
-      booking.payment.status !== "SUCCEEDED"
+      !(await paymentEligibleForPaidCancelPath(booking.payment))
     ) {
       return NextResponse.json({
         refundAmountCents: 0,

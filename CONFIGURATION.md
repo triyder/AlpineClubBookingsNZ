@@ -43,7 +43,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `beds[].name`                                      | yes      | User-facing bed/lodge name.                                                                                      |
 | `beds[].capacity`                                  | yes      | Positive integer fallback/import capacity.                                                                       |
 | `beds[].type`                                      | yes      | One of `dormitory`, `private`, or `shared`.                                                                      |
-| `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`.                                                                   |
+| `ageTiers[].id`                                    | yes      | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. (`NOT_APPLICABLE` is the fixed organisation/school tier — server-managed, never configured here.) |
 | `ageTiers[].label`                                 | yes      | User-facing age-tier label.                                                                                      |
 | `ageTiers[].minAge`                                | yes      | Minimum age, inclusive.                                                                                          |
 | `ageTiers[].maxAge`                                | yes      | Maximum age, inclusive, or `null` for no upper bound.                                                            |
@@ -259,6 +259,32 @@ Admin > Setup includes lodge-wide settings stored in the singleton
   dashboard, the hut-leader assignment API, and the queue-driven Needs
   Attention sidebar item.
 
+## Hut Leaders
+
+A hut-leader assignment (`/admin/hut-leaders`) is a date-ranged roster record
+that issues a dedicated lodge kiosk PIN for the assigned member (the plaintext
+PIN is shown only once, when it is issued or reset) — it is not a role or
+access-role capability. Assignment is admin-controlled; completing a Hut Leader
+Induction only sets `Member.hutLeaderEligible` and never creates or dates an
+assignment.
+
+The New Assignment picker is **booking-derived**. It lists only adult members
+who both hold the standard member (`USER`) access role and have an operational
+booking overlapping the selected date range, so a season-long custodian who has
+no booking never appears — and the create API rejects any member who lacks the
+`USER` role.
+
+To roster a custodian who has no booking of their own (the ratified workaround):
+
+1. On Promo Codes, create a 100%-off code covering the custodian's stay.
+2. On Book on Behalf, book the custodian's lodge nights and apply the free code
+   so the stay costs nothing.
+3. Confirm the custodian's account still has the standard member (`USER`) role
+   ticked — a member whose only roles are custom (definition-backed) roles
+   cannot be assigned as hut leader.
+4. Return to `/admin/hut-leaders`, choose the matching dates, and assign the
+   custodian as normal; they now appear in the picker and receive a lodge PIN.
+
 ## Required Local Setup Variables
 
 These are enough for a local database-backed app with external services left in
@@ -278,6 +304,7 @@ test/demo mode or disabled:
 | `SEED_ADMIN_FIRST_NAME` | Optional first name for the seeded admin; defaults to `Admin`.   |
 | `SEED_ADMIN_LAST_NAME`  | Optional last name for the seeded admin; defaults to `User`.     |
 | `SEED_LODGE_PASSWORD`   | Initial password for the seeded shared lodge kiosk account.      |
+| `ALLOW_DEMO_SEED`       | Local-only opt-in; must be `1` for `npm run db:seed:demo`.       |
 | `DEMO_SEED_PASSWORD`    | Optional local-only password for `npm run db:seed:demo` users.   |
 
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
@@ -308,11 +335,14 @@ and `NON_MEMBER` to Non-Member) using create-if-missing assignments. Re-running
 the seed does not overwrite existing seasonal assignments.
 
 `npm run db:seed:demo` is separate from the first-run seed. It is intended only
-for disposable local demo databases, refuses to run unless `DATABASE_URL`
-points at `localhost`, `127.0.0.1`, or `::1`, and deletes demo plus
-transactional rows before rebuilding a broad sample dataset. The demo seed uses
-fake emails under `demo.alpineclub.test` and fake provider identifiers only.
-Set `DEMO_SEED_PASSWORD` to override the default local demo password.
+for disposable local demo databases and must never be run on a deployment host.
+It requires `ALLOW_DEMO_SEED=1`, refuses `NODE_ENV=production`, refuses
+non-local `DATABASE_URL` hosts, and refuses to run when the `Member` table
+contains any email outside `demo.alpineclub.test`. The demo seed then deletes
+demo plus transactional rows before rebuilding a broad sample dataset. The demo
+seed uses fake emails under `demo.alpineclub.test` and fake provider
+identifiers only. Set `DEMO_SEED_PASSWORD` to override the default local demo
+password.
 
 ## Setup Readiness
 
@@ -378,11 +408,13 @@ Xero contact-group rules, and committee assignment are separate axes:
   runtime finance access.
 - `MembershipType` stores admin-configurable seasonal categories and policy:
   Full, Associate (renameable, including Reserve naming), Life, School,
-  Non-Member, Family, or club-created types. Each type carries booking behavior
-  (`MEMBER_RATE`, `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior
-  (`REQUIRED`, `NOT_REQUIRED`), allowed age tiers, and optional Xero
-  contact-group rules. Display names must be unique: creating or renaming a
-  type to a case-insensitive exact match of an existing name is rejected.
+  Non-Member, Family, or club-created types. The `/admin/membership-types`
+  page shows these as a compact ordered list; creating or editing a type opens
+  a dedicated editor for identity fields, booking behavior (`MEMBER_RATE`,
+  `NON_MEMBER_RATE`, `BLOCK_BOOKING`), subscription behavior (`REQUIRED`,
+  `NOT_REQUIRED`), allowed age tiers, and optional Xero contact-group rules.
+  Display names must be unique: creating or renaming a type to a
+  case-insensitive exact match of an existing name is rejected.
 - `AgeTierSetting` remains separate because a member can be Adult Full, Adult
   Life, Adult Associate, Child Family, Youth School, and so on. Age tiers still
   drive age-based rates and age-based default Xero grouping. Use Age Tier Xero
@@ -402,9 +434,10 @@ Xero contact-group rules, and committee assignment are separate axes:
   Existing future bookings are not automatically repriced by changing the type
   or `applyFrom` date. Production preview tokens require `AUTH_SECRET` or
   `NEXTAUTH_SECRET`; setup readiness blocks when neither secret is configured.
-- `/admin/membership-types` includes an idempotent roll-forward tool that copies
-  missing assignments from one season to another while leaving existing target
-  assignments unchanged and flagging missing or inactive-type exceptions.
+- `/admin/membership-types` includes a separate idempotent roll-forward section
+  that previews and then copies missing assignments from one season to another
+  while leaving existing target assignments unchanged and flagging missing or
+  inactive-type exceptions.
 - Committee assignment remains public/contact metadata and does not grant app
   access.
 
@@ -561,6 +594,17 @@ content is not retained in email logs. Recovery codes are generated on
 enrollment and profile regeneration, shown once, hashed at rest, and consumed
 once.
 
+> **Operational note — rotating `AUTH_SECRET`/`NEXTAUTH_SECRET` is a planned
+> event, not a casual credential refresh.** Because members' TOTP secrets and
+> recovery-code hashes are bound to key material derived from the secret,
+> rotating it **invalidates every member's enrolled authenticator and recovery
+> codes at once** — on their next sign-in each member is forced back through
+> two-factor enrollment. Schedule rotation as a maintenance action with advance
+> member communication and a support plan for anyone who cannot immediately
+> re-enroll (e.g. members who no longer have their authenticator device); never
+> rotate ad hoc. Short-lived email one-time codes are unaffected (re-issued per
+> attempt).
+
 Invalid two-factor attempts are rate-limited and tracked per member. Five
 invalid app, email, or recovery-code attempts lock the two-factor challenge for
 15 minutes. Accounts that still have `forcePasswordChange=true` must finish
@@ -587,6 +631,7 @@ invalid app, email, or recovery-code attempts lock the two-factor challenge for
 | `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`    | Enables live Xero member group lookups.                                |
 | `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS` | Enables automatic Xero contact-group loading.                          |
 | `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`     | Optional retry backoff for failed inbound Xero reconciliation.         |
+| `XERO_HTTP_TIMEOUT_MS`                     | Optional OAuth-layer HTTP timeout (identity discovery and token requests) in ms; default 10000, overriding xero-node's 3500ms. |
 
 ## Finance dashboard
 
@@ -654,13 +699,14 @@ rate-limited, or temporarily unavailable.
 
 ## Sentry
 
-| Variable                 | Description                                            |
-| ------------------------ | ------------------------------------------------------ |
-| `SENTRY_DSN`             | Server/edge Sentry DSN.                                |
-| `NEXT_PUBLIC_SENTRY_DSN` | Browser Sentry DSN.                                    |
-| `SENTRY_ORG`             | Sentry organization slug for source map uploads.       |
-| `SENTRY_PROJECT`         | Sentry project slug for source map uploads.            |
-| `SENTRY_AUTH_TOKEN`      | Sentry auth token for source map uploads during build. |
+| Variable                                  | Description                                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
+| `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
+| `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
+| `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for cron/webhook Sentry event deduplication; defaults to 300000 ms. |
 
 ## Cron, Waitlist, And Backups
 

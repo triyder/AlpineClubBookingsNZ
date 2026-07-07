@@ -66,6 +66,32 @@ describe("BookingFilters", () => {
     expect(mocks.routerPush).not.toHaveBeenCalled();
   });
 
+  it("preserves the dashboard upcoming check-ins deep link", async () => {
+    mocks.currentSearch = "upcoming=7";
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    // Regression guard for the debounced auto-apply effect: the dashboard link
+    // must keep upcoming=7 instead of pushing /admin/bookings after load.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(mocks.routerPush).not.toHaveBeenCalled();
+  });
+
+  it("renders comma-separated dashboard status deep links as the active state", async () => {
+    mocks.currentSearch = "status=PAYMENT_PENDING,CONFIRMED,PAID,PENDING";
+    setLocation(mocks.currentSearch);
+
+    render(<BookingFilters />);
+
+    expect(
+      screen.getByText("Payment Pending + Confirmed (Unpaid) + Paid + Pending"),
+    ).toBeTruthy();
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(mocks.routerPush).not.toHaveBeenCalled();
+  });
+
   it("navigates when the search input changes", async () => {
     mocks.currentSearch = "";
     setLocation("");

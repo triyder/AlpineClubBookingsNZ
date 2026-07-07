@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import logger from "./logger";
 
 export interface SuggestedFamilyGroup {
+  signature: string;
   suggestedName: string;
   reason: string;
   score: number; // Higher = more confident
@@ -14,6 +15,29 @@ export interface SuggestedFamilyGroup {
     canLogin: boolean;
     xeroContactId: string | null;
   }>;
+}
+
+function normalizeFamilySuggestionMemberIds(memberIds: string[]): string[] {
+  return [...new Set(memberIds.map((id) => id.trim()).filter(Boolean))].sort();
+}
+
+export function buildFamilySuggestionSignature(memberIds: string[]): string {
+  const sortedMemberIds = normalizeFamilySuggestionMemberIds(memberIds);
+  if (sortedMemberIds.length < 2) {
+    throw new Error("A family suggestion must include at least 2 unique members");
+  }
+  return sortedMemberIds.join("|");
+}
+
+function withSignature(
+  suggestion: Omit<SuggestedFamilyGroup, "signature">
+): SuggestedFamilyGroup {
+  return {
+    ...suggestion,
+    signature: buildFamilySuggestionSignature(
+      suggestion.members.map((member) => member.id)
+    ),
+  };
 }
 
 /**
@@ -29,21 +53,30 @@ export async function suggestFamilyGroups(): Promise<{
   suggestions: SuggestedFamilyGroup[];
   ungroupedCount: number;
   totalMembers: number;
+  hiddenCount: number;
 }> {
-  // Get all active members with their family group status
-  const allMembers = await prisma.member.findMany({
-    where: { active: true },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      email: true,
-      ageTier: true,
-      canLogin: true,
-      xeroContactId: true,
-      familyGroupMemberships: { select: { familyGroupId: true } },
-    },
-  });
+  const [allMembers, hiddenSuggestions] = await Promise.all([
+    prisma.member.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        ageTier: true,
+        canLogin: true,
+        xeroContactId: true,
+        familyGroupMemberships: { select: { familyGroupId: true } },
+      },
+    }),
+    prisma.hiddenFamilySuggestion.findMany({
+      select: { signature: true },
+    }),
+  ]);
+  const hiddenSignatures = new Set(
+    hiddenSuggestions.map((hidden) => hidden.signature)
+  );
+  const hiddenCount = hiddenSignatures.size;
 
   const totalMembers = allMembers.length;
 
@@ -54,7 +87,7 @@ export async function suggestFamilyGroups(): Promise<{
   const ungroupedCount = ungrouped.length;
 
   if (ungrouped.length < 2) {
-    return { suggestions: [], ungroupedCount, totalMembers };
+    return { suggestions: [], ungroupedCount, totalMembers, hiddenCount };
   }
 
   const suggestions: SuggestedFamilyGroup[] = [];
@@ -83,7 +116,7 @@ export async function suggestFamilyGroups(): Promise<{
       (a, b) => b[1] - a[1]
     )[0][0];
 
-    suggestions.push({
+    const suggestion = withSignature({
       suggestedName: `${commonLastName} Family`,
       reason: `${members.length} members share email ${email}`,
       score: 10,
@@ -98,8 +131,12 @@ export async function suggestFamilyGroups(): Promise<{
       })),
     });
 
-    for (const m of members) {
-      assignedMemberIds.add(m.id);
+    if (!hiddenSignatures.has(suggestion.signature)) {
+      suggestions.push(suggestion);
+
+      for (const m of members) {
+        assignedMemberIds.add(m.id);
+      }
     }
   }
 
@@ -119,34 +156,88 @@ export async function suggestFamilyGroups(): Promise<{
   for (const [, members] of lastNameGroups) {
     if (members.length < 2) continue;
 
-    suggestions.push({
-      suggestedName: `${members[0].lastName} Family`,
-      reason: `${members.length} ungrouped members share last name "${members[0].lastName}"`,
-      score: 3,
-      members: members.map((m) => ({
-        id: m.id,
-        firstName: m.firstName,
-        lastName: m.lastName,
-        email: m.email,
-        ageTier: m.ageTier,
-        canLogin: m.canLogin,
-        xeroContactId: m.xeroContactId,
-      })),
-    });
+    suggestions.push(
+      withSignature({
+        suggestedName: `${members[0].lastName} Family`,
+        reason: `${members.length} ungrouped members share last name "${members[0].lastName}"`,
+        score: 3,
+        members: members.map((m) => ({
+          id: m.id,
+          firstName: m.firstName,
+          lastName: m.lastName,
+          email: m.email,
+          ageTier: m.ageTier,
+          canLogin: m.canLogin,
+          xeroContactId: m.xeroContactId,
+        })),
+      })
+    );
   }
 
+  const visibleSuggestions = suggestions.filter(
+    (suggestion) => !hiddenSignatures.has(suggestion.signature)
+  );
+
   // Sort: highest score first, then by member count
-  suggestions.sort((a, b) => {
+  visibleSuggestions.sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
     return b.members.length - a.members.length;
   });
 
   logger.info(
-    { suggestions: suggestions.length, ungroupedCount, totalMembers },
+    {
+      suggestions: visibleSuggestions.length,
+      hiddenCount,
+      ungroupedCount,
+      totalMembers,
+    },
     "Family group suggestions generated"
   );
 
-  return { suggestions, ungroupedCount, totalMembers };
+  return {
+    suggestions: visibleSuggestions,
+    ungroupedCount,
+    totalMembers,
+    hiddenCount,
+  };
+}
+
+export async function hideFamilySuggestion(
+  memberIds: string[],
+  hiddenByMemberId: string
+): Promise<{ signature: string; memberIds: string[] }> {
+  const sortedMemberIds = normalizeFamilySuggestionMemberIds(memberIds);
+  const signature = buildFamilySuggestionSignature(sortedMemberIds);
+
+  const activeMembers = await prisma.member.findMany({
+    where: { id: { in: sortedMemberIds }, active: true },
+    select: { id: true },
+  });
+  if (activeMembers.length !== sortedMemberIds.length) {
+    throw new Error("Some members not found or inactive");
+  }
+
+  await prisma.hiddenFamilySuggestion.upsert({
+    where: { signature },
+    create: {
+      signature,
+      memberIds: sortedMemberIds,
+      hiddenByMemberId,
+    },
+    update: {
+      memberIds: sortedMemberIds,
+      hiddenByMemberId,
+    },
+  });
+
+  return { signature, memberIds: sortedMemberIds };
+}
+
+export async function resetHiddenFamilySuggestions(): Promise<{
+  count: number;
+}> {
+  const result = await prisma.hiddenFamilySuggestion.deleteMany();
+  return { count: result.count };
 }
 
 /**

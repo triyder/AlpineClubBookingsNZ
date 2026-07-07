@@ -82,8 +82,9 @@ fork for another organisation. See `NOTICE.md`.
    (Full Admin only) to rename them, adjust their per-area permissions, delete
    unused ones, or create brand-new roles.
 7. Use **Admin > Membership Types** to review the seeded seasonal membership
-   types: Full, Associate, Life, School, Non-Member, and Family. Associate is
-   the built-in Associate/Reserve-style type and can be renamed by the club.
+   types in the ordered list, then open a type editor to adjust its settings:
+   Full, Associate, Life, School, Non-Member, and Family. Associate is the
+   built-in Associate/Reserve-style type and can be renamed by the club.
    These records drive season-aware booking policy (`MEMBER_RATE`,
    `NON_MEMBER_RATE`, `BLOCK_BOOKING`) and subscription policy (`REQUIRED`,
    `NOT_REQUIRED`) without granting app access. Admins can also configure the
@@ -176,12 +177,15 @@ SEED_LODGE_PASSWORD=replace-with-a-local-kiosk-password \
 npm run dev
 ```
 
-For richer local-only demo data, run the destructive demo seed against a
-throwaway PostgreSQL database whose `DATABASE_URL` host is `localhost`,
-`127.0.0.1`, or `::1`:
+For richer local-only demo data, run the destructive demo seed only against a
+throwaway PostgreSQL database on a development machine. Never run it on a
+deployment host, including hosts where production PostgreSQL is reachable via
+`localhost`. The command requires an explicit opt-in, refuses
+`NODE_ENV=production`, refuses non-local `DATABASE_URL` hosts, and refuses to
+run when any existing `Member` email is outside `demo.alpineclub.test`:
 
 ```bash
-npm run db:seed:demo
+ALLOW_DEMO_SEED=1 npm run db:seed:demo
 ```
 
 The demo seed clears demo and transactional rows before rebuilding sample
@@ -210,7 +214,8 @@ Xero booking-edit settlement classifier — in
 `src/lib/__tests__/xero-settlement.property.test.ts`. They enforce the
 `docs/DOMAIN_INVARIANTS.md` "Money" rules as universally-quantified properties
 (integer cents, refund + retained = paid, deterministic repricing, no negative
-money).
+charge or refund totals — booking-edit components stay signed and sum to the
+net, #1356).
 
 This repository uses a current Next.js version. Before changing framework APIs,
 read the relevant versioned guide in `node_modules/next/dist/docs/`.

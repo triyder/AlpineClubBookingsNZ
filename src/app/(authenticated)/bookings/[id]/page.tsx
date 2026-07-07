@@ -23,6 +23,9 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 import { humanizeStatus, paymentStatusClass } from "@/lib/status-colors";
+import { BookingHelpDialog } from "@/components/booking-help-dialog";
+import { loadCancellationPolicy } from "@/lib/cancellation";
+import { describeCancellationSchedule } from "@/lib/cancellation-schedule";
 import { WAITLIST_OFFER_HOURS } from "@/lib/waitlist";
 import {
   getCancellationSettlementBreakdown,
@@ -381,6 +384,11 @@ export default async function BookingDetailPage({
           !bedAllocationLocked;
   const canEditNonMemberGuestNames =
     canModify && !isBookingFullyPaidForGuestNameEdits(booking);
+  // Once fully paid, the paid-name lock permits ONLY an identity-preserving
+  // spelling correction on a free-text non-member guest (#1386). The similarity
+  // guard is enforced server-side; this flag only opens the field with a hint.
+  const canFixNonMemberGuestNameTypos =
+    canModify && isBookingFullyPaidForGuestNameEdits(booking);
   const cancellationSettlement = booking.payment
     ? getCancellationSettlementBreakdown(
         booking.payment.refundedAmountCents,
@@ -453,7 +461,6 @@ export default async function BookingDetailPage({
       priceCents: g.priceCents,
       nights: g.nights.map((n) => n.stayDate.toISOString().slice(0, 10)),
     })),
-    bookingMemberId: booking.memberId,
     viewerRole: viewerAuthorizationRole,
     totalPriceCents: booking.totalPriceCents,
     discountCents: booking.discountCents,
@@ -471,6 +478,7 @@ export default async function BookingDetailPage({
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
     canEditNonMemberGuestNames,
+    canFixNonMemberGuestNameTypos,
     editPolicy: {
       mode: editPolicy.mode,
       today: editPolicy.today.toISOString().slice(0, 10),
@@ -665,12 +673,32 @@ export default async function BookingDetailPage({
     ? await getBookingProviderMismatches(booking.id)
     : [];
 
+  // Surface the applicable cancellation refund schedule to the member up front
+  // (#1371 F28): the exact per-booking amount already shows inside the cancel
+  // flow, but the full tier schedule previously lived only in the admin policy
+  // preview, so members first learned the refund consequences at cancel time.
+  //
+  // Only show the refund schedule when a payment has actually been captured —
+  // otherwise the tier percentages imply a refund the member will never get.
+  // For an unpaid-but-cancellable booking, say so plainly instead (owner review
+  // of PR #1389).
+  const showCancellationInfo = canCancel && !isDeleted;
+  const cancellationSchedule =
+    showCancellationInfo && originalPaymentCaptured
+      ? describeCancellationSchedule(await loadCancellationPolicy(booking.checkIn))
+      : undefined;
+  const cancellationHasNoPayment = showCancellationInfo && !originalPaymentCaptured;
+
   return (
     <div className="max-w-2xl space-y-6">
       <ScrollToHash />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
         <div className="flex items-center gap-2">
+          <BookingHelpDialog
+            cancellationSchedule={cancellationSchedule}
+            cancellationHasNoPayment={cancellationHasNoPayment}
+          />
           <Link href={backHref}>
             <Button variant="outline">Back to Bookings</Button>
           </Link>
@@ -701,7 +729,9 @@ export default async function BookingDetailPage({
             booking.payment?.stripePaymentMethodId &&
               booking.payment?.stripeCustomerId,
           )}
+          finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
+          features={modules}
         />
       )}
 

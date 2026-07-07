@@ -249,9 +249,10 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
  * the expiry/accept paths instead.
  *
  * A hold is only released when it was placed on or before that deadline. A hold
- * that post-dates the lapsed window — e.g. an admin manually re-held the request
- * via the "Hold slots" button after its original quote window had passed — is
- * kept, so the next cron tick never undoes a deliberate re-hold (#1296).
+ * that post-dates the lapsed window — e.g. an admin manually re-held a SCHOOL
+ * request via the "Hold slots" button (now a school-only UI action, #1385) after
+ * its original quote window had passed — is kept, so the next cron tick never
+ * undoes a deliberate re-hold (#1296).
  *
  * Idempotent and concurrency-safe: each release runs under the shared booking
  * advisory lock and re-verifies the request is still in a modify/query state
@@ -301,10 +302,11 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
     if (deadline > now) continue;
 
     // Keep a hold placed *after* the lapsed window — an admin manually re-held
-    // the request via "Hold slots" once its original quote window had already
-    // passed. Only release holds placed on or before the deadline; releasing a
-    // fresh re-hold on the next tick would defeat the admin's intent (#1296).
-    // The under-lock re-read re-confirms this defensively.
+    // the (school) request via "Hold slots" (a school-only UI action as of #1385)
+    // once its original quote window had already passed. Only release holds placed
+    // on or before the deadline; releasing a fresh re-hold on the next tick would
+    // defeat the admin's intent (#1296). The under-lock re-read re-confirms this
+    // defensively.
     if (request.heldBooking && request.heldBooking.createdAt > deadline) {
       continue;
     }
@@ -344,8 +346,8 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           return false;
         }
         // Defensive re-check: keep a hold that post-dates the lapsed window (a
-        // manual re-hold via "Hold slots"); only release holds placed on or
-        // before the deadline (#1296).
+        // manual re-hold via "Hold slots", a school-only UI action as of #1385);
+        // only release holds placed on or before the deadline (#1296).
         if (held.createdAt > deadline) return false;
 
         await tx.booking.update({

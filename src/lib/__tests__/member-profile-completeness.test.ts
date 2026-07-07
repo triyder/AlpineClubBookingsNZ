@@ -158,4 +158,33 @@ describe("evaluateMemberProfileCompleteness", () => {
       expect(result.canBeBookedAsMember).toBe(false);
     }
   });
+
+  it("treats dual-hat accounts (USER + admin roles) as self-confirming members (#1442)", () => {
+    const dualHat: MemberProfileCompletenessInput = {
+      ...completeProfile,
+      id: "dual-1",
+      role: "ADMIN",
+      accessRoles: [{ role: "USER" }, { role: "ADMIN" }],
+      canLogin: true,
+    };
+
+    // Confirmed like any member: bookable on their own booking.
+    const confirmed = evaluateMemberProfileCompleteness({
+      ...dualHat,
+      detailsConfirmedAt: new Date("2026-05-10T00:00:00.000Z"),
+      detailsConfirmedByMemberId: "dual-1",
+    });
+    expect(confirmed.confirmationMode).toBe("self");
+    expect(confirmed.canBeBookedAsMember).toBe(true);
+
+    // Unconfirmed: gated exactly like a plain member, not exempted.
+    const unconfirmed = evaluateMemberProfileCompleteness({
+      ...dualHat,
+      detailsConfirmedAt: null,
+      detailsConfirmedByMemberId: null,
+    });
+    expect(unconfirmed.confirmationMode).toBe("self");
+    expect(unconfirmed.canBeBookedAsMember).toBe(false);
+    expect(unconfirmed.needsOwnLoginConfirmation).toBe(true);
+  });
 });

@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   applyLocalRefundAllocation: vi.fn(),
   markPaymentIntentTransactionFailed: vi.fn(),
   refundPaymentTransactions: vi.fn(),
+  planStripeRefundAllocation: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -129,10 +130,19 @@ vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
   markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
   refundPaymentTransactions: mocks.refundPaymentTransactions,
+  planStripeRefundAllocation: mocks.planStripeRefundAllocation,
 }));
 
 vi.mock("@/lib/payment-recovery", () => ({
-  enqueueBookingCancellationRefundRecovery: vi.fn(),
+  enqueueBookingCancellationRefundRecovery: vi.fn(async () => ({
+    id: "recovery_op_1",
+  })),
+  markBookingCancellationRefundRecoverySucceeded: vi.fn(async () => ({
+    count: 1,
+  })),
+  recordBookingCancellationRefundRecoveryInlineError: vi.fn(async () => ({
+    count: 1,
+  })),
 }));
 
 import { cancelBooking } from "@/lib/booking-cancel";
@@ -278,6 +288,16 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
     mocks.refundPaymentTransactions.mockResolvedValue({
       refunds: [{ refundId: "re_1", paymentIntentId: "pi_m", amountCents: 0 }],
     });
+    // #1349: the claim tx freezes the refund plan before any Stripe call; the
+    // conservation matrix only asserts money sums, so echo the requested
+    // amount as a single fully-refundable slice.
+    mocks.planStripeRefundAllocation.mockImplementation(
+      async ({ amountCents }: { amountCents: number }) => ({
+        slices: [{ paymentTransactionId: "ptx_m", amountCents }],
+        plannedAmountCents: amountCents,
+        totalRefundableCents: amountCents,
+      }),
+    );
   });
 
   for (const tier of TIERS) {

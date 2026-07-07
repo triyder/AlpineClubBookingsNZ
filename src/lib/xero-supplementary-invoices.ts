@@ -70,6 +70,25 @@ export async function createXeroSupplementaryInvoice(params: {
     );
   }
 
+  // A supplementary invoice only exists to bill a positive NET (#1356): the
+  // components are signed (a mixed-sign edit carries its price reduction as a
+  // negative line), and Xero rejects a negative-total ACCREC invoice. A
+  // non-positive net belongs to the credit-note paths, so complete the
+  // operation as skipped rather than billing a gross fee the member never paid.
+  const netAmountCents = priceDiffCents + changeFeeCents;
+  if (netAmountCents <= 0) {
+    if (syncOperationId) {
+      await completeXeroSyncOperation(syncOperationId, {
+        responsePayload: {
+          skipped: true,
+          reason:
+            "Supplementary invoice net amount is not positive; a reduction settles via a modification credit note instead.",
+        },
+      });
+    }
+    return null;
+  }
+
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { payment: true, member: true },
@@ -94,19 +113,30 @@ export async function createXeroSupplementaryInvoice(params: {
   });
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   const incomeCode = incomeMapping.code ?? "200";
+  // A negative price adjustment is a give-back, so it posts to the
+  // hutFeeRefunds mapping like the standalone-reduction credit-note path
+  // (owner decision on #1356): clubs that prefer a single account map
+  // hutFeeRefunds to the same code as hutFeesIncome in the Xero mapping.
+  const refundMapping =
+    priceDiffCents < 0 ? await getResolvedAccountMapping("hutFeeRefunds") : null;
 
   const lineItems: LineItem[] = [];
 
-  if (priceDiffCents > 0) {
+  // The price-adjustment line is SIGNED (#1356): a mixed-sign edit emits a
+  // negative price line next to the positive fee line so the line items sum
+  // exactly to the net charge by construction (the #1163 exact-total rule).
+  if (priceDiffCents !== 0) {
+    const lineMapping = refundMapping ?? incomeMapping;
+    const lineCode = lineMapping.code ?? "200";
     const li: LineItem = {
       description: `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
       taxType: "OUTPUT2",
     };
-    if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
-    if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
-      li.accountCode = incomeCode;
+    if (lineMapping.itemCode) li.itemCode = lineMapping.itemCode;
+    if (!lineMapping.itemCode || lineCode !== "200" || lineMapping.codeExplicitlyConfigured) {
+      li.accountCode = lineCode;
     }
     lineItems.push(li);
   }
@@ -123,18 +153,6 @@ export async function createXeroSupplementaryInvoice(params: {
       li.accountCode = incomeCode;
     }
     lineItems.push(li);
-  }
-
-  if (lineItems.length === 0) {
-    if (syncOperationId) {
-      await completeXeroSyncOperation(syncOperationId, {
-        responsePayload: {
-          skipped: true,
-          reason: "Supplementary invoice has no billable line items.",
-        },
-      });
-    }
-    return null;
   }
 
   const bookingModification = await prisma.bookingModification.findUnique({
@@ -236,12 +254,14 @@ export async function createXeroSupplementaryInvoice(params: {
     if (recordPayment) {
       try {
         const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-        const totalCents = priceDiffCents + changeFeeCents;
+        // The recorded payment is the NET — exactly what the additional
+        // Stripe PaymentIntent captured (#1356). Recording anything larger
+        // than the capture overstates the Stripe clearing account.
         const paymentIdempotencyKey = buildXeroIdempotencyKey(
           "booking-mod",
           localId,
           "supplementary-payment",
-          totalCents,
+          netAmountCents,
           "v1"
         );
         const paymentResponse = await callXeroApi(
@@ -252,7 +272,7 @@ export async function createXeroSupplementaryInvoice(params: {
                 payments: [{
                   invoice: { invoiceID: created.invoiceID },
                   account: { code: stripeBankCode },
-                  amount: totalCents / 100,
+                  amount: netAmountCents / 100,
                   date: formatDate(new Date()),
                   reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
                 }],
@@ -314,7 +334,7 @@ export async function createXeroSupplementaryInvoice(params: {
                 role: "SUPPLEMENTARY_INVOICE_PAYMENT",
                 metadata: {
                   invoiceId: created.invoiceID,
-                  amountCents: priceDiffCents + changeFeeCents,
+                  amountCents: netAmountCents,
                 },
               },
             ]

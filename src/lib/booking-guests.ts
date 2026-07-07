@@ -198,6 +198,20 @@ export async function resolveLinkedBookingMembers(
     }
   }
 
+  // Guests are people. NOT_APPLICABLE is the organisation/school tier
+  // (#1440): it has no season rate, no age restrictions, and no bed-group
+  // semantics, so linking such an account would silently misprice the
+  // booking. Organisations book through the school-booking flow, where the
+  // attending people are listed as guests instead.
+  for (const member of linkedMemberMap.values()) {
+    if (member.ageTier === "NOT_APPLICABLE") {
+      throw new BookingGuestValidationError(
+        "Organisation accounts cannot be added as booking guests. Add the people attending instead.",
+        400
+      );
+    }
+  }
+
   return linkedMemberMap;
 }
 
@@ -411,10 +425,13 @@ export function normalizeBookingGuestPricingInputs(
   });
 }
 
-export function normalizeBookingGuestInputs(
-  guests: BookingGuestInput[],
+// Generic over the caller's parsed guest shape (bookable-tier zod inputs,
+// #1440): linking a member can widen the tier to the member's stored AgeTier,
+// so only the ageTier field is re-typed on the way out.
+export function normalizeBookingGuestInputs<T extends BookingGuestInput>(
+  guests: T[],
   linkedMembers: Map<string, LinkedBookingMember>
-): BookingGuestInput[] {
+): Array<Omit<T, "ageTier"> & { ageTier: AgeTier }> {
   return guests.map((guest) => {
     const memberId = guest.memberId?.trim();
     if (!memberId) {

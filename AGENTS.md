@@ -81,20 +81,43 @@ At the successful end of a meaningful piece of work:
 1. Push the branch and open a PR using `.github/pull_request_template.md`.
 2. Monitor CI to green. Fix any failure (lint, typecheck, `npm test`, build,
    migration-drift, and the dependency/secret/static scans) and push fixes until
-   every required check passes. Investigate before assuming a failure is
-   pre-existing; `main` is not branch-protected and can land red, so compare
-   against `main`'s own latest CI when a failure looks unrelated.
+   every required check passes. `main` is branch-protected: the `verify`,
+   `Migration drift check`, `Playwright E2E`, and `Static analysis gate` checks
+   must pass to merge, and force-pushes and branch deletions are blocked.
+   Because `enforce_admins` is off and no review approval is required, an admin
+   merge can still occasionally land `main` red, so investigate before assuming
+   a failure is pre-existing and compare against `main`'s own latest CI when a
+   failure looks unrelated.
 3. Apply the risk gate:
    - Eligible for autonomous merge: PRs whose changed areas stay within docs,
      agent workflow, admin or public UI copy, labels, and help text, and other
      Low/Medium-risk work that does not touch money movement, booking capacity,
      membership or family lifecycle, schema or migrations, auth/security/privacy,
      or live-provider (Xero/Stripe/SES/Sentry) behavior.
-   - Requires explicit owner approval before merge: every Critical or High-risk
-     change, including security/auth/privacy, payments/refunds/credits,
-     booking/capacity, membership/family lifecycle, Xero/Stripe/SES/Sentry,
-     schema/migrations, deployment, and data-integrity work. Hand these off with
-     full evidence and wait.
+   - Requires an explicit owner approval comment on the PR before merge: every
+     Critical or High-risk change, including security/auth/privacy,
+     payments/refunds/credits, booking/capacity, membership/family lifecycle,
+     Xero/Stripe/SES/Sentry, schema/migrations, deployment, and data-integrity
+     work. The approval must be an on-repo owner comment on the PR itself, not a
+     session-only or PR-body-only "standing authorization" claim. Hand these off
+     with full evidence and wait.
 4. Merge eligible PRs with a merge commit (never squash, rebase-merge, or
    force-push). A linked issue may close only when its PR is eligible and merged.
 5. After merge, delete the merged branch and confirm `main` CI stays green.
+
+### Pre-authorisation and attributability
+
+- The blanket epic-wide or session-wide pre-authorisation pattern is retired:
+  "standing authorization (this session)"-style claims that live only in
+  agent-written PR text are not auditable and are not accepted.
+- Any pre-authorisation for a gated change must live in an on-repo artifact (an
+  issue body or an issue/PR comment) and be quoted or linked in the PR body, so
+  the authorisation is attributable and auditable.
+- Gated areas (money movement, booking capacity, membership/family lifecycle,
+  schema/migrations, auth/security/privacy, and live providers Xero, Stripe,
+  SES, and Sentry) require an explicit owner approval comment on the PR before
+  merge. Branch protection enforces green CI, not human review, so this comment
+  is the human gate.
+- Recommended: give agents a separate GitHub identity or machine account so that
+  author never equals approver and the sign-off trail does not collapse into a
+  single account.

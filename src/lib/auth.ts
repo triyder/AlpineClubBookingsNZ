@@ -10,6 +10,13 @@ import {
   isAccessRole,
   type AppAccessRole,
 } from "./access-roles";
+import {
+  emptyAdminPermissionMatrix,
+  getAdminPermissionMatrix,
+  sanitizeAdminPermissionMatrix,
+  type AdminPermissionMatrix,
+} from "./admin-permissions";
+import { MEMBER_ACCESS_ROLE_SELECT } from "./access-role-definitions";
 import { loadEffectiveModuleFlags } from "./module-settings";
 import { consumeTwoFactorSessionChallenge } from "./two-factor";
 
@@ -25,12 +32,16 @@ const DUMMY_PASSWORD_HASH =
 
 const SESSION_MEMBER_SECURITY_SELECT = {
   role: true,
+  canLogin: true,
   forcePasswordChange: true,
   emailVerified: true,
   passwordChangedAt: true,
   twoFactorEnabled: true,
   twoFactorMethod: true,
-  accessRoles: { select: { role: true } },
+  // Joined definitions (#1367) so the per-request token refresh can compute
+  // the merged admin-permission matrix over custom and club-edited
+  // definition-backed roles, not just the enum bundles.
+  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
 } as const;
 
 async function loadSessionMemberSecurity(userId: string) {
@@ -47,7 +58,20 @@ declare module "next-auth" {
       email: string;
       name: string;
       role: AppRole;
+      /**
+       * Enum access roles ONLY. Definition-backed custom roles carry
+       * `role: null` and are absent here — admin-capability checks must use
+       * `adminPermissionMatrix` below (via hasAdminAreaAccess), which covers
+       * custom and club-edited roles (#1367).
+       */
       accessRoles: AppAccessRole[];
+      /**
+       * Merged admin-permission matrix computed from the DB-joined member at
+       * the per-request token refresh (#1367). Authoritative for
+       * session.user-based area checks: getAdminPermissionMatrix returns it
+       * directly when present.
+       */
+      adminPermissionMatrix: AdminPermissionMatrix;
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
       sessionInvalidated?: boolean;
@@ -203,11 +227,22 @@ export const authConfig = {
           const twoFactorRequired = modules.twoFactor === true;
 
           token.role = member.role;
-          // role is null for definition-backed custom-role rows; the JWT
-          // claim only carries enum roles, and guards re-read from the DB.
+          // role is null for definition-backed custom-role rows, so the
+          // accessRoles claim stays enum-only. Custom roles reach the
+          // session through adminPermissionMatrix below (#1367).
           token.accessRoles = member.accessRoles
             .map(({ role }) => role)
             .filter(isAccessRole);
+          // #1367: merged admin-permission matrix over the JOINED assignment
+          // rows, so definition-backed custom roles and club-edited seeded
+          // definitions grant correctly through every session.user-based
+          // check (e.g. the #1289/#1313 hasAdminAreaAccess(session.user, …)
+          // gates). Recomputed on every token refresh — the same freshness
+          // as the enum role claims above.
+          token.adminPermissionMatrix = getAdminPermissionMatrix({
+            accessRoles: member.accessRoles,
+            canLogin: member.canLogin,
+          });
           token.forcePasswordChange = member.forcePasswordChange;
           token.isEmailVerified = member.emailVerified;
           token.sessionInvalidated =
@@ -247,6 +282,16 @@ export const authConfig = {
               typeof role === "string" && isAccessRole(role),
           )
         : [];
+      // #1367: the jwt callback above stamps the matrix from the DB-joined
+      // member on every request BEFORE this projection runs, so this
+      // fallback only fires when that refresh could not run (member row gone,
+      // token without an id). Fail closed to all-none for those rather than
+      // leaving the field absent — session.user always carries the property,
+      // and getAdminPermissionMatrix treats a present matrix as
+      // authoritative.
+      session.user.adminPermissionMatrix =
+        sanitizeAdminPermissionMatrix(token.adminPermissionMatrix) ??
+        emptyAdminPermissionMatrix();
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;

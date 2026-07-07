@@ -155,6 +155,7 @@ import {
   reapStaleWaitingPaymentXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 
 describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   beforeEach(() => {
@@ -448,6 +449,59 @@ describe("enqueueXeroSupplementaryInvoiceOperation", () => {
     );
   });
 
+  // #1356 (F16): mixed-sign components stay signed through the queue so the
+  // executor can bill the exact net; a net that is not positive never becomes
+  // a supplementary invoice (it belongs to the credit-note paths).
+  it("queues mixed-sign components signed when the net is positive (#1356)", async () => {
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId: "booking_1",
+          priceDiffCents: -500,
+          changeFeeCents: 1000,
+          bookingModificationId: "mod_mixed",
+        },
+        {
+          createdByMemberId: "admin_1",
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_supplementary_1",
+      message: "Xero supplementary invoice queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "booking-mod:mod_mixed:supplementary-invoice:-500:1000:v1",
+        requestPayload: expect.objectContaining({
+          priceDiffCents: -500,
+          changeFeeCents: 1000,
+        }),
+      })
+    );
+  });
+
+  it("skips mixed-sign modifications whose net is not positive (#1356)", async () => {
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId: "booking_1",
+          priceDiffCents: -1500,
+          changeFeeCents: 1000,
+          bookingModificationId: "mod_negative_net",
+        },
+        {
+          createdByMemberId: "admin_1",
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "No supplementary invoice is required for this modification.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
   it("can hold supplementary invoices until additional Stripe payment succeeds", async () => {
     await expect(
       enqueueXeroSupplementaryInvoiceOperation(
@@ -553,6 +607,54 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
     );
     // Non-Stripe payments never consult the cumulative refund watermark.
     expect(mocks.sumCoveredRefundCreditNoteCents).not.toHaveBeenCalled();
+  });
+
+  // #1357 (F17): a transaction-scoped enqueue must route EVERY internal
+  // read/write through the caller's client so the outbox row commits
+  // atomically with the caller's release (and the dedupe sees uncommitted
+  // state), never through the global prisma client.
+  it("routes all reads and the insert through the caller's store client", async () => {
+    const store = {
+      payment: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "payment_1",
+          source: "INTERNET_BANKING",
+          refundedAmountCents: 5000,
+          xeroRefundCreditNoteId: null,
+        }),
+        update: vi.fn(),
+      },
+      xeroSyncOperation: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+    };
+
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 5000, {
+        createdByMemberId: "cron",
+        store: store as never,
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_credit_note_1",
+      message: "Xero refund credit note queued for background processing.",
+    });
+
+    expect(store.payment.findUnique).toHaveBeenCalledTimes(1);
+    expect(store.xeroSyncOperation.findFirst).toHaveBeenCalledTimes(1);
+    // The global-prisma delegates stayed untouched.
+    expect(mocks.findUniquePayment).not.toHaveBeenCalled();
+    expect(mocks.findFirstOperation).not.toHaveBeenCalled();
+    // Helpers and the operation insert received the same client.
+    expect(mocks.findCanonicalPaymentRefundCreditNote).toHaveBeenCalledWith(
+      "payment_1",
+      store
+    );
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localId: "payment_1",
+        store,
+      })
+    );
   });
 
   it("queues the uncovered delta with a v2 watermark key for a second Stripe refund", async () => {
@@ -1125,6 +1227,28 @@ describe("processQueuedXeroOutboxOperations", () => {
     mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
+  it("scans the pending outbox by the indexed queueType column, not a requestPayload JSON predicate (#1272)", async () => {
+    mocks.findManyOperations.mockResolvedValue([]);
+
+    await processQueuedXeroOutboxOperations({ limit: 7 });
+
+    expect(mocks.findManyOperations).toHaveBeenCalledTimes(1);
+    const args = mocks.findManyOperations.mock.calls[0][0];
+    // The scan now filters on the denormalized `queueType` column via the
+    // single-source-of-truth list, keeping status/direction/order/limit intact.
+    expect(args.where).toEqual({
+      status: "PENDING",
+      direction: "OUTBOUND",
+      queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
+    });
+    expect(args.where.queueType.in).toHaveLength(12);
+    // The legacy 12-branch `requestPayload->>'queueType'` OR predicate is gone.
+    expect(args.where.OR).toBeUndefined();
+    expect(JSON.stringify(args.where)).not.toContain("requestPayload");
+    expect(args.orderBy).toEqual({ createdAt: "asc" });
+    expect(args.take).toBe(7);
+  });
+
   it("claims and processes queued entrance fee operations", async () => {
     mocks.findManyOperations.mockResolvedValue([
       {
@@ -1553,6 +1677,312 @@ describe("processQueuedXeroOutboxOperations", () => {
         message: "Queued Xero outbox payload is incomplete.",
       })
     );
+  });
+
+  it("skips a row it loses the claim race for (updateMany matched zero PENDING rows)", async () => {
+    // A concurrent worker already flipped the row out of PENDING, so the
+    // conditional claim matches nothing. The single-flight must then skip the
+    // row (never dispatch its money-moving handler) rather than double-run it.
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_booking_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "BOOKING_INVOICE",
+          bookingId: "booking_1",
+        },
+      },
+    ]);
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+
+    expect(mocks.createXeroInvoiceForBooking).not.toHaveBeenCalled();
+  });
+});
+
+describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
+  // Directly exercises the real if/else dispatch chain inside
+  // `processQueuedXeroOutboxOperations` (not the parallel expected-operation
+  // map). Feeding a valid op per queue type and asserting it routes to a
+  // handler proves the chain covers exactly `XERO_OUTBOX_QUEUE_TYPES` — closing
+  // the gap PR-a's map-based proxy left open. Residual (accepted, per #1272): an
+  // orphan dispatch branch for a queueType NOT in the constant is dead code the
+  // column scan never surfaces, so a pure black-box test cannot observe it.
+  type OutboxFixture = {
+    op: {
+      id: string;
+      localId?: string | null;
+      localModel?: string | null;
+      createdByMemberId?: string | null;
+      requestPayload: Record<string, unknown>;
+    };
+    handler: ReturnType<typeof vi.fn>;
+  };
+
+  const fixtures: Record<
+    (typeof XERO_OUTBOX_QUEUE_TYPES)[number],
+    OutboxFixture
+  > = {
+    ENTRANCE_FEE_INVOICE: {
+      op: {
+        id: "op_entrance_1",
+        localId: "member_1",
+        localModel: "Member",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "ENTRANCE_FEE_INVOICE",
+          category: "ADULT",
+          itemCode: "EF-ADULT",
+          feeAmountCents: 15000,
+        },
+      },
+      handler: mocks.createXeroEntranceFeeInvoice,
+    },
+    BOOKING_INVOICE: {
+      op: {
+        id: "op_booking_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: { queueType: "BOOKING_INVOICE", bookingId: "booking_1" },
+      },
+      handler: mocks.createXeroInvoiceForBooking,
+    },
+    BOOKING_INVOICE_UPDATE: {
+      op: {
+        id: "op_booking_update_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "BOOKING_INVOICE_UPDATE",
+          bookingId: "booking_1",
+          xeroInvoiceId: "inv_existing",
+        },
+      },
+      handler: mocks.updateXeroBookingInvoiceForBooking,
+    },
+    REFUND_CREDIT_NOTE: {
+      op: {
+        id: "op_credit_note_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "REFUND_CREDIT_NOTE",
+          refundAmountCents: 3000,
+          watermarkCents: 8000,
+        },
+      },
+      handler: mocks.createXeroCreditNote,
+    },
+    ACCOUNT_CREDIT_NOTE: {
+      op: {
+        id: "op_account_credit_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 4200,
+        },
+      },
+      handler: mocks.createUnappliedXeroCreditNote,
+    },
+    SUPPLEMENTARY_INVOICE: {
+      op: {
+        id: "op_supplementary_1",
+        localId: "mod_1",
+        localModel: "BookingModification",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          bookingModificationId: "mod_1",
+        },
+      },
+      handler: mocks.createXeroSupplementaryInvoice,
+    },
+    MODIFICATION_CREDIT_NOTE: {
+      op: {
+        id: "op_mod_credit_note_1",
+        localId: "mod_1",
+        localModel: "BookingModification",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MODIFICATION_CREDIT_NOTE",
+          bookingId: "booking_1",
+          refundAmountCents: 3200,
+          bookingModificationId: "mod_1",
+        },
+      },
+      handler: mocks.createXeroCreditNoteForModification,
+    },
+    MODIFICATION_ACCOUNT_CREDIT_NOTE: {
+      op: {
+        id: "op_mod_account_credit_1",
+        localId: "mod_1",
+        localModel: "BookingModification",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          bookingId: "booking_1",
+          paymentId: "payment_1",
+          refundAmountCents: 3750,
+          bookingModificationId: "mod_1",
+        },
+      },
+      handler: mocks.createUnappliedXeroCreditNoteForModification,
+    },
+    CREDIT_NOTE_ALLOCATION: {
+      op: {
+        id: "op_allocation_1",
+        localId: "mod_1",
+        localModel: "BookingModification",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "CREDIT_NOTE_ALLOCATION",
+          creditNoteId: "cn_1",
+          invoiceId: "inv_1",
+          amountCents: 3200,
+          role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        },
+      },
+      handler: mocks.allocateCreditNoteToInvoice,
+    },
+    MEMBERSHIP_CANCELLATION_CREDIT_NOTE: {
+      op: {
+        id: "op_membership_cancel_credit_1",
+        localId: "sub_1",
+        localModel: "MemberSubscription",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
+          subscriptionId: "sub_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      },
+      handler: mocks.createXeroMembershipCancellationCreditNote,
+    },
+    MEMBERSHIP_CANCELLATION_CONTACT: {
+      op: {
+        id: "op_membership_cancel_contact_1",
+        localId: "participant_1",
+        localModel: "MembershipCancellationRequestParticipant",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MEMBERSHIP_CANCELLATION_CONTACT",
+          memberId: "member_1",
+          requestId: "request_1",
+          participantId: "participant_1",
+        },
+      },
+      handler: mocks.syncXeroMembershipCancellationContact,
+    },
+    GROUP_SETTLEMENT_INVOICE: {
+      op: {
+        id: "op_settle_1",
+        localId: "settle_1",
+        localModel: "GroupBookingSettlement",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "GROUP_SETTLEMENT_INVOICE",
+          settlementId: "settle_1",
+        },
+      },
+      handler: mocks.createXeroInvoiceForGroupSettlement,
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    // Every dispatch target resolves so a routed op reports success.
+    mocks.createXeroEntranceFeeInvoice.mockResolvedValue("inv");
+    mocks.createXeroInvoiceForBooking.mockResolvedValue("inv");
+    mocks.updateXeroBookingInvoiceForBooking.mockResolvedValue("inv");
+    mocks.createXeroCreditNote.mockResolvedValue("cn");
+    mocks.createUnappliedXeroCreditNote.mockResolvedValue("cn");
+    mocks.createXeroSupplementaryInvoice.mockResolvedValue("inv");
+    mocks.createXeroCreditNoteForModification.mockResolvedValue("cn");
+    mocks.createUnappliedXeroCreditNoteForModification.mockResolvedValue("cn");
+    mocks.allocateCreditNoteToInvoice.mockResolvedValue(undefined);
+    mocks.createXeroMembershipCancellationCreditNote.mockResolvedValue("cn");
+    mocks.syncXeroMembershipCancellationContact.mockResolvedValue({
+      memberId: "member_1",
+      xeroContactId: "contact_1",
+      addedGroupIds: [],
+      removedGroupIds: [],
+      archived: true,
+      skippedReason: null,
+    });
+    mocks.createXeroInvoiceForGroupSettlement.mockResolvedValue("inv");
+  });
+
+  it("has one dispatch fixture for every queue type and no extras", () => {
+    expect(Object.keys(fixtures).sort()).toEqual(
+      [...XERO_OUTBOX_QUEUE_TYPES].sort()
+    );
+  });
+
+  it("routes each XERO_OUTBOX_QUEUE_TYPES member through the real dispatch chain to its own handler", async () => {
+    for (const queueType of XERO_OUTBOX_QUEUE_TYPES) {
+      const fixture = fixtures[queueType];
+      mocks.findManyOperations.mockResolvedValue([fixture.op]);
+
+      const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+      // succeeded:1 means it reached a concrete handler; the else-branch throw
+      // ("payload is incomplete") would have produced failed:1 instead.
+      expect(result).toEqual({
+        found: 1,
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+      });
+      // Each queue type has a distinct handler, so exactly-once across the loop
+      // proves the chain routed this type to the right one.
+      expect(fixture.handler).toHaveBeenCalledTimes(1);
+    }
+
+    // No queue type slipped through to the incomplete-payload failure.
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("routes nothing outside the constant: representative non-members hit the incomplete-payload fallthrough", async () => {
+    // REQUEUE/BACKFILL carry no outbox queueType and must never be dispatched by
+    // this scan; a synthetic unknown stands in for a future stray type. All three
+    // reach the else-branch, so none of the money-moving handlers fire.
+    mocks.findManyOperations.mockResolvedValue([
+      { id: "op_requeue", requestPayload: { queueType: "REQUEUE" } },
+      { id: "op_backfill", requestPayload: { queueType: "BACKFILL" } },
+      { id: "op_unknown", requestPayload: { queueType: "TOTALLY_NEW_TYPE" } },
+    ]);
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 3,
+      processed: 3,
+      succeeded: 0,
+      failed: 3,
+      skipped: 0,
+    });
+
+    for (const fixture of Object.values(fixtures)) {
+      expect(fixture.handler).not.toHaveBeenCalled();
+    }
   });
 });
 

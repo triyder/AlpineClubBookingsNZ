@@ -78,7 +78,7 @@ Use these ownership boundaries when adding new code:
 | Route-private page UI | `src/app/(admin)/admin/xero/_components`, `src/app/(admin)/admin/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
-| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). |
+| Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/admin-bed-allocation.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, and approval state live behind focused services. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). In the AUTOMATIC on-payment/confirmation reconcile (`bed-allocation-lifecycle.ts` → the planner's `prioritizeCapacityHolding` mode), **capacity-holding bookings get first claim**: they are allocated before provisional ones, and a held booking blocked only by a **Provisional** allocation moves that provisional aside (to a free bed) — or, if the night is otherwise full, unallocates it back to the awaiting-allocation queue — then takes the freed bed. A **Held** or admin-**approved** (#776 lock) allocation is never displaced, and displacement never strands a same-booking minor; each displacement is applied atomically and writes a `lodge` audit row on the displaced provisional booking (#1387). The manual board **Run auto-allocation** button (`runAutoBedAllocation`) runs pure first-fit and does NOT displace — only the automatic reconcile does. |
 | Policy rules | `src/lib/policies/` | Pricing, age-tier, cancellation, change-fee, minimum-stay, member-credit, and booking-route decisions live as testable policy helpers. |
 | Operational Xero | `src/lib/xero-*.ts`, `src/lib/xero.ts` | `src/lib/xero.ts` is a compatibility facade. New code should import from the focused module that owns the behavior, not from the facade. |
 | Admin/member services | `src/lib/admin-member-xero-actions.ts`, `src/lib/member-serialization.ts`, `src/lib/member-lifecycle-actions.ts`, `src/lib/membership-cancellation-*.ts` | Shared admin/member request wrappers, DTO shape, lifecycle actions, and cancellation workflows live outside page files. |
@@ -164,10 +164,11 @@ approval, Xero, settings, and status-label flow.
 
 The source of truth is `prisma/schema.prisma`. Key domains are:
 
-- Members, family groups, dependent relationships, nominations, membership
-  cancellation requests, setup invites, password/email tokens, two-factor
-  enrollment state, hashed email OTP/recovery-code rows, notification
-  preferences, deletion requests, and audit logs.
+- Members, family groups, hidden family-suggestion member sets, dependent
+  relationships, nominations, membership cancellation requests, setup invites,
+  password/email tokens, two-factor enrollment state, hashed email
+  OTP/recovery-code rows, notification preferences, deletion requests, and
+  audit logs.
 - Seasons, season rates, booking periods, minimum-stay policies, group
   discounts, age-tier settings, promo codes, fixed-nightly promo adjustments,
   and promo redemptions.
@@ -248,10 +249,13 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
 In-progress member self-service edits are limited to future unused nights from
 NZ tomorrow onward. NZ today and earlier are locked for admin review through
 booking change requests. Positive booking-edit deltas use supplementary Xero
-invoices after additional Stripe payment succeeds, while negative deltas use a
-settlement choice: Stripe refund work where applicable or an idempotent
-source-linked member account credit. Both avoid unsafe financial mutation of a
-paid, part-paid, credited, or locked original invoice.
+invoices after additional Stripe payment succeeds — carrying signed component
+lines (a mixed-sign reduction-plus-fee edit includes its negative price
+adjustment) so the invoice and recorded payment equal the net actually charged
+(#1356) — while negative deltas use a settlement choice: Stripe refund work
+where applicable or an idempotent source-linked member account credit. Both
+avoid unsafe financial mutation of a paid, part-paid, credited, or locked
+original invoice.
 
 Money values are integer cents. Booking dates are New Zealand date-only lodge
 nights rather than timestamps.
@@ -286,6 +290,8 @@ record for lodge-wide operational defaults such as fallback capacity and the
 hut-leader lookahead window used by dashboard and Needs Attention warnings.
 The sidebar's Needs Attention Booking Requests badge sums pending internal
 booking reviews, requested change requests, and queued public booking requests.
+Pending self-service account deletion requests are also counted there and link
+admins to the deletion request queue.
 All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
 mirror the individual queue routes. Sidebar sections render expanded by
@@ -370,9 +376,19 @@ view/edit requirements centrally, selecting assignment rows with their
 definitions joined (`MEMBER_ACCESS_ROLE_SELECT` in
 `src/lib/access-role-definitions.ts`); the admin layout precomputes the
 matrix server-side and passes it to the sidebar, because definitions cannot
-resolve client-side. Editing a definition applies to every holder on their
-next request — guards re-read roles and definitions from the database and
-never trust the JWT.
+resolve client-side. Member-facing surfaces that gate on `session.user`
+(the `/bookings/[id]` detail page and the widened member-facing booking APIs
+from #1289/#1313) resolve through the session's embedded
+`adminPermissionMatrix` (#1367): `session.user.accessRoles` is enum-only —
+definition-backed custom roles carry `role: NULL` and vanish from it — so the
+auth `jwt` callback computes the merged matrix from the DB-joined member on
+every token refresh and embeds it, and `getAdminPermissionMatrix` treats an
+embedded matrix as authoritative (never widened by enum-bundle fallback, so a
+club-narrowed seeded definition stays narrowed). Editing a definition applies
+to every holder on their next request — `requireAdmin()` and the layouts
+re-read roles and definitions from the database, and the session-embedded
+matrix is itself recomputed from that same database join per request rather
+than trusted from an old token.
 
 When you add a new admin page (`src/app/(admin)`) or `/api/admin/**` route,
 update **both** central route maps: the permission-area map in
@@ -424,15 +440,17 @@ new address (`hasPrivilegedAccess` in `src/lib/access-roles.ts`).
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,
 booking behavior, subscription behavior, allowed age tiers, and optional Xero
-contact-group rules for built-in and admin-defined types. The built-ins are
-Full, Associate, Life, School, Non-Member, and Family; Associate is the single
-Associate/Reserve-style built-in and can be renamed by the club. Create and
-rename requests that would duplicate another type's display name
-(case-insensitive exact match) are rejected with a 409. Age tiers stay
-separate because the same tier can appear under several membership types. Age
-Tier Xero groups are for broad age cohorts, Membership Type Xero groups are for
-status or policy labels, and clubs can configure both when Xero needs both
-labels.
+contact-group rules for built-in and admin-defined types. The admin settings
+page presents types as an ordered policy list; create/edit opens a dedicated
+editor for identity, behavior, allowed tiers, and Xero rule configuration, while
+seasonal assignment roll-forward sits in its own preview/run section. The
+built-ins are Full, Associate, Life, School, Non-Member, and Family; Associate
+is the single Associate/Reserve-style built-in and can be renamed by the club.
+Create and rename requests that would duplicate another type's display name
+(case-insensitive exact match) are rejected with a 409. Age tiers stay separate
+because the same tier can appear under several membership types. Age Tier Xero
+groups are for broad age cohorts, Membership Type Xero groups are for status or
+policy labels, and clubs can configure both when Xero needs both labels.
 `SeasonalMembershipAssignment` records a member's type for a membership
 `seasonYear`, assignment source, and optional date-only `applyFrom` changeover.
 The initial backfill maps existing legacy roles to current-season assignments.
@@ -444,6 +462,10 @@ assignments forward from one season to another idempotently, skipping existing
 target-season assignments and reporting missing or inactive-type exceptions.
 The Admin > Members list shows the current seasonal Membership Type beside the
 Access column so operators can scan access and membership policy separately.
+When Xero is connected, the Xero contact-group badges and filters on that page
+are served from a local cache; a "Refresh Xero Groups" action repopulates it and
+a contextual hint next to the button reports when the cache was last refreshed
+(or prompts the operator to populate it when it has never been refreshed).
 Booking pricing and booking gates resolve the member's effective seasonal type
 for the booking season:
 `MEMBER_RATE` uses normal member rates, `NON_MEMBER_RATE` uses non-member

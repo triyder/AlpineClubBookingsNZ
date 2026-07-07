@@ -1,4 +1,5 @@
 import {
+  BookingStatus,
   PaymentSource,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
@@ -148,6 +149,7 @@ async function enqueueLedgerRefundRecovery({
   amountCents,
   idempotencyKey,
   stripeKeyPrefix,
+  allocationPlan,
   store = prisma,
 }: {
   bookingId: string;
@@ -155,6 +157,15 @@ async function enqueueLedgerRefundRecovery({
   stripeKeyPrefix?: string | null;
   amountCents: number;
   idempotencyKey: string;
+  /**
+   * Per-transaction slices frozen by the caller BEFORE any Stripe call
+   * (#1349). When present, the processor replays exactly these slices with
+   * their `${prefix}_${transactionId}_${amount}` Stripe keys instead of
+   * deriving an allocation from whatever progress happens to be recorded, so
+   * an enqueue-then-execute caller (booking cancel) is exactly-once even when
+   * the recovery cron races or resumes the inline refund.
+   */
+  allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
   const payment = await store.payment.findUnique({
@@ -183,6 +194,11 @@ async function enqueueLedgerRefundRecovery({
     );
   }
 
+  const allocationPlanJson =
+    allocationPlan && allocationPlan.length > 0
+      ? (allocationPlan as unknown as Prisma.InputJsonValue)
+      : undefined;
+
   return store.paymentRecoveryOperation.upsert({
     where: { idempotencyKey },
     create: {
@@ -194,6 +210,7 @@ async function enqueueLedgerRefundRecovery({
       amountCents,
       idempotencyKey,
       stripeKeyPrefix: stripeKeyPrefix ?? null,
+      allocationPlan: allocationPlanJson,
       nextRetryAt: new Date(),
     },
     update: {
@@ -202,6 +219,12 @@ async function enqueueLedgerRefundRecovery({
       paymentIntentId: representativePaymentIntentId,
       amountCents,
       stripeKeyPrefix: stripeKeyPrefix ?? null,
+      // Only overwrite a frozen plan when the caller supplies a fresh one; an
+      // update without a plan must not clobber slices a previous processing
+      // pass already replayed against Stripe.
+      ...(allocationPlanJson !== undefined
+        ? { allocationPlan: allocationPlanJson }
+        : {}),
     },
   });
 }
@@ -312,9 +335,14 @@ export async function enqueueRefundRequestRefundRecovery({
   });
 }
 
-export function buildBookingCancellationRefundIdempotencyKey(bookingId: string) {
-  return `booking_cancel_refund_recovery_${bookingId}`;
-}
+import {
+  buildBookingCancellationRefundIdempotencyKey,
+  buildBookingCancellationRefundMetadata,
+} from "./payment-recovery-keys";
+export {
+  buildBookingCancellationRefundIdempotencyKey,
+  buildBookingCancellationRefundMetadata,
+};
 
 /**
  * Durable recovery for a booking cancellation whose inline Stripe card refund
@@ -328,11 +356,14 @@ export async function enqueueBookingCancellationRefundRecovery({
   bookingId,
   paymentId,
   amountCents,
+  allocationPlan,
   store = prisma,
 }: {
   bookingId: string;
   paymentId: string;
   amountCents: number;
+  /** Slices frozen inside the cancellation claim transaction (#1349). */
+  allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
   return enqueueLedgerRefundRecovery({
@@ -340,7 +371,165 @@ export async function enqueueBookingCancellationRefundRecovery({
     paymentId,
     amountCents,
     idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+    allocationPlan,
     store,
+  });
+}
+
+/**
+ * Mark the booking-cancellation refund recovery operation SUCCEEDED after the
+ * inline refund completed (#1349). The operation is persisted inside the
+ * claim transaction BEFORE the Stripe call; this is the happy-path close. If
+ * this update is lost (crash, DB blip) the operation stays PENDING and the
+ * recovery cron replays the frozen plan — Stripe answers the replayed keys
+ * with the original refunds and the ledger dedupes on refund id, so the close
+ * being best-effort is safe.
+ */
+export async function markBookingCancellationRefundRecoverySucceeded({
+  bookingId,
+  store = prisma,
+}: {
+  bookingId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Record why the inline cancellation refund failed on the already-persisted
+ * recovery operation (#1349), for operator visibility on the health surfaces.
+ * Only touches a PENDING row: once the cron has claimed (PROCESSING) or
+ * resolved the operation, its own lifecycle owns lastError.
+ */
+export async function recordBookingCancellationRefundRecoveryInlineError({
+  bookingId,
+  message,
+  store = prisma,
+}: {
+  bookingId: string;
+  message: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey: buildBookingCancellationRefundIdempotencyKey(bookingId),
+      status: PaymentRecoveryOperationStatus.PENDING,
+    },
+    data: {
+      lastError: message,
+    },
+  });
+}
+
+const GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX =
+  "group_settlement_refund_recovery_";
+
+export function buildGroupSettlementRefundRecoveryIdempotencyKey(
+  settlementId: string,
+) {
+  return `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}${settlementId}`;
+}
+
+/**
+ * Durable retry for a group organiser-cancel settlement refund (F3, #1351,
+ * owner-decided auto-retry). Enqueued BEFORE the inline Stripe refund (the
+ * #1349 enqueue-then-execute pattern) with a short delay so the cron only
+ * picks it up when the inline run failed or died; the inline happy path marks
+ * it SUCCEEDED. The processor replays the settlement's PERSISTED refund plan
+ * verbatim under the same `group_cancel_refund_<settlementId>` Stripe key —
+ * a >24h retry never recomputes the cancellation tier, and an ambiguous
+ * failure (Stripe refunded, response lost) is replayed, not repeated. The
+ * recovery machinery supplies backoff and alerts ONLY on exhaustion.
+ *
+ * `paymentId` is an anchor row for the schema FK (the organiser's own
+ * payment): the processor never reads it — the group-settlement branch
+ * dispatches on the idempotency-key prefix before any payment lookup.
+ */
+export async function enqueueGroupSettlementRefundRecovery({
+  organiserBookingId,
+  paymentId,
+  settlementId,
+  paymentIntentId,
+  amountCents,
+  retryDelayMs = 0,
+  lastError,
+  store = prisma,
+}: {
+  organiserBookingId: string;
+  paymentId: string;
+  settlementId: string;
+  paymentIntentId: string;
+  amountCents: number;
+  retryDelayMs?: number;
+  lastError?: string;
+  store?: PaymentRecoveryStore;
+}) {
+  const idempotencyKey =
+    buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId);
+  const nextRetryAt = new Date(Date.now() + retryDelayMs);
+
+  return store.paymentRecoveryOperation.upsert({
+    where: { idempotencyKey },
+    create: {
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      status: PaymentRecoveryOperationStatus.PENDING,
+      bookingId: organiserBookingId,
+      paymentId,
+      paymentIntentId,
+      amountCents,
+      idempotencyKey,
+      nextRetryAt,
+      lastError: lastError ?? null,
+    },
+    update: {
+      amountCents,
+      // Re-arming after an inline failure pulls the retry forward; a FAILED
+      // row keeps its status/attempts, so an exhausted operation stays
+      // exhausted (alert already sent) until the retry itself succeeds.
+      nextRetryAt,
+      ...(lastError !== undefined ? { lastError } : {}),
+    },
+  });
+}
+
+/**
+ * Happy-path close after the inline settlement refund + flip completed
+ * (#1351). Best-effort: a lost close leaves a PENDING row whose replay is a
+ * no-op (the settlement is no longer SUCCEEDED, so the processor only
+ * re-applies any missing per-child mirrors idempotently).
+ */
+export async function markGroupSettlementRefundRecoverySucceeded({
+  settlementId,
+  store = prisma,
+}: {
+  settlementId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey:
+        buildGroupSettlementRefundRecoveryIdempotencyKey(settlementId),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
   });
 }
 
@@ -782,6 +971,31 @@ function parseRefundAllocationPlan(
 async function processBookingModificationRefundOperation(
   operation: PaymentRecoveryOperation,
 ) {
+  // Group settlement refund replay (F3, #1351): dispatch on the key prefix
+  // BEFORE any payment lookup — these operations anchor paymentId to the
+  // organiser's own payment purely for the schema FK, and deriving a refund
+  // from that payment's transactions would refund the wrong money. The
+  // executor replays the settlement's persisted plan under the inline
+  // `group_cancel_refund_<settlementId>` Stripe key and applies the
+  // per-child refundedAmountCents mirrors idempotently.
+  if (
+    operation.idempotencyKey.startsWith(
+      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
+    )
+  ) {
+    const settlementId = operation.idempotencyKey.slice(
+      GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX.length,
+    );
+    // Dynamic import: group-cancel imports this module for the enqueue/mark
+    // helpers (same pattern as booking-payment-cleanup above).
+    const { executeGroupSettlementRefundPlan } = await import(
+      "@/lib/group-cancel"
+    );
+    await executeGroupSettlementRefundPlan(settlementId);
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
   const payment = await prisma.payment.findUnique({
     where: { id: operation.paymentId },
     include: { transactions: true },
@@ -866,16 +1080,34 @@ async function processBookingModificationRefundOperation(
     "booking_cancel_refund_recovery_",
   );
 
-  let reason: string;
+  let metadata: Record<string, string>;
   let idempotencyKeyPrefix: string;
   if (refundRequestId) {
-    reason = "refund_request_refund_recovery";
+    metadata = {
+      bookingId: operation.bookingId,
+      reason: "refund_request_refund_recovery",
+      refundRequestId,
+    };
     idempotencyKeyPrefix = `refund_request_${refundRequestId}`;
   } else if (isBookingCancellationRecovery) {
-    reason = "booking_cancellation_refund_recovery";
+    // #1494: replay the inline cancel body VERBATIM. Both callers build the
+    // metadata from the same buildBookingCancellationRefundMetadata helper, so
+    // this replay's request body is byte-identical to the one the inline path
+    // sent when it created the Stripe refund. Under the shared
+    // `booking_cancel_refund_<bookingId>` idempotency key that makes Stripe
+    // replay the original refund rather than reject the key with
+    // idempotency_error (which previously sent this exact scenario — inline
+    // refund succeeded, recording lost — to retry-exhaustion + a manual
+    // reconcile). The metadata reconstructs purely from the persisted
+    // bookingId, so an operation enqueued BEFORE this fix replays through the
+    // same code path (there is no separate persisted-metadata to miss).
+    metadata = buildBookingCancellationRefundMetadata(operation.bookingId);
     idempotencyKeyPrefix = `booking_cancel_refund_${operation.bookingId}`;
   } else {
-    reason = "booking_modification_refund_recovery";
+    metadata = {
+      bookingId: operation.bookingId,
+      reason: "booking_modification_refund_recovery",
+    };
     idempotencyKeyPrefix =
       operation.stripeKeyPrefix ??
       `payment_recovery_modification_refund_${operation.id}`;
@@ -885,11 +1117,7 @@ async function processBookingModificationRefundOperation(
     paymentId: operation.paymentId,
     amountCents: plan.reduce((sum, slice) => sum + slice.amountCents, 0),
     allocation: plan,
-    metadata: {
-      bookingId: operation.bookingId,
-      reason,
-      ...(refundRequestId ? { refundRequestId } : {}),
-    },
+    metadata,
     idempotencyKeyPrefix,
   });
 
@@ -931,6 +1159,22 @@ async function processCreateAdditionalPaymentIntentOperation(
       transaction.createdAt > operation.createdAt,
   );
   if (newerAdditionalTransaction || operation.amountCents <= 0) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
+  // A booking cancelled after the modification has no increase left to
+  // collect (#1358): the cancel flow already tore down its additional
+  // intents, so minting a live intent here would resurrect a collectable the
+  // cancel retired and re-arm the WAITING_PAYMENT supplementary Xero
+  // operation for money that must never be captured. Complete without
+  // creating anything — the parked Xero op is retired by the
+  // stale-WAITING_PAYMENT reaper.
+  if (payment.booking.status === BookingStatus.CANCELLED) {
+    logger.info(
+      { operationId: operation.id, bookingId: operation.bookingId },
+      "Skipping additional intent recovery for cancelled booking",
+    );
     await completePaymentRecoveryOperation(operation.id);
     return;
   }

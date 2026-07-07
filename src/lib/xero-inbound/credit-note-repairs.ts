@@ -1,10 +1,11 @@
 import { type CreditNote as XeroCreditNote } from "xero-node";
-import { CreditType, PaymentStatus } from "@prisma/client";
+import { CreditType, PaymentSource, PaymentStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
 import { buildBookingAppliedCreditDescription, getAmountCentsFromAllocationMetadata, getCreditNoteAmountCents, getCreditNoteIdFromAllocationMetadata, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata, isIncludedRefundCreditNoteStatus } from "./amounts";
 import { findActiveXeroObjectLinks } from "./object-links";
+import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 
 export async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,
@@ -130,6 +131,8 @@ export async function repairRefundedPaymentBusinessState(input: {
       amountCents: true,
       refundedAmountCents: true,
       status: true,
+      // F5 (#1353): Stripe payments get a raise-only ledger floor below.
+      source: true,
     },
   });
   if (payments.length === 0) {
@@ -315,18 +318,62 @@ export async function repairRefundedPaymentBusinessState(input: {
       );
     }
 
-    const nextStatus = getNextRefundedPaymentStatus(
+    // F5 (#1353): for source=STRIPE the local refund ledger is Stripe-truth
+    // (written by processed refunds and the recovery machinery) — the repair
+    // may RAISE it from Xero-derived totals but must never LOWER it. A lower
+    // Xero-derived total means either a refund-delta credit note is missing
+    // in Xero (the F4 class this floor stops self-masking: the
+    // missing-credit-note detector compares against refundedAmountCents) or
+    // an operator voided a refund note in Xero for money Stripe has already
+    // paid out. Both are Xero-side divergences to surface, not local-ledger
+    // corruption to apply — so keep the ledger, log, and raise the deduped
+    // Xero sync alert. Non-Stripe payments (Internet Banking) keep the
+    // existing treat-Xero-as-authoritative behaviour: Xero IS their payment
+    // rail.
+    const isStripePayment = payment.source === PaymentSource.STRIPE;
+    let effectiveRefundedTotalCents = nextRefundedTotalCents;
+    if (
+      isStripePayment &&
+      nextRefundedTotalCents < payment.refundedAmountCents
+    ) {
+      logger.warn(
+        {
+          creditNoteId: input.creditNoteId,
+          paymentId: payment.id,
+          localRefundedAmountCents: payment.refundedAmountCents,
+          xeroDerivedRefundedTotalCents: nextRefundedTotalCents,
+        },
+        "Xero-derived refund total is below the local Stripe refund ledger; keeping the local ledger (raise-only floor)"
+      );
+      await notifyXeroSyncError({
+        errorType: "refund-ledger-divergence",
+        operation: `inbound-credit-note-repair:${input.creditNoteId}`,
+        errorMessage: `Xero-derived refund total (${nextRefundedTotalCents}c) for payment ${payment.id} is below the local Stripe refund ledger (${payment.refundedAmountCents}c). The local ledger was kept (raise-only floor, #1353). Likely causes: a missing refund-delta credit note in Xero, or a refund credit note voided in Xero after Stripe paid the refund out.`,
+      });
+      effectiveRefundedTotalCents = payment.refundedAmountCents;
+    }
+
+    let nextStatus = getNextRefundedPaymentStatus(
       payment.status,
       payment.amountCents,
-      nextRefundedTotalCents
+      effectiveRefundedTotalCents
     );
+    if (
+      isStripePayment &&
+      nextStatus === PaymentStatus.SUCCEEDED &&
+      (payment.status === PaymentStatus.REFUNDED ||
+        payment.status === PaymentStatus.PARTIALLY_REFUNDED)
+    ) {
+      // F5 (#1353): never un-refund a Stripe payment from Xero-derived data.
+      nextStatus = null;
+    }
     const updates: {
       refundedAmountCents?: number;
       status?: PaymentStatus;
     } = {};
 
-    if (payment.refundedAmountCents !== nextRefundedTotalCents) {
-      updates.refundedAmountCents = nextRefundedTotalCents;
+    if (payment.refundedAmountCents !== effectiveRefundedTotalCents) {
+      updates.refundedAmountCents = effectiveRefundedTotalCents;
     }
     if (nextStatus && payment.status !== nextStatus) {
       updates.status = nextStatus;

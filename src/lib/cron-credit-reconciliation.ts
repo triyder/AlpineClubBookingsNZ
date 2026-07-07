@@ -6,6 +6,10 @@ import {
   REFUND_CREDIT_NOTE_GRACE_HOURS,
   getRefundsMissingXeroCreditNotes,
 } from "@/lib/xero-admin-health";
+import {
+  enqueueXeroRefundCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 
 /**
  * Daily reconciliation of account credit balances.
@@ -45,10 +49,45 @@ export async function reconcileCreditBalances(): Promise<{
   const discrepancies = negativeBalances.length;
 
   const refundsMissingCreditNotes = await getRefundsMissingXeroCreditNotes({
-    limit: 10,
+    limit: 50,
   });
 
   if (refundsMissingCreditNotes.count > 0) {
+    // F4 (#1354) self-heal: re-enqueue the uncovered delta for each flagged
+    // payment. The enqueue is delta-capped (it computes
+    // refundedAmountCents − covered at enqueue) and correlation-key-deduped,
+    // the execution path recomputes coverage again at execution time, and the
+    // #1353 floor keeps refundedAmountCents from being rewritten down — so a
+    // historically swallowed delta converges to exactly one corrective note,
+    // and repeats collapse into the existing PENDING operation. Alerting
+    // below is unchanged: operators still see the divergence until the books
+    // actually heal.
+    let reEnqueued = 0;
+    for (const missing of refundsMissingCreditNotes.payments) {
+      try {
+        const queued = await enqueueXeroRefundCreditNoteOperation(
+          missing.paymentId,
+          missing.refundedAmountCents
+        );
+        if (queued.queueOperationId) {
+          reEnqueued += 1;
+        }
+      } catch (err) {
+        logger.error(
+          { err, paymentId: missing.paymentId },
+          "Failed to re-enqueue missing Xero refund credit note delta"
+        );
+      }
+    }
+    if (reEnqueued > 0 && (await isXeroConnected())) {
+      void kickQueuedXeroOutboxOperationsIfConnected({ limit: reEnqueued }).catch(
+        (err) =>
+          logger.error(
+            { err },
+            "Failed to kick Xero outbox worker after credit-note self-heal re-enqueue"
+          )
+      );
+    }
     // Cron context: the scoped bridge logs at error AND pages Sentry (deduped).
     reportCronError({
       tag: "credit-reconciliation:refunds-missing-credit-notes",

@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { CircleDashed, GripVertical, Lock, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +27,7 @@ interface AllocationChipProps {
   onReassignBed: (bedId: string) => void;
   onRemove: () => void;
   pending: boolean;
+  canEdit?: boolean;
 }
 
 export function AllocationChip({
@@ -34,11 +36,13 @@ export function AllocationChip({
   onReassignBed,
   onRemove,
   pending,
+  canEdit = true,
 }: AllocationChipProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: allocationDraggableId(allocation.id),
       data: { type: "allocation", allocationId: allocation.id },
+      disabled: !canEdit,
     });
 
   const otherBeds = bedOptions.filter((bed) => bed.id !== allocation.bedId);
@@ -68,6 +72,8 @@ export function AllocationChip({
       <button
         type="button"
         aria-label={`Drag ${allocation.guestName} to another bed or night`}
+        disabled={!canEdit}
+        title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
         className="cursor-grab touch-none rounded p-0.5 text-muted-foreground hover:bg-accent active:cursor-grabbing"
         {...attributes}
         {...listeners}
@@ -122,7 +128,8 @@ export function AllocationChip({
             variant="ghost"
             className="h-5 w-5 shrink-0"
             aria-label={`Manage allocation for ${allocation.guestName}`}
-            disabled={pending}
+            disabled={pending || !canEdit}
+            title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
           >
             <X className="h-3 w-3" />
           </Button>

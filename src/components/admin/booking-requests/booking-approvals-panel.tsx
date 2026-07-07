@@ -8,6 +8,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
+import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
 
@@ -60,6 +62,7 @@ interface BookingApprovalsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
   showHeading?: boolean;
+  canEdit?: boolean;
 }
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
@@ -88,6 +91,7 @@ export function BookingApprovalsPanel({
   basePath = "/admin/booking-requests",
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
+  canEdit = true,
 }: BookingApprovalsPanelProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -312,6 +316,8 @@ export function BookingApprovalsPanel({
                       <Textarea
                         id={`notes-${booking.id}`}
                         value={notesById[booking.id] ?? ""}
+                        disabled={!canEdit}
+                        title={!canEdit ? ADMIN_VIEW_ONLY_ACTION_REASON : undefined}
                         onChange={(event) =>
                           setNotesById((prev) => ({ ...prev, [booking.id]: event.target.value }))
                         }
@@ -320,19 +326,21 @@ export function BookingApprovalsPanel({
                         placeholder="Explain your decision. The member will see this note."
                       />
                       <div className="flex flex-wrap gap-2">
-                        <Button
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           onClick={() => decideReview(booking.id, "APPROVED")}
                           disabled={reviewingId === booking.id}
                         >
                           Approve
-                        </Button>
-                        <Button
+                        </ViewOnlyActionButton>
+                        <ViewOnlyActionButton
+                          canEdit={canEdit}
                           variant="destructive"
                           onClick={() => decideReview(booking.id, "REJECTED")}
                           disabled={reviewingId === booking.id}
                         >
                           Reject and cancel
-                        </Button>
+                        </ViewOnlyActionButton>
                       </div>
                     </div>
                   )}

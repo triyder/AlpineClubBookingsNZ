@@ -22,6 +22,14 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // #1385: the manual "Hold slots" UI entry is restricted to SCHOOL booking
+  // requests. The generic quote flow auto-holds the beds on quote send across the
+  // whole quote lifecycle (#1280), so a separate manual hold is redundant there
+  // and is hidden in the admin panel. This route stays in use for the SCHOOL hold
+  // flow — school approval reuses the held booking (#1352) — so it must NOT be
+  // removed. The restriction is UI-visibility only (Low-risk, #1385); no server-
+  // side request.type check is enforced here on purpose (that would be a
+  // behaviour/capability change beyond the issue's scope).
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const session = guard.session;

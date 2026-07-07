@@ -190,11 +190,11 @@ prepare_source() {
   log "Applying migrations to ${SRC_DB}"
   DATABASE_URL="$SRC_URL" npx prisma migrate deploy >/dev/null
 
+  log "Seeding demo data (prisma/demo-seed.ts)"
+  ALLOW_DEMO_SEED=1 DATABASE_URL="$SRC_URL" npx tsx prisma/demo-seed.ts >/dev/null
+
   log "Seeding base data (prisma/seed.ts)"
   DATABASE_URL="$SRC_URL" npx tsx prisma/seed.ts >/dev/null
-
-  log "Seeding demo data (prisma/demo-seed.ts)"
-  DATABASE_URL="$SRC_URL" npx tsx prisma/demo-seed.ts >/dev/null
 
   # Take the backup: plain pg_dump piped through gzip, matching the artifact
   # shape src/lib/backup.ts writes (pg_dump with no format flags, then gzip).

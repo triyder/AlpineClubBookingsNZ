@@ -48,8 +48,29 @@ vi.mock("@/components/ui/dialog", () => ({
 vi.mock("@/components/ui/accordion", () => ({
   Accordion: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   AccordionContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AccordionHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   AccordionItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  AccordionPlainTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
   AccordionTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onClick,
+    disabled,
+  }: {
+    children: ReactNode;
+    onClick?: () => void;
+    disabled?: boolean;
+  }) => (
+    <button onClick={onClick} disabled={disabled}>
+      {children}
+    </button>
+  ),
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("@/components/ui/tabs", () => ({
@@ -142,6 +163,13 @@ describe("Admin member detail Xero create", () => {
             history: [],
             pendingRequests: [],
           }),
+        });
+      }
+
+      if (url === "/api/admin/xero/status") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ connected: true, features: {} }),
         });
       }
 

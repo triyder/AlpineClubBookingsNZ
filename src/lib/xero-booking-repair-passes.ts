@@ -4,6 +4,7 @@
 // xero-booking-repair.ts (#1208 item 2). Money stays in integer cents; provider
 // calls stay outside DB transactions (unchanged).
 import logger from "@/lib/logger";
+import { PartialRefundError } from "@/lib/payment-transactions";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import type {
   BookingXeroRepairAction,
@@ -230,16 +231,58 @@ async function applyLateCaptureRefundRepair(
     return;
   }
 
-  const refundResult = await deps.refundPaymentTransactions({
-    paymentId,
-    amountCents: refundAmountCents,
-    reason: "requested_by_customer",
-    metadata: {
-      bookingId,
-      reason: "cancelled_booking_late_capture_repair",
-    },
-    idempotencyKeyPrefix: `late_cancel_refund_repair_${bookingId}`,
-  });
+  let refundResult: Awaited<
+    ReturnType<typeof deps.refundPaymentTransactions>
+  >;
+  try {
+    refundResult = await deps.refundPaymentTransactions({
+      paymentId,
+      amountCents: refundAmountCents,
+      reason: "requested_by_customer",
+      metadata: {
+        bookingId,
+        reason: "cancelled_booking_late_capture_repair",
+      },
+      idempotencyKeyPrefix: `late_cancel_refund_repair_${bookingId}`,
+    });
+  } catch (error) {
+    // #1495: a multi-slice refund can fail partway — earlier slices already
+    // refunded at Stripe and recorded to the ledger. Queue the Xero refund
+    // credit note for that recorded portion BEFORE rethrowing, so Xero stays
+    // consistent with what actually moved instead of understating refunds
+    // until the amount-mismatch arm surfaces the drift. The note is sized from
+    // the recorded refund ledger by enqueueXeroRefundCreditNoteOperation
+    // (capped at refundedAmountCents - already-covered), so passing the
+    // completed portion produces exactly the delta that moved; the operator's
+    // re-run for the remainder then enqueues only the still-uncovered slice
+    // under a distinct cumulative-watermark correlation key, never double-noting.
+    if (
+      invoiceId &&
+      error instanceof PartialRefundError &&
+      error.completedRefundCents > 0
+    ) {
+      try {
+        await deps.enqueueXeroRefundCreditNoteOperation(
+          paymentId,
+          error.completedRefundCents
+        );
+      } catch (enqueueError) {
+        // Best-effort: never let an enqueue failure mask the refund error the
+        // operator needs to see. The amount-mismatch arm still surfaces any
+        // residual drift on a later scan.
+        logger.error(
+          {
+            err: enqueueError,
+            bookingId,
+            paymentId,
+            completedRefundCents: error.completedRefundCents,
+          },
+          "Failed to queue Xero refund credit note for the completed slices of a partially-failed late-capture refund"
+        );
+      }
+    }
+    throw error;
+  }
 
   if (invoiceId) {
     await deps.enqueueXeroRefundCreditNoteOperation(paymentId, refundAmountCents);
@@ -370,13 +413,20 @@ async function applyQueuedAction(
 export async function applyActionsForPass(
   bookings: BookingXeroRepairBookingSummary[],
   deps: RepairDependencies,
-  xeroConnectionAvailable: boolean
+  xeroConnectionAvailable: boolean,
+  // #1491: exact keys an operator explicitly confirmed for execution even
+  // though they are not safeToAutoApply (from the dry-run report).
+  forcedActionKeys?: Set<string>
 ) {
   let hasStateChanges = false;
 
   for (const booking of bookings) {
     for (const action of booking.actions) {
-      if (!action.safeToAutoApply || action.status !== "planned") {
+      const operatorForced = forcedActionKeys?.has(action.key) ?? false;
+      if (
+        (!action.safeToAutoApply && !operatorForced) ||
+        action.status !== "planned"
+      ) {
         continue;
       }
 

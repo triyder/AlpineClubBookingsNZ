@@ -32,6 +32,7 @@ const {
   mockUpsertPaymentIntentTransaction,
   mockQueueSupersededAdditionalIntentCancellations,
   mockAttachIntentToWaitingOps,
+  mockExecuteGroupSettlementRefundPlan,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
@@ -63,6 +64,9 @@ const {
     .fn()
     .mockResolvedValue([]),
   mockAttachIntentToWaitingOps: vi.fn().mockResolvedValue({ attached: 0 }),
+  mockExecuteGroupSettlementRefundPlan: vi
+    .fn()
+    .mockResolvedValue({ outcome: "refunded", mirroredChildren: 1 }),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -100,6 +104,11 @@ vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: (...args: unknown[]) => mockCreatePaymentIntent(...args),
   findOrCreateCustomer: (...args: unknown[]) =>
     mockFindOrCreateCustomer(...args),
+}));
+
+vi.mock("@/lib/group-cancel", () => ({
+  executeGroupSettlementRefundPlan: (...args: unknown[]) =>
+    mockExecuteGroupSettlementRefundPlan(...args),
 }));
 
 vi.mock("@/lib/booking-payment-cleanup", () => ({
@@ -142,7 +151,10 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  buildBookingCancellationRefundMetadata,
+  enqueueBookingCancellationRefundRecovery,
   enqueueBookingModificationRefundRecovery,
+  enqueueGroupSettlementRefundRecovery,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 
@@ -803,18 +815,275 @@ describe("payment recovery worker", () => {
     expect(result.succeeded).toBe(1);
     // The recovery reconstructs booking_cancel_refund_<bookingId> (the inline
     // cancel key), so a refund Stripe already holds under those keys is
-    // replayed, not re-minted.
+    // replayed, not re-minted. #1494: the metadata is ALSO byte-identical to
+    // the inline body — { bookingId, reason: "cancellation" }, no
+    // refundPercentage — so Stripe replays the original refund instead of
+    // rejecting the reused key with idempotency_error.
     expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
         paymentId: "payment-1",
         amountCents: 4000,
         metadata: {
           bookingId: "booking-1",
-          reason: "booking_cancellation_refund_recovery",
+          reason: "cancellation",
         },
         idempotencyKeyPrefix: "booking_cancel_refund_booking-1",
       }),
     );
+  });
+
+  it("replays a byte-identical Stripe body (metadata + key) after a lost inline recording, so it converges instead of hitting idempotency_error (#1494)", async () => {
+    // Regression for #1494. The frozen-plan design promises that if the inline
+    // Stripe refund succeeds but the local recording is lost (crash window),
+    // the cron replays the identical slices under the identical idempotency
+    // key and Stripe answers with the ORIGINAL refund. That only holds if the
+    // request BODY matches byte-for-byte too. Before #1494 the cron sent
+    // metadata.reason = "booking_cancellation_refund_recovery" (and no
+    // refundPercentage) while the inline path sent reason = "cancellation" +
+    // refundPercentage, so Stripe rejected the reused key with
+    // idempotency_error and the operation retried to exhaustion. Both callers
+    // now build the body from buildBookingCancellationRefundMetadata, so the
+    // replay is exactly what the inline path first sent.
+    const crashed = makeOperation({
+      id: "recovery-cancel-lost-recording",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+      idempotencyKey: "booking_cancel_refund_recovery_booking-1",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    // Exact-object assertion (not objectContaining): the body is byte-identical
+    // to the inline cancel body asserted in booking-cancel.test.ts.
+    const [refundArgs] = mockRefundPaymentTransactions.mock.calls[0];
+    expect(refundArgs.metadata).toEqual({
+      bookingId: "booking-1",
+      reason: "cancellation",
+    });
+    expect(refundArgs.idempotencyKeyPrefix).toBe("booking_cancel_refund_booking-1");
+    expect(refundArgs.allocation).toEqual([
+      { paymentTransactionId: "txn-1", amountCents: 4000 },
+    ]);
+    // The shape reconstructs purely from the persisted bookingId, so an
+    // operation enqueued BEFORE this fix (no persisted metadata) replays the
+    // same converged body through this same path — no fallback branch needed.
+    expect(refundArgs.metadata).toEqual(
+      buildBookingCancellationRefundMetadata("booking-1"),
+    );
+  });
+
+  it("replays a claim-frozen allocation plan for a crashed booking cancellation refund (#1349)", async () => {
+    // #1349: booking-cancel persists this operation INSIDE the claim
+    // transaction, with the allocation frozen from the under-lock read. A
+    // process death before (or during) the inline Stripe call leaves it
+    // PENDING; the cron must execute EXACTLY the frozen slices under the
+    // inline cancel key prefix — identical Stripe idempotency keys — so any
+    // slice the inline path already completed is replayed by Stripe, never
+    // repeated.
+    const crashed = makeOperation({
+      id: "recovery-cancel-crash",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+      idempotencyKey: "booking_cancel_refund_recovery_booking-1",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(crashed);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...crashed, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        amountCents: 4000,
+        allocation: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        idempotencyKeyPrefix: "booking_cancel_refund_booking-1",
+      }),
+    );
+    // The frozen plan is authoritative — no re-derivation/re-freeze.
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ allocationPlan: expect.anything() }),
+      }),
+    );
+    // Replayed to completion.
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-cancel-crash" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        }),
+      }),
+    );
+  });
+
+  it("enqueueBookingCancellationRefundRecovery persists the claim-frozen allocation plan (#1349)", async () => {
+    await enqueueBookingCancellationRefundRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      amountCents: 4000,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { idempotencyKey: "booking_cancel_refund_recovery_booking-1" },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "booking-1",
+          paymentId: "payment-1",
+          amountCents: 4000,
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
+        update: expect.objectContaining({
+          amountCents: 4000,
+          allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 4000 }],
+        }),
+      }),
+    );
+  });
+
+  it("dispatches a group settlement refund recovery to the frozen-plan executor (#1351)", async () => {
+    const groupOp = makeOperation({
+      id: "recovery-group-settlement",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 9000,
+      idempotencyKey: "group_settlement_refund_recovery_settle-1",
+      paymentTransactionId: null,
+      paymentIntentId: "pi_settle_1",
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockExecuteGroupSettlementRefundPlan).toHaveBeenCalledWith(
+      "settle-1",
+    );
+    // The anchor payment is never read and no refund is derived from it.
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-group-settlement" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        }),
+      }),
+    );
+  });
+
+  it("retries a group settlement replay whose Stripe call failed, alerting only on exhaustion (#1351)", async () => {
+    const groupOp = makeOperation({
+      id: "recovery-group-settlement-fail",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 9000,
+      attempts: 1,
+      idempotencyKey: "group_settlement_refund_recovery_settle-1",
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(groupOp);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([{ ...groupOp, status: "PENDING" }]);
+      },
+    );
+    mockExecuteGroupSettlementRefundPlan.mockRejectedValueOnce(
+      new Error("stripe still down"),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.retried).toBe(1);
+    // Not exhausted yet: retry scheduled, NO admin alert.
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-group-settlement-fail" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.FAILED,
+          nextRetryAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it("enqueueGroupSettlementRefundRecovery upserts a delayed operation and re-arms it on inline failure (#1351)", async () => {
+    await enqueueGroupSettlementRefundRecovery({
+      organiserBookingId: "org-booking-1",
+      paymentId: "org-payment-1",
+      settlementId: "settle-1",
+      paymentIntentId: "pi_settle_1",
+      amountCents: 9000,
+      retryDelayMs: 10 * 60 * 1000,
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          idempotencyKey: "group_settlement_refund_recovery_settle-1",
+        },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "org-booking-1",
+          paymentId: "org-payment-1",
+          paymentIntentId: "pi_settle_1",
+          amountCents: 9000,
+          nextRetryAt: expect.any(Date),
+        }),
+      }),
+    );
+    const created = mockPaymentRecoveryUpsert.mock.calls[0][0].create;
+    expect(created.nextRetryAt.getTime()).toBeGreaterThan(
+      Date.now() + 9 * 60 * 1000,
+    );
+
+    // Inline failure re-arms for immediate retry with the error recorded.
+    await enqueueGroupSettlementRefundRecovery({
+      organiserBookingId: "org-booking-1",
+      paymentId: "org-payment-1",
+      settlementId: "settle-1",
+      paymentIntentId: "pi_settle_1",
+      amountCents: 9000,
+      retryDelayMs: 0,
+      lastError: "stripe down",
+    });
+    const rearm = mockPaymentRecoveryUpsert.mock.calls[1][0].update;
+    expect(rearm.lastError).toBe("stripe down");
+    expect(rearm.nextRetryAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
   it("skips the Stripe call when the outstanding refund balance has already been settled", async () => {
@@ -1087,6 +1356,49 @@ describe("payment recovery worker", () => {
       expect(result.succeeded).toBe(1);
       expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
       expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+    });
+
+    // #1358 (F29): a booking cancelled after the modification has no increase
+    // left to collect — the cancel flow tore down its additional intents, so
+    // recovery must complete without minting a live intent or re-arming the
+    // waiting supplementary Xero operation.
+    it("completes without creating anything when the booking is CANCELLED (#1358)", async () => {
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue({
+        id: "payment-1",
+        stripeCustomerId: "cus_123",
+        stripePaymentIntentId: "pi_original",
+        transactions: [
+          {
+            id: "txn-1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_original",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: PaymentStatus.SUCCEEDED,
+            createdAt: new Date("2026-05-01T00:00:00.000Z"),
+          },
+        ],
+        booking: {
+          id: "booking-1",
+          memberId: "m1",
+          status: "CANCELLED",
+          member: {
+            id: "m1",
+            email: "alice@test.com",
+            firstName: "Alice",
+            lastName: "Smith",
+          },
+        },
+      });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result.succeeded).toBe(1);
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+      expect(mockQueueSupersededAdditionalIntentCancellations).not.toHaveBeenCalled();
+      expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
     });
 
     it("enqueues exactly one recovery row per booking modification", async () => {

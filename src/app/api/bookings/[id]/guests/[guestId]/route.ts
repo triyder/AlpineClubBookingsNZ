@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
-import { sendBookingModifiedEmail } from "@/lib/email";
+import {
+  sendAdminMinorsOnlyReviewAlert,
+  sendBookingModifiedEmail,
+} from "@/lib/email";
+import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -213,6 +217,24 @@ export async function DELETE(
               : undefined,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")
+      );
+    }
+
+    // #1372: removing the last adult from a paid booking blocks its lodge
+    // check-in (the booking KEEPS its PAID status). Nudge admins to review it,
+    // best-effort — an email failure must never block the removal.
+    if (result.minorsOnlyReviewNewlyFlagged) {
+      sendAdminMinorsOnlyReviewAlert({
+        memberName: result.memberName,
+        checkIn: result.booking.checkIn,
+        checkOut: result.booking.checkOut,
+        guestCount: result.booking.guests.length,
+        reviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+      }).catch((err) =>
+        logger.error(
+          { err, bookingId },
+          "Failed to send minors-only review admin alert",
+        ),
       );
     }
 

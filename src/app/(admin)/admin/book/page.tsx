@@ -77,7 +77,10 @@ export default function AdminBookPage() {
 
     let cancelled = false;
 
-    fetch(`/api/admin/members/${selectedMember.id}/family`)
+    // Bookings-scoped on-behalf picker gated on bookings:edit (not
+    // membership:view), so a Booking Officer without membership:view still
+    // gets the selected member's family and correct member pricing (#1376).
+    fetch(`/api/admin/bookings/eligible-family?forMemberId=${selectedMember.id}`)
       .then((res) => (res.ok ? res.json() : { familyMembers: [] }))
       .then((data) => {
         if (!cancelled) {

@@ -50,6 +50,7 @@ import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
+import { isLikelyTypoCorrection } from "@/lib/guest-name-similarity";
 import {
   assertLinkedBookingMembersCanBeBooked,
   normalizeBookingGuestInputs,
@@ -134,6 +135,14 @@ export type ResolvedGuestNameUpdate = {
   previousLastName: string;
 };
 
+/**
+ * Shown when a free-text non-member guest name edit on a fully-paid booking is
+ * NOT an identity-preserving spelling correction (#1386). The paid-name lock
+ * still blocks swapping in a different person; only typo fixes are exempt.
+ */
+export const PAID_NAME_TYPO_ONLY_MESSAGE =
+  "Only spelling corrections are allowed after payment; to change who a booking is for, contact the office.";
+
 function normalizeGuestName(value: string, fieldName: string) {
   const normalized = value.replace(/[\r\n]+/g, " ").trim();
   if (!normalized) {
@@ -149,6 +158,7 @@ export function resolveGuestNameUpdates({
   booking,
   input,
   allowWhenFullyPaid = false,
+  allowTypoFixWhenFullyPaid = false,
 }: {
   booking: Pick<
     LoadedBookingForModify,
@@ -162,12 +172,24 @@ export function resolveGuestNameUpdates({
    * workflow — including after the school has paid its invoice.
    */
   allowWhenFullyPaid?: boolean;
+  /**
+   * Identity-only edits (no structural change) on a fully-paid booking may fix
+   * an identity-preserving spelling TYPO on a free-text non-member guest
+   * (#1386). Each changed name must pass {@link isLikelyTypoCorrection}; the
+   * lock still rejects anything that could be a different person (a swap).
+   * Ignored when {@link allowWhenFullyPaid} already lifts the lock (quoted
+   * bookings), and irrelevant when the booking is not fully paid.
+   */
+  allowTypoFixWhenFullyPaid?: boolean;
 }): ResolvedGuestNameUpdate[] {
   if (!input.guestUpdates?.length) {
     return [];
   }
 
-  if (!allowWhenFullyPaid && isBookingFullyPaidForGuestNameEdits(booking)) {
+  const fullyPaidLockActive =
+    !allowWhenFullyPaid && isBookingFullyPaidForGuestNameEdits(booking);
+
+  if (fullyPaidLockActive && !allowTypoFixWhenFullyPaid) {
     throw new ApiError(
       "Non-member guest names cannot be edited after the booking is fully paid",
       400,
@@ -208,6 +230,21 @@ export function resolveGuestNameUpdates({
     const lastName = normalizeGuestName(update.lastName, "Last name");
     if (firstName === guest.firstName && lastName === guest.lastName) {
       continue;
+    }
+
+    // On a fully-paid booking the lock is only lifted for an identity-preserving
+    // spelling correction (#1386); a name that could be a different person keeps
+    // the hard reject so payment can't quietly transfer the booking.
+    if (
+      fullyPaidLockActive &&
+      !isLikelyTypoCorrection(
+        guest.firstName,
+        guest.lastName,
+        firstName,
+        lastName,
+      )
+    ) {
+      throw new ApiError(PAID_NAME_TYPO_ONLY_MESSAGE, 400);
     }
 
     updates.push({

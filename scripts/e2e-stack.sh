@@ -72,11 +72,11 @@ prepare() {
   echo "==> Applying migrations"
   DATABASE_URL="$HOST_DATABASE_URL" npx prisma migrate deploy
 
+  echo "==> Seeding demo data"
+  ALLOW_DEMO_SEED=1 DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/demo-seed.ts
+
   echo "==> Seeding base data"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/seed.ts
-
-  echo "==> Seeding demo data"
-  DATABASE_URL="$HOST_DATABASE_URL" npx tsx prisma/demo-seed.ts
 
   echo "==> Enabling the modules the E2E journeys need"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts

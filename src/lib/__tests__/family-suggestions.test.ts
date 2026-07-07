@@ -12,6 +12,11 @@ vi.mock("../prisma", () => ({
     familyGroupMember: {
       createMany: vi.fn(),
     },
+    hiddenFamilySuggestion: {
+      findMany: vi.fn(),
+      upsert: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -27,16 +32,38 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 
 import { prisma } from "../prisma";
-import { suggestFamilyGroups, createFamilyGroupFromSuggestion } from "../family-suggestions";
+import {
+  buildFamilySuggestionSignature,
+  createFamilyGroupFromSuggestion,
+  hideFamilySuggestion,
+  resetHiddenFamilySuggestions,
+  suggestFamilyGroups,
+} from "../family-suggestions";
 
 const mockedFindMany = vi.mocked(prisma.member.findMany);
+const mockedHiddenFindMany = vi.mocked(prisma.hiddenFamilySuggestion.findMany);
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(prisma.member.count).mockResolvedValue(1);
+  mockedHiddenFindMany.mockResolvedValue([]);
+  vi.mocked(prisma.hiddenFamilySuggestion.upsert).mockResolvedValue({} as any);
+  vi.mocked(prisma.hiddenFamilySuggestion.deleteMany).mockResolvedValue({
+    count: 0,
+  } as any);
 });
 
 describe("suggestFamilyGroups", () => {
+  it("builds deterministic order-independent signatures", () => {
+    expect(buildFamilySuggestionSignature(["m2", "m1", "m2"])).toBe("m1|m2");
+    expect(buildFamilySuggestionSignature(["m1", "m2"])).toBe(
+      buildFamilySuggestionSignature(["m2", "m1"])
+    );
+    expect(() => buildFamilySuggestionSignature(["m1", "m1"])).toThrow(
+      "at least 2 unique members"
+    );
+  });
+
   it("returns empty suggestions when all members are grouped", async () => {
     mockedFindMany.mockResolvedValue([
       {
@@ -50,6 +77,7 @@ describe("suggestFamilyGroups", () => {
     expect(result.suggestions).toHaveLength(0);
     expect(result.totalMembers).toBe(1);
     expect(result.ungroupedCount).toBe(0);
+    expect(result.hiddenCount).toBe(0);
   });
 
   it("suggests group for members sharing the same email", async () => {
@@ -72,6 +100,7 @@ describe("suggestFamilyGroups", () => {
     expect(result.suggestions[0].suggestedName).toBe("Smith Family");
     expect(result.suggestions[0].reason).toContain("share email");
     expect(result.suggestions[0].members).toHaveLength(2);
+    expect(result.suggestions[0].signature).toBe("m1|m2");
   });
 
   it("suggests group for ungrouped members with same last name", async () => {
@@ -219,6 +248,127 @@ describe("suggestFamilyGroups", () => {
     const result = await suggestFamilyGroups();
     expect(result.suggestions).toHaveLength(0);
   });
+
+  it("filters hidden suggestion signatures", async () => {
+    mockedHiddenFindMany.mockResolvedValue([
+      { signature: buildFamilySuggestionSignature(["m2", "m1"]) },
+    ] as any);
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1", firstName: "Alice", lastName: "Smith", email: "family@test.com",
+        ageTier: "ADULT", canLogin: true, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m2", firstName: "Bob", lastName: "Smith", email: "family@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+    ] as any);
+
+    const result = await suggestFamilyGroups();
+    expect(result.suggestions).toHaveLength(0);
+    expect(result.hiddenCount).toBe(1);
+  });
+
+  it("resurfaces a hidden family when the suggested member set changes", async () => {
+    mockedHiddenFindMany.mockResolvedValue([
+      { signature: buildFamilySuggestionSignature(["m1", "m2"]) },
+    ] as any);
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1", firstName: "Alice", lastName: "Smith", email: "family@test.com",
+        ageTier: "ADULT", canLogin: true, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m2", firstName: "Bob", lastName: "Smith", email: "family@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m3", firstName: "Chris", lastName: "Smith", email: "family@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+    ] as any);
+
+    const result = await suggestFamilyGroups();
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0].signature).toBe("m1|m2|m3");
+    expect(result.hiddenCount).toBe(1);
+  });
+
+  it("lets a hidden shared-email pair resurface as a larger last-name suggestion", async () => {
+    mockedHiddenFindMany.mockResolvedValue([
+      { signature: buildFamilySuggestionSignature(["m1", "m2"]) },
+    ] as any);
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1", firstName: "Alice", lastName: "Smith", email: "family@test.com",
+        ageTier: "ADULT", canLogin: true, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m2", firstName: "Bob", lastName: "Smith", email: "family@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+      {
+        id: "m3", firstName: "Chris", lastName: "Smith", email: "other@test.com",
+        ageTier: "CHILD", canLogin: false, xeroContactId: null,
+        familyGroupMemberships: [],
+      },
+    ] as any);
+
+    const result = await suggestFamilyGroups();
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0].score).toBe(3);
+    expect(result.suggestions[0].signature).toBe("m1|m2|m3");
+  });
+});
+
+describe("hideFamilySuggestion", () => {
+  it("stores the canonical member set server-side", async () => {
+    mockedFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }] as any);
+
+    const result = await hideFamilySuggestion(["m2", "m1", "m1"], "admin1");
+
+    expect(result).toEqual({ signature: "m1|m2", memberIds: ["m1", "m2"] });
+    expect(prisma.hiddenFamilySuggestion.upsert).toHaveBeenCalledWith({
+      where: { signature: "m1|m2" },
+      create: {
+        signature: "m1|m2",
+        memberIds: ["m1", "m2"],
+        hiddenByMemberId: "admin1",
+      },
+      update: {
+        memberIds: ["m1", "m2"],
+        hiddenByMemberId: "admin1",
+      },
+    });
+  });
+
+  it("rejects inactive or missing members", async () => {
+    mockedFindMany.mockResolvedValue([{ id: "m1" }] as any);
+
+    await expect(
+      hideFamilySuggestion(["m1", "m2"], "admin1")
+    ).rejects.toThrow("not found or inactive");
+    expect(prisma.hiddenFamilySuggestion.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("resetHiddenFamilySuggestions", () => {
+  it("deletes every hidden suggestion", async () => {
+    vi.mocked(prisma.hiddenFamilySuggestion.deleteMany).mockResolvedValue({
+      count: 3,
+    } as any);
+
+    await expect(resetHiddenFamilySuggestions()).resolves.toEqual({ count: 3 });
+    expect(prisma.hiddenFamilySuggestion.deleteMany).toHaveBeenCalledWith();
+  });
 });
 
 describe("createFamilyGroupFromSuggestion", () => {
@@ -266,11 +416,12 @@ describe("createFamilyGroupFromSuggestion", () => {
 vi.mock("../auth", () => ({
   auth: vi.fn(),
 }));
-vi.mock("../audit", () => ({
+vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
 }));
 
 import { auth } from "../auth";
+import { logAudit } from "@/lib/audit";
 
 describe("GET /api/admin/family-suggestions", () => {
   it("returns 403 for non-admin users", async () => {
@@ -307,5 +458,88 @@ describe("POST /api/admin/family-suggestions", () => {
     });
     const res = await POST(req as any);
     expect(res.status).toBe(422);
+  });
+});
+
+describe("POST /api/admin/family-suggestions/hide", () => {
+  it("returns 403 for non-admin users", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+
+    const { POST } = await import("../../app/api/admin/family-suggestions/hide/route");
+    const req = new Request("http://localhost/api/admin/family-suggestions/hide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberIds: ["m1", "m2"] }),
+    });
+    const res = await POST(req as any);
+    expect(res.status).toBe(403);
+  });
+
+  it("validates input", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+
+    const { POST } = await import("../../app/api/admin/family-suggestions/hide/route");
+    const req = new Request("http://localhost/api/admin/family-suggestions/hide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberIds: ["m1"] }),
+    });
+    const res = await POST(req as any);
+    expect(res.status).toBe(422);
+  });
+
+  it("hides a server-canonical signature and writes an audit action", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    mockedFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }] as any);
+
+    const { POST } = await import("../../app/api/admin/family-suggestions/hide/route");
+    const req = new Request("http://localhost/api/admin/family-suggestions/hide", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberIds: ["m2", "m1"] }),
+    });
+    const res = await POST(req as any);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.signature).toBe("m1|m2");
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "FAMILY_SUGGESTION_HIDDEN",
+        memberId: "admin1",
+        targetId: "m1|m2",
+      })
+    );
+  });
+});
+
+describe("POST /api/admin/family-suggestions/reset", () => {
+  it("returns 403 for non-admin users", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: "u1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+
+    const { POST } = await import("../../app/api/admin/family-suggestions/reset/route");
+    const res = await POST();
+    expect(res.status).toBe(403);
+  });
+
+  it("resets hidden suggestions and writes an audit action", async () => {
+    vi.mocked(auth).mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
+    vi.mocked(prisma.hiddenFamilySuggestion.deleteMany).mockResolvedValue({
+      count: 2,
+    } as any);
+
+    const { POST } = await import("../../app/api/admin/family-suggestions/reset/route");
+    const res = await POST();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.deletedCount).toBe(2);
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "FAMILY_SUGGESTIONS_RESET",
+        memberId: "admin1",
+        metadata: { deletedCount: 2 },
+      })
+    );
   });
 });

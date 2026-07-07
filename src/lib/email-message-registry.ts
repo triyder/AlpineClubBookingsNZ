@@ -24,6 +24,8 @@ export interface EmailTemplateDefinition {
 
 const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-membership-application-pending",
+  "admin-minors-review",
+  "admin-owner-substitution",
   "admin-new-booking",
   "admin-payment-failure",
   "admin-pending-deadline",
@@ -37,6 +39,7 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-booking-change-request",
   "admin-issue-report",
   "admin-membership-cancellation-request",
+  "admin-account-deletion-requested",
   "admin-member-archive-requested",
   "admin-member-delete-requested",
   "admin-member-delete-approved",
@@ -107,6 +110,7 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
     "reason",
     "reviewUrl",
   ],
+  "admin-account-deletion-requested": ["reason", "requestId", "reviewUrl"],
   "admin-member-archive-requested": ["memberName", "reason", "reviewUrl"],
   "member-archive-approved": ["reason", "reviewNote"],
   "member-archive-rejected": ["reason", "reviewNote"],
@@ -150,6 +154,11 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-membership-cancellation-request": [
     "participantSummary",
     "requesterName",
+    "reviewUrl",
+  ],
+  "admin-account-deletion-requested": [
+    "memberEmail",
+    "memberName",
     "reviewUrl",
   ],
   "admin-member-archive-requested": [
@@ -208,6 +217,16 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary: "Locked booking change request submitted",
     frequency: "Per member/admin request submission",
   },
+  "admin-minors-review": {
+    triggerSummary:
+      "Paid booking edited into a minors-only (no-adult) composition",
+    frequency: "Once when a guest removal or batch edit newly trips the flag",
+  },
+  "admin-owner-substitution": {
+    triggerSummary:
+      "Held booking-request owner failed re-validation at conversion; a fresh contact was substituted and the invoice will bill it instead of the intended owner",
+    frequency: "Once per conversion where the held owner is no longer mappable",
+  },
   "membership-cancellation-submitted": {
     triggerSummary: "Membership cancellation request submitted",
     frequency: "Per requester submission",
@@ -231,6 +250,10 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-member-delete-requested": {
     triggerSummary: "Member hard-delete request submitted",
     frequency: "Per delete request",
+  },
+  "admin-account-deletion-requested": {
+    triggerSummary: "Self-service account deletion request submitted",
+    frequency: "Per member deletion request",
   },
   "admin-member-delete-approved": {
     triggerSummary: "Member hard-delete request approved",
@@ -449,6 +472,8 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "guestName",
   "holdUntil",
   "hoursRemaining",
+  "intendedMemberId",
+  "intendedMemberName",
   "inviteeName",
   "inviterName",
   "issueCategoryCount",
@@ -503,6 +528,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "remainingCredit",
   "recipientName",
   "profileUrl",
+  "requestId",
   "requestType",
   "requestedSummary",
   "requestedAmount",
@@ -518,6 +544,8 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "stalePendingMinutes",
   "startDate",
   "status",
+  "substituteMemberId",
+  "substituteMemberName",
   "subtotal",
   "targetAgeTier",
   "targetAgeTierLabel",

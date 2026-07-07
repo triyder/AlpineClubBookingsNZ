@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { getXeroContactGroups } from "@/lib/xero";
+import {
+  getXeroContactGroupCacheLastRefreshedAt,
+  getXeroContactGroups,
+} from "@/lib/xero";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/xero/contact-groups
- * Returns cached Xero contact groups by default.
+ * Returns cached Xero contact groups by default, along with `lastRefreshedAt`
+ * (the ISO timestamp of the last successful cache refresh, or null when the
+ * cache has never been populated).
  * Use `?refresh=1` for an operator-triggered refresh from Xero.
  */
 export async function GET(request: NextRequest) {
@@ -20,7 +25,12 @@ export async function GET(request: NextRequest) {
       refreshFromXero,
       repairMissingContactCache,
     });
-    return NextResponse.json({ groups, refreshed: refreshFromXero });
+    const lastRefreshedAt = await getXeroContactGroupCacheLastRefreshedAt();
+    return NextResponse.json({
+      groups,
+      refreshed: refreshFromXero,
+      lastRefreshedAt,
+    });
   } catch (error) {
     const xeroError = getXeroApiErrorInfo(error, "Failed to fetch contact groups");
     if (!xeroError.handled) {

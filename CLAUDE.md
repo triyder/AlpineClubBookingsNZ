@@ -21,8 +21,12 @@ written." Follow `AGENTS.md` → "Completion and Merge":
 1. Push the branch and open a PR using `.github/pull_request_template.md`.
 2. Monitor CI to green. Fix any failure — lint, typecheck, `npm test`, build,
    migration-drift, dependency/secret/static scans — and push until every
-   required check passes. `main` is not branch-protected and can land red, so
-   compare against `main`'s own latest CI before assuming a failure is yours.
+   required check passes. `main` is now branch-protected (the `verify`,
+   `Migration drift check`, `Playwright E2E`, and `Static analysis gate` checks
+   must pass to merge, and force-pushes/deletions are blocked), but because
+   `enforce_admins` is off and no review approval is required, an admin merge can
+   still occasionally land `main` red, so keep comparing against `main`'s own
+   latest CI before assuming a failure is yours.
 3. Apply the risk gate:
    - **Auto-merge eligible:** docs, agent workflow, admin/public UI copy, labels,
      help text, and other Low/Medium-risk work that does not touch money,

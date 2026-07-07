@@ -11,6 +11,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address";
+import { formatValidationErrorResponse } from "@/lib/format-validation-errors";
 import type {
   DependentDialogMode,
   DependentForm,
@@ -265,8 +266,14 @@ export function useMemberDependentDialog({
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to create dependent");
+        const data = await res.json().catch(() => ({}));
+        // Surface per-field zod errors (one line each) instead of a bare
+        // "Validation failed"; the dialog renders them with `whitespace-pre-line`.
+        throw new Error(
+          formatValidationErrorResponse(data, {
+            defaultMessage: "Failed to create dependent",
+          }).join("\n"),
+        );
       }
 
       setDependentOpen(false);

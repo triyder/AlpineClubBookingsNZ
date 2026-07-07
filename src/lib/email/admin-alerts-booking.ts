@@ -1,4 +1,6 @@
 import {
+  adminMinorsReviewRequiredTemplate,
+  adminOwnerSubstitutionTemplate,
   adminNewBookingTemplate,
   adminPendingDeadlineTemplate,
   adminBookingBumpedTemplate,
@@ -43,6 +45,74 @@ export async function sendAdminNewBookingAlert(data: {
       memberJustification: data.memberJustification ?? "",
     },
     preferenceKey: "adminNewBooking",
+  });
+}
+
+// F27 / #1372: Admin alert - paid booking edited into a minors-only (no-adult)
+// composition. The booking KEEPS its PAID status (Option A) but is blocked from
+// lodge check-in until an admin clears the review, so admins need a nudge that a
+// silent flag was set. #1422: this fires on its own "Booking review required"
+// preference category so muting routine new-booking alerts does not silence a
+// review-required alert.
+export async function sendAdminMinorsOnlyReviewAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  reviewReason: string;
+}) {
+  await sendToAdmins({
+    subject: `Review required: booking has only under-18 guests (${data.memberName})`,
+    html: adminMinorsReviewRequiredTemplate(data),
+    templateName: "admin-minors-review",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      reviewReason: data.reviewReason,
+    },
+    preferenceKey: "adminBookingReviewRequired",
+  });
+}
+
+// F20 / #1377: Admin alert - a held booking-request owner failed re-validation
+// at conversion, so a fresh non-login contact was minted and the invoice will
+// bill THAT contact instead of the intended owner. Routed to the Xero-sync-error
+// audience (finance/Xero admins) because the remedy is a Xero contact
+// reconciliation, reusing the existing `adminXeroSyncError` preference key so a
+// rare event needs no new NotificationPreference column.
+export async function sendAdminOwnerSubstitutionAlert(data: {
+  requestId: string;
+  bookingId: string;
+  intendedMemberId: string;
+  intendedMemberName?: string | null;
+  substituteMemberId: string;
+  substituteMemberName?: string | null;
+  reason: string;
+  requesterName: string;
+  requesterEmail: string;
+  checkIn: Date;
+  checkOut: Date;
+}) {
+  await sendToAdmins({
+    subject: `Owner substitution — reconcile Xero contact for booking request ${data.requestId}`,
+    html: adminOwnerSubstitutionTemplate(data),
+    templateName: "admin-owner-substitution",
+    templateData: {
+      requestId: data.requestId,
+      bookingId: data.bookingId,
+      intendedMemberId: data.intendedMemberId,
+      intendedMemberName: data.intendedMemberName ?? "",
+      substituteMemberId: data.substituteMemberId,
+      substituteMemberName: data.substituteMemberName ?? "",
+      reason: data.reason,
+      requesterName: data.requesterName,
+      memberEmail: data.requesterEmail,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+    },
+    preferenceKey: "adminXeroSyncError",
   });
 }
 

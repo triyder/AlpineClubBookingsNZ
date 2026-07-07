@@ -31,7 +31,12 @@ const putSchema = z.object({
   settings: z
     .array(
       z.object({
-        tier: ageTierEnum,
+        // NOT_APPLICABLE is the organisation/school tier (#1440): it has no
+        // age range, no Xero group, and no subscription rule, so it never
+        // gets a settings row.
+        tier: ageTierEnum.refine((tier) => tier !== "NOT_APPLICABLE", {
+          message: "The N/A age tier is not configurable",
+        }),
         minAge: z.number().int().min(0),
         maxAge: z.number().int().min(0).nullable(),
         label: z.string().min(1).max(100),

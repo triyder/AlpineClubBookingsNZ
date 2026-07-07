@@ -9,6 +9,10 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/auth", () => ({
+  auth: vi.fn(),
+}));
+
 vi.mock("@/components/admin/booking-filters", () => ({
   BookingFilters: () => null,
 }));
@@ -42,6 +46,8 @@ import {
 } from "@/lib/admin-bookings-service";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 
 const effectiveModulesOn = {
   kiosk: true,
@@ -73,6 +79,12 @@ describe("AdminBookingsPage", () => {
     vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroObjectLink.findMany).mockResolvedValue([]);
+    vi.mocked(auth).mockResolvedValue({
+      user: {
+        id: "admin-1",
+        accessRoles: [{ role: "ADMIN" }],
+      },
+    } as any);
   });
 
   function makeBooking(overrides: Record<string, unknown> = {}) {
@@ -377,6 +389,25 @@ describe("AdminBookingsPage", () => {
     expect(html).not.toContain("bedState=unallocated");
     expect(html).not.toContain(">Beds<");
     expect(html).not.toContain("Unallocated");
+  });
+
+  it("disables booking creation for a bookings view-only admin", async () => {
+    vi.mocked(auth).mockResolvedValueOnce({
+      user: {
+        id: "admin-readonly",
+        accessRoles: [{ role: "ADMIN_READONLY" }],
+      },
+    } as any);
+
+    const element = await AdminBookingsPage({
+      searchParams: Promise.resolve({}),
+    });
+    const html = renderToStaticMarkup(element);
+
+    expect(html).toContain("+ Create Booking");
+    expect(html).toContain("disabled");
+    expect(html).toContain(ADMIN_VIEW_ONLY_ACTION_REASON);
+    expect(html).not.toContain('href="/admin/book"');
   });
 
   it("formats total guests with non-member guests in brackets", () => {

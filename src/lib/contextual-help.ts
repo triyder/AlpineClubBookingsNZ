@@ -19,6 +19,26 @@ export type ContextualHelpContent = {
   notes?: string[];
 };
 
+/**
+ * Booking status glossary — the plain-English meaning of every booking status
+ * badge a member (or operator) can see. Exported as a single source of truth so
+ * both the admin/finance contextual help below and the member booking pages
+ * (#1371 F28 / #1072) render the identical text.
+ */
+export const BOOKING_STATUS_GLOSSARY: string[] = [
+  "Draft — saved but not submitted; holds no beds.",
+  "Pending — provisional non-member hold; does not consume capacity.",
+  "Awaiting Review — waiting on an admin decision; keeps its beds so approval cannot overbook.",
+  "Payment Pending — awaiting payment; beds are not reserved until money is committed.",
+  "Confirmed (Unpaid) — pay-on-account booking; the lodge is reserved while the emailed Xero invoice is outstanding, and it flips to Paid on reconciliation.",
+  "Paid — paid in full; holds capacity.",
+  "Completed — the stay has started or finished; keeps consuming capacity until checkout.",
+  "Waitlisted — queued for a spot; no beds held.",
+  "Waitlist Offered — a spot opened; time-limited offer to confirm and pay.",
+  "Bumped — displaced when capacity changed; no beds held.",
+  "Cancelled — cancelled; no beds held.",
+];
+
 type HelpEntry = {
   path: string;
   content: ContextualHelpContent;
@@ -137,7 +157,7 @@ const adminHelpEntries: HelpEntry[] = [
       "Booking Requests",
       "This page manages public or internal booking requests before they become normal bookings.",
       [
-        "Open each request, check the requested dates and guest counts, then price, quote, hold, approve, decline, or ask for changes.",
+        "Open each request, check the requested dates and guest counts, then price, quote, approve, decline, or ask for changes. Sending a quote auto-holds the beds, so a manual Hold slots step only shows for school requests.",
         "Use status tabs to separate new requests from quoted, queried, and completed requests.",
         "Check capacity and payment expectations before sending a quote or approval.",
       ],
@@ -155,7 +175,7 @@ const adminHelpEntries: HelpEntry[] = [
         {
           name: "Hold",
           description:
-            "Temporarily reserves capacity while the request is being assessed or quoted.",
+            "Manually reserves capacity for a school request before it is approved or quoted. Sending a quote auto-holds the beds on other requests, so the manual Hold slots button only appears for school requests.",
         },
       ],
       [
@@ -347,6 +367,22 @@ const adminHelpEntries: HelpEntry[] = [
             "The kiosk access code used by the hut leader; reset it only when necessary.",
         },
       ],
+      [
+        "The New Assignment picker is booking-derived: it only lists adult members who hold the standard member (USER) role and have an operational booking overlapping the selected dates. A season-long custodian with no booking will not appear.",
+        "To assign a custodian who has no booking, first book a stay on their behalf covering the period — a 100%-off promo code makes it free — then return here and assign them as hut leader as usual. Use Book on Behalf to create the stay and Promo Codes to set up the free code.",
+        "A member whose only roles are custom (definition-backed) roles cannot be assigned as hut leader. Keep the standard member (USER) role ticked on their account so they stay eligible.",
+      ],
+      [
+        {
+          title: "Make a season-long custodian a hut leader",
+          details: [
+            "On Promo Codes, create a 100%-off code covering the custodian's stay.",
+            "On Book on Behalf, book the custodian's lodge nights and apply the free code so the stay costs nothing.",
+            "Confirm the custodian's account still has the standard member (USER) role ticked.",
+            "Return here, choose the matching dates, and assign the custodian as hut leader — they now appear in the picker and receive a lodge PIN.",
+          ],
+        },
+      ],
     ),
   ),
   entry(
@@ -382,19 +418,7 @@ const adminHelpEntries: HelpEntry[] = [
       [
         {
           title: "Booking status glossary",
-          details: [
-            "Draft — saved but not submitted; holds no beds.",
-            "Pending — provisional non-member hold; does not consume capacity.",
-            "Awaiting Review — waiting on an admin decision; keeps its beds so approval cannot overbook.",
-            "Payment Pending — awaiting payment; beds are not reserved until money is committed.",
-            "Confirmed (Unpaid) — pay-on-account booking; the lodge is reserved while the emailed Xero invoice is outstanding, and it flips to Paid on reconciliation.",
-            "Paid — paid in full; holds capacity.",
-            "Completed — the stay has started or finished; keeps consuming capacity until checkout.",
-            "Waitlisted — queued for a spot; no beds held.",
-            "Waitlist Offered — a spot opened; time-limited offer to confirm and pay.",
-            "Bumped — displaced when capacity changed; no beds held.",
-            "Cancelled — cancelled; no beds held.",
-          ],
+          details: BOOKING_STATUS_GLOSSARY,
         },
       ],
     ),
@@ -413,7 +437,7 @@ const adminHelpEntries: HelpEntry[] = [
         {
           name: "Member",
           description:
-            "The account that owns the booking and receives booking communications.",
+            "The account that owns the booking and receives booking communications. Selecting the member loads their family group (from your bookings:edit permission) so you can add family guests at the correct member price.",
         },
         {
           name: "Guests",
@@ -436,6 +460,7 @@ const adminHelpEntries: HelpEntry[] = [
       [
         "Select the date or booking window, then review unallocated guests and room availability.",
         "Use auto-allocation for ordinary cases and manual moves for operational exceptions.",
+        "When a booking is paid or confirmed, automatic allocation gives Held bookings first claim: it may move a blocking Provisional allocation to a free bed, or return it to the awaiting queue, so a Held booking gets a bed. The manual 'Run auto-allocation' button does not displace; a Held or admin-approved allocation is never displaced.",
         "Approve allocations only after checking room rules, capacity, and any hut-leader notes.",
       ],
       [
@@ -770,7 +795,7 @@ const adminHelpEntries: HelpEntry[] = [
         {
           name: "Access role",
           description:
-            "Controls app access such as user, admin, finance, lodge, or organisation access.",
+            "Controls app access such as user, admin, finance, lodge, or organisation access. On-behalf booking family selection works from a Booking Officer's bookings:edit permission, so dropping membership:view from a customised role does not break member pricing.",
         },
         {
           name: "Seasonal membership type",
@@ -1328,8 +1353,9 @@ const adminHelpEntries: HelpEntry[] = [
       "Membership Types",
       "Membership Types define seasonal member categories, booking rate behavior, subscription behavior, and optional Xero contact-group rules.",
       [
-        "Create or edit types before assigning them to members or rolling seasons forward.",
-        "Preview roll-forward changes and exceptions before applying them.",
+        "Use the type list to scan status, policy behavior, allowed tiers, assignment counts, and order.",
+        "Create or edit a type in the editor before assigning it to members or rolling seasons forward.",
+        "Use the separate roll-forward section to preview changes and exceptions before applying them.",
         "Keep access roles separate from seasonal membership type policy.",
       ],
       [

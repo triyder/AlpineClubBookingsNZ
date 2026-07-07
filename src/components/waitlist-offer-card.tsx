@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -12,7 +11,6 @@ interface WaitlistOfferCardProps {
 }
 
 export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: WaitlistOfferCardProps) {
-  const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const [timeLeft, setTimeLeft] = useState("");
@@ -49,8 +47,12 @@ export function WaitlistOfferCard({ bookingId, expiresAt, finalPriceCents }: Wai
     const data = await res.json();
 
     if (res.ok && data.success) {
-      // Refresh the page to show the new status (CONFIRMED/PENDING/PAID)
-      router.refresh();
+      // Hard reload: the confirm POST succeeded server-side, so re-render the
+      // page from the server to its new status (CONFIRMED/PENDING/PAID) with a
+      // full document reload. `confirming` stays true until the reload navigates,
+      // so the CTA can never stick on "Confirming…". A soft router.refresh()
+      // raced the server re-render and could leave the button frozen (#1371 F28).
+      window.location.reload();
     } else {
       setError(data.error || "Failed to confirm booking");
       setConfirming(false);

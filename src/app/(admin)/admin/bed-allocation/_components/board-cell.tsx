@@ -23,6 +23,7 @@ interface BoardCellProps {
   onRemove: (allocation: DashboardAllocation) => void;
   pending: boolean;
   highlighted?: boolean;
+  canEdit?: boolean;
 }
 
 export function BoardCell({
@@ -35,10 +36,12 @@ export function BoardCell({
   onRemove,
   pending,
   highlighted,
+  canEdit = true,
 }: BoardCellProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: cellDroppableId(bedId, stayDate),
     data: { type: "cell", bedId, roomId, stayDate },
+    disabled: !canEdit,
   });
 
   return (
@@ -58,6 +61,7 @@ export function BoardCell({
           onReassignBed={(targetBedId) => onReassignBed(allocation, targetBedId)}
           onRemove={() => onRemove(allocation)}
           pending={pending}
+          canEdit={canEdit}
         />
       ) : (
         <div className="flex h-12 items-center justify-center rounded-md border border-dashed border-transparent text-[10px] text-muted-foreground/50">

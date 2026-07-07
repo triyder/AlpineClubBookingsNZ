@@ -64,7 +64,6 @@ interface BookingData {
   checkIn: string;
   checkOut: string;
   guests: Guest[];
-  bookingMemberId: string;
   viewerRole: string;
   finalPriceCents: number;
   totalPriceCents: number;
@@ -72,6 +71,9 @@ interface BookingData {
   promoAdjustmentCents: number;
   promo: PromoInfo | null;
   canEditNonMemberGuestNames: boolean;
+  // Fully paid: only an identity-preserving spelling correction is allowed on a
+  // free-text non-member guest (#1386). The server enforces the similarity guard.
+  canFixNonMemberGuestNameTypos: boolean;
   editPolicy: {
     mode: "future" | "in-progress" | null;
     today: string;
@@ -257,9 +259,13 @@ export function EditBookingPanel({
 
   useEffect(() => {
     let cancelled = false;
+    // Admin on-behalf uses the bookings-scoped picker gated on bookings:edit
+    // (the booking owner is resolved server-side from the booking), so a
+    // Booking Officer without membership:view still gets the member's family
+    // and correct member pricing (#1376). Members use their own family route.
     const familyUrl =
       booking.viewerRole === "ADMIN"
-        ? `/api/admin/members/${booking.bookingMemberId}/family`
+        ? `/api/admin/bookings/${booking.id}/eligible-family`
         : "/api/members/family";
 
     fetch(familyUrl)
@@ -278,7 +284,7 @@ export function EditBookingPanel({
     return () => {
       cancelled = true;
     };
-  }, [booking.bookingMemberId, booking.viewerRole]);
+  }, [booking.id, booking.viewerRole]);
 
   // Check if anything has changed
   const remainingGuests = useMemo(
@@ -376,9 +382,11 @@ export function EditBookingPanel({
         range.stayEnd !== (guest.stayEnd ?? booking.checkOut)
       );
     });
+  const nonMemberGuestNamesEditable =
+    booking.canEditNonMemberGuestNames || booking.canFixNonMemberGuestNameTypos;
   const guestNameUpdates = useMemo(
     () =>
-      booking.canEditNonMemberGuestNames
+      nonMemberGuestNamesEditable
         ? booking.guests
             .filter((guest) => !guest.isMember && !removedGuestIds.has(guest.id))
             .map((guest) => {
@@ -403,7 +411,7 @@ export function EditBookingPanel({
             }))
         : [],
     [
-      booking.canEditNonMemberGuestNames,
+      nonMemberGuestNamesEditable,
       booking.guests,
       guestNameEdits,
       removedGuestIds,
@@ -964,7 +972,13 @@ export function EditBookingPanel({
           {booking.guests.map((guest) => {
             const isRemoved = removedGuestIds.has(guest.id);
             const canEditGuestName =
-              booking.canEditNonMemberGuestNames && !guest.isMember && !isRemoved;
+              nonMemberGuestNamesEditable && !guest.isMember && !isRemoved;
+            // Fully paid: the field is open only for a spelling correction; a
+            // change of who the booking is for must go through the office (#1386).
+            const showTypoOnlyHint =
+              canEditGuestName &&
+              !booking.canEditNonMemberGuestNames &&
+              booking.canFixNonMemberGuestNameTypos;
             const nameEdit = getGuestNameEdit(guest);
             return (
               <div
@@ -1000,6 +1014,12 @@ export function EditBookingPanel({
                           }
                         />
                       </div>
+                      {showTypoOnlyHint ? (
+                        <p className="col-span-2 text-xs text-gray-500">
+                          Only spelling corrections are allowed after payment.
+                          To change who this booking is for, contact the office.
+                        </p>
+                      ) : null}
                     </div>
                   ) : (
                     <p className="font-medium">

@@ -17,7 +17,7 @@ import {
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -33,10 +33,7 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-import {
-  authorizationRoleFromAccessRoles,
-  hasAdminAccess,
-} from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   findBookingMemberNightConflicts,
   getBookingMemberNightConflictResponse,
@@ -51,7 +48,7 @@ const quoteSchema = z.object({
   checkOut: dateOnlyString.transform(parseDateOnly),
   guests: z.array(
     z.object({
-      ageTier: ageTierEnum,
+      ageTier: bookableAgeTierEnum,
       isMember: z.boolean(),
       memberId: z.string().min(1).optional(),
       stayStart: z.string().optional(),
@@ -75,8 +72,12 @@ export async function POST(request: NextRequest) {
   if (inactiveResponse) {
     return inactiveResponse;
   }
-  const isAdmin = hasAdminAccess(session.user);
-  const actorRole = authorizationRoleFromAccessRoles(session.user);
+  // bookings:edit holders (Full Admin, Booking Officer, custom roles) may
+  // quote on-behalf — aligned with booking create and the modification path
+  // (#1313/#1442).
+  const canManageBookings =
+    bookingManagementAuthorizationRole(session.user) === "ADMIN";
+  const actorRole = bookingManagementAuthorizationRole(session.user);
 
   const json = await parseJsonRequestBody(request);
   if (!json.ok) return json.response;
@@ -98,9 +99,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
-  const isAdminOnBehalf =
-    isAdmin && Boolean(parsed.data.forMemberId);
-  const effectiveMemberId = isAdminOnBehalf
+  // A quote with forMemberId must never silently price the caller instead of
+  // the target: unauthorized callers are rejected, mirroring create (#1442).
+  if (parsed.data.forMemberId) {
+    if (!canManageBookings) {
+      return NextResponse.json(
+        { error: "Only admins can book on behalf of another member" },
+        { status: 403 }
+      );
+    }
+    if (parsed.data.forMemberId === session.user.id) {
+      return NextResponse.json(
+        { error: "Booking managers cannot book for themselves — book your own stay through the member booking page" },
+        { status: 400 }
+      );
+    }
+  }
+  const isAuthorizedOnBehalf = Boolean(parsed.data.forMemberId);
+  const effectiveMemberId = isAuthorizedOnBehalf
     ? parsed.data.forMemberId!
     : session.user.id;
 
@@ -109,7 +125,7 @@ export async function POST(request: NextRequest) {
       prisma,
       effectiveMemberId,
       rawGuests.map((guest) => guest.memberId),
-      { skipAuthorization: isAdminOnBehalf }
+      { skipAuthorization: isAuthorizedOnBehalf }
     );
     await assertLinkedBookingMembersCanBeBooked(
       prisma,
@@ -117,7 +133,7 @@ export async function POST(request: NextRequest) {
       session.user.id,
       {
         actorRole,
-        onBehalfOfMemberId: isAdminOnBehalf ? effectiveMemberId : null,
+        onBehalfOfMemberId: isAuthorizedOnBehalf ? effectiveMemberId : null,
       }
     );
     guests = normalizeGuestStayRanges(

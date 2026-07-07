@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, subMonths } from "date-fns";
+import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -214,11 +215,22 @@ export default function PaymentsPage() {
   );
   const [xeroState, setXeroState] = useState(searchParams.get("xeroState") || "all");
   const [settlement, setSettlement] = useState(searchParams.get("settlement") || "all");
+  // The activity window bounds are interpreted in the club time zone by the
+  // payments API, so seed the defaults from the club-timezone date rather than
+  // the browser's local date (otherwise post-NZ-midnight activity is hidden for
+  // operators whose clock trails NZ). Derive the "3 months ago" bound from the
+  // same club-day so both ends stay consistent.
+  const clubToday = todayDateOnlyForTimeZone();
+  const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
+  const defaultLastUpdatedFrom = format(
+    subMonths(new Date(clubYear, clubMonth - 1, clubDay), 3),
+    "yyyy-MM-dd"
+  );
   const [lastUpdatedFrom, setLastUpdatedFrom] = useState(
-    searchParams.get("lastUpdatedFrom") || format(subMonths(new Date(), 3), "yyyy-MM-dd")
+    searchParams.get("lastUpdatedFrom") || defaultLastUpdatedFrom
   );
   const [lastUpdatedTo, setLastUpdatedTo] = useState(
-    searchParams.get("lastUpdatedTo") || format(new Date(), "yyyy-MM-dd")
+    searchParams.get("lastUpdatedTo") || clubToday
   );
   const [checkInFrom, setCheckInFrom] = useState(searchParams.get("checkInFrom") || "");
   const [checkInTo, setCheckInTo] = useState(searchParams.get("checkInTo") || "");

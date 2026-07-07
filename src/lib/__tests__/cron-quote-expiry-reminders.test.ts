@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BookingRequestQuoteStatus,
   BookingRequestStatus,
   BookingRequestType,
   BookingStatus,
@@ -171,6 +172,32 @@ describe("sendQuoteExpiryReminders — reminders", () => {
       expect.objectContaining({
         where: { id: "quote-1" },
         data: expect.objectContaining({ reminderSentAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("only reminds SENT quotes, so a declined request (quote SUPERSEDED) is never nudged (#1423)", async () => {
+    mocks.mockGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+    });
+    // A declined request's quote is retired to SUPERSEDED (#1423), so the
+    // status:SENT-filtered Phase-1 query returns nothing for it.
+    stubQuoteFindMany({ reminderQuotes: [], releaseQuotes: [] });
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(result.remindedCount).toBe(0);
+    expect(mocks.mockSendEmail).not.toHaveBeenCalled();
+    // The mechanism: the Phase-1 reminder query is scoped to SENT quotes, so a
+    // retired (SUPERSEDED) quote can never be selected and nudged.
+    expect(prisma.bookingRequestQuote.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: BookingRequestQuoteStatus.SENT,
+          reminderSentAt: null,
+        }),
       }),
     );
   });

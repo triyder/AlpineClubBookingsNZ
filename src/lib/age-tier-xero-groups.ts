@@ -271,9 +271,44 @@ export async function getXeroContactGroupMismatchSnapshot(options?: {
     configuredMappings.map((mapping) => mapping.groupId)
   );
 
-  const mismatches = members.flatMap((member) => {
+  const mismatches = members.flatMap(
+    (member): XeroContactGroupMismatchEntry[] => {
     if (!member.xeroContactId) {
       return [];
+    }
+
+    // NOT_APPLICABLE members (organisations/schools, #1440) have no
+    // expected age-tier group — they never have an AgeTierSetting row. They
+    // are only mismatched when they sit in a managed age-tier group (e.g.
+    // left in "Adults" from before the backfill), so admins can clean that
+    // up in Xero.
+    if (member.ageTier === "NOT_APPLICABLE") {
+      const actualGroups = groupsByContactId.get(member.xeroContactId) ?? [];
+      const unexpectedManagedGroups = actualGroups
+        .filter((group) => managedGroupIds.has(group.id))
+        .map((group) => ({
+          ...group,
+          tier: tierByManagedGroupId.get(group.id) ?? null,
+        }));
+
+      if (unexpectedManagedGroups.length === 0) {
+        return [];
+      }
+
+      return [
+        {
+          memberId: member.id,
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberEmail: member.email,
+          ageTier: member.ageTier,
+          xeroContactId: member.xeroContactId,
+          defaultGroup: null,
+          acceptedGroups: [],
+          actualGroups,
+          unexpectedManagedGroups,
+          missingExpectedGroup: false,
+        } satisfies XeroContactGroupMismatchEntry,
+      ];
     }
 
     const expectedConfig = configByTier.get(member.ageTier);
@@ -313,7 +348,8 @@ export async function getXeroContactGroupMismatchSnapshot(options?: {
         missingExpectedGroup,
       } satisfies XeroContactGroupMismatchEntry,
     ];
-  });
+    }
+  );
 
   return {
     cacheReady: true,

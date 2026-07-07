@@ -205,10 +205,14 @@ export async function reapStaleGroupSettlements(
  * refund plan makes it reconstruct (never recompute) the per-child refund mirror
  * and the SUCCEEDED guard fires the Stripe refund at most once across re-drives.
  *
- * Known residual (out of scope, #1233 reconcile class): a child whose booking
- * committed CANCELLED but crashed before its Xero refund credit note was
- * enqueued is excluded from re-drive by settleGroupBookingOnOrganiserCancel's
- * ACTIVE_CHILD_STATUSES filter, so its credit note is never re-enqueued here.
+ * Credit-note durability (#1257/#1377): a re-drive cannot see a child whose
+ * booking already committed CANCELLED (the ACTIVE_CHILD_STATUSES filter
+ * excludes it), but this is no longer a gap. settleGroupBookingOnOrganiserCancel
+ * now enqueues each child's Xero refund credit note in the SAME transaction as
+ * the child cancel + refund mirror, so a CANCELLED child always carries its
+ * queued credit-note operation — the crash window is closed for every source,
+ * including Internet-Banking children the #1354 daily reconcile self-heal
+ * cannot recover. That daily self-heal remains a Stripe-only backstop.
  */
 async function resumeInterruptedOrganiserCancels(
   now: Date,

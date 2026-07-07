@@ -26,6 +26,17 @@ import {
 // ---------------------------------------------------------------------------
 
 export const CONTACT_GROUP_CACHE_CURSOR_RESOURCE = "CONTACT_GROUP_CACHE";
+/**
+ * Cursor resource tracking only the last *full* contact-group cache rebuild
+ * (the "Refresh Xero Groups" admin action). Distinct from
+ * `CONTACT_GROUP_CACHE_CURSOR_RESOURCE`, whose `lastSuccessfulSyncAt` is also
+ * bumped by per-contact reconciliation (member link/import, inbound contact
+ * webhooks, cancellation, bulk sync). The admin members page reads this cursor
+ * so its "last refreshed" hint reflects staleness of the whole cached snapshot,
+ * not a single-contact touch.
+ */
+export const CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE =
+  "CONTACT_GROUP_FULL_REFRESH";
 export const XERO_PAGE_SIZE = 100;
 export const XERO_CONTACT_ID_BATCH_SIZE = 50;
 

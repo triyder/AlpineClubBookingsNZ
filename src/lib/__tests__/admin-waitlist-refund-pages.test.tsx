@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
@@ -9,6 +10,11 @@ import RefundRequestsPage from "@/app/(admin)/admin/refund-requests/page";
 const mocks = vi.hoisted(() => ({
   currentSearch: "",
   routerReplace: vi.fn(),
+  sessionUser: {
+    id: "admin-2",
+    role: "ADMIN",
+    accessRoles: [{ role: "ADMIN" }],
+  },
 }));
 
 const fetchMock = vi.fn();
@@ -23,7 +29,7 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("next-auth/react", () => ({
   useSession: () => ({
-    data: { user: { id: "admin-2", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
+    data: { user: mocks.sessionUser },
   }),
 }));
 
@@ -71,6 +77,11 @@ describe("Admin waitlist page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     global.fetch = fetchMock as typeof fetch;
+    mocks.sessionUser = {
+      id: "admin-2",
+      role: "ADMIN",
+      accessRoles: [{ role: "ADMIN" }],
+    };
   });
 
   it("loads API query params and links members and booking context with return state", async () => {
@@ -327,5 +338,111 @@ describe("Admin refund and credit review page", () => {
       "/admin/members/member-1?returnTo=/admin/refund-requests?status=APPROVED#account-credit"
     );
     expect(screen.queryByText("credit-opaque-1")).toBeNull();
+  });
+
+  it("disables refund and credit review actions for finance view-only access", async () => {
+    mocks.currentSearch = "";
+    mocks.sessionUser = {
+      id: "admin-readonly",
+      role: "ADMIN",
+      accessRoles: [{ role: "ADMIN_READONLY" }],
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url === "/api/admin/refund-requests?status=PENDING") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: [
+              {
+                id: "refund-1",
+                bookingId: "booking-1",
+                memberId: "member-1",
+                reason: "Weather closure",
+                requestedAmountCents: 2000,
+                status: "PENDING",
+                adminNotes: null,
+                approvedAmountCents: null,
+                reviewedAt: null,
+                createdAt: "2026-07-01T00:00:00.000Z",
+                booking: {
+                  id: "booking-1",
+                  checkIn: "2026-08-01T00:00:00.000Z",
+                  checkOut: "2026-08-03T00:00:00.000Z",
+                  finalPriceCents: 10000,
+                  status: "CANCELLED",
+                  creditsFromCancellation: [],
+                  payment: {
+                    amountCents: 10000,
+                    refundedAmountCents: 0,
+                    stripePaymentIntentId: "pi_123",
+                  },
+                },
+                member: {
+                  id: "member-1",
+                  firstName: "Jane",
+                  lastName: "Doe",
+                  email: "jane@example.com",
+                },
+              },
+            ],
+          }),
+        });
+      }
+
+      if (url === "/api/admin/credit-approvals?status=PENDING") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            {
+              id: "credit-request-1",
+              memberId: "member-2",
+              amountCents: 3000,
+              description: "Manual correction",
+              status: "PENDING",
+              createdAt: "2026-07-01T00:00:00.000Z",
+              reviewedAt: null,
+              member: {
+                id: "member-2",
+                firstName: "Rangi",
+                lastName: "Smith",
+                email: "rangi@example.com",
+              },
+              requestedBy: {
+                id: "admin-1",
+                firstName: "Alex",
+                lastName: "Admin",
+              },
+              reviewedBy: null,
+              approvedCredit: null,
+            },
+          ],
+        });
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+
+    render(<RefundRequestsPage />);
+
+    expect(
+      await screen.findByText(/can view refund appeals and credit approvals/i),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Review/ })).toBeDisabled();
+    const creditSection = screen
+      .getByText("Manual Credit Approvals")
+      .closest("section");
+    expect(creditSection).toBeTruthy();
+    expect(
+      within(creditSection as HTMLElement).getByRole("button", {
+        name: /^Approve/,
+      }),
+    ).toBeDisabled();
+    expect(
+      within(creditSection as HTMLElement).getByRole("button", {
+        name: /^Reject$/,
+      }),
+    ).toBeDisabled();
   });
 });

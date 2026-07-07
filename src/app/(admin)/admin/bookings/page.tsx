@@ -1,6 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -17,6 +18,8 @@ import { formatDateOnly } from "@/lib/date-only";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { auth } from "@/lib/auth";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { ReactNode } from "react";
@@ -56,6 +59,10 @@ export default async function AdminBookingsPage({
   const params = await searchParams;
   const parsedQuery = adminBookingsQuerySchema.safeParse(params);
   const query = parsedQuery.success ? parsedQuery.data : adminBookingsQuerySchema.parse({});
+  const session = await auth();
+  const canEditBookings = session?.user
+    ? hasAdminAreaAccess(session.user, { area: "bookings", level: "edit" })
+    : false;
   const effectiveModules = await loadEffectiveModuleFlags();
   const showBedAllocation = effectiveModules.bedAllocation;
   const { bookings, total, sortBy, sortDir } = await listAdminBookings(query, {
@@ -204,12 +211,16 @@ export default async function AdminBookingsPage({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">All Bookings</h1>
-        <Link
-          href="/admin/book"
-          className="app-button-brand"
-        >
-          + Create Booking
-        </Link>
+        {canEditBookings ? (
+          <Link
+            href="/admin/book"
+            className="app-button-brand"
+          >
+            + Create Booking
+          </Link>
+        ) : (
+          <ViewOnlyActionButton canEdit={false}>+ Create Booking</ViewOnlyActionButton>
+        )}
       </div>
 
       <BookingFilters showBedAllocation={showBedAllocation} />

@@ -5,6 +5,7 @@ import {
   syncXeroMembershipCancellationContact,
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
+import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
 import { getSeasonYear } from "@/lib/utils";
 import {
   buildXeroIdempotencyKey,
@@ -28,6 +29,7 @@ import {
 import { createXeroEntranceFeeInvoice } from "@/lib/xero-entrance-fee-invoices";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
+  ENTRANCE_FEE_EXEMPT_MESSAGE,
   getEntranceFeeContext,
   type EntranceFeeContext,
 } from "@/lib/xero-mappings";
@@ -49,6 +51,7 @@ import {
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_QUEUE_TYPES,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
   type QueuedOutboxExpectedOperation,
@@ -59,27 +62,18 @@ async function claimQueuedOutboxOperation(
   operationId: string,
   expectedOperation: QueuedOutboxExpectedOperation
 ) {
-  const result = await prisma.xeroSyncOperation.updateMany({
-    where: {
-      id: operationId,
-      status: "PENDING",
-      direction: "OUTBOUND",
-      entityType: expectedOperation.entityType,
-      operationType: expectedOperation.operationType,
-      localModel: {
-        in: [...expectedOperation.localModels],
-      },
-    },
-    data: {
-      status: "RUNNING",
-      startedAt: new Date(),
-      completedAt: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
+  // Delegates to the shared claim-to-RUNNING single-flight (#1272). The guard
+  // below is the outbound-outbox predicate; combined with the helper's
+  // `status: "PENDING"` precondition the resulting WHERE is identical to the
+  // pre-consolidation inline claim.
+  return claimXeroSyncOperationToRunning(operationId, {
+    direction: "OUTBOUND",
+    entityType: expectedOperation.entityType,
+    operationType: expectedOperation.operationType,
+    localModel: {
+      in: [...expectedOperation.localModels],
     },
   });
-
-  return result.count === 1;
 }
 
 function buildPrecomputedEntranceFeeContext(
@@ -135,6 +129,17 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   }
 
   const entranceFee = await getEntranceFeeContext(memberId);
+
+  // Organisations/schools are exempt from entrance fees (owner decision,
+  // 2026-07-07) — checked before the amount override so an explicitly
+  // entered amount can never bill an organisation.
+  if (entranceFee.exempt) {
+    return {
+      queueOperationId: null,
+      message: ENTRANCE_FEE_EXEMPT_MESSAGE,
+    };
+  }
+
   const feeAmountCents =
     options?.amountCents ?? entranceFee.feeMapping.amountCents;
   const description = options?.description?.trim() || null;
@@ -492,9 +497,18 @@ export async function enqueueXeroBookingInvoiceUpdateOperation(
 export async function enqueueXeroRefundCreditNoteOperation(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string }
+  options?: { createdByMemberId?: string; store?: Prisma.TransactionClient }
 ) {
-  const payment = await prisma.payment.findUnique({
+  // Optional transaction client (#1357) so callers (e.g. the Internet Banking
+  // hold-expiry cron) can enqueue the outbox row inside the same transaction
+  // that releases the hold — the invoice-clearing intent then commits
+  // atomically with the release instead of riding a post-commit crash window.
+  // Every internal read/write goes through the same client so the #1354
+  // correlation-key dedupe sees a consistent (uncommitted) state. Defaults to
+  // the global `prisma`, keeping existing callers unchanged.
+  const db = options?.store ?? prisma;
+
+  const payment = await db.payment.findUnique({
     where: { id: paymentId },
     select: {
       id: true,
@@ -515,7 +529,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
     };
   }
 
-  const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId);
+  const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId, db);
   let noteAmountCents = refundAmountCents;
   let watermarkCents = refundAmountCents;
 
@@ -525,7 +539,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // is the cumulative refund ledger and already includes this delta at enqueue
     // time, so capping the note to `refundedAmountCents - coveredCents` yields
     // this delta while replays of an already-covered state cap at zero.
-    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId);
+    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId, db);
     noteAmountCents = Math.max(
       0,
       Math.min(refundAmountCents, payment.refundedAmountCents - coveredCents)
@@ -542,21 +556,24 @@ export async function enqueueXeroRefundCreditNoteOperation(
     // refund per payment and re-enqueue on cron reruns; the single-note skip
     // absorbs those replays by repointing at the existing note.
     if (payment.xeroRefundCreditNoteId !== canonicalLink.xeroObjectId) {
-      await prisma.payment.update({
+      await db.payment.update({
         where: { id: paymentId },
         data: {
           xeroRefundCreditNoteId: canonicalLink.xeroObjectId,
         },
       });
     }
-    await upsertXeroObjectLink({
-      localModel: "Payment",
-      localId: paymentId,
-      xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: canonicalLink.xeroObjectId,
-      xeroObjectNumber: canonicalLink.xeroObjectNumber,
-      role: "REFUND_CREDIT_NOTE",
-    });
+    await upsertXeroObjectLink(
+      {
+        localModel: "Payment",
+        localId: paymentId,
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: canonicalLink.xeroObjectId,
+        xeroObjectNumber: canonicalLink.xeroObjectNumber,
+        role: "REFUND_CREDIT_NOTE",
+      },
+      options?.store ? { store: options.store } : undefined
+    );
 
     return {
       queueOperationId: null,
@@ -575,7 +592,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
     payment.source === PaymentSource.STRIPE ? "v2" : "v1"
   );
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+  const existingQueuedOperation = await db.xeroSyncOperation.findFirst({
     where: {
       correlationKey,
       direction: "OUTBOUND",
@@ -614,6 +631,7 @@ export async function enqueueXeroRefundCreditNoteOperation(
       watermarkCents,
     },
     createdByMemberId: options?.createdByMemberId ?? null,
+    store: db,
   });
 
   return {
@@ -745,7 +763,11 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     bookingModificationId,
   } = params;
 
-  if (priceDiffCents <= 0 && changeFeeCents <= 0) {
+  // Net-based guard (#1356): the components are signed, and a supplementary
+  // invoice exists only to bill a positive net. A mixed-sign edit whose net is
+  // not positive settles via the credit-note paths; queueing it here would
+  // gross-bill the fee while dropping the larger reduction.
+  if (priceDiffCents + changeFeeCents <= 0) {
     return {
       queueOperationId: null,
       message: "No supplementary invoice is required for this modification.",
@@ -858,6 +880,33 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
       ? "Xero supplementary invoice is waiting for confirmed additional payment."
       : "Xero supplementary invoice queued for background processing.",
   };
+}
+
+/**
+ * Whether any supplementary-invoice outbox operation tied to this
+ * PaymentIntent has left WAITING_PAYMENT (was released, is running, already
+ * SUCCEEDED, or FAILED-but-replayable) — i.e. a Xero invoice for the
+ * additional amount exists or may still be created (#1350). Used by the
+ * cancelled-booking late-capture webhook path to decide whether a corrective
+ * refund credit note is needed; a still-WAITING_PAYMENT (or CANCELLED)
+ * operation produces no invoice, so crediting it would over-credit the books.
+ */
+export async function hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent(
+  paymentIntentId: string
+): Promise<boolean> {
+  const releasedCount = await prisma.xeroSyncOperation.count({
+    where: {
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      status: { notIn: ["WAITING_PAYMENT", "CANCELLED"] },
+      requestPayload: {
+        path: ["paymentIntentId"],
+        equals: paymentIntentId,
+      },
+    },
+  });
+  return releasedCount > 0;
 }
 
 export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
@@ -1772,83 +1821,23 @@ export async function processQueuedXeroOutboxOperations(options?: {
 }): Promise<ProcessQueuedXeroOutboxOperationsResult> {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.xeroSyncOperation.findMany({
+    // Scan the indexed, denormalized `queueType` column (#1271, item 3 of
+    // #1208) instead of a 12-branch `requestPayload->>'queueType'` OR predicate.
+    // Behavior-identical for this scan: the column is written at enqueue in
+    // `startXeroSyncOperation` from the same sanitized payload and never updated
+    // afterward, and the only non-enqueue path into PENDING (the
+    // WAITING_PAYMENT -> PENDING supplementary release) only flips status. So
+    // for every PENDING row the column mirrors the enqueue-time
+    // `payload.queueType` exactly (#1271's migration also backfilled existing
+    // rows), and this selects the identical set the OR predicate did — now via
+    // the `(queueType, status, createdAt)` index. Dispatch below still reads
+    // `queueType` from the payload, so routing is unchanged.
     where: {
       status: "PENDING",
       direction: "OUTBOUND",
-      OR: [
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_ENTRANCE_FEE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
-          },
-        },
-        {
-          requestPayload: {
-            path: ["queueType"],
-            equals: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
-          },
-        },
-      ],
+      queueType: {
+        in: [...XERO_OUTBOX_QUEUE_TYPES],
+      },
     },
     orderBy: {
       createdAt: "asc",
@@ -2004,15 +1993,25 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
       result.succeeded += 1;
     } catch (error) {
-      if (
-        error instanceof Error &&
-        (
-          error.message === "Queued Xero outbox payload is incomplete." ||
-          payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE ||
-          payload?.queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE
-        )
-      ) {
-        await failXeroSyncOperation(queuedOperation.id, error);
+      // F4 (#1354): fail the operation for EVERY queue type, not just the two
+      // membership-cancellation types and payload-shape errors. An operation
+      // erroring BEFORE its handler overwrote requestPayload (token refresh,
+      // contact resolution, account mapping) previously stayed RUNNING with
+      // the queued payload; after an operator stale-reset the retry stack
+      // could not parse that shape — a permanent manual dead-end. FAILED rows
+      // are replayable, and the retry parser now understands the queued
+      // payload shape, so failing fast here closes the dead-end for all
+      // types.
+      try {
+        await failXeroSyncOperation(
+          queuedOperation.id,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      } catch (failErr) {
+        logger.error(
+          { err: failErr, queueOperationId: queuedOperation.id },
+          "Failed to mark queued Xero outbox operation FAILED after an error"
+        );
       }
       logger.error(
         {

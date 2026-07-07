@@ -298,6 +298,81 @@ describe("upsertXeroObjectLink", () => {
     );
   });
 
+  it("merges inbound metadata over the outbound per-delta keys when mergeMetadata is set (#1354)", async () => {
+    const txLinkFindUnique = vi.fn().mockResolvedValue({
+      metadata: { amountCents: 3000, watermarkCents: 8000 },
+    });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        payment: {
+          findUnique: mocks.txPaymentFindUnique,
+        },
+        xeroObjectLink: {
+          updateMany: mocks.txLinkUpdateMany,
+          upsert: mocks.txLinkUpsert,
+          findUnique: txLinkFindUnique,
+        },
+      })
+    );
+    // STRIPE payment: per-delta links bypass canonical deactivation.
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      source: "STRIPE",
+      xeroRefundCreditNoteId: null,
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_delta",
+      xeroObjectNumber: "CN-8",
+      role: "REFUND_CREDIT_NOTE",
+      metadata: { status: "AUTHORISED", total: 30 },
+      mergeMetadata: true,
+    });
+
+    // The update clause carries BOTH the outbound per-delta keys and the
+    // inbound reconcile fields — pre-#1354 the replace destroyed
+    // amountCents/watermarkCents minutes after every note was created.
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          metadata: {
+            amountCents: 3000,
+            watermarkCents: 8000,
+            status: "AUTHORISED",
+            total: 30,
+          },
+        }),
+      })
+    );
+  });
+
+  it("keeps replace semantics when mergeMetadata is not set", async () => {
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      source: "STRIPE",
+      xeroRefundCreditNoteId: null,
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_delta",
+      xeroObjectNumber: "CN-8",
+      role: "REFUND_CREDIT_NOTE",
+      metadata: { amountCents: 3000, watermarkCents: 8000 },
+    });
+
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          metadata: { amountCents: 3000, watermarkCents: 8000 },
+        }),
+      })
+    );
+  });
+
   it("deactivates older active refund credit note links when the payment already has a canonical note", async () => {
     mocks.txPaymentFindUnique.mockResolvedValue({
       xeroRefundCreditNoteId: "cn_canonical",
@@ -454,6 +529,53 @@ describe("startXeroSyncOperation", () => {
     }));
   });
 
+  it("returns the winner's active row when the partial unique index rejects a lost concurrent enqueue (#1354)", async () => {
+    mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
+    mocks.operationFindFirst.mockResolvedValue({
+      id: "op_winner",
+      status: "PENDING",
+      correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+    });
+
+    const result = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "payment_1",
+      status: "PENDING",
+      idempotencyKey: "payment:payment_1:refund-credit-note:8000:v2",
+      correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+    });
+
+    expect(result).toMatchObject({ id: "op_winner" });
+    expect(mocks.operationFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          correlationKey: "payment:payment_1:refund-credit-note:8000:v2",
+          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+        },
+      })
+    );
+  });
+
+  it("rethrows a unique violation with no surviving active row (or no correlation key)", async () => {
+    mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
+    mocks.operationFindFirst.mockResolvedValue(null);
+
+    await expect(
+      startXeroSyncOperation({
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_1",
+        status: "PENDING",
+        correlationKey: "key-x",
+      })
+    ).rejects.toMatchObject({ code: "P2002" });
+  });
+
   it("writes via the global prisma client when no store is supplied and never leaks store into the payload", async () => {
     await startXeroSyncOperation({
       direction: "OUTBOUND",
@@ -528,5 +650,62 @@ describe("startXeroSyncOperation", () => {
     const createArg = txCreate.mock.calls[0][0];
     expect(createArg.data.attemptCount).toBe(2);
     expect(createArg.data).not.toHaveProperty("store");
+  });
+
+  it("denormalizes queueType from the persisted payload with no drift (#1271)", async () => {
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "payment_qt",
+      status: "PENDING",
+      idempotencyKey: "booking:booking_qt:invoice:v1",
+      correlationKey: "booking:booking_qt:invoice:v1",
+      requestPayload: {
+        queueType: "BOOKING_INVOICE",
+        bookingId: "booking_qt",
+      },
+    });
+
+    const createArg = mocks.operationCreate.mock.calls[0][0];
+    // At enqueue the denormalized column is derived from the SAME persisted
+    // payload, so it is exactly equal to requestPayload.queueType.
+    expect(createArg.data.queueType).toBe("BOOKING_INVOICE");
+    expect(createArg.data.queueType).toBe(
+      (createArg.data.requestPayload as { queueType?: string }).queueType
+    );
+    // #1272: this enqueue-time equality is the invariant #1272 relies on (it
+    // scans only PENDING/WAITING_PAYMENT). Post-dispatch, handlers overwrite
+    // requestPayload wholesale and drop queueType (e.g. xero-booking-invoices),
+    // so the column keeps its enqueue value while payload.queueType is gone --
+    // an intentional divergence that needs a DB round-trip to exercise, so it is
+    // asserted here only at creation.
+  });
+
+  it("persists a null queueType for a REQUEUE payload that carries none (#1271)", async () => {
+    await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "REQUEUE",
+      localModel: "Payment",
+      localId: "payment_rq",
+      status: "PENDING",
+      correlationKey: "xero-operation:requeue:op_original_1",
+      replayable: false,
+      requestPayload: {
+        originalOperationId: "op_original_1",
+        originalOperationType: "CREATE",
+        originalStatus: "FAILED",
+      },
+    });
+
+    const createArg = mocks.operationCreate.mock.calls[0][0];
+    // REQUEUE rows have no queueType in their payload, so the denormalized
+    // column stays null and never invents a value.
+    expect(createArg.data.queueType).toBeNull();
+    expect(
+      (createArg.data.requestPayload as { queueType?: string }).queueType
+    ).toBeUndefined();
   });
 });

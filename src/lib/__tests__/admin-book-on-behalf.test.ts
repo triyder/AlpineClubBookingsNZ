@@ -421,6 +421,226 @@ describe("Admin Book on Behalf", () => {
   });
 });
 
+describe("Dual-hat self-booking and officer on-behalf (#1442)", () => {
+  const dualHatSession = {
+    user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "USER" }, { role: "ADMIN" }] },
+  } as never;
+  const officerSession = {
+    user: { id: "officer1", role: "USER", accessRoles: [{ role: "ADMIN_BOOKINGS" }] },
+  } as never;
+  const readOnlySession = {
+    user: { id: "viewer1", role: "USER", accessRoles: [{ role: "ADMIN_READONLY" }] },
+  } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (mockedPrisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (fn: (tx: typeof mockedPrisma) => Promise<unknown>) => fn(mockedPrisma)
+    );
+    (mockedPrisma.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockedPrisma.$executeRawUnsafe as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockedPrisma.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.promoRedemption.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    });
+    (mockedPrisma.promoCodeAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.bookingGuest.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
+  it("lets a dual-hat admin (USER + ADMIN) create their own draft booking", async () => {
+    mockedAuth.mockResolvedValue(dualHatSession);
+    // Self path runs the member lookups: email verification, Xero link, tier.
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true, emailVerified: true, xeroContactId: "xero-a", ageTier: "ADULT",
+    });
+    (mockedPrisma.memberSubscription.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "PAID",
+    });
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "b-self",
+      memberId: "admin1",
+      createdById: "admin1",
+      status: "DRAFT",
+      guests: [],
+    });
+
+    const req = makeRequest({
+      checkIn,
+      checkOut,
+      draft: true,
+      guests: [{ firstName: "Ada", lastName: "Admin", ageTier: "ADULT", isMember: true }],
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    const createCall = (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.data.memberId).toBe("admin1");
+  });
+
+  it("applies member gates to a dual-hat admin's own booking (no admin leniency)", async () => {
+    mockedAuth.mockResolvedValue(dualHatSession);
+    // Unverified email must block the booking exactly as for a plain member.
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true, emailVerified: false, xeroContactId: null, ageTier: "ADULT",
+    });
+
+    const req = makeRequest({
+      checkIn,
+      checkOut,
+      draft: true,
+      guests: [{ firstName: "Ada", lastName: "Admin", ageTier: "ADULT", isMember: true }],
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("Email not verified");
+  });
+
+  it("still forces admin-only accounts (no USER token) onto the on-behalf page", async () => {
+    mockedAuth.mockResolvedValue({
+      user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+    } as never);
+
+    const req = makeRequest(baseBookingPayload);
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe("ADMIN_MUST_BOOK_ON_BEHALF");
+  });
+
+  it("lets a Booking Officer (bookings:edit) create an on-behalf draft", async () => {
+    mockedAuth.mockResolvedValue(officerSession);
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true,
+    });
+    (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "target-m1", ageTier: "ADULT" },
+    ]);
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "b-officer",
+      memberId: "target-m1",
+      createdById: "officer1",
+      status: "DRAFT",
+      guests: [],
+    });
+
+    const req = makeRequest({
+      ...baseBookingPayload,
+      draft: true,
+      forMemberId: "target-m1",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    const createCall = (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.data.memberId).toBe("target-m1");
+    expect(createCall.data.createdById).toBe("officer1");
+    // Authorized on-behalf keeps the admin-path behavior: no family-group check.
+    expect(mockedPrisma.familyGroupMember.findMany).not.toHaveBeenCalled();
+  });
+
+  it("blocks a Booking Officer from targeting themselves on-behalf", async () => {
+    mockedAuth.mockResolvedValue(officerSession);
+
+    const req = makeRequest({ ...baseBookingPayload, forMemberId: "officer1" });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("cannot book for themselves");
+  });
+
+  it("rejects on-behalf creation from bookings:view-only admins", async () => {
+    mockedAuth.mockResolvedValue(readOnlySession);
+
+    const req = makeRequest({ ...baseBookingPayload, forMemberId: "target-m1" });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("Only admins");
+  });
+
+  it("rejects an unauthorized quote forMemberId instead of silently pricing the caller", async () => {
+    mockedAuth.mockResolvedValue({
+      user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] },
+    } as never);
+
+    const req = new NextRequest("http://localhost/api/bookings/quote", {
+      method: "POST",
+      body: JSON.stringify({
+        checkIn,
+        checkOut,
+        guests: [{ ageTier: "ADULT", isMember: true }],
+        forMemberId: "target-m1",
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await postQuote(req);
+    expect(res.status).toBe(403);
+    expect(mockedGetCredit).not.toHaveBeenCalled();
+  });
+
+  it("quotes against the target member for a Booking Officer", async () => {
+    mockedAuth.mockResolvedValue(officerSession);
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    mockedGetCredit.mockResolvedValue(2500);
+
+    const req = new NextRequest("http://localhost/api/bookings/quote", {
+      method: "POST",
+      body: JSON.stringify({
+        checkIn,
+        checkOut,
+        guests: [{ ageTier: "ADULT", isMember: true }],
+        forMemberId: "target-m1",
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await postQuote(req);
+    expect(res.status).toBe(200);
+    expect(mockedGetCredit).toHaveBeenCalledWith("target-m1");
+  });
+
+  it("blocks a self-target quote for on-behalf actors", async () => {
+    mockedAuth.mockResolvedValue(officerSession);
+
+    const req = new NextRequest("http://localhost/api/bookings/quote", {
+      method: "POST",
+      body: JSON.stringify({
+        checkIn,
+        checkOut,
+        guests: [{ ageTier: "ADULT", isMember: true }],
+        forMemberId: "officer1",
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await postQuote(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("cannot book for themselves");
+  });
+
+  it("rejects an unauthorized promo-validate forMemberId", async () => {
+    mockedAuth.mockResolvedValue({
+      user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] },
+    } as never);
+
+    const req = new NextRequest("http://localhost/api/promo-codes/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        code: "TEST10",
+        checkIn: promoCheckIn,
+        checkOut: promoCheckOut,
+        guests: [{ ageTier: "ADULT", isMember: true }],
+        forMemberId: "target-m1",
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await postPromoValidate(req);
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("Create booking guest normalization", () => {
   beforeEach(() => {
     vi.clearAllMocks();

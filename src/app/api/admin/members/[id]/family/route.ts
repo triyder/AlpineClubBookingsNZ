@@ -1,95 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { prisma } from "@/lib/prisma";
+import { resolveMemberFamily } from "@/lib/resolve-member-family";
 
 /**
+ * DEPRECATED / ORPHANED (as of #1376): this route currently has no callers.
+ * Both admin booking-on-behalf pickers moved to the bookings-scoped endpoints
+ * (/api/admin/bookings/[id]/eligible-family and
+ * /api/admin/bookings/eligible-family), which serve the same shape but gate on
+ * bookings:edit. Retained (not deleted) for a potential membership-surface use
+ * of the member-scoped, membership:view-gated variant; slated for removal if no
+ * consumer emerges. See #1419.
+ *
  * GET /api/admin/members/[id]/family
  * Returns the target member's family group members for admin booking-on-behalf.
  * Same shape as /api/members/family but for any member (admin only).
+ *
+ * This route lives under /api/admin/members, so the bare requireAdmin() infers
+ * the membership:view requirement. The bookings-scoped on-behalf pickers
+ * (/api/admin/bookings/[id]/eligible-family and
+ * /api/admin/bookings/eligible-family) serve the SAME shape via the shared
+ * resolveMemberFamily() helper but gate on bookings:edit instead, so a Booking
+ * Officer without membership:view can still attach member identities (#1376).
  */
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { id: memberId } = await params;
 
-  const member = await prisma.member.findUnique({
-    where: { id: memberId },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      ageTier: true,
-      active: true,
-      archivedAt: true,
-      familyGroupMemberships: {
-        select: {
-          familyGroupId: true,
-          familyGroup: { select: { id: true, name: true } },
-        },
-      },
-    },
-  });
-
-  if (!member || !member.active || member.archivedAt) {
+  const family = await resolveMemberFamily(memberId);
+  if (!family) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  const seen = new Set<string>();
-  const familyMembers: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    ageTier: string;
-    relationship: "self" | "partner" | "dependent";
-  }[] = [];
-
-  function addMember(
-    m: { id: string; firstName: string; lastName: string; ageTier: string },
-    relationship: "self" | "partner" | "dependent"
-  ) {
-    if (seen.has(m.id)) return;
-    seen.add(m.id);
-    familyMembers.push({ ...m, relationship });
-  }
-
-  // Include the target member as "self"
-  addMember(
-    { id: member.id, firstName: member.firstName, lastName: member.lastName, ageTier: member.ageTier },
-    "self"
-  );
-
-  // All members from the target member's family groups
-  const groupIds = member.familyGroupMemberships.map((m) => m.familyGroupId);
-
-  if (groupIds.length > 0) {
-    const groupMemberships = await prisma.familyGroupMember.findMany({
-      where: {
-        familyGroupId: { in: groupIds },
-        memberId: { not: memberId },
-        member: { active: true, archivedAt: null },
-      },
-      include: {
-        member: {
-          select: { id: true, firstName: true, lastName: true, ageTier: true },
-        },
-      },
-      orderBy: { member: { firstName: "asc" } },
-    });
-    for (const gm of groupMemberships) {
-      const rel = gm.member.ageTier === "ADULT" ? "partner" : "dependent";
-      addMember(gm.member, rel);
-    }
-  }
-
-  const firstGroup = member.familyGroupMemberships[0]?.familyGroup ?? null;
-
-  return NextResponse.json({
-    familyGroupId: firstGroup?.id ?? null,
-    familyGroupName: firstGroup?.name ?? null,
-    familyGroupIds: groupIds,
-    familyMembers,
-  });
+  return NextResponse.json(family);
 }

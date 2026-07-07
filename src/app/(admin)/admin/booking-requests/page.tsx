@@ -9,9 +9,11 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booking-approvals-panel";
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import type { BookingRequestsTab } from "@/lib/admin-booking-requests-path";
 
 const APPROVALS_SEARCH_PARAMS = { tab: "approvals" } satisfies Record<
@@ -37,6 +39,7 @@ export default function BookingRequestsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = parseBookingRequestsTab(searchParams.get("tab"));
+  const canEditBookings = useAdminAreaEditAccess("bookings");
 
   // Pending public-request count, so admins can see at a glance that
   // verified non-member requests are waiting on the Public Requests tab
@@ -98,6 +101,13 @@ export default function BookingRequestsPage() {
         </p>
       </div>
 
+      {!canEditBookings ? (
+        <AdminViewOnlyNotice>
+          Your admin role can view booking requests but cannot approve, reject,
+          price, hold, or convert them.
+        </AdminViewOnlyNotice>
+      ) : null}
+
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="grid w-full grid-cols-3 sm:w-auto">
           <TabsTrigger value="approvals">Approvals</TabsTrigger>
@@ -119,6 +129,7 @@ export default function BookingRequestsPage() {
             <BookingApprovalsPanel
               fixedSearchParams={APPROVALS_SEARCH_PARAMS}
               showHeading={false}
+              canEdit={canEditBookings}
             />
           ) : null}
         </TabsContent>
@@ -127,6 +138,7 @@ export default function BookingRequestsPage() {
             <BookingChangeRequestsPanel
               fixedSearchParams={CHANGES_SEARCH_PARAMS}
               showHeading={false}
+              canEdit={canEditBookings}
             />
           ) : null}
         </TabsContent>
@@ -144,6 +156,7 @@ export default function BookingRequestsPage() {
               <PublicBookingRequestsPanel
                 fixedSearchParams={PUBLIC_SEARCH_PARAMS}
                 showHeading={false}
+                canEdit={canEditBookings}
               />
             </div>
           ) : null}

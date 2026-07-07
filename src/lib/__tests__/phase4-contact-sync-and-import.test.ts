@@ -164,6 +164,10 @@ import {
   syncContactsFromXero,
   updateXeroContact,
 } from "@/lib/xero";
+import {
+  CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+  CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
+} from "@/lib/xero-contact-cache";
 
 describe("Phase 4 contact sync and cached import", () => {
   beforeEach(() => {
@@ -350,6 +354,39 @@ describe("Phase 4 contact sync and cached import", () => {
       ]),
       skipDuplicates: true,
     });
+  });
+
+  it("records a dedicated full-refresh cursor (separate from the incremental cache cursor) so the members-page hint tracks whole-snapshot staleness", async () => {
+    mocks.accountingApi.getContactGroups.mockResolvedValue({
+      body: {
+        contactGroups: [
+          { contactGroupID: "group_1", name: "Adults", status: "ACTIVE" },
+        ],
+      },
+    });
+    mocks.accountingApi.getContactGroup.mockResolvedValue({
+      body: { contactGroups: [{ contacts: [] }] },
+    });
+
+    await refreshXeroContactGroupCache();
+
+    const upsertResources = mocks.prisma.xeroSyncCursor.upsert.mock.calls.map(
+      (call) => call[0].where.resourceType_scope.resourceType
+    );
+    // The existing incremental cache cursor is still written, untouched...
+    expect(upsertResources).toContain(CONTACT_GROUP_CACHE_CURSOR_RESOURCE);
+    // ...and the new full-refresh cursor is written too.
+    expect(upsertResources).toContain(
+      CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE
+    );
+
+    const fullRefreshUpsert = mocks.prisma.xeroSyncCursor.upsert.mock.calls.find(
+      (call) =>
+        call[0].where.resourceType_scope.resourceType ===
+        CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE
+    )?.[0];
+    expect(fullRefreshUpsert?.create?.lastSuccessfulSyncAt).toBeInstanceOf(Date);
+    expect(fullRefreshUpsert?.update?.lastSuccessfulSyncAt).toBeInstanceOf(Date);
   });
 
   it("uses the contact sync cursor and skips first-invoice lookups in the default sync path", async () => {

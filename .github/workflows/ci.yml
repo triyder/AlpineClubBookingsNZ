@@ -200,6 +200,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      # Fails fast (no database or npm install needed) if any migration matching
+      # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, or
+      # if a new migration reuses an existing timestamp prefix. Catches finding
+      # F8 (#1359) at PR time instead of at a fork's production deploy.
+      - name: Check migration safety ledger coverage
+        run: bash scripts/check-migration-safety-coverage.sh
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:

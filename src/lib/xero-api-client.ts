@@ -185,47 +185,54 @@ export async function getAuthenticatedXeroClient(): Promise<{
     // Token expired or about to expire - refresh it (wrapped in mutex)
     const refreshWork = (async () => {
       const { tokens: claimedTokens, leaseUntil } = leaseClaim;
-      const { xero } = await buildAuthenticatedXeroClient(claimedTokens);
-      xero.setTokenSet({
-        access_token: claimedTokens.accessToken,
-        refresh_token: claimedTokens.refreshToken,
-        token_type: "Bearer",
-      });
-      const config = getOperationalXeroConfig();
+      // Everything after the lease claim must run under this try: if client
+      // construction (initialize() -> identity.xero.com discovery) throws
+      // before the finally is armed, the rejected promise stays cached in
+      // _tokenRefreshPromise and the DB lease stays claimed, so every later
+      // call in this process instantly replays the stale error until restart.
       try {
-        const newTokenSet = await xero.refreshWithRefreshToken(
-          config.clientId,
-          config.clientSecret,
-          claimedTokens.refreshToken
-        );
-
-        await saveXeroTokens({
-          accessToken: newTokenSet.access_token!,
-          refreshToken: newTokenSet.refresh_token!,
-          expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
-          tenantId: claimedTokens.tenantId,
-        }, {
-          claimedTokenId: claimedTokens.id,
-          refreshLeaseUntil: leaseUntil,
-        });
-
+        const { xero } = await buildAuthenticatedXeroClient(claimedTokens);
         xero.setTokenSet({
-          access_token: newTokenSet.access_token!,
-          refresh_token: newTokenSet.refresh_token!,
-          token_type: newTokenSet.token_type ?? "Bearer",
+          access_token: claimedTokens.accessToken,
+          refresh_token: claimedTokens.refreshToken,
+          token_type: "Bearer",
         });
+        const config = getOperationalXeroConfig();
+        try {
+          const newTokenSet = await xero.refreshWithRefreshToken(
+            config.clientId,
+            config.clientSecret,
+            claimedTokens.refreshToken
+          );
 
-        return { xero, tenantId: claimedTokens.tenantId! };
-      } catch (err) {
-        logger.error({ err }, "Xero token refresh failed");
-        import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
-          notifyXeroSyncError({
-            errorType: "Token Refresh Failure",
-            operation: "getAuthenticatedXeroClient",
-            errorMessage: err instanceof Error ? err.message : String(err),
-          })
-        ).catch(() => {});
-        throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+          await saveXeroTokens({
+            accessToken: newTokenSet.access_token!,
+            refreshToken: newTokenSet.refresh_token!,
+            expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
+            tenantId: claimedTokens.tenantId,
+          }, {
+            claimedTokenId: claimedTokens.id,
+            refreshLeaseUntil: leaseUntil,
+          });
+
+          xero.setTokenSet({
+            access_token: newTokenSet.access_token!,
+            refresh_token: newTokenSet.refresh_token!,
+            token_type: newTokenSet.token_type ?? "Bearer",
+          });
+
+          return { xero, tenantId: claimedTokens.tenantId! };
+        } catch (err) {
+          logger.error({ err }, "Xero token refresh failed");
+          import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
+            notifyXeroSyncError({
+              errorType: "Token Refresh Failure",
+              operation: "getAuthenticatedXeroClient",
+              errorMessage: err instanceof Error ? err.message : String(err),
+            })
+          ).catch(() => {});
+          throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+        }
       } finally {
         await releaseXeroTokenRefreshLease(claimedTokens.id, leaseUntil).catch((err) => {
           logger.warn({ err }, "Failed to release Xero token refresh lease");

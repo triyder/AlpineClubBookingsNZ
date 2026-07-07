@@ -15,12 +15,14 @@
 // them. The base first-run seed data (seasons, rates, policies, admin/lodge
 // accounts, page content, induction template, club theme) is preserved.
 //
-// SAFETY GUARD: refuses to run unless DATABASE_URL points at localhost.
+// SAFETY GUARD: refuses unless explicitly opted in, non-production, local,
+// and connected to an empty or demo-only Member table.
 // ---------------------------------------------------------------------------
 import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
+import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
 import {
   ensureMemberAccessRoles,
   ensureMemberAccessRolesFromCompatibilityFields,
@@ -28,6 +30,7 @@ import {
 import { backfillCurrentSeasonMembershipAssignments } from "../src/lib/membership-types";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
+  DUAL_HAT_ADMIN,
   E2E_ADMIN,
   EMAIL_2FA_ENROLLEE,
   IB_BOOKING_ID,
@@ -38,6 +41,8 @@ import {
   NOMINATION_TOKEN_ONE,
   NOMINATION_TOKEN_TWO,
   NOMINATOR_TWO,
+  PAID_CANCEL_BOOKING_ID,
+  PAID_CANCEL_WINDOW,
   ROLE_PERSONAS,
   WAITLIST_FILL_GUEST_COUNT,
   WAITLIST_FULL_WINDOW,
@@ -48,7 +53,7 @@ import {
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
-const DEMO_DOMAIN = "demo.alpineclub.test";
+const DEMO_DOMAIN = DEMO_SEED_DOMAIN;
 const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD ?? "demo1234";
 const PWHASH = bcrypt.hashSync(DEMO_PASSWORD, 12);
 const SEASON_YEAR = 2026;
@@ -69,23 +74,20 @@ function nightsBetween(checkIn: string, checkOut: string): string[] {
   return out;
 }
 
-function assertLocalDatabase() {
-  const url = process.env.DATABASE_URL ?? "";
-  let hostname = "";
-
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    throw new Error(
-      "Refusing to run demo seed: DATABASE_URL is missing or invalid. " +
-        "Point DATABASE_URL at a local PostgreSQL database first.",
-    );
-  }
-
-  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
-  if (!isLocal) {
-    throw new Error(`Refusing to run demo seed: DATABASE_URL host is not local (${hostname || "unknown"}).`);
-  }
+async function assertDemoSeedSafety() {
+  await assertDemoSeedMayRun({
+    env: process.env,
+    countNonDemoMembers: () =>
+      prisma.member.count({
+        where: {
+          NOT: {
+            email: {
+              endsWith: `@${DEMO_DOMAIN}`,
+            },
+          },
+        },
+      }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -228,7 +230,7 @@ async function addGuest(
 }
 
 async function main() {
-  assertLocalDatabase();
+  await assertDemoSeedSafety();
   await cleanup();
   console.log("Building demo data...");
 
@@ -750,12 +752,39 @@ async function main() {
   // -------------------------------------------------------------------------
   // E2E fixtures (Playwright suite; see e2e/helpers/fixtures.ts). Deterministic
   // personas + bookings + a membership application the browser specs drive.
-  // Guarded by the same localhost-only check as the rest of this seed.
+  // Guarded by the same explicit local demo-only checks as the rest of this seed.
   // -------------------------------------------------------------------------
   // Scoped access-role personas: one bundled role each (plus baseline USER) so
   // the admin-permission matrix (src/lib/admin-permissions.ts) governs access.
+  // Each gets a complete, self-confirmed profile: admin-UI specs drive real
+  // pages as these personas, and an unconfirmed profile pops the blocking
+  // "Confirm member details" modal over every page (it broke the
+  // admin-member-detail spec's clicks; alice deliberately keeps that gate).
+  const roleProfileConfirmedAt = new Date();
   for (const [role, persona] of Object.entries(ROLE_PERSONAS)) {
-    const scoped = await makeMember(persona.email.split("@")[0], persona.firstName, persona.lastName);
+    const scoped = await makeMember(persona.email.split("@")[0], persona.firstName, persona.lastName, {
+      dateOfBirth: d("1984-03-03"),
+      phoneCountryCode: "64",
+      phoneAreaCode: "21",
+      phoneNumber: "5550100",
+      streetAddressLine1: "2 Ridgeline Terrace",
+      streetCity: "Alpine Village",
+      streetRegion: "Waikato",
+      streetPostalCode: "3420",
+      streetCountry: "New Zealand",
+      postalAddressLine1: "2 Ridgeline Terrace",
+      postalCity: "Alpine Village",
+      postalRegion: "Waikato",
+      postalPostalCode: "3420",
+      postalCountry: "New Zealand",
+      profileCompletedAt: roleProfileConfirmedAt,
+      detailsConfirmedAt: roleProfileConfirmedAt,
+      onboardingConfirmedAt: roleProfileConfirmedAt,
+    });
+    await prisma.member.update({
+      where: { id: scoped.id },
+      data: { detailsConfirmedByMemberId: scoped.id },
+    });
     await ensureMemberAccessRoles(prisma, {
       memberId: scoped.id,
       roles: [role],
@@ -830,6 +859,22 @@ async function main() {
     "1979-11-03",
     "5552003",
   );
+
+  // Dual-hat committee member (USER + ADMIN tokens): paid-up, complete
+  // profile, so the dual-hat booking spec can create a real self-booking
+  // through the member /book wizard under full member rules (#1442).
+  const dana = await seedConfirmedPaidMember(
+    DUAL_HAT_ADMIN.email.split("@")[0],
+    DUAL_HAT_ADMIN.firstName,
+    DUAL_HAT_ADMIN.lastName,
+    "1986-09-09",
+    "5552004",
+  );
+  await ensureMemberAccessRoles(prisma, {
+    memberId: dana.id,
+    roles: ["USER", "ADMIN"],
+    canLogin: true,
+  });
 
   // Email-code two-factor enrollee: un-enrolled (makeMember sets no two-factor
   // state) so global enforcement forces enrollment, and the email-code spec
@@ -935,6 +980,48 @@ async function main() {
       stripePaymentIntentId: "pi_e2e_ib_pending",
     },
   });
+
+  // Cancellation-with-refund spec: a future-dated PAID booking owned by Nadia on
+  // a December (Summer season) window no other spec or seeded booking uses, so
+  // the cancel spec can hold the whole amount as a positive account credit.
+  // Mirrors the PAID demo booking (bPaid) shape, but future-dated with a
+  // deterministic id and WITHOUT the additional/setup payment-intent fields, so
+  // the credit-method cancel makes no Stripe call (src/lib/booking-cancel.ts).
+  const paidCancelNights = nightsBetween(
+    PAID_CANCEL_WINDOW.checkIn,
+    PAID_CANCEL_WINDOW.checkOut,
+  ).length;
+  const paidCancelBooking = await prisma.booking.create({
+    data: {
+      id: PAID_CANCEL_BOOKING_ID,
+      memberId: nadia.id,
+      checkIn: d(PAID_CANCEL_WINDOW.checkIn),
+      checkOut: d(PAID_CANCEL_WINDOW.checkOut),
+      status: "PAID",
+      totalPriceCents: NIGHTLY * paidCancelNights,
+      finalPriceCents: NIGHTLY * paidCancelNights,
+    },
+  });
+  await addGuest(
+    paidCancelBooking.id,
+    { firstName: NOMINATOR_TWO.firstName, lastName: NOMINATOR_TWO.lastName, ageTier: "ADULT", isMember: true, memberId: nadia.id },
+    PAID_CANCEL_WINDOW.checkIn,
+    PAID_CANCEL_WINDOW.checkOut,
+    NIGHTLY,
+  );
+  const paidCancelPayment = await prisma.payment.create({
+    data: {
+      bookingId: paidCancelBooking.id,
+      amountCents: paidCancelBooking.finalPriceCents,
+      source: "STRIPE",
+      status: "SUCCEEDED",
+      stripePaymentIntentId: "pi_e2e_paid_cancel",
+    },
+  });
+  await prisma.paymentTransaction.create({
+    data: { paymentId: paidCancelPayment.id, kind: "PRIMARY", source: "STRIPE", amountCents: paidCancelBooking.finalPriceCents, status: "SUCCEEDED", stripePaymentIntentId: "pi_e2e_paid_cancel" },
+  });
+  await prisma.bookingEvent.create({ data: { bookingId: paidCancelBooking.id, type: "MEMBER_PAID", actorMemberId: nadia.id, amountCents: paidCancelBooking.finalPriceCents } });
 
   // Membership application spec: PENDING_NOMINATORS with two nomination tokens
   // whose raw values are known (SHA-256 stored, matching action-tokens.ts), so

@@ -52,6 +52,7 @@ import {
   unlinkMemberXeroContact,
 } from "@/lib/admin-member-xero-actions";
 import { memberName } from "@/lib/member-serialization";
+import { formatValidationErrorResponse } from "@/lib/format-validation-errors";
 import type {
   Member,
   MemberForm,
@@ -484,7 +485,11 @@ export function MemberEditorDialog({
         dateOfBirth: form.dateOfBirth || null,
         role: form.role,
         accessRoles: form.accessRoles,
-        ageTier: form.ageTier,
+        // NOT_APPLICABLE is server-managed (#1440): organisations get it
+        // forced on every write, and a member reclassified away from
+        // Organisation needs the server to restore a DOB-derived tier — so
+        // it is never submitted.
+        ...(form.ageTier === "NOT_APPLICABLE" ? {} : { ageTier: form.ageTier }),
         financeAccessLevel: form.financeAccessLevel,
         active: form.active,
         canLogin: form.canLogin,
@@ -518,7 +523,9 @@ export function MemberEditorDialog({
       const data = (await res
         .json()
         .catch(() => ({}))) as MemberSaveResponse & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Save failed");
+      // Surface per-field zod errors (one line each) instead of a bare
+      // "Validation failed"; the banner renders them with `whitespace-pre-line`.
+      if (!res.ok) throw new Error(formatValidationErrorResponse(data).join("\n"));
 
       let warning = data.warning;
       let successMessage = currentEditingMember
@@ -662,7 +669,7 @@ export function MemberEditorDialog({
               ref={formErrorRef}
               role="alert"
               tabIndex={-1}
-              className="scroll-mt-20 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+              className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
             >
               {formError}
             </div>
@@ -910,28 +917,40 @@ export function MemberEditorDialog({
                 }
                 onToggleRole={toggleAccessRole}
               />
-              <div className="space-y-2">
-                <Label>Age Tier</Label>
-                <Select
-                  value={form.ageTier}
-                  onValueChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      ageTier: value as MemberForm["ageTier"],
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="INFANT">Infant</SelectItem>
-                    <SelectItem value="CHILD">Child</SelectItem>
-                    <SelectItem value="YOUTH">Youth</SelectItem>
-                    <SelectItem value="ADULT">Adult</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {form.accessRoles.includes("ORG") || form.role === "SCHOOL" ? (
+                // Organisations/schools have no age (#1440): the server
+                // always stores NOT_APPLICABLE for them, so the picker is
+                // replaced with a fixed N/A readout.
+                <div className="space-y-2">
+                  <Label>Age Tier</Label>
+                  <p className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                    N/A — organisations don&apos;t have an age tier
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label>Age Tier</Label>
+                  <Select
+                    value={form.ageTier === "NOT_APPLICABLE" ? "" : form.ageTier}
+                    onValueChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        ageTier: value as MemberForm["ageTier"],
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="INFANT">Infant</SelectItem>
+                      <SelectItem value="CHILD">Child</SelectItem>
+                      <SelectItem value="YOUTH">Youth</SelectItem>
+                      <SelectItem value="ADULT">Adult</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             <MemberAddressFields

@@ -8,6 +8,7 @@ interface ContactGroupsResponsePayload {
   groups?: AdminXeroContactGroup[];
   error?: string;
   refreshed?: boolean;
+  lastRefreshedAt?: string | null;
 }
 
 type ContactGroupsFetchResponse = {
@@ -23,6 +24,7 @@ export type ContactGroupsFetch = (
 export interface LoadAdminXeroContactGroupsResult {
   groups: AdminXeroContactGroup[];
   refreshed: boolean;
+  lastRefreshedAt: string | null;
 }
 
 interface LoadAdminXeroContactGroupsOptions {
@@ -56,6 +58,10 @@ async function requestContactGroups(
   return {
     groups: Array.isArray(payload?.groups) ? payload.groups : [],
     refreshed: payload?.refreshed === true,
+    lastRefreshedAt:
+      typeof payload?.lastRefreshedAt === "string"
+        ? payload.lastRefreshedAt
+        : null,
   };
 }
 

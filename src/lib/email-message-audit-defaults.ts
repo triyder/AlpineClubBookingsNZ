@@ -174,6 +174,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Update on Your Account Deletion Request",
     "defaultBody": "Account Deletion Request Update\n\nHi {{firstName}},\n\nYour account deletion request has been reviewed and was not approved at this time.\n\nAdmin note: {{adminNote}} [only when adminNote exists]\n\nIf you have questions about this decision, please contact the club directly.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "admin-account-deletion-requested": {
+    "defaultSubject": "Account deletion requested: {{memberName}}",
+    "defaultBody": "Account Deletion Request Submitted\n\n{{memberName}} submitted an account deletion request.\n\nMember: {{memberName}}\nEmail: {{memberEmail}}\n\nReason:\n{{reason}} [only when reason exists]\n\nReview Deletion Requests: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
   "admin-member-archive-requested": {
     "defaultSubject": "Member archive requested: {{memberName}}",
     "defaultBody": "Member Archive Requested\n\n{{requesterName}} requested archive review for {{memberName}}.\n\nMember: {{memberName}}\nRequested by: {{requesterName}}\n\nReason:\n{{reason}}\n\nReview Archive Requests: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
@@ -197,6 +201,14 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "admin-member-delete-rejected": {
     "defaultSubject": "Member delete rejected: {{memberName}}",
     "defaultBody": "Member Delete Request Rejected\n\nHi {{requesterName}},\n\nThe hard-delete request for {{memberName}} was not approved.\n\nReason:\n{{reason}}\n\nReview note: {{reviewNote}} [only when reviewNote exists]\n\nOpen Member: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "admin-minors-review": {
+    "defaultSubject": "Review required: booking has only under-18 guests ({{memberName}})",
+    "defaultBody": "Booking Review Required\n\nA paid booking was edited and now has only under-18 guests. It is blocked from lodge check-in until an admin reviews it.\n\n{{reviewReason}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
+  },
+  "admin-owner-substitution": {
+    "defaultSubject": "Owner substitution — reconcile Xero contact for booking request {{requestId}}",
+    "defaultBody": "Owner Substitution — Xero Reconciliation Required\n\nAn owner substitution occurred while converting booking request {{requestId}} into booking {{bookingId}}. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.\n\nAction required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.\n\nIntended owner (should be billed): {{intendedMemberName}} ({{intendedMemberId}})\nSubstituted contact (currently billed): {{substituteMemberName}} ({{substituteMemberId}})\nReason: {{reason}}\nRequester: {{requesterName}} ({{memberEmail}})\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nReview Bookings: {{BASE_URL}}/admin/bookings"
   },
   "admin-new-booking": {
     "defaultSubject": "New Booking: {{memberName}} ({{status}})",

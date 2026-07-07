@@ -16,6 +16,7 @@ vi.mock("@/lib/stripe", () => ({
 import {
   markPaymentIntentTransactionFailed,
   PartialRefundError,
+  planStripeRefundAllocation,
   recordInternetBankingPaymentTransaction,
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
@@ -555,5 +556,146 @@ describe("multi-transaction refund allocation (#1097)", () => {
       })
     ).rejects.toThrow(/not a captured Stripe transaction/);
     expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+});
+
+describe("planStripeRefundAllocation (#1349)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function twoTransactionStore() {
+    const ctx = createRefundStore();
+    ctx.payment.amountCents = 8000;
+    ctx.transactions.push({
+      id: "txn_2",
+      paymentId: "payment_1",
+      kind: "ADDITIONAL",
+      source: PaymentSource.STRIPE,
+      stripePaymentIntentId: "pi_2",
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      reference: null,
+      amountCents: 3000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      paymentMethodId: "pm_1",
+      reason: null,
+      // Newer than txn_1 so the newest-first allocation slices it first.
+      createdAt: new Date("2026-01-05T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-05T00:00:00.000Z"),
+    });
+    return ctx;
+  }
+
+  function stripeRefund(
+    id: string,
+    amount: number,
+    paymentIntent: string,
+    charge: string
+  ) {
+    return {
+      id,
+      amount,
+      currency: "nzd",
+      status: "succeeded",
+      reason: "requested_by_customer",
+      created: 1770000000,
+      charge,
+      payment_intent: paymentIntent,
+    };
+  }
+
+  it("freezes exactly the slices — and therefore the Stripe keys — an inline derive would mint", async () => {
+    // Freeze the plan the way the cancellation claim transaction does (#1349).
+    const planCtx = twoTransactionStore();
+    const { slices, plannedAmountCents, totalRefundableCents } =
+      await planStripeRefundAllocation({
+        paymentId: "payment_1",
+        amountCents: 5000,
+        store: planCtx.store as any,
+      });
+
+    expect(slices).toEqual([
+      { paymentTransactionId: "txn_2", amountCents: 3000 },
+      { paymentTransactionId: "txn_1", amountCents: 2000 },
+    ]);
+    expect(plannedAmountCents).toBe(5000);
+    expect(totalRefundableCents).toBe(8000);
+
+    // Inline derive-mode refund on an IDENTICAL payment state...
+    const deriveCtx = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce(stripeRefund("re_d1", 3000, "pi_2", "ch_2"))
+      .mockResolvedValueOnce(stripeRefund("re_d2", 2000, "pi_1", "ch_1"));
+    await refundPaymentTransactions({
+      paymentId: "payment_1",
+      amountCents: 5000,
+      idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
+      store: deriveCtx.store as any,
+    });
+    const deriveKeys = mocks.processRefund.mock.calls.map(
+      (call) => call[0].idempotencyKey
+    );
+
+    // ...and plan-execution mode (inline cancel or cron replay) on another
+    // identical state mint byte-identical Stripe idempotency keys, so either
+    // side replays — never repeats — the other's refunds.
+    mocks.processRefund.mockClear();
+    const executeCtx = twoTransactionStore();
+    mocks.processRefund
+      .mockResolvedValueOnce(stripeRefund("re_p1", 3000, "pi_2", "ch_2"))
+      .mockResolvedValueOnce(stripeRefund("re_p2", 2000, "pi_1", "ch_1"));
+    await refundPaymentTransactions({
+      paymentId: "payment_1",
+      amountCents: 5000,
+      allocation: slices,
+      idempotencyKeyPrefix: "booking_cancel_refund_booking_1",
+      store: executeCtx.store as any,
+    });
+    const planKeys = mocks.processRefund.mock.calls.map(
+      (call) => call[0].idempotencyKey
+    );
+
+    expect(planKeys).toEqual(deriveKeys);
+    expect(planKeys).toEqual([
+      "booking_cancel_refund_booking_1_txn_2_3000",
+      "booking_cancel_refund_booking_1_txn_1_2000",
+    ]);
+  });
+
+  it("caps the plan at the ledger-refundable total instead of throwing (mirror drift)", async () => {
+    const ctx = twoTransactionStore();
+
+    const { slices, plannedAmountCents, totalRefundableCents } =
+      await planStripeRefundAllocation({
+        paymentId: "payment_1",
+        amountCents: 10000,
+        store: ctx.store as any,
+      });
+
+    expect(plannedAmountCents).toBe(8000);
+    expect(totalRefundableCents).toBe(8000);
+    expect(slices).toEqual([
+      { paymentTransactionId: "txn_2", amountCents: 3000 },
+      { paymentTransactionId: "txn_1", amountCents: 5000 },
+    ]);
+  });
+
+  it("skips non-captured transactions and already-refunded value", async () => {
+    const ctx = twoTransactionStore();
+    ctx.transactions[1].status = "FAILED";
+    ctx.transactions[0].refundedAmountCents = 1000;
+
+    const { slices, plannedAmountCents } = await planStripeRefundAllocation({
+      paymentId: "payment_1",
+      amountCents: 5000,
+      store: ctx.store as any,
+    });
+
+    expect(slices).toEqual([
+      { paymentTransactionId: "txn_1", amountCents: 4000 },
+    ]);
+    expect(plannedAmountCents).toBe(4000);
   });
 });

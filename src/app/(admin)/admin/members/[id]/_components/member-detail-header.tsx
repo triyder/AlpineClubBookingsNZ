@@ -3,7 +3,19 @@
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ExternalLink, Link2, Pencil, Plus } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Link2,
+  MoreHorizontal,
+  Plus,
+} from "lucide-react";
 import { accessRoleLabelForToken } from "@/lib/access-role-definitions";
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options";
 import type { MemberDetail, MemberLifecycleActionRequest } from "../_types";
@@ -15,13 +27,14 @@ interface MemberDetailHeaderProps {
   isAdultMember: boolean;
   memberIsArchived: boolean;
   pendingDeleteRequest: MemberLifecycleActionRequest | undefined;
+  /** null = status still loading; no Xero UI renders until it resolves. */
+  xeroConnected: boolean | null;
   xeroPushing: boolean;
   xeroUnlinking: boolean;
   onOpenDependentDialog: () => void;
   onOpenLinkXero: () => void;
   onOpenCreateXero: () => void;
   onUnlinkXero: () => void;
-  onOpenEditDialog: () => void;
 }
 
 export function MemberDetailHeader({
@@ -31,13 +44,13 @@ export function MemberDetailHeader({
   isAdultMember,
   memberIsArchived,
   pendingDeleteRequest,
+  xeroConnected,
   xeroPushing,
   xeroUnlinking,
   onOpenDependentDialog,
   onOpenLinkXero,
   onOpenCreateXero,
   onUnlinkXero,
-  onOpenEditDialog,
 }: MemberDetailHeaderProps) {
   const roleOptions = useAccessRoleOptions();
   const router = useRouter();
@@ -121,52 +134,76 @@ export function MemberDetailHeader({
               Add Dependent
             </Button>
           )}
-          {member.xeroContactId ? (
-            <>
-              <a
-                href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button variant="outline" size="sm">
-                  <ExternalLink className="h-4 w-4 mr-1" />
-                  View in Xero
+          {/* Xero actions render only once the connection status resolves to
+              true: everyday actions stay visible, rare ones live in the
+              overflow menu. Disconnected (or still loading) shows no Xero UI
+              at all — offering link/unlink against a dead connection only
+              fails after the click. */}
+          {xeroConnected === true &&
+            (member.xeroContactId ? (
+              <>
+                <a
+                  href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button variant="outline" size="sm">
+                    <ExternalLink className="h-4 w-4 mr-1" />
+                    View in Xero
+                  </Button>
+                </a>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="More member actions"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={onOpenLinkXero}>
+                      <Link2 className="h-4 w-4 mr-1" />
+                      Change Xero Link
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={onUnlinkXero}
+                      disabled={xeroUnlinking}
+                    >
+                      {xeroUnlinking ? "Unlinking..." : "Unlink Xero Contact"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" onClick={onOpenLinkXero}>
+                  <Link2 className="h-4 w-4 mr-1" />
+                  Link to Xero
                 </Button>
-              </a>
-              <Button variant="outline" size="sm" onClick={onOpenLinkXero}>
-                <Link2 className="h-4 w-4 mr-1" />
-                Change Link
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onUnlinkXero}
-                disabled={xeroUnlinking}
-              >
-                {xeroUnlinking ? "Unlinking..." : "Unlink"}
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outline" size="sm" onClick={onOpenLinkXero}>
-                <Link2 className="h-4 w-4 mr-1" />
-                Link to Xero
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onOpenCreateXero}
-                disabled={xeroPushing}
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                {xeroPushing ? "Creating..." : "Create in Xero"}
-              </Button>
-            </>
-          )}
-          <Button size="sm" onClick={onOpenEditDialog}>
-            <Pencil className="h-4 w-4 mr-1" />
-            Edit Member
-          </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="More member actions"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={onOpenCreateXero}
+                      disabled={xeroPushing}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      {xeroPushing ? "Creating..." : "Create in Xero"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            ))}
         </div>
       </div>
     </div>

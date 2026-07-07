@@ -35,6 +35,20 @@ Not covered by browser tests (by design):
   confirmation pages using seeded tokens rather than parsing the captured email
   (see below). Only the email-code two-factor spec reads a captured message back.
 
+Not covered yet, but tracked for addition (issue #1373 — restored to this list
+so the gaps are not silently implied as covered):
+
+- **Stripe refund, cancellation-with-refund, saved card, and member credit** —
+  `e2e/stripe-payment.spec.ts` covers only test-mode payment success + decline;
+  the refund/credit money outcomes stay Vitest/service-tested until the
+  cancellation-with-refund browser spec lands.
+- **Admin approve → bed allocation** — the `bedAllocation` module is enabled on
+  the staging stack, but the approve-then-allocate journey has no browser spec
+  yet.
+- **Access-role management** (create → edit → assign a role definition) — the
+  role *boundary* matrix is covered by `e2e/admin-roles.spec.ts`, but role
+  *management* is not yet browser-tested (deferred from #1134).
+
 ## Running locally
 
 ```bash
@@ -47,9 +61,11 @@ npm run test:e2e                       # prepare stack + run suite
 1. Starts the staging compose Postgres (host port `STAGING_POSTGRES_PORT`,
    default 5433 — **never** the production 5432).
 2. Drops and recreates the `public` schema, then runs `prisma migrate deploy`,
-   the base seed, and the demo seed, so every run starts from a known state.
-   It then enables the modules the E2E journeys need
-   (`e2e/setup/enable-e2e-modules.ts`) — a fresh database defaults these off:
+   the explicitly opted-in demo seed, and the create-if-missing base seed, so
+   every run starts from a known state without placing non-demo members in the
+   database before the destructive demo seed guard runs. It then enables the
+   modules the E2E journeys need (`e2e/setup/enable-e2e-modules.ts`) — a fresh
+   database defaults these off:
    `twoFactor` (two-factor enforcement), `waitlist` (`/admin/waitlist`,
    force-confirm, waitlist-confirm), `kiosk` + `chores` (`/lodge/*` and the
    roster, for the LODGE role boundary), `financeDashboard` (`/finance`, for
@@ -110,7 +126,8 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
 ## Seeded fixtures and personas
 
 The demo seed (`prisma/demo-seed.ts`) writes deterministic E2E fixtures behind
-its localhost-only guard, shared with the specs through
+its explicit local demo-only guard (`ALLOW_DEMO_SEED=1`, non-production,
+local `DATABASE_URL`, and no non-demo member emails), shared with the specs through
 `e2e/helpers/fixtures.ts` so seed data and assertions never drift:
 
 - **Scoped-role personas** — one member per bundled access role
@@ -219,9 +236,11 @@ The `two-factor` module is already enabled for the run by
 #1315 after a stable green window on `main`). Check the job log and the uploaded
 `playwright-report` artifact when it goes red.
 
-Note on scope: `main` is not branch-protected, so a red E2E run is an honest
-failing signal but does not itself hard-block a merge. Making E2E a required
-status that blocks merges is a separate branch-protection setting.
+Note on scope: `main` is branch-protected and `Playwright E2E` is one of the
+required status checks, so a red E2E run hard-blocks a (non-admin) merge.
+Because `enforce_admins` is off and no review approval is required, an admin
+merge can still occasionally land `main` red, so compare against `main`'s own
+latest CI before assuming an unrelated failure is yours.
 
 The Stripe payment specs remain an environment dependency: they run only when
 the `STRIPE_TEST_SECRET_KEY` / `STRIPE_TEST_PUBLISHABLE_KEY` repository secrets

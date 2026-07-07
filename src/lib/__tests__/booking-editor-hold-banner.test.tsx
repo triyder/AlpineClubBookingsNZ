@@ -29,7 +29,6 @@ function makeBooking(
         priceCents: 5000,
       },
     ],
-    bookingMemberId: "mem_1",
     viewerRole: "MEMBER",
     totalPriceCents: 5000,
     discountCents: 0,
@@ -39,6 +38,7 @@ function makeBooking(
     hasNonMembers: true,
     nonMemberHoldUntil: null,
     canEditNonMemberGuestNames: false,
+    canFixNonMemberGuestNameTypos: false,
     editPolicy: {
       mode: null,
       today: "2026-07-05",

@@ -24,6 +24,9 @@ interface BookingGroup {
   bookingId: string;
   memberName: string;
   expectedArrivalTime: string | null;
+  // #1422: a booking held by a pending admin review is shown but blocked from
+  // check-in — arrival is disabled here and the server rejects it too.
+  blockedFromCheckin?: boolean;
   guests: Guest[];
 }
 
@@ -590,6 +593,11 @@ export default function KioskPage() {
                               </span>
                             )}
                           </div>
+                          {booking.blockedFromCheckin && (
+                            <p className="mb-2 inline-block rounded-lg border border-red-700/50 bg-red-900/50 px-3 py-1 text-sm font-semibold text-red-200">
+                              Blocked from Check-In — see Booking Officer
+                            </p>
+                          )}
                           <div className="space-y-2">
                             {booking.guests.map((guest) => (
                               <div
@@ -635,7 +643,7 @@ export default function KioskPage() {
                                       Non-member
                                     </span>
                                   )}
-                                  {canMarkAttendance && guest.isArriving && !guest.departedAt && (
+                                  {canMarkAttendance && guest.isArriving && !guest.departedAt && !booking.blockedFromCheckin && (
                                     <button
                                       onClick={() => toggleArrival(guest.id)}
                                       className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
@@ -647,7 +655,7 @@ export default function KioskPage() {
                                       {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
                                     </button>
                                   )}
-                                  {canMarkAttendance && guest.isDeparting && (
+                                  {canMarkAttendance && guest.isDeparting && !booking.blockedFromCheckin && (
                                     <button
                                       onClick={() => toggleDeparture(guest.id)}
                                       className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${

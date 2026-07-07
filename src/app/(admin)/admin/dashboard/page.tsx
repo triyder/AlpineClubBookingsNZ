@@ -24,7 +24,9 @@ import {
   CalendarCheck,
   AlertTriangle,
   UserX,
+  Trash2,
 } from "lucide-react";
+import { formatDollarsDisplay } from "@/lib/finance-format";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -65,6 +67,7 @@ async function getStats() {
     pendingCreditApprovals,
     pendingMembershipCancellations,
     pendingMemberArchives,
+    pendingDeletionRequests,
     pendingBookingReviews,
     pendingBookingChangeRequests,
     unassignedHutLeaderDates,
@@ -128,6 +131,9 @@ async function getStats() {
         status: MemberLifecycleActionRequestStatus.REQUESTED,
       },
     }),
+    prisma.deletionRequest.count({
+      where: { status: "PENDING" },
+    }),
     prisma.booking.count({
       where: { adminReviewStatus: "PENDING", deletedAt: null },
     }),
@@ -155,6 +161,7 @@ async function getStats() {
     pendingCreditApprovals,
     pendingMembershipCancellations,
     pendingMemberArchives,
+    pendingDeletionRequests,
     pendingBookingReviews,
     pendingBookingChangeRequests,
     pendingMembershipReviews:
@@ -177,6 +184,10 @@ export default async function AdminDashboardPage() {
   ].filter(Boolean) as string[];
   const hasPendingBookingApprovals =
     stats.pendingBookingReviews > 0 || stats.pendingBookingChangeRequests > 0;
+  const bookingRequestsHref =
+    stats.pendingBookingReviews > 0
+      ? "/admin/booking-requests?tab=approvals"
+      : "/admin/booking-requests?tab=changes";
   const bookingApprovalSummary = [
     stats.pendingBookingReviews > 0
       ? `${stats.pendingBookingReviews} new booking review${stats.pendingBookingReviews === 1 ? "" : "s"}`
@@ -224,7 +235,7 @@ export default async function AdminDashboardPage() {
       )}
 
       {hasPendingBookingApprovals && (
-        <Link href="/admin/booking-requests">
+        <Link href={bookingRequestsHref}>
           <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <AlertTriangle className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />
@@ -232,6 +243,26 @@ export default async function AdminDashboardPage() {
                 <p className="font-medium text-amber-900">Booking Requests</p>
                 <p className="text-sm text-amber-800 mt-1">
                   {bookingApprovalSummary.join(" and ")} waiting for admin decision.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {stats.pendingDeletionRequests > 0 && (
+        <Link href="/admin/deletion-requests?status=PENDING">
+          <Card className="border-red-200 bg-red-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <Trash2 className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-red-950">
+                  Account Deletion Requests
+                </p>
+                <p className="text-sm text-red-800 mt-1">
+                  {stats.pendingDeletionRequests} account deletion request
+                  {stats.pendingDeletionRequests === 1 ? "" : "s"} waiting for
+                  admin review.
                 </p>
               </div>
             </CardContent>
@@ -338,7 +369,7 @@ export default async function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">
-                {formatCents(stats.revenueThisMonth)}
+                {formatDollarsDisplay(stats.revenueThisMonth)}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 From succeeded payments

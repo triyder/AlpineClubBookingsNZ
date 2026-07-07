@@ -56,15 +56,22 @@ enum TwoFactorMethod {
 
 enum FinanceSnapshotType {
   PROFIT_AND_LOSS_MONTHLY
+  PROFIT_AND_LOSS_BY_MONTH
   ACCOUNTS_RECEIVABLE_INVOICES
   ACCOUNTS_PAYABLE_INVOICES
   BANK_TRANSACTIONS
   AGED_RECEIVABLES
   AGED_PAYABLES
   BALANCE_SHEET
+  BALANCE_SHEET_BY_MONTH
   BANK_BALANCES
   CONTACTS
   CHART_OF_ACCOUNTS
+}
+
+enum FinanceMonthlyStatementKind {
+  PROFIT_AND_LOSS
+  BALANCE_SHEET
 }
 
 enum FinanceSyncRunStatus {
@@ -90,6 +97,9 @@ enum AgeTier {
   CHILD
   YOUTH
   ADULT
+  // Organisations/schools have no age; excluded from age-based automations
+  // (age-up cron, age-tier Xero groups, subscription requirements). #1440
+  NOT_APPLICABLE
 }
 
 enum Gender {
@@ -1990,6 +2000,7 @@ model FinanceSyncRun {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   snapshots           FinanceSnapshot[]
+  monthlyBalances     FinanceAccountMonthlyBalance[]
 
   @@index([workflow, startedAt])
   @@index([status, startedAt])
@@ -2015,6 +2026,44 @@ model FinanceSnapshot {
   @@unique([snapshotType, scope, asOfDate], map: "FinanceSnapshot_snapshotType_scope_asOfDate_key")
   @@index([snapshotType, asOfDate])
   @@index([scope, asOfDate])
+  @@index([syncRunId])
+}
+
+// One row per (statement kind, month, Xero account code): the monthly finance
+// fact table the dashboard reads. PROFIT_AND_LOSS rows hold the month's net
+// activity for a revenue/expense account; BALANCE_SHEET rows hold the closing
+// month-end position for an asset/liability/equity account. Rows are replaced
+// idempotently from multi-period Xero reports (12 months per sync), so late
+// edits in Xero self-heal for a year back; older months come from backfill.
+model FinanceAccountMonthlyBalance {
+  id            String                      @id @default(cuid())
+  statementKind FinanceMonthlyStatementKind
+  scope         String                      @default("default")
+  // Always the first day of the month, stored as an NZ date-only value.
+  month         DateTime                    @db.Date
+  // Normalized upper-case Xero GL code (matches FinanceReportCategoryMapping).
+  accountCode   String                      @db.VarChar(40)
+  accountId     String?
+  accountName   String?                     @db.VarChar(200)
+  // Xero account type (SALES, EXPENSE, BANK, CURRLIAB, ...) and class
+  // (REVENUE | EXPENSE | ASSET | LIABILITY | EQUITY) from the chart of accounts.
+  accountType   String?                     @db.VarChar(40)
+  accountClass  String?                     @db.VarChar(20)
+  amountCents   Int
+  currency      String?                     @db.VarChar(8)
+  // True while the month is still in progress (amounts are month-to-date);
+  // flipped false by the first sync after month end.
+  isProvisional Boolean                     @default(false)
+  sourceReport  String                      @db.VarChar(60)
+  syncRunId     String?
+  syncedAt      DateTime                    @default(now())
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+  syncRun       FinanceSyncRun?             @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
+  @@unique([statementKind, scope, month, accountCode])
+  @@index([statementKind, month])
+  @@index([accountCode, month])
   @@index([syncRunId])
 }
 
@@ -2072,6 +2121,17 @@ model XeroSyncOperation {
   lastErrorCode     String?
   lastErrorMessage  String?
   requestPayload    Json?
+  // Denormalized copy of the outbox discriminator, captured once at enqueue in
+  // `startXeroSyncOperation` and never updated afterward (#1271, item 3 of
+  // #1208). Dispatch reads queueType from `requestPayload` (not this column),
+  // BEFORE handlers may overwrite `requestPayload` -- so after dispatch this
+  // column can diverge from the payload (some handlers, e.g. the booking-invoice
+  // create/update, rewrite requestPayload wholesale and drop queueType). That is
+  // expected and safe: nothing reads this column yet (added for #1272), and for
+  // every row still awaiting dispatch (PENDING / WAITING_PAYMENT -- the set #1272
+  // will scan) the column faithfully mirrors the enqueue-time queueType. Null for
+  // REQUEUE, BACKFILL, inbound, and any other row enqueued with no queueType.
+  queueType         String?
   responsePayload   Json?
   xeroObjectType    String?
   xeroObjectId      String?
@@ -2092,18 +2152,22 @@ model XeroSyncOperation {
   @@index([status, createdAt])
   @@index([direction, status, createdAt])
   @@index([entityType, status, createdAt])
+  @@index([queueType, status, createdAt])
   @@index([localModel, localId, createdAt])
-  // No @@unique on correlationKey/idempotencyKey by design (#1234, invariant (c)):
-  // (1) the same key legitimately recurs across rows over time -- a terminal-status
-  //     row from attempt 1 plus a fresh PENDING re-enqueue -- so the outbox dedup is
-  //     a `findFirst` scoped to status IN (PENDING, RUNNING[, WAITING_PAYMENT]); a
-  //     full unique would reject a legitimate re-enqueue and break retries.
-  // (2) the only correct DB form is a PARTIAL unique WHERE status IN (...), which
-  //     Prisma schema cannot express -- it would live only in raw migration SQL and
-  //     the Migration drift check (schema-vs-DB) would flag it as drift and fail.
-  // (3) the enqueue race is bounded: both rows carry the same Xero idempotency key,
-  //     so Xero dedups the actual call within its 24h window, and the findFirst
-  //     dedup handles the common sequential case. Not exploitable on any caller path.
+  // No FULL @@unique on correlationKey/idempotencyKey (#1234 invariant (c)(1)
+  // still holds: the same key legitimately recurs across rows over time -- a
+  // terminal-status row from attempt 1 plus a fresh PENDING re-enqueue). The
+  // #1234 rationale points (2)/(3) are superseded by #1354 (owner-approved,
+  // #1375 sitting item 10): a raw PARTIAL unique index
+  // "XeroSyncOperation_active_correlationKey_unique" ON (correlationKey)
+  // WHERE correlationKey IS NOT NULL AND status IN
+  // ('PENDING','RUNNING','WAITING_PAYMENT') lives in migration
+  // 20260706040000 -- prisma cannot model it here, but `prisma migrate diff`
+  // tolerates raw partial indexes (precedent: Member_email_login_unique), so
+  // the drift check stays green. The findFirst dedup in the enqueue paths
+  // remains the fast path; startXeroSyncOperation resolves a lost concurrent
+  // race by catching the unique violation and returning the winner's active
+  // row.
   @@index([correlationKey])
   @@index([idempotencyKey])
   @@index([xeroObjectType, xeroObjectId])
@@ -2885,6 +2949,17 @@ model FamilyGroupMember {
   @@index([familyGroupId])
 }
 
+model HiddenFamilySuggestion {
+  id               String   @id @default(cuid())
+  signature        String   @unique
+  memberIds        String[] @default([])
+  hiddenByMemberId String
+  createdAt        DateTime @default(now())
+
+  @@index([hiddenByMemberId])
+  @@index([createdAt])
+}
+
 model FamilyGroupJoinRequest {
   id            String    @id @default(cuid())
   familyGroupId String
@@ -2938,30 +3013,31 @@ model FamilyGroupJoinRequest {
 // ---------------------------------------------------------------------------
 
 model NotificationPreference {
-  id                        String   @id @default(cuid())
-  memberId                  String   @unique
-  bookingConfirmation       Boolean  @default(true)
-  bookingReminder           Boolean  @default(true)
-  bookingBumped             Boolean  @default(true)
-  bookingCancelled          Boolean  @default(true)
-  bookingWaitlist           Boolean  @default(true)
-  choreRoster               Boolean  @default(true)
-  marketingEmails           Boolean  @default(false)
-  adminNewBooking           Boolean  @default(true)
-  adminPaymentFailure       Boolean  @default(true)
-  adminPendingDeadline      Boolean  @default(true)
-  adminBookingBumped        Boolean  @default(true)
-  adminXeroSyncError        Boolean  @default(true)
-  adminCapacityWarning      Boolean  @default(true)
-  adminDailyDigest          Boolean  @default(true)
-  adminWaitlistOffer        Boolean  @default(true)
-  adminFamilyGroupRequest   Boolean  @default(true)
-  adminBookingChangeRequest Boolean  @default(true)
-  adminRefundRequest        Boolean  @default(true)
-  adminIssueReport          Boolean  @default(true)
-  adminBookingRequest       Boolean  @default(true)
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
+  id                         String   @id @default(cuid())
+  memberId                   String   @unique
+  bookingConfirmation        Boolean  @default(true)
+  bookingReminder            Boolean  @default(true)
+  bookingBumped              Boolean  @default(true)
+  bookingCancelled           Boolean  @default(true)
+  bookingWaitlist            Boolean  @default(true)
+  choreRoster                Boolean  @default(true)
+  marketingEmails            Boolean  @default(false)
+  adminNewBooking            Boolean  @default(true)
+  adminPaymentFailure        Boolean  @default(true)
+  adminPendingDeadline       Boolean  @default(true)
+  adminBookingBumped         Boolean  @default(true)
+  adminXeroSyncError         Boolean  @default(true)
+  adminCapacityWarning       Boolean  @default(true)
+  adminDailyDigest           Boolean  @default(true)
+  adminWaitlistOffer         Boolean  @default(true)
+  adminFamilyGroupRequest    Boolean  @default(true)
+  adminBookingChangeRequest  Boolean  @default(true)
+  adminRefundRequest         Boolean  @default(true)
+  adminIssueReport           Boolean  @default(true)
+  adminBookingRequest        Boolean  @default(true)
+  adminBookingReviewRequired Boolean  @default(true)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }

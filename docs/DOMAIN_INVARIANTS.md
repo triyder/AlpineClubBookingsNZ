@@ -89,6 +89,118 @@ Future reviews and issues should cite this file when proposing changes.
 - Internet Banking defaults are non-holding and no-cutoff. If bed holding is
   enabled, the hold expiry is snapshotted on the Payment and must be released
   idempotently by cron if unpaid.
+- The hold-expiry release and its invoice-clearing Xero credit-note outbox row
+  commit in ONE transaction (#1357): the release marks the hold consumed
+  (re-runs skip it), so an intent enqueued post-commit would ride a crash
+  window with no self-heal. The outbox enqueue is a pure local insert — the
+  Xero call itself stays in the outbox worker, outside the transaction.
+- Cancelling a booking never rewrites captured-payment truth (#1473).
+  "Captured" is decided on LEDGER evidence — a payment transaction row in a
+  captured status (SUCCEEDED / (PARTIALLY_)REFUNDED), or, for STRIPE rows
+  with no ledger rows (pre-ledger data), the refund mirror (Stripe refunds
+  require a captured charge) — never on the aggregate mirror alone: the
+  inbound reconcile folds invoice-applied modification credit notes into
+  `refundedAmountCents`/`PARTIALLY_REFUNDED` on never-captured IB payments
+  (pure bookkeeping, zero cash), so the mirror lies in both directions. A
+  never-captured payment — including that folded shape — flips to FAILED at
+  cancel and its open invoice gets the finalPrice+changeFee invoice-clearing
+  credit note (the #1015 outstanding-balance rule; supplementary invoices
+  from unpaid price increases are a separate pre-existing gap). A genuinely
+  captured PARTIALLY_REFUNDED payment takes the PAID cancellation path
+  (#1491, owner decision): the member receives the cancellation-policy tier
+  of the REMAINING captured value (`refundableBase = min(amountCents −
+  refundedAmountCents, finalPrice + changeFee) − changeFee`; change fees stay
+  non-refundable per FEE-03), with the same claim-first single-flight,
+  frozen card-refund plan, and credit-path ledger writes as a SUCCEEDED
+  cancel. Paid-path eligibility is LEDGER-ONLY (a captured transaction row —
+  `paymentEligibleForPaidCancelPath`, shared with the cancel-preview route so
+  preview and cancel can never disagree): mirror-only legacy rows stay in the
+  preserve branch because the refund executors allocate against ledger rows.
+  Two paid-path rules keep money truth intact: a captured INTERNET_BANKING
+  payment's refund method is coerced to "credit" before the tier is computed
+  (there is no Stripe intent to refund — "card" would claim a processed
+  refund and book a Xero cash-refund note with no money moved), and any
+  folded (mirror-only) refund is materialized into the capture ledger inside
+  the claim transaction before new refunds execute, so the aggregate
+  reconcile cannot erase the folded history and the allocation planners see
+  the true remaining headroom. A captured payment that stays out of the paid
+  path (fully REFUNDED, or a flattened legacy mirror) keeps its status and
+  refund history, its captured Stripe intent is not sent a cancel, and no
+  clearing note is enqueued: finalPrice+changeFee is not its open balance —
+  normally the invoice is already settled Xero-side, and in the
+  failed-payment-record window a cancel-time clearing note would close the
+  invoice underneath the op retry stack's recording repair and permanently
+  poison it. The repair pass's late-capture finding fires only when a
+  cancelled booking retains captured value with NO recorded
+  cancellation-refund decision — no CANCELLED-event policy snapshot (written
+  by every paid-path cancel, including 0%-tier retentions), no cancellation
+  credit, and no LIVE booking-cancel refund recovery operation (a terminally
+  FAILED op is a decision whose money never moved and does not suppress the
+  finding) — and is never auto-applied: an operator distinguishes a genuine
+  late capture from a deliberate retention, then executes it with
+  `--apply --apply-action <key>` (#1491). Rows already flattened by the old
+  defect are not backfilled (the repair pass synthesizes captured state from
+  the STRIPE mirror).
+- A payment landing on an already-CANCELLED booking's stale open invoice must
+  never settle silently (#1357) — but a PAID invoice event alone proves
+  nothing: Xero also reports PAID when OUR OWN clearing credit note is
+  allocated (zero cash), and every paid-then-cancelled booking replays PAID
+  events for money the cancellation flow already settled. Minting therefore
+  requires positive CASH evidence on the invoice (`amountPaid`, falling back
+  to actual payment records), a payment that never settled (PENDING/FAILED),
+  and no credit already minted by this pipeline (matched by its own credit
+  descriptions — never by amount, which collides with unrelated
+  cancellation-flow rows). Both credit-minting arms (already-cancelled and
+  late-capacity-failure) size the mint by the invoice's QUANTIFIED cash
+  (#1459), clamped per payment to the payment's own amount — `amountPaid`
+  plus overpayment/prepayment allocations (which accrue to `amountCredited`,
+  so they are additive), falling back to the invoice's non-DELETED payment
+  records only when `amountPaid` is unusable — never by the payment's face
+  amount alone: on a mixed invoice (part cash, remainder cleared by credit
+  allocation) the member is credited only the cash that actually arrived, and
+  the admin alert names both amounts so the operator can verify the
+  allocation source. Partially quantifiable evidence floors the mint at the
+  verified cash and the alert says the figures are unverified; only evidence
+  that quantifies NOTHING (degraded shapes only; the fresh getInvoice fetch
+  carries the amount fields) falls back to the full payment amount rather
+  than silently under-crediting. The clamp is per payment, not apportioned
+  across multiple payments matched to one invoice — a shape no app flow
+  produces (group settlements ride their own settlement path). When it mints,
+  the inbound reconcile creates the member credit and enqueues the offsetting
+  account-credit note — both sized at the minted amount — and retires the
+  now-obsolete still-PENDING invoice-clearing refund note, all in ONE
+  transaction — then alerts the admins exactly once. Cash arriving AFTER a
+  mint never credits automatically (the settled-payment and dedup gates hold);
+  when a later event's fully-verified cash exceeds the already-minted credit,
+  the reconcile alerts the admins with the delta instead of staying silent,
+  and cash-classified evidence that quantifies to zero on a never-settled
+  payment alerts as a payload anomaly rather than settling without a credit. A PAID invoice event
+  never overwrites a (PARTIALLY_)REFUNDED payment or transaction status back
+  to SUCCEEDED.
+- The same cash-evidence rule gates Internet Banking SETTLEMENT itself, not
+  just credit minting (#1435), on BOTH inbound settlement surfaces: the
+  per-payment loop and the combined group-settlement flip. Settlement runs
+  only when the PAID invoice carries positive cash evidence: `amountPaid`
+  when present (an explicit 0 is authoritative), falling back to actual
+  non-DELETED payment records. Operator-applied OVERPAYMENT and PREPAYMENT
+  allocations also count as cash — they are real member money on the Xero
+  contact, and the app's own bookkeeping only ever produces credit-note
+  allocations, so they can never be the clearing-note echo the gate exists
+  to stop. Mixed cash+credit invoices settle (`amountPaid` is the cash
+  portion; credit allocations accrue to `amountCredited`). A credit-note-
+  cleared invoice settles nothing — no PaymentTransaction or Payment
+  SUCCEEDED flip, no booking PAID flip, no member credit, no group-child
+  flips; the skip only stamps MISSING invoice identifiers (linkage, never
+  status) so a later real-cash event for the same invoice still matches its
+  payments, and it alerts the admins when the affected booking is still live
+  (an operator cleared the invoice Xero-side while the app still awaits
+  payment — nothing else would ever settle or expire that booking). A
+  payload carrying NEITHER cash field fails the inbound event instead of
+  settling blind or skipping terminally (owner-approved default): the
+  FAILED-retry sweep re-fetches the invoice fresh, so transient payload
+  degradation self-heals and persistent degradation stays loud and
+  operator-replayable. Canonical single-payment identifier backfill remains
+  with `syncLinkedPaymentInvoiceMetadata`, which runs before the loop.
 - Payment, refund, and credit operations must be idempotent across retries,
   webhook replays, cron reruns, and partial failure recovery.
 - External provider side effects require clear retry and idempotency behavior.
@@ -120,11 +232,26 @@ Future reviews and issues should cite this file when proposing changes.
   **reconstructs it verbatim and never recomputes** — a >24h re-drive can land
   in a different cancellation tier, so recomputing the mirror amount would be
   unsafe. The plan is written before the Stripe refund and before the
-  settlement flips, so the refund fires at most once across re-drives. (Resume
-  completes the local booking/capacity/refund-mirror cleanup only; it does not
-  re-enqueue a Xero refund credit note for a child that crashed after its
-  cancel committed but before its credit note was queued — pre-existing
-  books-drift of the #1233 reconcile class.)
+  settlement flips, so the refund fires at most once across re-drives.
+- The group-cancel refund credit-note enqueue is **durable** (#1257/#1377).
+  Each child's Xero refund credit-note outbox row (integer cents) is enqueued
+  **inside the same transaction** as that child's cancel + `refundedAmountCents`
+  mirror — the enqueue is a DB outbox insert, not a provider call, so it may
+  join the tx. A crash can therefore never leave a `CANCELLED` child with its
+  refund mirror written but no credit-note operation queued: either both commit
+  or neither does (the reaper then re-drives the still-`ACTIVE` child). This
+  closes the window for **every** payment source, including Internet-Banking
+  children the #1354 daily reconcile self-heal cannot recover because they carry
+  no per-child `xeroInvoiceId`; that daily self-heal remains a Stripe-only
+  backstop. Only the outbox worker *kick* stays best-effort and post-commit.
+- A failed settlement refund must stay durably owed (#1351): the frozen plan
+  is never nulled, a payment-recovery operation persisted before the inline
+  Stripe call retries the refund under the same
+  `group_cancel_refund_<settlementId>` key, and no interleaving of the inline
+  run, the recovery replay, and the reaper resume may apply a per-child
+  refund mirror twice — the replay only ever writes a mirror to an
+  already-CANCELLED plan child whose `refundedAmountCents` is still zero,
+  via a conditional update. Alerts fire on retry exhaustion only.
 
 ## Booking Modifications
 
@@ -141,6 +268,20 @@ Booking changes must not orphan or desynchronize:
 
 Positive deltas, negative deltas, credits, refunds, and additional payments must
 remain traceable to the original booking and modification event.
+
+A modification price increase whose Stripe intent creation fails transiently is
+never lost silently (#1358, F29): every additional-intent flow routes through
+the shared helper whose failure path enqueues a durable
+`CREATE_ADDITIONAL_PAYMENT_INTENT` recovery operation keyed one-per-modification
+with the same modification-scoped Stripe idempotency key, so the replay collects
+exactly once; exhausted retries alert the admins with the member, booking, and
+amount, and stalled or exhausted queues surface through the recovery health
+checks. The recovery processor is execution-time honest about lifecycle: a
+booking CANCELLED after the modification completes the operation WITHOUT
+minting an intent — cancellation already tore down its additional intents, and
+recovery must never resurrect a retired collectable or re-arm the parked
+supplementary Xero operation for money that must not be captured (the
+stale-WAITING_PAYMENT reaper retires that op).
 
 Per-guest stay ranges must sit inside the parent booking's checkIn/checkOut
 envelope. A guest stay range outside the current envelope is not rejected —
@@ -228,6 +369,28 @@ place, and approving it clears the review without re-opening the payment
 lifecycle. Rejection cancels through the shared cancellation flow, which
 refunds captured payments per the policy.
 
+Because a paid minors-only booking is deliberately **not** parked to
+AWAITING_REVIEW (Option A / F27, issue #1372 — parking a paid booking would
+collide with the captured-money invariant #1100), a second gate protects the
+child-safety concern: while a paid/completed booking carries a PENDING admin
+review it is **blocked from lodge check-in**. The block is reason-agnostic
+(#1422) — ANY pending admin review gates check-in, not only the adult-supervision
+reason (today the only such reason, but a future review type inherits the gate
+automatically). Server enforcement lives in the shared
+`checkinNotBlockedByPendingReviewFilter()` where-fragment, which **excludes** the
+booking from the arrive/depart and roster generate/confirm queries
+(`src/lib/lodge-date-scoping.ts`) so its guest resolves to null server-side
+(arrive returns 404, roster-confirm 400); the check-in reminder cron skips it as
+well. The lodge **guest list** (the roster staff read on the kiosk) is the one
+surface that now **shows** the blocked booking rather than hiding it — flagged
+"Blocked from Check-In — see Booking Officer" with its arrival toggle disabled,
+so staff can see who is held while the booking stays un-arrivable server-side
+(defense in depth). The booking keeps its PAID status throughout; clearing the
+review to APPROVED makes it check-in-eligible again. When the flag newly trips on
+a paid booking a best-effort admin email fires (template `admin-minors-review`,
+gated by its own `adminBookingReviewRequired` notification preference #1422),
+since nothing changes the booking's visible status to signal the block.
+
 A quote hold spans the whole quote lifecycle (issue #1254). Sending a quote
 places the hold automatically: the held booking (AWAITING_REVIEW, a
 capacity-holding status) reserves the beds/guest-nights before the send is
@@ -264,6 +427,14 @@ quote") is unchanged — only an admin lowering the nightly capacity can reclaim
 unpaid hold. Paying the hold moves it to a fully capacity-holding status and ends
 this exposure.
 
+School approval re-checks per-night capacity for the FINAL guest list on both
+branches — fresh-create and held-reuse (excluding the held booking's own
+guests) — under the global booking advisory lock, before anything flips to a
+capacity-holding status (#1352). A hold reserves only the originally held
+guest count, so an admin child-count override at approval can never confirm
+more beds than actually remain on any night; the admin sees the same
+capacityExceeded outcome as the fresh path.
+
 A booking converted from (or held for) a public/school booking request keeps
 its officer-negotiated price, flat-split across guest rows; the quote's
 per-tier rates are not persisted on the booking. Before a school group
@@ -285,12 +456,44 @@ customer "booking cancelled" email (`cancelBooking`'s
 `suppressCustomerNotification` option — the detach/reconcile/audit still run),
 and it deliberately does **not** revoke the requester's quote response token:
 the link stays active, so the admin is warned to re-send a fresh quote after
-re-mapping. Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
+re-mapping. Releasing a hold (and declining a held request) refuses with HTTP
+409 rather than cancelling if the requester accepted the quote concurrently —
+i.e. the held booking has already left `AWAITING_REVIEW` (`cancelBooking`'s
+`requireRequestHold` guard, #1406) — so a just-accepted booking is never
+cancelled and its payment links never revoked out from under the requester.
+
+An admin decline releases the capacity hold from ANY held/editor state, not just
+`VERIFIED`/`PRICED` (#1423): a decline is valid from all six states the admin
+panel shows the Decline button for — `VERIFIED`, `PRICED`, `QUOTED`,
+`QUOTE_SENT`, `QUERY_PENDING`, `MODIFICATION_REQUESTED`
+(`DECLINABLE_BOOKING_REQUEST_STATUSES`) — and each can carry a live
+`AWAITING_REVIEW` hold that the decline frees (claim-first: the `DECLINED` flip
+lands before any hold release, so a wrong-state decline `409`s and never touches
+the hold).
+
+A DECLINED request is untouchable by every other actor. In the SAME transaction
+as the `DECLINED` claim, the decline retires any outstanding `SENT` quote
+(`SENT` -> `SUPERSEDED`; `SUPERSEDED` = admin retired it, distinct from a
+requester-cancel `CANCELLED`). Because `loadSentQuoteByToken` requires
+`status === SENT`, that retirement alone `409`s all four requester quote actions
+(accept / modify / query / cancel) on a still-live link, and the pre-expiry
+reminder cron (which selects only `SENT` quotes) skips the declined request
+instead of nudging it. As defence-in-depth against a request finalised between a
+requester POST's token load and its write, the accept re-arm, the modify/query
+re-status, and the losing-accept capacity revert are each status-guarded with
+`status notIn [DECLINED, CANCELLED]`: a late accept or modify/query `409`s (no
+new booking, Payment, or PaymentLink; no resurrection to
+`MODIFICATION_REQUESTED`/`QUERY_PENDING`), and the revert simply does not
+un-decline the request. The guards still permit a re-arm from
+`CONVERTED`/`APPROVED`, preserving approve's `convertedBookingId` idempotency
+(#1232 double-accept returns the one existing booking). Per-teacher hut-leader records are always created fresh. The held owner is re-validated at conversion:
 if a previously mapped contact is no longer a valid non-login contact by the time
 the requester accepts (login enabled, archived, deactivated, role changed), the
-accept still succeeds — a fresh non-login contact is substituted and an
-admin-attention audit row (`booking_request.owner_substituted`) is recorded so
-the substituted Xero contact can be reconciled. When the Xero module is off, the
+accept still succeeds — a fresh non-login contact is substituted and both a
+durable admin-attention audit row (`booking_request.owner_substituted`) and an
+active `admin-owner-substitution` admin email alert (gated by the
+`adminXeroSyncError` preference, F20 residual #2 / #1377) are raised post-commit
+so the substituted Xero contact can be reconciled. When the Xero module is off, the
 manual-invoice admin notification names the resolved booking owner (the mapped
 contact when mapped), not the raw request school/contact.
 Headcount or tier changes still go through the admin re-quote flow, and
@@ -305,6 +508,42 @@ prices, and night rows are echoed back unchanged on every booking, quoted or
 not — so they pass the block, and quoted bookings are additionally exempt
 from the paid-name lock (renaming placeholder students after the school has
 paid its invoice is the intended workflow).
+
+The paid-name lock on free-text (non-member) guest names blocks changing who a
+booking is for after full payment — an unauthorised transfer/resale. It has one
+narrow exemption (#1386): on an **identity-only** edit (no structural change) of
+a fully-paid, non-quoted booking, an identity-preserving spelling **typo** may
+be corrected. A change qualifies only when, on names normalised as trim +
+lowercase + collapse-internal-whitespace: (a) neither new part is blank; (b) the
+first name and last name each keep the same word/token count (a typo never adds
+or removes a name part); (c) no positionally-aligned token is a whole-token
+replacement — for each aligned first/last token pair, at least half of the
+longer token must be preserved (edit distance × 2 &lt; max token length), which
+refuses surname-family swaps like "David Ng" → "David Wu" and "Ann Ho" →
+"Ann Lo" even though their overall distance is ≤ 2; and (d) the
+Damerau-Levenshtein distance (adjacent transposition = 1 edit) between the
+normalised full names is at most `min(2, floor(0.25 × lengthOfLongerFullName))`
+— at most two edits and never more than a quarter of the longer name, distance 0
+(pure case/whitespace) included. Anything else keeps the hard reject ("only
+spelling corrections are allowed after payment; contact the office to change who
+a booking is for"), so a same-surname given-name swap ("John Smith" →
+"Jane Smith", distance 3) and a full swap ("John Smith" → "Aroha Ngata") are
+refused. The rule is enforced server-side (`src/lib/guest-name-similarity.ts`,
+mirrored in the modify-quote preview); it never reprices or rechecks capacity
+(the identity-only price-preserving path still applies), and every allowed fix
+writes a `BookingModification` audit row discriminated as `GUEST_TYPO_FIX` (with
+a `paidNameTypoFix` snapshot flag) carrying old→new names, actor, and time.
+Member-linked guest names remain unrenameable regardless.
+
+**Residual risk (accepted, audit-mitigated):** the per-token and distance bounds
+above stop wider swaps, but a SINGLE-character change that keeps most of a
+token is fundamentally indistinguishable from a spelling typo by string
+comparison, so short one-edit substitutions such as "Kim" → "Tim", "Sam" →
+"Pam", or "Rob" → "Bob" are STILL accepted after payment. This is
+self-serviceable by the booking owner (`booking.memberId === actor`) on
+PAID/CONFIRMED bookings and cannot be closed in code. Its only mitigation is the
+`GUEST_TYPO_FIX` audit trail, which admins should periodically review for
+suspicious post-payment renames.
 
 A price reduction against an issued-but-unpaid Xero invoice (pay-on-account,
 no captured payment) is corrected for the full net delta — there is no captured
@@ -333,6 +572,118 @@ the refund ledger. `refundedAmountCents` therefore reflects every settlement
 method, and no ordering of edit/cancel operations may produce a different
 total payout (refunds plus credits) than another ordering reaching the same
 final state.
+
+A net-positive booking edit that mixes a price reduction with a larger
+late-change fee bills Xero the SIGNED components on one supplementary invoice
+(#1356): a negative price-adjustment line beside the positive fee line, so the
+invoice total and the payment recorded against the Stripe clearing account
+both equal the net the member was actually charged — the same net the
+additional Stripe PaymentIntent captured. The negative line posts to the
+`hutFeeRefunds` account mapping, like every other give-back (a club that
+prefers a single ledger line maps `hutFeeRefunds` to the same code as
+`hutFeesIncome`); positive lines stay on `hutFeesIncome`. Clamping the negative component
+would over-record income and Stripe-bank receipts by the dropped reduction
+and break bank reconciliation. A supplementary invoice exists only for a
+positive net; a mixed-sign edit whose net is zero or negative settles through
+the modification credit-note paths, and both the outbox enqueue and the
+executor refuse (skip, replay-safely) rather than gross-bill the fee. The
+booking-vs-Xero repair pass applies the same rule: it verifies supplementary
+invoices against the modification net and queues missing ones with the signed
+components. On the credit-note side the repair pass sizes by STORED evidence
+(#1427): abs(net) is only an upper bound, because the primary path caps the
+credit at the policy-limited settlement the modification row cannot
+reconstruct. Queue actions and the amount-evidence expectation prefer the
+resolved note's own enqueue payload (then oldest-first — the first enqueue
+is the primary-path settlement decision; CANCELLED attempts rank last), and
+replaying that amount rebuilds the identical amount-embedding correlation
+key, so the local outbox dedup holds and a recent attempt that already
+reached Xero dedups within Xero's idempotency window — then link metadata,
+then executed note totals, then (last resort) a bare legacy payload.
+Operation evidence, object resolution, and blocking detection are all
+discriminated by the operation's queue-type hint: the immutable `queueType`
+COLUMN (#1347), then the payload's own name, then the correlation-key
+segment — decisive for the pre-column executed ledger, whose payloads were
+overwritten at dispatch before the column backfill copied them. An
+account-credit-note op beside the invoice-applied note (same
+entityType/operationType) therefore never sizes, resolves as, blocks, or
+pollutes the mismatch evidence of the invoice-applied note — in the
+worst case that confusion allocated the member's UNAPPLIED account-credit
+note against the already-paid primary invoice (double-refund exposure). A
+net-negative modification positively settled by an account credit note (link
+role or executed op hint) is complete as-is: it has no invoice-applied note
+to repair and produces no finding. A
+stored amount outside (0, abs(net)] is ignored as inconsistent, so an
+over-sized note still flags against abs(net); the deliberate limit of
+evidence-first is that a wrongly-enqueued amount INSIDE the range reads as
+the app's recorded decision and reports clean — the alternative (flagging
+every non-abs(net) note) drowned real drift in a false positive on every
+policy-tiered booking. When no stored evidence exists and the payment has
+captured money (by aggregate status or a captured transaction row), BOTH the
+missing-note queue and the missing-allocation queue become manual-review
+findings instead of auto-applying abs(net); auto-queueing abs(net) remains
+correct only for the no-captured-payment case, where the full delta is a
+pure bookkeeping correction (#1015). A live-but-not-retryable credit-note or
+allocation operation surfaces as blocked rather than silence (and a
+FAILED-unretryable one says so, not "pending"). The manual retry stack replays the operation's STORED amounts
+first (the #1354 queued-payload-first rule): the Xero idempotency key embeds
+the amounts, so replaying the enqueued values keeps the retry deduplicable
+against the original attempt, preserves a policy-limited credit-note
+settlement the modification row does not record, and lets the enqueue-time
+`queueType` distinguish an unapplied account-credit note from an
+invoice-applied one. Only fully-legacy rows fall back to the signed
+modification record — a rebuilt supplementary invoice keeps its reduction and
+a rebuilt credit note refunds the absolute net, never the absolute price
+component alone (which would over-credit by the fee).
+
+A cancellation's card-refund debt must be durable before any external call
+(#1349): the claim transaction that flips the booking to `CANCELLED` also
+writes the payment-recovery operation, carrying the per-transaction refund
+allocation frozen from the under-lock read. No crash point between the claim
+commit and the Stripe refund may leave the debt unrecorded, and no combination
+of the inline refund and the recovery cron may pay it twice — both execute the
+same frozen slices, so they mint identical Stripe idempotency keys and Stripe
+replays rather than repeats. The mirror of this rule is the group-cancel
+settlement, which persists its per-child `refundPlan` before its Stripe refund
+for the same reason.
+
+Xero contact resolution (`findOrCreateXeroContact` /
+`createXeroContactForMember`) performs every provider call — OAuth refresh,
+searches, creates, and their retry sleeps — OUTSIDE any database transaction
+(#1355): concurrent duplicate creation is bounded by the member-scoped Xero
+idempotency key, and only the local link write takes a SHORT advisory-locked
+transaction with a re-check (first-writer-wins against a concurrent
+resolver). Operation-log success is recorded post-commit only; a local-link
+failure after the Xero call marks the operation FAILED, never SUCCEEDED for
+rolled-back state.
+
+Stepped Stripe refunds settle into Xero as per-delta credit notes whose cents
+must sum exactly to the payment's refunded total (#1354). The amounts billed
+to Xero are derived from EXECUTION-TIME state (`refundedAmountCents` minus the
+sum of active covering notes), never trusted from an enqueue-time watermark —
+so operations executing out of order, replays through the retry stack (which
+re-enters delta mode via the queued payload or the enqueue-time `queueType`
+column), and races between enqueue and execution all converge on the same
+books. Inbound reconciliation MERGES link metadata over the outbound
+per-delta keys instead of replacing them; the outbox processor fails errored
+operations for every queue type (keeping them replayable rather than
+RUNNING-stuck dead-ends); the daily credit-reconciliation cron re-enqueues
+the uncovered delta for any flagged payment so historical gaps self-heal; and
+a partial unique index allows at most one ACTIVE outbox operation per
+correlation key (owner-approved defence in depth — terminal rows may repeat
+the key across attempts).
+
+For `source: STRIPE` payments the local refund ledger is Stripe-truth and
+inbound Xero reconciliation may only raise it, never lower it (#1353). The
+inbound credit-note repair keeps the local `refundedAmountCents` when the
+Xero-derived total is below it (logging and raising the deduped Xero sync
+alert instead of rewriting), and never flips a REFUNDED/PARTIALLY_REFUNDED
+Stripe payment back to SUCCEEDED from Xero-derived data — an operator voiding
+a refund credit note in Xero cannot "un-refund" money Stripe has already paid
+out, and a missing refund-delta credit note can no longer silently lower the
+ledger the missing-credit-note detector compares against (which previously
+self-masked the divergence). Internet Banking payments are the deliberate
+exception: Xero is their payment rail, so the repair remains authoritative in
+both directions for them.
 
 Cancelled-booking soft-delete may hide an operational duplicate only when it
 preserves the booking row and no external money/Xero history needs to remain
@@ -373,6 +724,41 @@ Bundled and definition-backed rows are composed by the central admin
 permission matrix (maximum level per area); they must not be projected into
 legacy `Member.role = ADMIN`. Finance portal access derives from the merged
 `finance` area level, never from the enum values or `financeAccessLevel`.
+"User Type" (User / Organisation / Admin / Lodge) is a derived presentation
+concept over access-role tokens, not a stored field: the Edit Member screen's
+User Type select and the members-list Access column derive it via
+`deriveUserType` (any privileged token other than `LODGE` ⇒ Admin; `LODGE` ⇒
+Lodge kiosk; `ORG` ⇒ Organisation; otherwise User) and save it back as plain
+`accessRoles` tokens — the Admin type's "Also a club member" checkbox is the
+`USER` token. No new stored classification field may be introduced for it,
+organisations cannot hold admin roles, and the server-side Full-Admin gates
+on access-role writes remain the authority (the UI only mirrors them).
+On-behalf booking must not depend on `membership:view`: a Booking Officer
+(`bookings:edit`) reaches the booking owner's or target member's family group
+through the bookings-scoped pickers
+(`GET /api/admin/bookings/[id]/eligible-family`, resolving the owner from the
+booking server-side, and `GET /api/admin/bookings/eligible-family?forMemberId=`),
+each gated on `bookings:edit` and returning exactly one member's family group
+via the shared `resolveMemberFamily` helper. This decoupling means a club that
+customises the Booking Officer role to drop `membership:view` can still attach
+the correct member identity — and therefore correct member pricing — instead of
+silently re-adding the member as a mispriced non-member. The member-scoped
+`GET /api/admin/members/[id]/family` remains gated on `membership:view` for
+membership surfaces.
+On-behalf CREATION is aligned with modification (#1313/#1442): `/api/bookings`,
+`/api/bookings/quote`, and `/api/promo-codes/validate` authorize a
+`forMemberId` via `bookingManagementAuthorizationRole` (`bookings:edit`), so a
+Booking Officer and a Full Admin drive identical on-behalf behaviour. A
+`forMemberId` from a caller without `bookings:edit` is rejected (403) — a quote
+or promo check must never silently price the caller instead of the target. No
+on-behalf actor may target themselves (separation of duties): an admin's or
+officer's own stays go through the member `/book` flow and normal member
+payment paths. Portal context determines intent: a dual-hat account
+(`USER` token + admin roles) self-books as a plain member with NO admin
+bypasses — email verification, Xero-link, subscription, guest-subscription,
+and minimum-stay gates all apply to self-bookings; the gate bypasses are keyed
+to authorized on-behalf bookings only. Only admin-only accounts (no `USER`
+token) are redirected from the member wizard to `/admin/book`.
 Legacy membership lifecycle/classification code may read `Member.role` only to
 distinguish compatibility categories such as non-login/non-member records until
 that workflow is fully represented by seasonal membership type.
@@ -382,7 +768,22 @@ Age tiers remain separate because the same tier can be Full, Life, Associate,
 Family, School, or another
 configured type. Age-tier Xero groups and membership-type Xero groups may both
 exist; duplicate exact rules and multiple managed rules for the same scope are
-not valid. Committee assignment controls public committee/contact presentation
+not valid.
+Organisation-type members (the `ORG` access role or the legacy `SCHOOL` role)
+always carry the `NOT_APPLICABLE` age tier, and no other member may hold it —
+the server forces it on every org create/update, rejects it for people, and
+restores a DOB-derived tier when a member is reclassified away from
+Organisation. `NOT_APPLICABLE` never has an `AgeTierSetting` row: it has no
+age range, is displayed as "N/A", and is excluded from every age-based
+automation — the season age-up cron, age-tier Xero contact-group sync (orgs
+are never added to a managed age group; a leftover membership is surfaced as
+a mismatch instead), and age-based subscription requirements. Organisations
+are also exempt from membership entrance fees: both Xero entrance-fee
+invoice paths (direct and outbox) skip N/A members before any amount —
+including an explicit override — is considered. Booking guests
+are always people: `NOT_APPLICABLE` is not a bookable tier, and organisation
+accounts cannot be linked as booking guests.
+Committee assignment controls public committee/contact presentation
 only. Do not add committee positions to access roles or `Member.role`.
 `CommitteeRole` master records and `CommitteeAssignment` member links can be
 active/inactive independently of access role and seasonal membership type, and
@@ -421,7 +822,14 @@ inductions created from approved applications should explicitly assign the
 application nominators as signers while preserving the application nominator
 fallback for historical records. Completing a Hut Leader Induction sets
 `Member.hutLeaderEligible`; it does not create or date a `HutLeaderAssignment`,
-which remains an admin-controlled roster/coverage record.
+which remains an admin-controlled roster/coverage record and issues a dedicated
+lodge kiosk PIN (its plaintext is shown only once, at issue or reset).
+Assignment additionally requires the member to hold the standard
+`USER` access role: a member whose only roles are custom definition-backed rows
+(`role = null`) cannot be assigned as a hut leader, and the booking-derived
+picker only surfaces adult `USER` members with an operational booking
+overlapping the assignment range (see CONFIGURATION.md → "Hut Leaders" for the
+promo-code/book-on-behalf workaround that rosters a booking-less custodian).
 
 Hard delete must remain limited to records that pass the eligibility checks for
 no durable booking, financial, family, Xero, or membership-history blockers.

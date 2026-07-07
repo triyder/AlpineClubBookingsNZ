@@ -28,6 +28,7 @@ import {
   sanitizeForJson,
   startXeroSyncOperation,
   upsertXeroObjectLink,
+  sumCoveredRefundCreditNoteCents,
 } from "@/lib/xero-sync";
 import {
   callXeroApi,
@@ -104,6 +105,18 @@ export async function createXeroCreditNote(
 
   let existingCreditNoteId: string | null = null;
   let existingCreditNoteNumber: string | null = null;
+  // F4 (#1354): in delta mode the amounts billed to Xero are derived from
+  // EXECUTION-TIME state, not the enqueue-time request. The enqueue-time
+  // watermark can be stale: two Stripe refunds inside one outbox interval
+  // give the second operation a LOWER watermark than the first, and
+  // oldest-first execution then treated the first note as covering — the
+  // second delta was marked SUCCEEDED without creating anything. The
+  // payment's refundedAmountCents is monotonic under inbound reconcile since
+  // #1353, so `refundedAmountCents − sum(covered notes)` is the true
+  // uncovered amount at the moment this runs, whatever order operations
+  // execute or replay in.
+  let effectiveRefundAmountCents = refundAmountCents;
+  let effectiveWatermarkCents: number | null = null;
 
   if (isDeltaMode) {
     // Per-delta refunds (#1162): a payment refunded in steps has one active note
@@ -125,13 +138,53 @@ export async function createXeroCreditNote(
         metadata: true,
       },
     });
-    const coveringLink = activeLinks.find((link) => {
-      const linkWatermark = readLinkWatermarkCents(link.metadata);
-      return linkWatermark !== null && linkWatermark >= watermarkCents;
-    });
-    if (coveringLink) {
-      existingCreditNoteId = coveringLink.xeroObjectId;
-      existingCreditNoteNumber = coveringLink.xeroObjectNumber ?? null;
+
+    const coveredCents = await sumCoveredRefundCreditNoteCents(paymentId);
+    const uncoveredCents = Math.max(
+      0,
+      payment.refundedAmountCents - coveredCents
+    );
+
+    if (uncoveredCents <= 0) {
+      // Nothing uncovered at execution time: the enqueue-time delta was
+      // already settled by other notes (or the request raced a competing
+      // note). Close against the covering link — by watermark when one
+      // matches, else the newest active note.
+      const coveringLink =
+        activeLinks.find((link) => {
+          const linkWatermark = readLinkWatermarkCents(link.metadata);
+          return linkWatermark !== null && linkWatermark >= watermarkCents;
+        }) ??
+        activeLinks[0] ??
+        null;
+      if (coveringLink) {
+        existingCreditNoteId = coveringLink.xeroObjectId;
+        existingCreditNoteNumber = coveringLink.xeroObjectNumber ?? null;
+      } else {
+        // Unreachable in practice (uncovered can only be 0 with no active
+        // note when the refund ledger is empty, and delta enqueues require a
+        // positive delta) — but never bill Xero for a covered request.
+        logger.warn(
+          { paymentId, refundAmountCents, coveredCents },
+          "Refund credit note delta already covered with no active link; completing without creating"
+        );
+        if (queuedOperationId) {
+          await completeXeroSyncOperation(queuedOperationId, {
+            responsePayload: {
+              skippedNothingUncovered: true,
+              coveredCents,
+            },
+          });
+        }
+        return payment.xeroRefundCreditNoteId ?? "";
+      }
+    } else {
+      // Bill exactly what the ledger still shows uncovered (never more than
+      // requested), and key the note by the EXECUTION-TIME watermark so a
+      // replay under unchanged state mints the identical Xero idempotency
+      // key, while changed state produces a consistent new intent.
+      effectiveRefundAmountCents = Math.min(refundAmountCents, uncoveredCents);
+      effectiveWatermarkCents = coveredCents + effectiveRefundAmountCents;
     }
   } else {
     const canonicalRefundCreditNote =
@@ -195,7 +248,7 @@ export async function createXeroCreditNote(
   const refundLineItem: LineItem = {
     description: `Refund for booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
     quantity: 1,
-    unitAmount: refundAmountCents / 100,
+    unitAmount: effectiveRefundAmountCents / 100,
     taxType: "OUTPUT2",
   };
   if (refundMapping.itemCode) {
@@ -220,7 +273,7 @@ export async function createXeroCreditNote(
         "payment",
         paymentId,
         "refund-credit-note",
-        watermarkCents,
+        effectiveWatermarkCents ?? watermarkCents,
         "v2"
       )
     : buildXeroIdempotencyKey(
@@ -235,7 +288,7 @@ export async function createXeroCreditNote(
     creditNotes: [buildCreditNote(contactId)],
     allocation: {
       invoiceId: originalInvoiceId,
-      amount: refundAmountCents / 100,
+      amount: effectiveRefundAmountCents / 100,
     },
   };
 
@@ -273,7 +326,7 @@ export async function createXeroCreditNote(
         creditNotes: [buildCreditNote(resolvedContactId)],
         allocation: {
           invoiceId: originalInvoiceId,
-          amount: refundAmountCents / 100,
+          amount: effectiveRefundAmountCents / 100,
         },
       }),
       run: ({ contactId: resolvedContactId }) =>
@@ -327,7 +380,7 @@ export async function createXeroCreditNote(
       const refundPayment = buildRefundCreditNotePayment({
         paymentId,
         creditNoteId: createdNote.creditNoteID,
-        refundAmountCents,
+        refundAmountCents: effectiveRefundAmountCents,
         bankCode,
       });
       const refundPaymentResponse = await callXeroApi(
@@ -382,8 +435,11 @@ export async function createXeroCreditNote(
           xeroObjectNumber: createdNote.creditNoteNumber ?? null,
           role: "REFUND_CREDIT_NOTE",
           metadata: {
-            amountCents: refundAmountCents,
-            watermarkCents: options?.watermarkCents ?? refundAmountCents,
+            amountCents: effectiveRefundAmountCents,
+            watermarkCents:
+              effectiveWatermarkCents ??
+              options?.watermarkCents ??
+              effectiveRefundAmountCents,
           },
         },
         ...(refundPaymentResponseBody?.paymentID
@@ -430,7 +486,17 @@ async function backfillCancellationCreditXeroNote(params: {
       sourceBookingId: params.bookingId,
       amountCents: params.refundAmountCents,
       type: CreditType.CANCELLATION_REFUND,
-      description: `Cancellation refund for booking ${bookingLabel}`,
+      // Every credit this pipeline mints must link back to its Xero note: the
+      // cancellation-flow literal plus the two Internet Banking payment-credit
+      // literals (late capacity failure, and a payment landing on an
+      // already-cancelled booking, #1357).
+      description: {
+        in: [
+          `Cancellation refund for booking ${bookingLabel}`,
+          `Internet Banking payment credit for booking ${bookingLabel}`,
+          `Internet Banking payment credit for cancelled booking ${bookingLabel}`,
+        ],
+      },
       xeroCreditNoteId: null,
     },
     data: {

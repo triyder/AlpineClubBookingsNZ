@@ -16,21 +16,22 @@ import {
   MemberPasswordActionButton,
 } from "@/components/admin/member-password-action-button"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
+import { getLifecycleStatusConfig } from "@/lib/admin-member-badges"
 import {
-  getLifecycleStatusConfig,
-  getLoginBadge,
-} from "@/lib/admin-member-badges"
+  getMemberLoginStage,
+  LOGIN_STAGE_LABELS,
+} from "@/lib/member-login-stage"
+import { deriveUserType, USER_TYPE_LABELS } from "@/lib/access-roles"
 import { memberName } from "@/lib/member-serialization"
-import { accessRoleLabelForToken } from "@/lib/access-role-definitions"
-import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
 import type { Member } from "../_types"
-import { subscriptionStatusConfig } from "../_utils"
+import { formatTypeTierLabel, subscriptionStatusConfig } from "../_utils"
 
 interface MemberTableProps {
   members: Member[]
   loading: boolean
   debouncedSearch: string
   selectedIds: Set<string>
+  canEdit?: boolean
   sortBy: string
   sortDir: "asc" | "desc"
   membersListPath: string
@@ -95,6 +96,7 @@ export function MemberTable({
   loading,
   debouncedSearch,
   selectedIds,
+  canEdit = true,
   sortBy,
   sortDir,
   membersListPath,
@@ -104,7 +106,6 @@ export function MemberTable({
   onOpenPasswordActionDialog,
   onEditMember,
 }: MemberTableProps) {
-  const roleOptions = useAccessRoleOptions()
   if (loading) {
     return (
       <div className="py-12 text-center">
@@ -129,19 +130,25 @@ export function MemberTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-10">
-              <span className="sr-only">Select</span>
-              <input
-                type="checkbox"
-                aria-label="Select all members on this page"
-                checked={selectedIds.size === members.length && members.length > 0}
-                onChange={onToggleSelectAll}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-            </TableHead>
+            {canEdit ? (
+              <TableHead className="w-10">
+                <span className="sr-only">Select</span>
+                <input
+                  type="checkbox"
+                  aria-label="Select all members on this page"
+                  checked={selectedIds.size === members.length && members.length > 0}
+                  onChange={onToggleSelectAll}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+              </TableHead>
+            ) : null}
             {[
               ["name", "Name"],
               ["email", "Email"],
+              // Access shows the member's derived type plus their single login
+              // stage. The login stage is derived (no sortable DB column), so
+              // this header sorts by the stored `role` — an approximation of
+              // type order — rather than the rendered stage.
               ["role", "Access"],
             ].map(([column, label]) => (
               <SortableHeader
@@ -153,10 +160,18 @@ export function MemberTable({
                 onToggleSort={onToggleSort}
               />
             ))}
-            <TableHead>Membership Type</TableHead>
+            {/*
+              Combined "Type – Tier" column (#1445): the current-season
+              membership type followed by the age tier (e.g. "Full – Adult").
+              The column leads with Type, but sorts by `ageTier` — the type
+              comes from a filtered to-many relation (the current-season
+              SeasonalMembershipAssignment) that Prisma cannot cleanly orderBy,
+              whereas ageTier is a real, whitelisted sortable Member column. The
+              separate Membership Type and Age Tier filters remain distinct.
+            */}
             <SortableHeader
               column="ageTier"
-              label="Age Tier"
+              label="Type – Tier"
               sortBy={sortBy}
               sortDir={sortDir}
               onToggleSort={onToggleSort}
@@ -168,7 +183,6 @@ export function MemberTable({
               sortDir={sortDir}
               onToggleSort={onToggleSort}
             />
-            <TableHead>Login</TableHead>
             <TableHead>Family Group</TableHead>
             <TableHead>Subscription</TableHead>
             <TableHead>Xero</TableHead>
@@ -179,13 +193,24 @@ export function MemberTable({
               sortDir={sortDir}
               onToggleSort={onToggleSort}
             />
-            <TableHead className="text-right">Actions</TableHead>
+            {canEdit ? <TableHead className="text-right">Actions</TableHead> : null}
           </TableRow>
         </TableHeader>
         <TableBody>
           {members.map((member) => {
             const lifecycleConfig = getLifecycleStatusConfig(member)
-            const loginBadge = getLoginBadge(member.canLogin)
+            // One Access column (#1444): the member's derived type plus their
+            // single login-journey stage. The no-login case renders just "No
+            // login" (no type prefix); every login-on stage renders
+            // "{Type} · {Stage}", e.g. "Admin · Invited".
+            const loginStage = getMemberLoginStage(member)
+            const userType = deriveUserType(member.accessRoles, member.canLogin)
+            const accessTypeLabel =
+              userType === "lodge" ? "Lodge" : USER_TYPE_LABELS[userType]
+            const accessLabel =
+              loginStage === "no-login"
+                ? LOGIN_STAGE_LABELS["no-login"]
+                : `${accessTypeLabel} · ${LOGIN_STAGE_LABELS[loginStage]}`
             const subscriptionConfig =
               subscriptionStatusConfig[member.subscriptionStatus ?? "NONE"] ||
               subscriptionStatusConfig.NOT_INVOICED
@@ -206,15 +231,17 @@ export function MemberTable({
 
             return (
               <TableRow key={member.id} className="hover:bg-slate-50">
-                <TableCell>
-                  <input
-                    type="checkbox"
-                    aria-label={`Select ${name}`}
-                    checked={selectedIds.has(member.id)}
-                    onChange={() => onToggleSelect(member.id)}
-                    className="h-4 w-4 rounded border-gray-300"
-                  />
-                </TableCell>
+                {canEdit ? (
+                  <TableCell>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${name}`}
+                      checked={selectedIds.has(member.id)}
+                      onChange={() => onToggleSelect(member.id)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                  </TableCell>
+                ) : null}
                 <TableCell className="font-medium">
                   <Link
                     href={buildHrefWithReturnTo(`/admin/members/${member.id}`, membersListPath)}
@@ -230,46 +257,24 @@ export function MemberTable({
                 </TableCell>
                 <TableCell className="text-slate-600">{member.email}</TableCell>
                 <TableCell>
-                  <div className="flex max-w-[220px] flex-wrap gap-1">
-                    {member.accessRoles.length > 0 ? (
-                      member.accessRoles.map((role) => (
-                        <Badge
-                          key={role}
-                          variant={
-                            role.startsWith("ADMIN") ? "default" : "secondary"
-                          }
-                          className={
-                            role.startsWith("ADMIN")
-                              ? "bg-blue-600 text-white hover:bg-blue-700"
-                              : ""
-                          }
-                        >
-                          {accessRoleLabelForToken(role, roleOptions)}
-                        </Badge>
-                      ))
-                    ) : (
-                      <Badge variant="secondary">No Login</Badge>
+                  <Badge
+                    variant={userType === "admin" ? "default" : "secondary"}
+                    className={
+                      userType === "admin"
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : ""
+                    }
+                  >
+                    {accessLabel}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  {/* Display-only combination; data stays separate (#1445). */}
+                  <span className="text-sm text-slate-600 whitespace-nowrap">
+                    {formatTypeTierLabel(
+                      member.currentMembershipType?.name,
+                      member.ageTier,
                     )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  {member.currentMembershipType ? (
-                    <Badge
-                      variant={
-                        member.currentMembershipType.isActive
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {member.currentMembershipType.name}
-                    </Badge>
-                  ) : (
-                    <span className="text-xs text-slate-400">-</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm text-slate-600">
-                    {member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}
                   </span>
                 </TableCell>
                 <TableCell>
@@ -281,23 +286,31 @@ export function MemberTable({
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary" className={loginBadge.className}>
-                    {loginBadge.label}
-                  </Badge>
-                </TableCell>
-                <TableCell>
                   {member.familyGroups && member.familyGroups.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
-                      {member.familyGroups.map((familyGroup) => (
-                        <Link key={familyGroup.id} href={`/admin/family-groups?edit=${familyGroup.id}`}>
+                      {member.familyGroups.map((familyGroup) =>
+                        canEdit ? (
+                          <Link
+                            key={familyGroup.id}
+                            href={`/admin/family-groups?edit=${familyGroup.id}`}
+                          >
+                            <Badge
+                              variant="secondary"
+                              className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                            >
+                              {familyGroup.name || "Unnamed Group"}
+                            </Badge>
+                          </Link>
+                        ) : (
                           <Badge
+                            key={familyGroup.id}
                             variant="secondary"
-                            className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                            className="bg-indigo-50 text-indigo-700 border-indigo-200"
                           >
                             {familyGroup.name || "Unnamed Group"}
                           </Badge>
-                        </Link>
-                      ))}
+                        )
+                      )}
                     </div>
                   ) : (
                     <span className="text-xs text-slate-400">-</span>
@@ -360,17 +373,19 @@ export function MemberTable({
                     year: "numeric",
                   })}
                 </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <MemberPasswordActionButton
-                      member={member}
-                      onClick={() => onOpenPasswordActionDialog([member.id], name)}
-                    />
-                    <Button variant="outline" size="sm" onClick={() => onEditMember(member)}>
-                      Edit
-                    </Button>
-                  </div>
-                </TableCell>
+                {canEdit ? (
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <MemberPasswordActionButton
+                        member={member}
+                        onClick={() => onOpenPasswordActionDialog([member.id], name)}
+                      />
+                      <Button variant="outline" size="sm" onClick={() => onEditMember(member)}>
+                        Edit
+                      </Button>
+                    </div>
+                  </TableCell>
+                ) : null}
               </TableRow>
             )
           })}

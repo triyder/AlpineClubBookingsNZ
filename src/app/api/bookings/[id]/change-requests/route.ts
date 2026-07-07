@@ -7,7 +7,7 @@ import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/l
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
@@ -23,7 +23,7 @@ const createChangeRequestSchema = z.object({
       z.object({
         firstName: nameField(),
         lastName: nameField(),
-        ageTier: ageTierEnum,
+        ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().trim().min(1).optional(),
         stayStart: z.string().optional(),

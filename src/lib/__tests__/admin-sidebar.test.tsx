@@ -31,6 +31,7 @@ const ZERO_COUNTS: AdminPendingCounts = {
   publicBookingRequests: 0,
   membershipCancellations: 0,
   archiveRequests: 0,
+  deletionRequests: 0,
   issueReports: 0,
   unassignedHutLeaderDates: 0,
 };
@@ -102,19 +103,35 @@ describe("AdminSidebar", () => {
     );
   });
 
-  it("shows membership type settings in setup and configuration", () => {
-    const section = getVisibleAdminNavSections(allOn).find(
+  it("groups setup and configuration around the setup hubs", () => {
+    const section = getVisibleAdminNavSections(allOn, undefined, true).find(
       (item) => item.label === "Setup & Configuration",
     );
 
-    expect(section?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          href: "/admin/membership-types",
-          label: "Membership Types",
-        }),
-      ]),
-    );
+    expect(section?.items.map((item) => item.label)).toEqual([
+      "Setup",
+      "Modules",
+      "Membership & Members",
+      "Site Appearance & Content",
+      "Bookings Setup",
+      "Integrations",
+      "Notifications & Email",
+      "Chores",
+      "Access Roles",
+      "Committee",
+    ]);
+  });
+
+  it("moves Chores out of Lodge Operations and removes standalone Booking Messages", () => {
+    const sections = getVisibleAdminNavSections(allOn);
+    const lodge = sections.find((item) => item.label === "Lodge Operations");
+    const setup = sections.find((item) => item.label === "Setup & Configuration");
+
+    expect(lodge?.items.map((item) => item.label)).not.toContain("Chores");
+    expect(setup?.items.map((item) => item.label)).toContain("Chores");
+    expect(
+      sections.flatMap((section) => section.items.map((item) => item.label)),
+    ).not.toContain("Booking Messages");
   });
 
   it("keeps pending family group requests visible while Members is collapsed", async () => {
@@ -197,6 +214,24 @@ describe("AdminSidebar", () => {
     );
     expect(screen.getByRole("link", { name: /Hut Leaders/ })).not.toBeNull();
     expect(screen.getByText("4")).not.toBeNull();
+  });
+
+  it("surfaces pending account deletion requests in Needs Attention", async () => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ "Monitoring & Support": false }),
+    );
+    vi.stubGlobal("fetch", buildFetchMock({ deletionRequests: 2 }));
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole("link", { name: /Deletion Requests/ }),
+    ).not.toBeNull();
+    expect(screen.getByText("2")).not.toBeNull();
   });
 
   it("labels the membership cancellation queue as Cancellation Requests", () => {

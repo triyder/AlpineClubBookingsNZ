@@ -20,10 +20,11 @@ import {
 } from "lucide-react";
 import type { RevenueGranularity } from "@/lib/admin-reports";
 import { getRevenueGranularityLabel } from "@/lib/admin-reports";
-import { formatCents } from "@/lib/utils";
+import { formatDollarsDisplay } from "@/lib/finance-format";
 import { bookingStatusLabel } from "@/lib/status-colors";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
+import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the trees live in
 // _components/report-charts and mount after the page shell. The placeholders
@@ -139,8 +140,16 @@ function StatCard({
 
 export default function ReportsPage() {
   const club = useClubIdentity();
-  const defaultFrom = format(startOfMonth(subMonths(new Date(), 3)), "yyyy-MM-dd");
-  const defaultTo = format(endOfMonth(new Date()), "yyyy-MM-dd");
+  // The reports API interprets from/to in the club time zone, so anchor the
+  // default range on the club-timezone "today" rather than the browser's local
+  // date (a browser trailing NZ across a month boundary would otherwise seed a
+  // window a whole month behind).
+  const [clubYear, clubMonth, clubDay] = todayDateOnlyForTimeZone()
+    .split("-")
+    .map(Number);
+  const clubToday = new Date(clubYear, clubMonth - 1, clubDay);
+  const defaultFrom = format(startOfMonth(subMonths(clubToday, 3)), "yyyy-MM-dd");
+  const defaultTo = format(endOfMonth(clubToday), "yyyy-MM-dd");
 
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
@@ -375,7 +384,7 @@ export default function ReportsPage() {
               />
               <StatCard
                 title="Total Revenue"
-                value={formatCents(data.summary.totalRevenueCents)}
+                value={formatDollarsDisplay(data.summary.totalRevenueCents)}
                 subtitle="Excludes cancelled and bumped bookings"
                 icon={DollarSign}
               />

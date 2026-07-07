@@ -194,13 +194,14 @@ const baseMember: Member = {
   currentMembershipType: null,
 };
 
-function renderMemberTable(members: Member[]) {
+function renderMemberTable(members: Member[], canEdit = true) {
   return render(
     <MemberTable
       members={members}
       loading={false}
       debouncedSearch=""
       selectedIds={new Set()}
+      canEdit={canEdit}
       sortBy="name"
       sortDir="asc"
       membersListPath="/admin/members"
@@ -232,29 +233,34 @@ describe("admin member access-role UI", () => {
     vi.clearAllMocks();
   });
 
-  it("shows every access role and no-login state in the member table without the old finance column", () => {
+  it("shows one Access column with type + login stage and drops the Login column (#1444)", () => {
     renderMemberTable([
+      // USER, canLogin, setup complete → "User · Can log in".
+      { ...baseMember, id: "member-user-can-login" },
+      // Privileged tokens + a pending unexpired invite → "Admin · Invited".
       {
         ...baseMember,
-        id: "member-all-access",
-        accessRoles: [
-          "USER",
-          "ADMIN",
-          "ADMIN_READONLY",
-          "ADMIN_BOOKINGS",
-          "ADMIN_MEMBERSHIP",
-          "ADMIN_CONTENT",
-          "LODGE",
-          "FINANCE_USER",
-          "FINANCE_ADMIN",
-          "ORG",
-        ],
+        id: "member-admin-invited",
+        accessRoles: ["USER", "ADMIN"],
+        hasCompletedAccountSetup: false,
+        pendingInviteExpiresAt: "2999-01-01T00:00:00.000Z",
       },
+      // ORG, login on, no invite/password yet → "Organisation · Not invited".
+      {
+        ...baseMember,
+        id: "member-org-not-invited",
+        accessRoles: ["ORG"],
+        hasCompletedAccountSetup: false,
+        pendingInviteExpiresAt: null,
+      },
+      // canLogin off → bare "No login" (no type prefix). Name deliberately
+      // avoids the "No Login" tokens so the absence assertions below only
+      // catch the retired badge copy, not this member's name link.
       {
         ...baseMember,
         id: "member-no-login",
-        firstName: "No",
-        lastName: "Login",
+        firstName: "Nadia",
+        lastName: "Offline",
         email: "nologin@example.test",
         accessRoles: [],
         canLogin: false,
@@ -262,21 +268,68 @@ describe("admin member access-role UI", () => {
     ]);
 
     expect(screen.getByRole("columnheader", { name: /Access/ })).toBeInTheDocument();
+    // The redundant standalone Login column and the old finance column are gone.
+    expect(screen.queryByRole("columnheader", { name: /^Login$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: /Finance Access/ })).not.toBeInTheDocument();
-    expect(screen.getByText("User")).toBeInTheDocument();
-    expect(screen.getByText("Full Admin")).toBeInTheDocument();
-    expect(screen.getByText("Read-only Admin")).toBeInTheDocument();
-    expect(screen.getByText("Booking Officer")).toBeInTheDocument();
-    expect(screen.getByText("Membership Officer")).toBeInTheDocument();
-    expect(screen.getByText("Content Manager")).toBeInTheDocument();
-    expect(screen.getByText("Lodge")).toBeInTheDocument();
-    expect(screen.getByText("Finance Viewer")).toBeInTheDocument();
-    expect(screen.getByText("Treasurer")).toBeInTheDocument();
-    expect(screen.getByText("Organisation")).toBeInTheDocument();
-    expect(screen.getAllByText("No Login").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Treasurer").parentElement).toHaveClass(
-      "flex-wrap",
+
+    // The single Access cell renders "{Type} · {Stage}" per login-on member.
+    expect(screen.getByText("User · Can log in")).toBeInTheDocument();
+    expect(screen.getByText("Admin · Invited")).toBeInTheDocument();
+    expect(screen.getByText("Organisation · Not invited")).toBeInTheDocument();
+    // The no-login case is just "No login", with no duplicated type prefix.
+    expect(screen.getByText("No login")).toBeInTheDocument();
+
+    // The old duplicated copy is gone from both retired surfaces.
+    expect(screen.queryByText("No Login")).not.toBeInTheDocument();
+    expect(screen.queryByText("Non-Login")).not.toBeInTheDocument();
+    expect(screen.queryByText("Can Login")).not.toBeInTheDocument();
+  });
+
+  it("relabels the login-access filter and offers all four stages including No login (#1444)", () => {
+    render(
+      <MemberFilterToolbar
+        search=""
+        filters={emptyFilters}
+        activeFilterCount={0}
+        xeroFeatures={{
+          liveMemberGroupLookups: false,
+          autoLoadContactGroups: false,
+        }}
+        xeroContactGroupsList={[]}
+        onSearchChange={vi.fn()}
+        onSetFilter={vi.fn()}
+        onClearFilters={vi.fn()}
+      />,
     );
+
+    expect(screen.getByText("All Login Access")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "No login" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Not invited" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Invited" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Can log in" })).toBeInTheDocument();
+    // The old "Invite Status" phrasing is retired.
+    expect(screen.queryByText("Invite Status")).not.toBeInTheDocument();
+  });
+
+  it("hides member write and bulk-selection controls for view-only membership access", () => {
+    renderMemberTable(
+      [
+        {
+          ...baseMember,
+          familyGroups: [{ id: "family-1", name: "Summit Household" }],
+        },
+      ],
+      false,
+    );
+
+    expect(screen.queryByLabelText("Select all members on this page")).toBeNull();
+    expect(screen.queryByLabelText("Select Alice Summit")).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Actions" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.getByText("Summit Household")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Summit Household" }),
+    ).not.toBeInTheDocument();
   });
 
   it("labels access-role list filters with the new model", () => {
@@ -321,7 +374,9 @@ describe("admin member access-role UI", () => {
       />,
     );
 
-    expect(screen.getByText("All Member Types")).toBeInTheDocument();
+    // The old Role-based control is now labelled "Non-Member Category" (#1445);
+    // its behaviour and Non-Member/School options are unchanged.
+    expect(screen.getByText("All Non-Member Categories")).toBeInTheDocument();
     expect(
       screen.getByRole("option", { name: "Non-Member" }),
     ).toBeInTheDocument();
@@ -429,6 +484,54 @@ describe("admin member access-role UI", () => {
     expect(roleCheckbox("User")).toBeChecked();
     expect(roleCheckbox("Treasurer")).not.toBeChecked();
   });
+
+  it("surfaces server field validation errors when creating a member", async () => {
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input);
+      const method = (init as RequestInit | undefined)?.method;
+      if (url === "/api/admin/members" && method === "POST") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: "Validation failed",
+              details: {
+                email: ["Invalid email address"],
+                dateOfBirth: ["Invalid date format"],
+              },
+            }),
+            { status: 422, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+
+    render(
+      <MemberEditorDialog
+        open
+        xeroConnected={false}
+        onOpenChange={vi.fn()}
+        onSaved={vi.fn()}
+        onSuccess={vi.fn()}
+        onWarning={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Member" }));
+
+    // Field-level messages surface with friendly labels, one line per field.
+    expect(
+      await screen.findByText(/Email: Invalid email address/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Date of birth: Invalid date format/),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("scoped-admin gated access-role picker (#1038)", () => {
@@ -509,4 +612,3 @@ describe("scoped-admin gated access-role picker (#1038)", () => {
     }
   });
 });
-

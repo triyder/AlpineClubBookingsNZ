@@ -102,7 +102,9 @@ export const updateMemberSchema = z.object({
   // Role tokens: enum values for system roles/seeded bundles, definition
   // ids for custom roles. Validated against the definitions table on write.
   accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
-  ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
+  ageTier: z
+    .enum(["ADULT", "YOUTH", "CHILD", "INFANT", "NOT_APPLICABLE"])
+    .optional(),
   active: z.boolean().optional(),
   canLogin: z.boolean().optional(),
   forcePasswordChange: z.boolean().optional(),
@@ -986,6 +988,44 @@ export async function updateAdminMember(params: {
     }
   } else if (data.ageTier !== undefined) {
     updateData.ageTier = data.ageTier;
+  }
+
+  // Organisation-type members have no age (#1440): their tier is always
+  // NOT_APPLICABLE regardless of DOB-computed or submitted values, and no
+  // other member may hold it. Org-type = ORG access role (post-update) or
+  // the legacy SCHOOL compatibility role.
+  {
+    const tokensAfterUpdate =
+      nextAccessRoles ?? resolveAccessRoleTokens(existing);
+    const legacyRoleAfterUpdate = updateData.role ?? existing.role;
+    const isOrganisationMember =
+      tokensAfterUpdate.includes("ORG") || legacyRoleAfterUpdate === "SCHOOL";
+    if (isOrganisationMember) {
+      updateData.ageTier = "NOT_APPLICABLE";
+    } else {
+      if (data.ageTier === "NOT_APPLICABLE") {
+        return jsonResult(
+          {
+            error:
+              "The N/A age tier applies only to organisation and school accounts",
+          },
+          { status: 422 },
+        );
+      }
+      if (
+        existing.ageTier === "NOT_APPLICABLE" &&
+        updateData.ageTier === undefined
+      ) {
+        // Reclassified away from organisation: restore a real tier from the
+        // DOB when there is one, otherwise the schema default.
+        updateData.ageTier = existing.dateOfBirth
+          ? await computeAgeTier(
+              existing.dateOfBirth,
+              getSeasonStartDate(getSeasonYear()),
+            )
+          : "ADULT";
+      }
+    }
   }
 
   try {

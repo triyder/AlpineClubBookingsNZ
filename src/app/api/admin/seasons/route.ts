@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
-import { ageTierEnum } from "@/lib/age-tier-schema"
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 
@@ -18,7 +18,7 @@ const seasonSchema = z.object({
   active: z.boolean().default(true),
   rates: z.array(
     z.object({
-      ageTier: ageTierEnum,
+      ageTier: bookableAgeTierEnum,
       isMember: z.boolean(),
       pricePerNightCents: z.number().int().min(0),
     })

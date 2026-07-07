@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { BucketBoard } from "@/app/(admin)/admin/bed-allocation/_components/bucket-board";
@@ -47,17 +48,18 @@ function buildGroup(): BucketGuestGroup {
   };
 }
 
-function renderBucket(booking: DashboardBookingSummary) {
+function renderBucket(booking: DashboardBookingSummary, canEdit = true) {
   return render(
     <BucketBoard
       bookings={[booking]}
       groupsByBooking={new Map([[booking.id, [buildGroup()]]])}
-      bedOptions={[]}
-      selectedBeds={{}}
+      bedOptions={[{ id: "bed-1", roomId: "room-1", roomName: "Room", bedName: "Bed 1", label: "Room / Bed 1" }]}
+      selectedBeds={{ "guest-1": "bed-1" }}
       onSelectBed={vi.fn()}
       onAllocate={vi.fn()}
       pendingGuestIds={new Set()}
       highlightedBookingId=""
+      canEdit={canEdit}
     />
   );
 }
@@ -89,5 +91,14 @@ describe("BucketBoard requested-room badge (#706)", () => {
     renderBucket(buildBooking());
 
     expect(screen.queryByText(/Requested/)).toBeNull();
+  });
+
+  it("disables manual allocation controls for view-only booking access", () => {
+    renderBucket(buildBooking(), false);
+
+    expect(
+      screen.getByRole("button", { name: /Drag Example Guest to a bed/i }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Allocate/ })).toBeDisabled();
   });
 });

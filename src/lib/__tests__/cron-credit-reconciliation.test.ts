@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  enqueueXeroRefundCreditNoteOperation: vi.fn(),
+  kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   memberCreditGroupBy: vi.fn(),
   memberCreditCount: vi.fn(),
   isXeroConnected: vi.fn(),
@@ -24,6 +26,13 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mocks.isXeroConnected,
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroRefundCreditNoteOperation:
+    mocks.enqueueXeroRefundCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected:
+    mocks.kickQueuedXeroOutboxOperationsIfConnected,
 }));
 
 vi.mock("@/lib/xero-admin-health", () => ({
@@ -54,6 +63,17 @@ beforeEach(() => {
     count: 0,
     payments: [],
   });
+  mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
+    queueOperationId: "op_heal_1",
+    message: "queued",
+  });
+  mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue({
+    found: 0,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  });
 });
 
 describe("reconcileCreditBalances", () => {
@@ -81,7 +101,8 @@ describe("reconcileCreditBalances", () => {
       refundsMissingXeroCreditNotes: 2,
     });
     expect(mocks.getRefundsMissingXeroCreditNotes).toHaveBeenCalledWith({
-      limit: 10,
+      // #1354: raised so the self-heal pass re-enqueues a fuller set per tick.
+      limit: 50,
     });
   });
 
@@ -143,6 +164,77 @@ describe("reconcileCreditBalances", () => {
     expect(JSON.stringify(vi.mocked(Sentry.captureMessage).mock.calls)).not.toContain(
       "Jane Doe"
     );
+  });
+
+  it("re-enqueues the uncovered delta for each flagged payment so swallowed refunds self-heal (#1354)", async () => {
+    mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
+      count: 2,
+      payments: [
+        {
+          paymentId: "pay_1",
+          bookingId: "booking_1",
+          refundedAmountCents: 8000,
+          refundedAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
+        {
+          paymentId: "pay_2",
+          bookingId: "booking_2",
+          refundedAmountCents: 3000,
+          refundedAt: new Date("2026-07-02T00:00:00.000Z"),
+        },
+      ],
+    });
+    mocks.isXeroConnected.mockResolvedValue(true);
+
+    await reconcileCreditBalances();
+
+    // The enqueue is delta-capped internally (covered cents are subtracted at
+    // enqueue AND recomputed at execution), so passing the full refunded
+    // total re-enqueues exactly the uncovered remainder; repeats collapse
+    // into the existing PENDING operation via the correlation-key dedup.
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "pay_1",
+      8000
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "pay_2",
+      3000
+    );
+    expect(
+      mocks.kickQueuedXeroOutboxOperationsIfConnected
+    ).toHaveBeenCalledWith({ limit: 2 });
+  });
+
+  it("continues healing the remaining payments when one enqueue fails", async () => {
+    mocks.getRefundsMissingXeroCreditNotes.mockResolvedValue({
+      count: 2,
+      payments: [
+        {
+          paymentId: "pay_1",
+          bookingId: "booking_1",
+          refundedAmountCents: 8000,
+          refundedAt: new Date("2026-07-01T00:00:00.000Z"),
+        },
+        {
+          paymentId: "pay_2",
+          bookingId: "booking_2",
+          refundedAmountCents: 3000,
+          refundedAt: new Date("2026-07-02T00:00:00.000Z"),
+        },
+      ],
+    });
+    mocks.enqueueXeroRefundCreditNoteOperation
+      .mockRejectedValueOnce(new Error("db blip"))
+      .mockResolvedValueOnce({ queueOperationId: "op_heal_2", message: "queued" });
+    mocks.isXeroConnected.mockResolvedValue(true);
+
+    await expect(reconcileCreditBalances()).resolves.toMatchObject({
+      refundsMissingXeroCreditNotes: 2,
+    });
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.kickQueuedXeroOutboxOperationsIfConnected
+    ).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("keeps existing negative-balance discrepancy behavior", async () => {

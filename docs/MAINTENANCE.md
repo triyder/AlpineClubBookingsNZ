@@ -160,7 +160,7 @@ extraction over expanding this table casually.
 | --- | ---: | --- |
 | `src/lib/xero-inbound-reconciliation.ts` | 13 | Split (#1270, #1208 item 1) into a re-export barrel over cohesive `src/lib/xero-inbound/` modules (`types`, `constants`, `amounts`, `object-links`, `audit`, `incremental-reconciliation`, `contact`, `payment`, `invoice-paid-effects`, `invoice`, `credit-note-repairs`, `credit-note`, `event-processing`). Behavior-preserving verbatim motion with an acyclic import graph (`types`/`constants` are leaves; the `event-processing` worker sits on top); the barrel re-exports the unchanged public surface (3 functions + 5 result types + `XeroInboundReplayError`). |
 | `src/lib/xero-booking-repair.ts` | 2682 | Accepted as-is for now: operator repair tool, documented separately, not normal request-path code. |
-| `src/lib/xero-operation-outbox.ts` | 2028 | Queued for future split when queue dispatch, release, or retry policy changes next land. |
+| `src/lib/xero-operation-outbox.ts` | 1972 | Queued for future split when queue dispatch, release, or retry policy changes next land (PR-b of #1272 co-locates the replay stack). |
 | `src/lib/email-templates.ts` | 2006 | Accepted as-is for now: central template catalogue; split only with a template-registry change. |
 | `src/lib/email.ts` | 11 | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). The `admin-alerts` surface was itself split (#1210) by **domain/source** — `admin-alerts.ts` is now a barrel re-exporting `admin-alerts-shared` (plumbing + `getAdminEmails`), `admin-alerts-booking`, `admin-alerts-membership`, `admin-alerts-finance`, and `admin-alerts-ops`. When an alerts/email module next exceeds the ~700 LOC soft cap, split it along the **domain axis** (booking/capacity, membership lifecycle, finance/Xero/payments, ops) — not by audience, which is fuzzy because most alerts fan out to all admins — and keep the facade barrel's exports byte-identical so `src/lib/email.ts` and every importer keep resolving. |
 | `src/lib/xero-hardening.ts` | 1606 | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. |
@@ -188,7 +188,33 @@ with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.
 `XERO_AMOUNT_MISMATCH` findings are manual-review only: the tool reports stored
 Xero operation/link amount evidence that disagrees with local cents, but it
-does not auto-adjust financial amounts.
+does not auto-adjust financial amounts. Since #1427,
+`MISSING_MODIFICATION_CREDIT_NOTE` and `MISSING_CREDIT_NOTE_ALLOCATION` are
+also manual-review (not auto-queued) when the payment captured money and no
+stored evidence records the policy-limited settlement — the report tells you
+to size the credit note (or confirm the note's total) by hand from the
+cancellation-policy history before acting; `--apply` will not touch these.
+Since #1491, `LATE_CAPTURE_AFTER_CANCELLATION` is also never auto-applied:
+it now fires only when a cancelled booking retains captured value with NO
+recorded cancellation-refund decision (no cancellation credit, no
+booking-cancel refund recovery operation), which is either a genuine late
+capture or a deliberate 0%-tier policy retention. After verifying it is a
+genuine late capture, execute exactly that refund with
+`--apply --apply-action <actionKey>` (the key is printed next to the planned
+action in the human summary and in the JSON report; combine with
+`--booking <id>` to keep the rest of the apply run scoped, and note the run
+warns about forced keys that matched nothing); if it is a deliberate
+retention, leave it. If a multi-slice refund fails partway (one captured
+Stripe intent refunds and records, a later one declines), the action reports
+`failed`, but the Xero refund credit note is still queued for exactly the
+slices that actually refunded — sized from the recorded refund ledger, not the
+requested total — so Xero never understates the refund (#1495). Re-run
+`--apply-action` with the new, smaller remainder key the report now prints (it
+embeds the still-outstanding cents): it refunds only the remainder and queues a
+note for exactly that delta under a distinct cumulative-watermark correlation
+key, never re-noting the completed slices. Tiered cancels that
+deliberately retained a policy penalty produce no finding at all — their
+books are correct.
 
 ## Quarterly Backup Restore Drill
 

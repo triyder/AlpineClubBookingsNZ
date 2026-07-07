@@ -63,27 +63,41 @@ test("member switches a card booking to Internet Banking with Xero absent", asyn
   await expect(switchButton).toBeVisible();
   await switchButton.click();
 
-  // The detail page refreshes to the Internet Banking card: source Internet
-  // Banking with a BOOKING-… reference, and no crash despite Xero being
-  // unconfigured (the Xero invoice is queued but never sent while disconnected).
-  // The client-side router.refresh() can lose the race under load, and the
-  // page intermittently re-renders the pre-switch layout for one paint even
-  // after the IB card has shown (render inconsistency — recorded as a UX
-  // finding for #1148). Assert the whole post-switch card atomically per
-  // reload attempt so one consistent render proves the durable state.
-  await expect(async () => {
-    await page.reload();
-    await expect(page.getByText("Internet Banking Payment")).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByText(/Reference:/)).toBeVisible({ timeout: 2_000 });
-    await expect(
-      page.getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
-        exact: true,
-      }),
-    ).toBeVisible({ timeout: 2_000 });
-    // Already on Internet Banking, so the switch affordance is gone in the
-    // same render. The booking stays payment-owed (holdBedSlots defaults off
-    // → no bed held, per #737).
-    await expect(switchButton).toHaveCount(0, { timeout: 2_000 });
-  }).toPass({ timeout: 45_000 });
+  // Deterministic outcome: on success the switch triggers a hard reload, so the
+  // page re-renders from the server to the Internet Banking card — source
+  // Internet Banking with a BOOKING-… reference, the switch affordance gone (a
+  // fresh render cannot show it once payment.source is INTERNET_BANKING), and no
+  // crash despite Xero being unconfigured (the Xero invoice is queued but never
+  // sent while disconnected). The booking stays payment-owed (holdBedSlots
+  // defaults off → no bed held, per #737). No soft-refresh race, no reload
+  // crutch in the spec (#1148 / #1371 F28) — asserted against the reloaded DOM.
+  await expect(switchButton).toHaveCount(0, { timeout: 30_000 });
+  // #1400 root cause (confirmed by inspecting the reloaded page's streamed HTML):
+  // /bookings/[id] has a loading.tsx, so Next.js wraps this async server page in a
+  // Suspense boundary and STREAMS it — the shell flushes first with the skeleton
+  // inside <main>, then the real content (including this Internet Banking card)
+  // arrives in a trailing `<div hidden id="S:…">` React streaming segment appended
+  // to <body>, which an inline reveal script then moves into <main>. On the
+  // window.location.reload() after the switch, on a loaded CI runner that
+  // reveal/cleanup races: for a window the card exists BOTH revealed in <main> AND
+  // still in the not-yet-removed hidden streaming segment, so an unscoped getByText
+  // resolves to two elements (one hidden) for the assertion window — the same
+  // hard-load streaming/hydration class as the login #email duplicate (#1154/#1207).
+  // The hidden copy is a benign framework artefact (the <main> copy IS the correct,
+  // complete member-visible render), so scope the post-reload assertions to the
+  // <main> region: it targets the revealed server render, and because the streaming
+  // segment sits OUTSIDE <main> a hidden artefact can never strict-violate — while a
+  // genuine double render INSIDE <main> still trips strict mode and fails, so no
+  // real regression is masked. Supersedes the visible=true guard from #1407.
+  const main = page.getByRole("main");
+  await expect(main.getByText("Internet Banking Payment")).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(main.getByText(/Reference:/)).toBeVisible();
+  await expect(
+    main.getByText(`BOOKING-${IB_BOOKING_ID.slice(0, 8).toUpperCase()}`, {
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.close();
 });

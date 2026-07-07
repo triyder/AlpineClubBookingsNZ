@@ -1,0 +1,70 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { requireAdmin } from "@/lib/session-guards";
+import { hideFamilySuggestion } from "@/lib/family-suggestions";
+import { logAudit } from "@/lib/audit";
+import logger from "@/lib/logger";
+
+const hideSuggestionSchema = z.object({
+  memberIds: z.array(z.string().min(1)).min(2, "At least 2 members required"),
+});
+
+/**
+ * POST /api/admin/family-suggestions/hide
+ * Globally hide a suggested family group by its server-canonical member-id set.
+ */
+export async function POST(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = hideSuggestionSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsed.error.flatten().fieldErrors },
+      { status: 422 }
+    );
+  }
+
+  try {
+    const result = await hideFamilySuggestion(
+      parsed.data.memberIds,
+      guard.session.user.id
+    );
+
+    logAudit({
+      action: "FAMILY_SUGGESTION_HIDDEN",
+      memberId: guard.session.user.id,
+      targetId: result.signature,
+      entityType: "HiddenFamilySuggestion",
+      entityId: result.signature,
+      category: "admin",
+      outcome: "success",
+      summary: "Family suggestion permanently hidden",
+      metadata: {
+        signature: result.signature,
+        memberIds: result.memberIds,
+        memberCount: result.memberIds.length,
+      },
+    });
+
+    return NextResponse.json({
+      message: "Family suggestion hidden.",
+      signature: result.signature,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Failed to hide family suggestion";
+    logger.error(
+      { err, memberIds: parsed.data.memberIds },
+      "Failed to hide family suggestion"
+    );
+    return NextResponse.json({ error: message }, { status: 422 });
+  }
+}

@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
+import { useXeroStatus } from "@/hooks/use-xero-status"
 import type { XeroContactGroup, XeroFeatureFlags } from "../_types"
 
 interface UseXeroContactGroupsOptions {
@@ -15,45 +16,53 @@ export function useXeroContactGroups({
   onSuccess,
   refreshMembers,
 }: UseXeroContactGroupsOptions) {
-  const [xeroConnected, setXeroConnected] = useState<boolean | null>(null)
-  const [xeroFeatures, setXeroFeatures] = useState<XeroFeatureFlags>({
-    autoLoadContactGroups: false,
-    liveMemberGroupLookups: false,
-  })
+  const { connected: xeroConnected, features } = useXeroStatus()
+  const xeroFeatures: XeroFeatureFlags = useMemo(
+    () => ({
+      autoLoadContactGroups: features.autoLoadContactGroups,
+      liveMemberGroupLookups: features.liveMemberGroupLookups,
+    }),
+    [features.autoLoadContactGroups, features.liveMemberGroupLookups]
+  )
   const [xeroContactGroupsList, setXeroContactGroupsList] = useState<XeroContactGroup[]>([])
   const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false)
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch("/api/admin/xero/status")
-      .then(async (res) => {
-        if (!res.ok) throw new Error("Failed to load Xero status")
-        return res.json() as Promise<{
-          connected?: boolean
-          features?: Partial<XeroFeatureFlags>
-        }>
-      })
-      .then((data) => {
-        const connected = Boolean(data.connected)
-        setXeroConnected(connected)
-        setXeroFeatures({
-          autoLoadContactGroups: Boolean(data.features?.autoLoadContactGroups),
-          liveMemberGroupLookups: Boolean(data.features?.liveMemberGroupLookups),
-        })
-        if (
-          connected &&
-          data.features?.autoLoadContactGroups &&
-          data.features?.liveMemberGroupLookups
-        ) {
-          fetch("/api/admin/xero/contact-groups")
-            .then((res) => (res.ok ? res.json() : null))
-            .then((groupsData: { groups?: XeroContactGroup[] } | null) => {
-              if (groupsData?.groups) setXeroContactGroupsList(groupsData.groups)
-            })
-            .catch(() => {})
+    // Whenever Xero is connected we read the cached contact-groups snapshot so
+    // the page can show when it was last refreshed, regardless of feature
+    // flags. The groups *list* is only adopted for the filter toolbar under the
+    // existing auto-load conditions, so filter behavior is unchanged.
+    if (!xeroConnected) {
+      return
+    }
+    const shouldLoadGroupsList =
+      features.autoLoadContactGroups && features.liveMemberGroupLookups
+    let cancelled = false
+    fetch("/api/admin/xero/contact-groups")
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (
+          groupsData:
+            | { groups?: XeroContactGroup[]; lastRefreshedAt?: string | null }
+            | null
+        ) => {
+          if (cancelled || !groupsData) return
+          setLastRefreshedAt(groupsData.lastRefreshedAt ?? null)
+          if (shouldLoadGroupsList && groupsData.groups) {
+            setXeroContactGroupsList(groupsData.groups)
+          }
         }
-      })
-      .catch(() => setXeroConnected(false))
-  }, [])
+      )
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [
+    xeroConnected,
+    features.autoLoadContactGroups,
+    features.liveMemberGroupLookups,
+  ])
 
   const refreshXeroGroups = useCallback(async () => {
     if (!xeroConnected) return
@@ -62,6 +71,7 @@ export function useXeroContactGroups({
     try {
       const result = await loadAdminXeroContactGroups({ refreshFromXero: true })
       setXeroContactGroupsList(result.groups)
+      setLastRefreshedAt(result.lastRefreshedAt)
       await refreshMembers()
       onSuccess(
         result.groups.length > 0
@@ -81,5 +91,6 @@ export function useXeroContactGroups({
     xeroContactGroupsList,
     refreshingXeroGroups,
     refreshXeroGroups,
+    lastRefreshedAt,
   }
 }

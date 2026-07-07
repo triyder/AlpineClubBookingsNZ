@@ -392,80 +392,111 @@ export async function findOrCreateXeroContact(
   memberId: string,
   options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
-  const xeroContactId = await prisma.$transaction(async (tx) => {
-    // Advisory lock prevents concurrent duplicate creation for same member
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+  // F7 (#1355): Xero API calls (OAuth refresh, searches, createContacts and
+  // its up-to-120s retry sleeps) must NEVER run inside the advisory-locked
+  // transaction — Prisma's 5s interactive-transaction default aborted the tx
+  // AFTER the external side effect whenever Xero was slow, rolling back the
+  // local link while the Xero contact persisted, on every new-member/repair
+  // invoice path. The restructure:
+  //   Phase 0 — lock-free steady-state fast path (trust the persisted link).
+  //   Phase 1 — ALL Xero work outside any transaction. Concurrent duplicate
+  //             creation is prevented by the member-scoped Xero idempotency
+  //             key (identical concurrent creates converge on one contact),
+  //             not by holding a DB lock across provider calls.
+  //   Phase 2 — a SHORT advisory-locked transaction re-checks then writes
+  //             the local link (first-writer-wins against a concurrent
+  //             resolver).
+  //   Op-log completion runs POST-COMMIT so an operation is never recorded
+  //   SUCCEEDED for work whose surrounding transaction rolled back.
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+  });
+  if (!member) throw new Error(`Member not found: ${memberId}`);
 
-    const member = await tx.member.findUnique({
-      where: { id: memberId },
+  // Trust the persisted contact link on steady-state write paths and avoid
+  // a read-before-write. Retry/repair paths can opt in to relinking.
+  if (member.xeroContactId && !options?.repairExistingLink) {
+    await upsertXeroObjectLink({
+      localModel: "Member",
+      localId: memberId,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: member.xeroContactId,
+      xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
+      role: "CONTACT",
     });
-    if (!member) throw new Error(`Member not found: ${memberId}`);
+    await syncContactGroupsBestEffort(memberId, member.xeroContactId, options);
+    return member.xeroContactId;
+  }
 
-    // Trust the persisted contact link on steady-state write paths and avoid
-    // a read-before-write. Retry/repair paths can opt in to relinking.
-    if (member.xeroContactId && !options?.repairExistingLink) {
-      await upsertXeroObjectLink({
-        localModel: "Member",
-        localId: memberId,
-        xeroObjectType: "CONTACT",
-        xeroObjectId: member.xeroContactId,
-        xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
-        role: "CONTACT",
-      });
-      return member.xeroContactId;
-    }
+  // ── Phase 1: Xero resolution, OUTSIDE any transaction ──────────────
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const previousXeroContactId = member.xeroContactId;
 
-    const { xero, tenantId } = await getAuthenticatedXeroClient();
-    const previousXeroContactId = member.xeroContactId;
+  type ResolvedContact =
+    | {
+        kind: "matched";
+        contactId: string;
+        linkedVia: "email_match" | "email_match_repair" | "name_match" | "name_match_repair";
+        contactName: string | null;
+        operationId: string | null;
+        completionInput: Parameters<typeof completeXeroSyncOperation>[1] | null;
+      }
+    | {
+        kind: "created";
+        contactId: string;
+        operationId: string;
+        completionInput: Parameters<typeof completeXeroSyncOperation>[1];
+      };
+  let resolved: ResolvedContact | null = null;
 
     // Search by email first.
     // Email quotes are stripped to keep the OData filter syntactically valid;
     // z.string().email() at the API boundary ensures only RFC-valid emails
     // reach this point, so no further escaping is needed.
-    try {
-      const contactsResponse = await callXeroApi(
-        () =>
-          xero.accountingApi.getContacts(
-            tenantId,
-            undefined, // ifModifiedSince
-            `EmailAddress="${member.email.replace(/"/g, "")}"` // where clause
-          ),
-        {
-          operation: "getContacts",
-          resourceType: "CONTACT",
-          workflow: "findOrCreateXeroContact",
-          context: `findOrCreateXeroContact searchByEmail(${member.email})`,
-        }
-      );
-      const contacts = contactsResponse.body.contacts;
-      if (contacts && contacts.length > 0) {
-        const contactId = contacts[0].contactID!;
-        await linkMatchedXeroContact(tx, {
-          memberId,
-          contactId,
-          previousXeroContactId,
-          repairExistingLink: options?.repairExistingLink,
-          linkedVia: options?.repairExistingLink
-            ? "email_match_repair"
-            : "email_match",
-          contactName: buildXeroContactDisplayName(contacts[0]),
-        });
-        return contactId;
+  try {
+    const contactsResponse = await callXeroApi(
+      () =>
+        xero.accountingApi.getContacts(
+          tenantId,
+          undefined, // ifModifiedSince
+          `EmailAddress="${member.email.replace(/"/g, "")}"` // where clause
+        ),
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "findOrCreateXeroContact",
+        context: `findOrCreateXeroContact searchByEmail(${member.email})`,
       }
-    } catch (searchErr) {
-      // Rate-limit errors must propagate — swallowing them would cause a new
-      // contact to be created and waste the daily quota further.
-      if (searchErr instanceof XeroDailyLimitError) throw searchErr;
-      // Any other error (network timeout, transient 5xx) is logged and we
-      // fall through to contact creation. This is intentional: a failed
-      // search is recoverable, whereas failing to create the invoice is not.
-      logger.warn(
-        { err: searchErr, memberId, email: member.email },
-        "Xero email search failed; falling through to contact creation"
-      );
+    );
+    const contacts = contactsResponse.body.contacts;
+    if (contacts && contacts.length > 0) {
+      resolved = {
+        kind: "matched",
+        contactId: contacts[0].contactID!,
+        linkedVia: options?.repairExistingLink ? "email_match_repair" : "email_match",
+        contactName: buildXeroContactDisplayName(contacts[0]),
+        operationId: null,
+        completionInput: null,
+      };
     }
+  } catch (searchErr) {
+    // Rate-limit errors must propagate — swallowing them would cause a new
+    // contact to be created and waste the daily quota further.
+    if (searchErr instanceof XeroDailyLimitError) throw searchErr;
+    // Any other error (network timeout, transient 5xx) is logged and we
+    // fall through to contact creation. This is intentional: a failed
+    // search is recoverable, whereas failing to create the invoice is not.
+    logger.warn(
+      { err: searchErr, memberId, email: member.email },
+      "Xero email search failed; falling through to contact creation"
+    );
+  }
 
-    // Create new contact
+  if (!resolved) {
+    // Create new contact (still outside any transaction). The member-scoped
+    // Xero idempotency key makes concurrent duplicate creates converge on
+    // one contact, which is what previously justified holding the advisory
+    // lock across this call.
     const contact: Contact = {
       name: `${member.firstName} ${member.lastName}`,
       firstName: member.firstName,
@@ -524,29 +555,27 @@ export async function findOrCreateXeroContact(
         throw new Error("Failed to create Xero contact");
       }
 
-      await tx.member.update({
-        where: { id: memberId },
-        data: { xeroContactId: createdContact.contactID },
-      });
-
-      await completeXeroSyncOperation(operation.id, {
-        responsePayload: response.body,
-        xeroObjectType: "CONTACT",
-        xeroObjectId: createdContact.contactID,
-        xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
-        extraLinks: [
-          {
-            localModel: "Member",
-            localId: memberId,
-            xeroObjectType: "CONTACT",
-            xeroObjectId: createdContact.contactID,
-            xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
-            role: "CONTACT",
-          },
-        ],
-      });
-
-      return createdContact.contactID;
+      resolved = {
+        kind: "created",
+        contactId: createdContact.contactID,
+        operationId: operation.id,
+        completionInput: {
+          responsePayload: response.body,
+          xeroObjectType: "CONTACT",
+          xeroObjectId: createdContact.contactID,
+          xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
+          extraLinks: [
+            {
+              localModel: "Member",
+              localId: memberId,
+              xeroObjectType: "CONTACT",
+              xeroObjectId: createdContact.contactID,
+              xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
+              role: "CONTACT",
+            },
+          ],
+        },
+      };
     } catch (error) {
       if (isDuplicateActiveXeroContactNameError(error)) {
         try {
@@ -558,39 +587,35 @@ export async function findOrCreateXeroContact(
           });
 
           if (matchedContact?.contactID) {
-            await linkMatchedXeroContact(tx, {
-              memberId,
+            resolved = {
+              kind: "matched",
               contactId: matchedContact.contactID,
-              previousXeroContactId,
-              repairExistingLink: options?.repairExistingLink,
               linkedVia: options?.repairExistingLink
                 ? "name_match_repair"
                 : "name_match",
               contactName: buildXeroContactDisplayName(matchedContact),
-            });
-
-            await completeXeroSyncOperation(operation.id, {
-              responsePayload: {
-                resolution: "linked_existing_contact_by_name",
-                matchedBy: "name",
-                duplicateCreateError: sanitizeForJson(error),
-              },
-              xeroObjectType: "CONTACT",
-              xeroObjectId: matchedContact.contactID,
-              xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
-              extraLinks: [
-                {
-                  localModel: "Member",
-                  localId: memberId,
-                  xeroObjectType: "CONTACT",
-                  xeroObjectId: matchedContact.contactID,
-                  xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
-                  role: "CONTACT",
+              operationId: operation.id,
+              completionInput: {
+                responsePayload: {
+                  resolution: "linked_existing_contact_by_name",
+                  matchedBy: "name",
+                  duplicateCreateError: sanitizeForJson(error),
                 },
-              ],
-            });
-
-            return matchedContact.contactID;
+                xeroObjectType: "CONTACT",
+                xeroObjectId: matchedContact.contactID,
+                xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
+                extraLinks: [
+                  {
+                    localModel: "Member",
+                    localId: memberId,
+                    xeroObjectType: "CONTACT",
+                    xeroObjectId: matchedContact.contactID,
+                    xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
+                    role: "CONTACT",
+                  },
+                ],
+              },
+            };
           }
         } catch (recoveryError) {
           await failXeroSyncOperation(operation.id, recoveryError, {
@@ -601,11 +626,119 @@ export async function findOrCreateXeroContact(
         }
       }
 
-      await failXeroSyncOperation(operation.id, error);
-      throw error;
+      if (!resolved) {
+        await failXeroSyncOperation(operation.id, error);
+        throw error;
+      }
     }
-  });
+  }
 
+  // ── Phase 2: SHORT advisory-locked transaction, re-check-then-write ──
+  // Only local writes happen under the lock; the 5s interactive-transaction
+  // budget is ample. First-writer-wins: a concurrent resolver that linked
+  // while our Xero work ran keeps its link (identical concurrent creates
+  // converge on the same contact via the shared idempotency key anyway).
+  const finalResolved = resolved;
+  if (!finalResolved) {
+    throw new Error(`Failed to resolve a Xero contact for member ${memberId}`);
+  }
+
+  let linkOutcome: { contactId: string; wonWrite: boolean };
+  try {
+    linkOutcome = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+
+      const fresh = await tx.member.findUnique({
+        where: { id: memberId },
+        select: { xeroContactId: true },
+      });
+      if (!fresh) throw new Error(`Member not found: ${memberId}`);
+
+      if (
+        fresh.xeroContactId &&
+        !options?.repairExistingLink &&
+        fresh.xeroContactId !== finalResolved.contactId
+      ) {
+        return { contactId: fresh.xeroContactId, wonWrite: false };
+      }
+
+      if (finalResolved.kind === "matched") {
+        await linkMatchedXeroContact(tx, {
+          memberId,
+          contactId: finalResolved.contactId,
+          previousXeroContactId,
+          repairExistingLink: options?.repairExistingLink,
+          linkedVia: finalResolved.linkedVia,
+          contactName: finalResolved.contactName,
+        });
+      } else {
+        await tx.member.update({
+          where: { id: memberId },
+          data: { xeroContactId: finalResolved.contactId },
+        });
+      }
+      return { contactId: finalResolved.contactId, wonWrite: true };
+    });
+  } catch (linkError) {
+    if (finalResolved.operationId) {
+      try {
+        await failXeroSyncOperation(finalResolved.operationId, linkError, {
+          phase: "local_link_after_xero_resolution",
+          resolvedContactId: finalResolved.contactId,
+        });
+      } catch (failErr) {
+        logger.error(
+          { err: failErr, memberId },
+          "Failed to record local-link failure on the contact operation"
+        );
+      }
+    }
+    throw linkError;
+  }
+
+  // Post-commit op-log close (F7 task 3): success is recorded only for work
+  // that actually committed; a phase-2 failure marks the operation FAILED via
+  // the catch below instead of leaving a SUCCEEDED record for rolled-back
+  // state. (linkMatchedXeroContact throws inside the tx when the contact is
+  // already linked to another member — that failure path is covered too.)
+  if (finalResolved.operationId && finalResolved.completionInput) {
+    if (linkOutcome.wonWrite) {
+      await completeXeroSyncOperation(
+        finalResolved.operationId,
+        finalResolved.completionInput
+      );
+    } else {
+      logger.warn(
+        {
+          memberId,
+          resolvedContactId: finalResolved.contactId,
+          existingContactId: linkOutcome.contactId,
+        },
+        "Concurrent resolver linked a different Xero contact first; recording the unlinked resolution"
+      );
+      await completeXeroSyncOperation(finalResolved.operationId, {
+        responsePayload: {
+          resolution: "superseded_by_concurrent_link",
+          resolvedContactId: finalResolved.contactId,
+          linkedContactId: linkOutcome.contactId,
+        },
+        xeroObjectType: "CONTACT",
+        xeroObjectId: finalResolved.contactId,
+        xeroObjectUrl: buildXeroContactUrl(finalResolved.contactId),
+      });
+    }
+  }
+
+  const xeroContactId = linkOutcome.contactId;
+  await syncContactGroupsBestEffort(memberId, xeroContactId, options);
+  return xeroContactId;
+}
+
+async function syncContactGroupsBestEffort(
+  memberId: string,
+  xeroContactId: string,
+  options?: { createdByMemberId?: string }
+) {
   try {
     await syncManagedXeroContactGroupForMember(memberId, {
       createdByMemberId: options?.createdByMemberId,
@@ -616,8 +749,6 @@ export async function findOrCreateXeroContact(
       "Failed to sync managed Xero contact groups after linking contact"
     );
   }
-
-  return xeroContactId;
 }
 
 /**
@@ -629,18 +760,21 @@ export async function createXeroContactForMember(
   memberId: string,
   options?: { createdByMemberId?: string }
 ): Promise<string> {
-  const xeroContactId = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+  // F7 (#1355): same restructure as findOrCreateXeroContact — the Xero
+  // create (OAuth refresh + up-to-120s retry sleeps) runs OUTSIDE any
+  // transaction; only the local link write takes the short advisory-locked
+  // transaction. This function's contract is create-and-overwrite (an admin
+  // explicitly minting a fresh contact), so no first-writer re-check applies;
+  // the member-scoped idempotency key bounds concurrent duplicates.
+  const member = await prisma.member.findUnique({ where: { id: memberId } });
+  if (!member) throw new Error(`Member not found: ${memberId}`);
 
-    const member = await tx.member.findUnique({ where: { id: memberId } });
-    if (!member) throw new Error(`Member not found: ${memberId}`);
+  const missingFields = getMissingFieldsForXeroContactCreate(member);
+  if (missingFields.length > 0) {
+    throw new XeroContactValidationError(missingFields);
+  }
 
-    const missingFields = getMissingFieldsForXeroContactCreate(member);
-    if (missingFields.length > 0) {
-      throw new XeroContactValidationError(missingFields);
-    }
-
-    const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
 
     const contact: Contact = {
       name: `${member.firstName} ${member.lastName}`,
@@ -677,67 +811,79 @@ export async function createXeroContactForMember(
       createdByMemberId: options?.createdByMemberId ?? null,
     });
 
-    try {
-      const response = await callXeroApi(
-        () =>
-          xero.accountingApi.createContacts(
-            tenantId,
-            { contacts: [contact] },
-            undefined,
-            idempotencyKey
-          ),
-        {
-          operation: "createContacts",
-          resourceType: "CONTACT",
-          workflow: "createXeroContactForMember",
-          context: `createContacts(member ${memberId})`,
-        }
-      );
-      const createdContact = response.body.contacts?.[0];
-      if (!createdContact?.contactID) {
-        throw new Error("Failed to create Xero contact");
-      }
-
-      await tx.member.update({
-        where: { id: memberId },
-        data: { xeroContactId: createdContact.contactID },
-      });
-
-      await completeXeroSyncOperation(operation.id, {
-        responsePayload: response.body,
-        xeroObjectType: "CONTACT",
-        xeroObjectId: createdContact.contactID,
-        xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
-        extraLinks: [
-          {
-            localModel: "Member",
-            localId: memberId,
-            xeroObjectType: "CONTACT",
-            xeroObjectId: createdContact.contactID,
-            xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
-            role: "CONTACT",
-          },
-        ],
-      });
-
-      return createdContact.contactID;
-    } catch (error) {
-      await failXeroSyncOperation(operation.id, error);
-      throw error;
-    }
-  });
-
+  let createdContactId: string;
+  let completionInput: Parameters<typeof completeXeroSyncOperation>[1];
   try {
-    await syncManagedXeroContactGroupForMember(memberId, {
-      createdByMemberId: options?.createdByMemberId,
-    });
-  } catch (error) {
-    logger.error(
-      { err: error, memberId, xeroContactId },
-      "Failed to sync managed Xero contact groups after creating contact"
+    const response = await callXeroApi(
+      () =>
+        xero.accountingApi.createContacts(
+          tenantId,
+          { contacts: [contact] },
+          undefined,
+          idempotencyKey
+        ),
+      {
+        operation: "createContacts",
+        resourceType: "CONTACT",
+        workflow: "createXeroContactForMember",
+        context: `createContacts(member ${memberId})`,
+      }
     );
+    const createdContact = response.body.contacts?.[0];
+    if (!createdContact?.contactID) {
+      throw new Error("Failed to create Xero contact");
+    }
+    createdContactId = createdContact.contactID;
+    completionInput = {
+      responsePayload: response.body,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: createdContactId,
+      xeroObjectUrl: buildXeroContactUrl(createdContactId),
+      extraLinks: [
+        {
+          localModel: "Member",
+          localId: memberId,
+          xeroObjectType: "CONTACT",
+          xeroObjectId: createdContactId,
+          xeroObjectUrl: buildXeroContactUrl(createdContactId),
+          role: "CONTACT",
+        },
+      ],
+    };
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
   }
 
+  // Short advisory-locked transaction: only the local link write.
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+      await tx.member.update({
+        where: { id: memberId },
+        data: { xeroContactId: createdContactId },
+      });
+    });
+  } catch (linkError) {
+    try {
+      await failXeroSyncOperation(operation.id, linkError, {
+        phase: "local_link_after_xero_resolution",
+        resolvedContactId: createdContactId,
+      });
+    } catch (failErr) {
+      logger.error(
+        { err: failErr, memberId },
+        "Failed to record local-link failure on the contact operation"
+      );
+    }
+    throw linkError;
+  }
+
+  // Post-commit op-log close (F7 task 3).
+  await completeXeroSyncOperation(operation.id, completionInput);
+
+  const xeroContactId = createdContactId;
+  await syncContactGroupsBestEffort(memberId, xeroContactId, options);
   return xeroContactId;
 }
 

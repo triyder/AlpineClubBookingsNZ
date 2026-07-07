@@ -14,6 +14,7 @@ import {
   isRole,
 } from "@/lib/member-roles";
 import { roleNeverRequiresSubscription } from "@/lib/member-subscription-defaults";
+import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -150,6 +151,27 @@ export async function GET(req: NextRequest) {
   const ageTierFilter = sp.get("ageTier");
   if (ageTierFilter && AGE_TIER_VALUES.includes(ageTierFilter as AgeTier)) {
     andConditions.push({ ageTier: ageTierFilter });
+  }
+
+  // Membership type filter — mirror the list endpoint so an exported CSV
+  // matches the filtered on-screen roster (#1445). "UNASSIGNED" → no
+  // current-season assignment; any other value is a MembershipType id.
+  const membershipTypeFilter = sp.get("membershipType");
+  if (membershipTypeFilter === UNASSIGNED_MEMBERSHIP_TYPE_VALUE) {
+    andConditions.push({
+      seasonalMembershipAssignments: {
+        none: { seasonYear: currentSeasonYear },
+      },
+    });
+  } else if (membershipTypeFilter) {
+    andConditions.push({
+      seasonalMembershipAssignments: {
+        some: {
+          seasonYear: currentSeasonYear,
+          membershipTypeId: membershipTypeFilter,
+        },
+      },
+    });
   }
 
   const xeroLinkedFilter = sp.get("xeroLinked");
@@ -429,6 +451,7 @@ export async function GET(req: NextRequest) {
           includeArchived: sp.get("includeArchived"),
           active: sp.get("active"),
           ageTier: sp.get("ageTier"),
+          membershipType: sp.get("membershipType"),
           xeroLinked: sp.get("xeroLinked"),
           financeAccess: sp.get("financeAccess"),
           inviteStatus: sp.get("inviteStatus"),

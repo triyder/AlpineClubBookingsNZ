@@ -3,8 +3,17 @@ import {
   collapsibleMemberSections,
   dedupeParentOptions,
   formatAdminName,
+  formatMemberAccountPreview,
   formatMemberAuditLogSummary,
+  formatMemberCommitteePreview,
+  formatMemberContactPreview,
   formatMemberDateNz,
+  formatMemberFamilyPreview,
+  formatMemberFinancePreview,
+  formatMemberHistoryPreview,
+  formatMemberLifecyclePreview,
+  formatMemberMembershipPreview,
+  formatMemberPhone,
   formatPromoBenefit,
   getAuditActorDisplayName,
   getMemberDetailBackLabel,
@@ -306,16 +315,175 @@ describe("admin-member-detail-helpers", () => {
 
   describe("collapsible section keys", () => {
     it("exports stable storage keys for each collapsible section", () => {
-      expect(collapsibleMemberSections).toEqual(["subs", "bookings", "xero", "audit"])
+      expect(collapsibleMemberSections).toEqual([
+        "contact",
+        "account",
+        "family",
+        "membership",
+        "finance",
+        "committee",
+        "history",
+        "lifecycle",
+      ])
       for (const section of collapsibleMemberSections) {
-        expect(memberSectionStorageKeys[section]).toMatch(/^admin-member-section:/)
+        expect(memberSectionStorageKeys[section]).toBe(
+          `admin-member-section:${section}`
+        )
       }
     })
 
     it("isCollapsibleMemberSection narrows correctly", () => {
-      expect(isCollapsibleMemberSection("subs")).toBe(true)
-      expect(isCollapsibleMemberSection("xero")).toBe(true)
+      expect(isCollapsibleMemberSection("contact")).toBe(true)
+      expect(isCollapsibleMemberSection("finance")).toBe(true)
+      // Retired pre-grouping section ids no longer narrow.
+      expect(isCollapsibleMemberSection("subs")).toBe(false)
       expect(isCollapsibleMemberSection("not-a-section")).toBe(false)
+    })
+  })
+
+  describe("group preview lines", () => {
+    it("formats a phone from its parts", () => {
+      expect(
+        formatMemberPhone({
+          phoneCountryCode: "64",
+          phoneAreaCode: "27",
+          phoneNumber: "5551234",
+        })
+      ).toBe("+64 27 5551234")
+      expect(
+        formatMemberPhone({
+          phoneCountryCode: null,
+          phoneAreaCode: null,
+          phoneNumber: null,
+        })
+      ).toBeNull()
+    })
+
+    it("builds the contact preview from available parts", () => {
+      expect(
+        formatMemberContactPreview({
+          email: "jane@example.com",
+          phoneCountryCode: "64",
+          phoneAreaCode: "27",
+          phoneNumber: "5551234",
+          streetCity: "Tokoroa",
+        })
+      ).toBe("jane@example.com · +64 27 5551234 · Tokoroa")
+      expect(
+        formatMemberContactPreview({
+          email: "jane@example.com",
+          phoneCountryCode: null,
+          phoneAreaCode: null,
+          phoneNumber: null,
+          streetCity: null,
+        })
+      ).toBe("jane@example.com")
+    })
+
+    it("summarises account state, hiding role counts for no-login members", () => {
+      expect(
+        formatMemberAccountPreview({
+          canLogin: true,
+          accessRoleCount: 2,
+          active: true,
+        })
+      ).toBe("Can log in · 2 roles · Active")
+      expect(
+        formatMemberAccountPreview({
+          canLogin: false,
+          accessRoleCount: 0,
+          active: false,
+        })
+      ).toBe("No login · Inactive")
+    })
+
+    it("summarises family links and falls back to None", () => {
+      expect(
+        formatMemberFamilyPreview({
+          parentCount: 1,
+          dependentCount: 2,
+          familyGroupCount: 1,
+        })
+      ).toBe("1 parent · 2 dependents · 1 family group")
+      expect(
+        formatMemberFamilyPreview({
+          parentCount: 0,
+          dependentCount: 0,
+          familyGroupCount: 0,
+        })
+      ).toBe("None")
+    })
+
+    it("summarises the current-season membership", () => {
+      expect(
+        formatMemberMembershipPreview({
+          currentSeasonYear: 2026,
+          currentSeasonTypeName: "Full Member",
+          currentSeasonSubscriptionLabel: "Paid",
+        })
+      ).toBe("2026/2027: Full Member · Paid")
+      expect(
+        formatMemberMembershipPreview({
+          currentSeasonYear: 2026,
+          currentSeasonTypeName: null,
+          currentSeasonSubscriptionLabel: null,
+        })
+      ).toBe("2026/2027: No seasonal type set")
+    })
+
+    it("summarises finance state with a loading placeholder", () => {
+      expect(
+        formatMemberFinancePreview({
+          creditBalanceCents: 4050,
+          promoCodeCount: 1,
+          xeroLinked: true,
+        })
+      ).toBe("Credit $40.50 · 1 promo code · Xero linked")
+      expect(
+        formatMemberFinancePreview({
+          creditBalanceCents: null,
+          promoCodeCount: 0,
+          xeroLinked: false,
+        })
+      ).toBe("Credit — · Not linked to Xero")
+    })
+
+    it("summarises committee assignments", () => {
+      expect(formatMemberCommitteePreview({ assignmentCount: 3 })).toBe(
+        "3 assignments"
+      )
+      expect(formatMemberCommitteePreview({ assignmentCount: 0 })).toBe("None")
+    })
+
+    it("summarises booking history", () => {
+      expect(
+        formatMemberHistoryPreview({
+          totalBookings: 12,
+          lastStay: "2026-07-04T00:00:00.000Z",
+        })
+      ).toMatch(/^12 bookings · last stay /)
+      expect(
+        formatMemberHistoryPreview({ totalBookings: 0, lastStay: null })
+      ).toBe("0 bookings")
+    })
+
+    it("summarises lifecycle status with pending delete flag", () => {
+      expect(
+        formatMemberLifecyclePreview({
+          active: true,
+          cancelledAt: null,
+          archivedAt: null,
+          hasPendingDeleteRequest: false,
+        })
+      ).toBe("Active")
+      expect(
+        formatMemberLifecyclePreview({
+          active: false,
+          cancelledAt: "2026-01-01T00:00:00.000Z",
+          archivedAt: "2026-02-01T00:00:00.000Z",
+          hasPendingDeleteRequest: true,
+        })
+      ).toBe("Archived · delete requested")
     })
   })
 

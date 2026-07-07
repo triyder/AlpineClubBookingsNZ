@@ -28,6 +28,7 @@ import {
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
   type PricingResult,
+  isBookingFullyPaidForGuestNameEdits,
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
@@ -38,7 +39,14 @@ import {
   executeBookingModificationRefund,
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
-import { sendBookingModifiedEmail } from "@/lib/email";
+import {
+  sendAdminMinorsOnlyReviewAlert,
+  sendBookingModifiedEmail,
+} from "@/lib/email";
+import {
+  ADULT_SUPERVISION_REVIEW_REASON,
+  minorsReviewAlertShouldFire,
+} from "@/lib/booking-review";
 import logger from "@/lib/logger";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { prisma } from "@/lib/prisma";
@@ -78,6 +86,9 @@ type BatchModificationTransactionResult =
     guestNameUpdates: ResolvedGuestNameUpdate[];
     guestIdentityChanged: boolean;
     identityOnlyModification: boolean;
+    // #1372: this edit newly dropped a paid (capacity-holding) booking into the
+    // blocked minors-only review state, so the post-tx step alerts admins.
+    minorsOnlyReviewNewlyFlagged: boolean;
   };
 
 export type BatchModificationResponse = {
@@ -202,9 +213,20 @@ export async function modifyBookingBatch({
       input,
       // Quoted bookings rename placeholder students even after payment.
       allowWhenFullyPaid: quotePriced,
+      // Identity-only edits on a fully-paid booking may fix a spelling typo on a
+      // free-text non-member guest (#1386); a swap to a different person is
+      // still rejected. Never loosen structural edits — hence identity-only.
+      allowTypoFixWhenFullyPaid: requestIsIdentityOnly,
     });
     const identityOnlyModification =
       guestNameUpdates.length > 0 && !requestedStructuralChange;
+    // A fully-paid, non-quoted booking whose name edit cleared the typo guard
+    // (#1386): flag it so the audit row is queryable and the price-preserving
+    // path is provably taken (it never reprices or rechecks capacity).
+    const paidNameTypoFix =
+      identityOnlyModification &&
+      !quotePriced &&
+      isBookingFullyPaidForGuestNameEdits(booking);
 
     // Identity-only modifications are price-preserving by construction
     // (#1099): the stored totals, per-guest prices, and night rows are echoed
@@ -338,7 +360,15 @@ export async function modifyBookingBatch({
       data: {
         bookingId,
         memberId: actor.id,
-        modificationType: identityOnlyModification ? "GUEST_UPDATE" : "BATCH_MODIFY",
+        // GUEST_TYPO_FIX discriminates a post-payment spelling correction
+        // (#1386) from an ordinary pre-payment name update, so the abuse-
+        // sensitive path is queryable. (modificationType is a free-text String,
+        // not a Prisma enum — no schema change.)
+        modificationType: paidNameTypoFix
+          ? "GUEST_TYPO_FIX"
+          : identityOnlyModification
+            ? "GUEST_UPDATE"
+            : "BATCH_MODIFY",
         previousData: {
           checkIn: new Date(booking.checkIn).toISOString().split("T")[0],
           checkOut: new Date(booking.checkOut).toISOString().split("T")[0],
@@ -379,6 +409,8 @@ export async function modifyBookingBatch({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          // Post-payment identity-preserving spelling correction (#1386).
+          ...(paidNameTypoFix ? { paidNameTypoFix: true } : {}),
         },
         priceDiffCents,
         changeFeeCents,
@@ -431,6 +463,12 @@ export async function modifyBookingBatch({
       guestNameUpdates,
       guestIdentityChanged: guestNameUpdates.length > 0,
       identityOnlyModification,
+      // #1372: newly blocked a paid booking on the minors-only rule? Computed
+      // from the pre-edit review state and the freshly written booking.
+      minorsOnlyReviewNewlyFlagged: minorsReviewAlertShouldFire({
+        previous: booking,
+        updated: updatedBooking,
+      }),
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       memberEmail: booking.member.email,
@@ -556,6 +594,24 @@ async function dispatchBatchPostTransactionSideEffects({
       "Failed to queue Xero settlement for batch modification",
     ),
   );
+
+  // #1372: an edit that dropped the last adult from a paid booking blocks its
+  // lodge check-in (the booking KEEPS its PAID status). Nudge admins to review
+  // it, best-effort — an email failure must never affect the completed edit.
+  if (result.minorsOnlyReviewNewlyFlagged) {
+    sendAdminMinorsOnlyReviewAlert({
+      memberName: result.memberName,
+      checkIn: result.booking.checkIn,
+      checkOut: result.booking.checkOut,
+      guestCount: result.booking.guests.length,
+      reviewReason: ADULT_SUPERVISION_REVIEW_REASON,
+    }).catch((err) =>
+      logger.error(
+        { err, bookingId },
+        "Failed to send minors-only review admin alert",
+      ),
+    );
+  }
 
   if (result.identityOnlyModification) {
     return;

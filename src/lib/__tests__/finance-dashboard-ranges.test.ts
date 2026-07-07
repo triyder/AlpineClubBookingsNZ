@@ -1,121 +1,268 @@
 import { describe, expect, it } from "vitest";
 import {
+  financeDashboardMonthCount,
+  financeDashboardWindowDetail,
+  financeDashboardWindowMonths,
+  resolveComparisonFinanceRange,
   resolveFinanceDashboardSelection,
-  resolveForwardFinanceWindow,
   resolvePrimaryFinanceRange,
 } from "@/lib/finance-dashboard-ranges";
+import { parseDateOnly } from "@/lib/date-only";
 
-const TODAY = new Date("2026-06-28T00:00:00.000Z");
+// 6 July 2026: the in-progress month is July, last completed month is June.
+const TODAY = parseDateOnly("2026-07-06");
+const MARCH_YEAR_END = 3;
 
-describe("finance dashboard range selectors", () => {
-  it("defaults to bookings, last month, previous month, and next month", () => {
-    const selection = resolveFinanceDashboardSelection({ today: TODAY });
-
-    expect(selection.view).toBe("bookings");
-    expect(selection.range).toBe("last-month");
-    expect(selection.compare).toBe("previous-month");
-    expect(selection.forward).toBe("next-month");
-    expect(selection.primary).toMatchObject({
-      from: "2026-05-01",
-      to: "2026-05-31",
-      label: "May 2026",
-    });
-    expect(selection.comparison).toMatchObject({
-      from: "2026-04-01",
-      to: "2026-04-30",
-      label: "April 2026",
-    });
-    expect(selection.forwardWindow).toMatchObject({
-      from: "2026-07-01",
-      to: "2026-07-31",
-      label: "July 2026",
-    });
-  });
-
-  it("treats last 12 months as completed calendar months ending last month", () => {
-    const range = resolvePrimaryFinanceRange({
-      option: "last-12-months",
+describe("resolvePrimaryFinanceRange", () => {
+  it("resolves last-month to the last completed month", () => {
+    const window = resolvePrimaryFinanceRange({
+      option: "last-month",
       today: TODAY,
-    });
-
-    expect(range).toMatchObject({
-      from: "2025-06-01",
-      to: "2026-05-31",
-      label: "June 2025 to May 2026",
-    });
-  });
-
-  it("validates custom windows and falls back with a warning", () => {
-    const selection = resolveFinanceDashboardSelection({
-      today: TODAY,
-      searchParams: {
-        range: "custom",
-        from: "2026-05-20",
-        to: "2026-05-01",
-        compare: "custom",
-        compareFrom: "bad-date",
-        compareTo: "2026-04-30",
-        forward: "custom",
-        forwardFrom: "2026-07-10",
-      },
-    });
-
-    expect(selection.primary).toMatchObject({
-      from: "2026-05-01",
-      to: "2026-05-31",
-    });
-    expect(selection.comparison).toMatchObject({
-      from: "2026-04-01",
-      to: "2026-04-30",
-    });
-    expect(selection.forwardWindow).toMatchObject({
-      from: "2026-07-01",
-      to: "2026-07-31",
-    });
-    expect(selection.warnings).toEqual([
-      "Primary range custom end date must be on or after the start date. Showing May 2026.",
-      "Comparison range custom dates were invalid. Showing April 2026.",
-      "Forward window custom dates were incomplete. Showing July 2026.",
-    ]);
-  });
-
-  it("uses configured active or upcoming seasons for Rest of Season", () => {
-    const window = resolveForwardFinanceWindow({
-      option: "rest-of-season",
-      today: TODAY,
-      seasons: [
-        {
-          name: "Winter 2026",
-          startDate: new Date("2026-06-01T00:00:00.000Z"),
-          endDate: new Date("2026-10-31T00:00:00.000Z"),
-          active: true,
-        },
-      ],
+      financialYearEndMonth: MARCH_YEAR_END,
     });
 
     expect(window).toMatchObject({
-      from: "2026-06-28",
-      to: "2026-10-31",
-      seasonName: "Winter 2026",
+      fromMonth: "2026-06",
+      toMonth: "2026-06",
+      from: "2026-06-01",
+      to: "2026-06-30",
+      label: "June 2026",
     });
   });
 
-  it("warns instead of guessing when Rest of Season has no configured season", () => {
-    const warnings: string[] = [];
-    const window = resolveForwardFinanceWindow({
-      option: "rest-of-season",
+  it.each([
+    ["last-3-months", "2026-04"],
+    ["last-6-months", "2026-01"],
+    ["last-12-months", "2025-07"],
+  ] as const)("resolves %s ending at the last completed month", (option, fromMonth) => {
+    const window = resolvePrimaryFinanceRange({
+      option,
       today: TODAY,
-      seasons: [],
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(window.fromMonth).toBe(fromMonth);
+    expect(window.toMonth).toBe("2026-06");
+  });
+
+  it("resolves financial-year-to-date including the in-progress month (March year-end)", () => {
+    const window = resolvePrimaryFinanceRange({
+      option: "financial-year-to-date",
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(window).toMatchObject({
+      fromMonth: "2026-04",
+      toMonth: "2026-07",
+      from: "2026-04-01",
+      to: "2026-07-31",
+    });
+    expect(window.label).toContain("FY2027 to date");
+  });
+
+  it("resolves financial-year-to-date in the first month of the financial year", () => {
+    const window = resolvePrimaryFinanceRange({
+      option: "financial-year-to-date",
+      today: parseDateOnly("2026-04-02"),
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(window.fromMonth).toBe("2026-04");
+    expect(window.toMonth).toBe("2026-04");
+  });
+
+  it("resolves financial-year-to-date for a December year-end", () => {
+    const window = resolvePrimaryFinanceRange({
+      option: "financial-year-to-date",
+      today: TODAY,
+      financialYearEndMonth: 12,
+    });
+
+    expect(window.fromMonth).toBe("2026-01");
+    expect(window.toMonth).toBe("2026-07");
+    expect(window.label).toContain("FY2026 to date");
+  });
+
+  it("resolves last-financial-year as the previous complete April-to-March year", () => {
+    const window = resolvePrimaryFinanceRange({
+      option: "last-financial-year",
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(window).toMatchObject({
+      fromMonth: "2025-04",
+      toMonth: "2026-03",
+      from: "2025-04-01",
+      to: "2026-03-31",
+    });
+    expect(window.label).toContain("FY2026");
+  });
+
+  it("accepts custom month keys", () => {
+    const warnings: string[] = [];
+    const window = resolvePrimaryFinanceRange({
+      option: "custom",
+      searchParams: { from: "2026-01", to: "2026-03" },
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
       warnings,
     });
 
-    expect(window).toEqual({
-      from: null,
-      to: null,
-      label: "Rest of Season unavailable",
+    expect(window).toMatchObject({
+      fromMonth: "2026-01",
+      toMonth: "2026-03",
+      from: "2026-01-01",
+      to: "2026-03-31",
     });
-    expect(warnings).toEqual([
-      "Rest of Season needs an active or upcoming configured season. Configure seasons before using this forward window.",
+    expect(warnings).toEqual([]);
+  });
+
+  it("clamps legacy day-level custom params to whole months with a warning", () => {
+    const warnings: string[] = [];
+    const window = resolvePrimaryFinanceRange({
+      option: "custom",
+      searchParams: { from: "2026-01-15", to: "2026-03-20" },
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+      warnings,
+    });
+
+    expect(window.fromMonth).toBe("2026-01");
+    expect(window.toMonth).toBe("2026-03");
+    expect(window.to).toBe("2026-03-31");
+    expect(warnings.some((warning) => warning.includes("whole months"))).toBe(true);
+  });
+
+  it("falls back to last month when custom months are reversed", () => {
+    const warnings: string[] = [];
+    const window = resolvePrimaryFinanceRange({
+      option: "custom",
+      searchParams: { from: "2026-05", to: "2026-02" },
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+      warnings,
+    });
+
+    expect(window.fromMonth).toBe("2026-06");
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("resolveComparisonFinanceRange", () => {
+  const primary = resolvePrimaryFinanceRange({
+    option: "last-3-months",
+    today: TODAY,
+    financialYearEndMonth: MARCH_YEAR_END,
+  });
+
+  it("resolves previous-period to the same-length window immediately before", () => {
+    const window = resolveComparisonFinanceRange({
+      option: "previous-period",
+      primary,
+    });
+
+    expect(window).toMatchObject({
+      fromMonth: "2026-01",
+      toMonth: "2026-03",
+    });
+  });
+
+  it("resolves same-period-last-year to the same months a year earlier", () => {
+    const window = resolveComparisonFinanceRange({
+      option: "same-period-last-year",
+      primary,
+    });
+
+    expect(window).toMatchObject({
+      fromMonth: "2025-04",
+      toMonth: "2025-06",
+    });
+  });
+
+  it("resolves none to null", () => {
+    expect(
+      resolveComparisonFinanceRange({ option: "none", primary })
+    ).toBeNull();
+  });
+
+  it("resolves custom comparison months", () => {
+    const window = resolveComparisonFinanceRange({
+      option: "custom",
+      primary,
+      searchParams: { compareFrom: "2024-04", compareTo: "2024-06" },
+    });
+
+    expect(window).toMatchObject({
+      fromMonth: "2024-04",
+      toMonth: "2024-06",
+    });
+  });
+});
+
+describe("resolveFinanceDashboardSelection", () => {
+  it("defaults to last-month vs previous-period on the bookings view", () => {
+    const selection = resolveFinanceDashboardSelection({
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(selection).toMatchObject({
+      view: "bookings",
+      range: "last-month",
+      compare: "previous-period",
+      currentMonth: "2026-07",
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+    expect(selection.primary.fromMonth).toBe("2026-06");
+    expect(selection.comparison?.fromMonth).toBe("2026-05");
+  });
+
+  it("maps legacy range and compare option values onto month-granular ones", () => {
+    const selection = resolveFinanceDashboardSelection({
+      searchParams: { range: "last-quarter", compare: "previous-month" },
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(selection.range).toBe("last-3-months");
+    expect(selection.compare).toBe("previous-period");
+  });
+
+  it("carries a null comparison window through for compare=none", () => {
+    const selection = resolveFinanceDashboardSelection({
+      searchParams: { compare: "none" },
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(selection.comparison).toBeNull();
+    expect(financeDashboardWindowDetail(selection.comparison)).toBe("None");
+  });
+
+  it("falls back to defaults on unknown option values", () => {
+    const selection = resolveFinanceDashboardSelection({
+      searchParams: { range: "fortnightly", compare: "vibes" },
+      today: TODAY,
+      financialYearEndMonth: MARCH_YEAR_END,
+    });
+
+    expect(selection.range).toBe("last-month");
+    expect(selection.compare).toBe("previous-period");
+  });
+});
+
+describe("month window helpers", () => {
+  it("counts months inclusively and enumerates them oldest first", () => {
+    const window = { fromMonth: "2025-11", toMonth: "2026-02" };
+
+    expect(financeDashboardMonthCount(window)).toBe(4);
+    expect(financeDashboardWindowMonths(window)).toEqual([
+      "2025-11",
+      "2025-12",
+      "2026-01",
+      "2026-02",
     ]);
   });
 });

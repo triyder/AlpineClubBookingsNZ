@@ -773,6 +773,91 @@ export function adminNewBookingTemplate(data: {
   `);
 }
 
+// ---- F27 / #1372: Admin Alert — booking left with only under-18 guests ----
+
+export function adminMinorsReviewRequiredTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  reviewReason: string;
+}): string {
+  return layout(`
+    ${heading("Booking Review Required")}
+    ${paragraph(
+      "A paid booking was edited and now has only under-18 guests. It is blocked from lodge check-in until an admin reviews it.",
+    )}
+    ${alertBox(escapeHtml(data.reviewReason), "warning")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+    ])}
+    ${button("Review Bookings", BASE_URL + "/admin/bookings")}
+  `);
+}
+
+// ---- F20 / #1377: Admin Alert — booking-request owner substitution ----
+// A held owner failed re-validation at conversion, so a fresh non-login contact
+// was minted and the invoice will bill THAT contact instead of the intended
+// owner. Gated on the Xero-sync-error preference because the remedy is a Xero
+// contact reconciliation (repoint the invoice's contact to the intended org).
+
+export function adminOwnerSubstitutionTemplate(data: {
+  requestId: string;
+  bookingId: string;
+  intendedMemberId: string;
+  intendedMemberName?: string | null;
+  substituteMemberId: string;
+  substituteMemberName?: string | null;
+  reason: string;
+  requesterName: string;
+  requesterEmail: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  const describeMember = (id: string, name?: string | null): string => {
+    const trimmed = (name ?? "").trim();
+    return trimmed
+      ? `${escapeHtml(trimmed)} (${escapeHtml(id)})`
+      : escapeHtml(id);
+  };
+  return layout(`
+    ${heading("Owner Substitution — Xero Reconciliation Required")}
+    ${paragraph(
+      "An owner substitution occurred while converting a booking request. The booking (and its Xero invoice) will bill a newly-created contact instead of the intended owner.",
+    )}
+    ${alertBox(
+      "Action required: reconcile the invoice's contact in Xero — repoint it from the newly-created contact to the intended organisation.",
+      "warning",
+    )}
+    ${infoTable([
+      { label: "Booking request", value: escapeHtml(data.requestId) },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      {
+        label: "Intended owner (should be billed)",
+        value: describeMember(data.intendedMemberId, data.intendedMemberName),
+      },
+      {
+        label: "Substituted contact (currently billed)",
+        value: describeMember(
+          data.substituteMemberId,
+          data.substituteMemberName,
+        ),
+      },
+      { label: "Reason", value: escapeHtml(data.reason) },
+      {
+        label: "Requester",
+        value: `${escapeHtml(data.requesterName)} (${escapeHtml(data.requesterEmail)})`,
+      },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+    ])}
+    ${button("Review Bookings", BASE_URL + "/admin/bookings")}
+  `);
+}
+
 // ---- N-04: Admin Alert — Payment Failure ----
 
 export function adminPaymentFailureTemplate(data: {
@@ -1923,6 +2008,37 @@ export function adminMembershipApplicationPendingTemplate(data: {
     ])}
     ${dependentSummary}
     ${button("Review Application", data.reviewUrl)}
+    ${supportContactMuted()}
+  `);
+}
+
+export function adminAccountDeletionRequestedTemplate(data: {
+  memberName: string;
+  memberEmail: string;
+  reason?: string | null;
+  reviewUrl: string;
+}): string {
+  const reasonHtml = data.reason
+    ? multilineBlock(escapeHtml(data.reason))
+    : muted("No reason was provided.");
+
+  return layout(`
+    ${heading("Account Deletion Request Submitted")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(data.memberName) +
+        "</strong> submitted an account deletion request."
+    )}
+    ${alertBox(
+      "Review privacy requests promptly and record the decision from the deletion requests queue.",
+      "warning"
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Email", value: escapeHtml(data.memberEmail) },
+    ])}
+    ${reasonHtml}
+    ${button("Review Deletion Requests", data.reviewUrl, { sameOrigin: true })}
     ${supportContactMuted()}
   `);
 }

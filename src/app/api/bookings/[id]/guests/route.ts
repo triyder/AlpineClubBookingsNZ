@@ -32,7 +32,7 @@ import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settleme
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { getNonMemberHoldPolicy } from "@/lib/cancellation";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -72,7 +72,7 @@ const addGuestsSchema = z.object({
       z.object({
         firstName: nameField(),
         lastName: nameField(),
-        ageTier: ageTierEnum,
+        ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
       })
@@ -244,7 +244,12 @@ export async function POST(
         );
       }
 
-      let normalizedNewGuests = newGuests;
+      // Normalization can widen a linked guest's tier to the member's
+      // stored AgeTier, so the element type widens ageTier (only) beyond
+      // the bookable-tier zod inference.
+      let normalizedNewGuests: Array<
+        Omit<(typeof newGuests)[number], "ageTier"> & { ageTier: AgeTier }
+      > = newGuests;
       try {
         const linkedMembers = await resolveLinkedBookingMembers(
           tx,

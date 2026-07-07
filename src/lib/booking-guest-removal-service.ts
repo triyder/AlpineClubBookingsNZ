@@ -19,6 +19,7 @@ import {
 import { toGroupDiscountConfig } from "@/lib/policies/booking-route-decisions";
 import {
   ADULT_SUPERVISION_REVIEW_REASON,
+  minorsReviewAlertShouldFire,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import {
@@ -78,6 +79,9 @@ export type RemoveBookingGuestResult = {
   bookingModificationId: string;
   zeroDollarAutoPaid: boolean;
   supersededPrimaryPaymentIntents: SupersededPrimaryPaymentIntent[];
+  // #1372: this removal newly dropped a paid (capacity-holding) booking into the
+  // blocked minors-only review state, so the route should alert admins.
+  minorsOnlyReviewNewlyFlagged: boolean;
 };
 
 const SELF_REMOVABLE_GUEST_BOOKING_STATUSES = new Set<string>([
@@ -514,6 +518,13 @@ export async function removeBookingGuestInTransaction({
     include: { guests: true, payment: true },
   });
 
+  // #1372: did this removal newly block a paid booking on the minors-only rule?
+  // Computed from the pre-removal review state and the freshly written booking.
+  const minorsOnlyReviewNewlyFlagged = minorsReviewAlertShouldFire({
+    previous: booking,
+    updated: updatedBooking,
+  });
+
   await reconcileBedAllocationsForBooking({
     bookingId,
     db: tx,
@@ -594,6 +605,7 @@ export async function removeBookingGuestInTransaction({
     bookingModificationId: bookingModification.id,
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
+    minorsOnlyReviewNewlyFlagged,
   };
 }
 

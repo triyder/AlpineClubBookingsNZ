@@ -27,6 +27,7 @@ import {
 } from "@/lib/xero-sync";
 import {
   CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+  CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
   extractActiveXeroContactGroups,
   fetchXeroContactsByIdsFromXero,
   refreshXeroContactCachesFromContact,
@@ -282,6 +283,35 @@ export async function refreshXeroContactGroupCache(
         }),
       },
     });
+
+    // Dedicated cursor for the full "Refresh Xero Groups" rebuild only. Unlike
+    // CONTACT_GROUP_CACHE_CURSOR_RESOURCE (also bumped by per-contact
+    // reconciliation), this is written solely here, so the admin members page
+    // can report how stale the whole cached snapshot is.
+    await tx.xeroSyncCursor.upsert({
+      where: {
+        resourceType_scope: {
+          resourceType: CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
+          scope: DEFAULT_XERO_SYNC_SCOPE,
+        },
+      },
+      create: {
+        resourceType: CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
+        scope: DEFAULT_XERO_SYNC_SCOPE,
+        lastSuccessfulSyncAt: refreshedAt,
+        metadata: toPrismaJson({
+          groupCount: refreshedGroups.length,
+          membershipCount,
+        }),
+      },
+      update: {
+        lastSuccessfulSyncAt: refreshedAt,
+        metadata: toPrismaJson({
+          groupCount: refreshedGroups.length,
+          membershipCount,
+        }),
+      },
+    });
   });
 
   return refreshedGroups.map((group) => ({
@@ -320,6 +350,26 @@ export async function getXeroContactGroups(options?: {
     name: group.name,
     contactCount: group.contactCount,
   }));
+}
+
+/**
+ * Returns the ISO timestamp of the last full contact-group cache rebuild (the
+ * "Refresh Xero Groups" admin action), or null when a full refresh has never
+ * run. Reads the dedicated {@link CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE}
+ * cursor — NOT the shared `CONTACT_GROUP_CACHE` cursor, whose timestamp is also
+ * bumped by per-contact reconciliation (member link/import, inbound webhooks)
+ * and would therefore under-report how stale the cached snapshot is.
+ */
+export async function getXeroContactGroupCacheLastRefreshedAt(): Promise<
+  string | null
+> {
+  const cursor = await getXeroSyncCursor(
+    CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
+    DEFAULT_XERO_SYNC_SCOPE
+  );
+  return cursor?.lastSuccessfulSyncAt
+    ? cursor.lastSuccessfulSyncAt.toISOString()
+    : null;
 }
 
 export async function getXeroContactGroupMemberships(

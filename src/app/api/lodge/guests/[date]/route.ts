@@ -9,6 +9,7 @@ import { formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { isCheckinBlockedByPendingReview } from "@/lib/booking-review";
 import {
   getGuestStayEnd,
   getGuestStayStart,
@@ -63,6 +64,13 @@ export async function GET(
           stayEnd: isLodgeListScope ? { gte: date } : { gt: date },
         },
       },
+      // #1422: the guest list (the check-in roster staff read) INCLUDES a
+      // booking blocked by a pending admin review so staff can see who is
+      // blocked. It is flagged per-booking below via `blockedFromCheckin` and
+      // its arrival toggle is disabled in the kiosk. The mutation/enforcement
+      // paths (arrive/depart/roster-confirm in lodge-date-scoping.ts) keep
+      // excluding it, so a blocked guest still cannot be marked arrived
+      // server-side (defense in depth).
     },
     include: {
       guests: {
@@ -96,6 +104,10 @@ export async function GET(
         bookingId: b.id,
         memberName: `${b.member.firstName} ${b.member.lastName}`,
         expectedArrivalTime: b.expectedArrivalTime,
+        // #1422: flag (don't hide) a booking blocked by a pending admin review.
+        // The kiosk shows a "see Booking Officer" note and disables its arrival
+        // toggle; the arrive/depart endpoints still reject it server-side.
+        blockedFromCheckin: isCheckinBlockedByPendingReview(b),
         guests: visibleGuests.map((g) => {
           const ageTier = getBookingGuestDisplayAgeTier(g);
           const stayStart = getGuestStayStart(g, b);

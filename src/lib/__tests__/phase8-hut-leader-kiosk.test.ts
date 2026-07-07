@@ -1023,4 +1023,29 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(content).toContain("Manage Today's Roster");
     expect(content).not.toContain("Manage Today&apos;s Roster");
   });
+
+  it("#1422: flags a blocked booking and disables its attendance toggles", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const kioskPath = path.resolve(
+      process.cwd(),
+      "src",
+      "app",
+      "(lodge)",
+      "lodge",
+      "kiosk",
+      "page.tsx"
+    );
+    const content = fs.readFileSync(kioskPath, "utf-8");
+
+    // A booking held by a pending admin review is shown with a clear message...
+    expect(content).toContain("Blocked from Check-In — see Booking Officer");
+    // ...and its arrive/depart toggles are suppressed for blocked bookings.
+    expect(content).toContain(
+      "canMarkAttendance && guest.isArriving && !guest.departedAt && !booking.blockedFromCheckin"
+    );
+    expect(content).toContain(
+      "canMarkAttendance && guest.isDeparting && !booking.blockedFromCheckin"
+    );
+  });
 });

@@ -3,7 +3,11 @@ import {
   STREET_ADDRESS_FIELDS,
   type MemberAddressField,
 } from "@/lib/member-address";
-import { hasAdminAccess, hasLodgeAccess } from "@/lib/access-roles";
+import {
+  hasAccessRole,
+  hasAdminAccess,
+  hasLodgeAccess,
+} from "@/lib/access-roles";
 
 export type MemberProfileConfirmationMode = "self" | "delegated" | "not_allowed";
 
@@ -190,8 +194,15 @@ export function evaluateMemberProfileCompleteness(
   member: MemberProfileCompletenessInput,
   options: MemberProfileCompletenessOptions = {}
 ): MemberProfileCompletenessResult {
+  // Admin-only and lodge kiosk accounts are exempt from the confirm-details
+  // onboarding (they are not bookable members). A dual-hat account (USER
+  // token alongside admin/lodge roles) books under full member rules (#1442),
+  // so it confirms its details like any member — without this, dual-hat
+  // admins are permanently canBeBookedAsMember=false and can never be added
+  // to their own booking.
   const confirmationExemptRole =
-    hasAdminAccess(member) || hasLodgeAccess(member);
+    (hasAdminAccess(member) || hasLodgeAccess(member)) &&
+    !hasAccessRole(member, "USER");
   const confirmationMode: MemberProfileConfirmationMode =
     member.active === false || confirmationExemptRole
       ? "not_allowed"

@@ -20,6 +20,7 @@ interface BucketBoardProps {
   onAllocate: (group: BucketGuestGroup) => void;
   pendingGuestIds: Set<string>;
   highlightedBookingId: string;
+  canEdit?: boolean;
 }
 
 export function BucketBoard({
@@ -31,10 +32,12 @@ export function BucketBoard({
   onAllocate,
   pendingGuestIds,
   highlightedBookingId,
+  canEdit = true,
 }: BucketBoardProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: BUCKET_DROPPABLE_ID,
     data: { type: "bucket" },
+    disabled: !canEdit,
   });
 
   const bookingsWithGroups = bookings.filter(
@@ -138,6 +141,7 @@ export function BucketBoard({
                     onAllocate={() => onAllocate(group)}
                     pending={pendingGuestIds.has(group.bookingGuestId)}
                     highlighted={booking.id === highlightedBookingId}
+                    canEdit={canEdit}
                   />
                 ))}
               </div>

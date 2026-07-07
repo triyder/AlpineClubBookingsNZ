@@ -561,6 +561,99 @@ describe("P2.3: Guest subscription check", () => {
     ]);
   });
 
+  it("previews an identity-preserving typo fix on a fully-paid booking as zero-delta (#1386)", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    // Ordinary (non-quoted) fully-paid booking with a free-text non-member guest.
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      checkIn,
+      checkOut,
+      status: "PAID",
+      totalPriceCents: 5000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 5000,
+      guests: [
+        {
+          id: "guest-1",
+          firstName: "Jhon",
+          lastName: "Doe",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 5000,
+        },
+      ],
+      payment: {
+        status: "SUCCEEDED",
+        amountCents: 5000,
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+      },
+      promoRedemption: null,
+    });
+
+    const req = makeModifyQuoteRequest({
+      guestUpdates: [{ guestId: "guest-1", firstName: "John", lastName: "Doe" }],
+    });
+
+    const res = await getModifyQuote(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.priceDiffCents).toBe(0);
+    expect(body.netChargeCents).toBe(0);
+    expect(body.newFinalPriceCents).toBe(5000);
+  });
+
+  it("rejects a swap in the modify-quote preview on a fully-paid booking (#1386)", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      checkIn,
+      checkOut,
+      status: "PAID",
+      totalPriceCents: 5000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 5000,
+      guests: [
+        {
+          id: "guest-1",
+          firstName: "Old",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 5000,
+        },
+      ],
+      payment: {
+        status: "SUCCEEDED",
+        amountCents: 5000,
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+      },
+      promoRedemption: null,
+    });
+
+    const req = makeModifyQuoteRequest({
+      guestUpdates: [{ guestId: "guest-1", firstName: "New", lastName: "Guest" }],
+    });
+
+    const res = await getModifyQuote(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("spelling corrections");
+  });
+
   it("quotes per-guest stay range changes by guest-night ranges", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } });
     const { checkCapacityForGuestRanges } = await import("@/lib/capacity");

@@ -42,25 +42,81 @@ page render.
 ## Dashboard Surface
 
 `/finance` is the only finance UI route. It is controlled by query selectors:
-`view`, `range`, custom `from`/`to`, `compare`, custom comparison dates,
-`forward`, custom forward dates, and the costs-only `expenseCategoryId` and
-`expenseLine` filters.
+`view`, `range`, custom `from`/`to` months, `compare`, custom comparison
+months, `forward` (bookings view only), custom forward months, and the
+costs-only `expenseCategoryId` and `expenseLine` filters.
+
+The dashboard is **month-granular**: ranges are whole-month windows over the
+monthly fact table (`last-month`, `last-3-months`, `last-6-months`,
+`last-12-months`, `financial-year-to-date`, `last-financial-year`, or a custom
+month range), and comparisons are `previous-period`, `same-period-last-year`,
+`none`, or custom months. Financial-year ranges use the club's configured
+year-end month (override → Xero organisation → 31 March default). Custom
+params accept `YYYY-MM`; legacy `YYYY-MM-DD` bookmarks are clamped to their
+containing month with a warning, and legacy option values (`last-quarter`,
+`previous-month`, …) map onto their month-granular equivalents. The
+in-progress month appears only in ranges that include it (e.g. financial year
+to date) and is flagged as month-to-date. Day-level detail lives in Xero.
 
 The default dashboard state is:
 
 - view: Bookings
 - range: Last Month
-- compare: Previous Month
+- compare: Previous Period
 - forward: Next Month
 
-The dashboard renders visual summaries only: KPI cards, trend charts, mix
-charts, reconciliation/status panels, compact source notes, warnings, and
-PDF/CSV exports for the active selection. It does not render daily detail tables
-or route users to the removed `/finance/*` report pages.
+The dashboard renders visual summaries only: KPI cards, trend charts (one
+point per month, with the comparison period overlaid as a second series), mix
+charts, reconciliation/status panels, compact source notes (the Xero-derived
+views link to Xero's report centre for day-level drill-down), warnings, and
+PDF/CSV exports for the active selection. Dashboard displays show whole
+dollars with thousands separators; exact cents appear only where tie-out
+matters (the reconciliation panel and CSV/PDF export rows). It does not render
+daily detail tables or route users to the removed `/finance/*` report pages.
+
+The revenue, costs, pricing-sensitivity, cash, working-capital, and
+balance-sheet views read `FinanceAccountMonthlyBalance` facts (see
+[finance-monthly-facts-contract.md](finance-monthly-facts-contract.md));
+the bookings view reads local booking/payment data. The cash view's "latest
+bank balance" KPI is the one figure still read from the daily bank-summary
+snapshot, since it is a point-in-time value rather than a monthly one.
+
+The **Ratios** view is the committee's comparison tool: a numerator dropdown
+(any treasurer category, or Total income/expenses), an "as a percentage of"
+denominator dropdown, and financial-year/range chips — e.g. catering cost as a
+share of hut-fee income for this FY, last FY, and the FY before. The server
+ships the full category-month matrix (`finance-ratio-insights.ts` /
+client-safe helpers in `finance-ratio-shared.ts`), so switching pairings or
+ranges recomputes instantly in the browser; the selection syncs to
+`ratioNumerator`/`ratioDenominator`/`ratioRange` query params for shareable
+links.
+Divide-by-zero renders as "—". The revenue and costs views carry a compact
+"Financial years" panel (this FY YTD vs the two prior FYs per group) that
+links conceptually to the same data.
+
+The **Xero Sync** view (`view=sync-health`) is the treasurer's
+sync-confidence page: one traffic light aggregating the health signals the
+platform already tracks — latest daily sync run, revenue reconciliation,
+Xero operation outbox (failed/pending writes, bookings missing invoices,
+refunds missing credit notes), and monthly fact freshness (latest sync time
+and newest finalised month per statement kind). Red means a sync failed in
+the last 24 hours, outbox operations have failed, or reconciliation does not
+tie; amber covers pending operations, staleness over 36 hours, a finished
+month still provisional-only, or an unavailable signal; green otherwise.
+Signals link to the Xero admin console or the setup mappings panel. The view
+is aggregation-only (`finance-sync-health.ts`) — it adds no sync logic and
+never calls Xero live — and has no range/compare selectors.
 
 ## Data Model
 
 - Xero-derived accounting datasets are persisted as `FinanceSnapshot` rows.
+- Monthly per-account reporting facts (one row per statement kind, month, and
+  Xero GL account code) are persisted in `FinanceAccountMonthlyBalance`,
+  derived from multi-period profit-and-loss and balance-sheet pulls in the
+  same daily sync. Historical coverage comes from the re-runnable backfill
+  (`POST /api/finance/sync/backfill-monthly-facts` or
+  `npm run finance:backfill-monthly-facts`). See
+  [finance-monthly-facts-contract.md](finance-monthly-facts-contract.md).
 - Daily sync is handled by the finance sync cron and durable service layer.
 - Treasurer-controlled report groups are stored in `FinanceReportCategory` and
   `FinanceReportCategoryMapping`. Each group carries an optional `subtype`
@@ -78,6 +134,7 @@ or route users to the removed `/finance/*` report pages.
 - [finance-xero-config-contract.md](finance-xero-config-contract.md)
 - [finance-revenue-reconciliation-contract.md](finance-revenue-reconciliation-contract.md)
 - [finance-snapshot-storage-contract.md](finance-snapshot-storage-contract.md)
+- [finance-monthly-facts-contract.md](finance-monthly-facts-contract.md)
 - [finance-sync-service-contract.md](finance-sync-service-contract.md)
 - [finance-sync-cron-contract.md](finance-sync-cron-contract.md)
 - [finance-sync-diagnostics-contract.md](finance-sync-diagnostics-contract.md)

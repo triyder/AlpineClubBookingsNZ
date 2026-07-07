@@ -36,6 +36,10 @@ vi.mock("@/lib/email", () => ({
   sendBookingRequestVerificationEmail: vi.fn().mockResolvedValue(undefined),
   sendHutLeaderAssignmentEmail: vi.fn().mockResolvedValue(undefined),
   sendAdminSchoolManualInvoiceEmail: vi.fn().mockResolvedValue(undefined),
+  // #1377: the school approve path now fires an owner-substitution admin alert
+  // on the substitute path. Stub it under the partial mock or the real approve
+  // path calls undefined → throw (mock-safety, see #1417).
+  sendAdminOwnerSubstitutionAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
@@ -87,6 +91,7 @@ import {
   sendBookingRequestVerificationEmail,
   sendHutLeaderAssignmentEmail,
   sendAdminSchoolManualInvoiceEmail,
+  sendAdminOwnerSubstitutionAlert,
 } from "@/lib/email";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
@@ -118,6 +123,7 @@ const mockedEnqueueInvoice = vi.mocked(enqueueXeroBookingInvoiceOperation);
 const mockedSendVerification = vi.mocked(sendBookingRequestVerificationEmail);
 const mockedSendPin = vi.mocked(sendHutLeaderAssignmentEmail);
 const mockedSendManualInvoice = vi.mocked(sendAdminSchoolManualInvoiceEmail);
+const mockedSendOwnerSubstitution = vi.mocked(sendAdminOwnerSubstitutionAlert);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
 const mockedLogAudit = vi.mocked(logAudit);
 
@@ -436,6 +442,8 @@ describe("approveSchoolBookingRequest", () => {
       expect.objectContaining({ createdByMemberId: "admin-1" })
     );
     expect(mockedSendManualInvoice).not.toHaveBeenCalled();
+    // No substitution on a normal conversion → no owner-substitution alert (#1377).
+    expect(mockedSendOwnerSubstitution).not.toHaveBeenCalled();
   });
 
   it("maps the school owner to an existing non-login SCHOOL contact instead of creating one (#1255)", async () => {
@@ -651,6 +659,18 @@ describe("approveSchoolBookingRequest", () => {
     const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0]
       .data as Record<string, unknown>;
     expect(updateArgs.memberId).toBe("school-member");
+    // The #1352 capacity re-check runs on the held-reuse path even WITHOUT a
+    // guestOverride (submitted snapshot), excluding the hold's own beds —
+    // guards against a future regression gating the check behind the
+    // override. (Adopted from the independent implementation in PR #1402.)
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      CHECK_IN,
+      CHECK_OUT,
+      expect.any(Array),
+      "held-1",
+      expect.anything()
+    );
+    expect(mockedCheckCapacity.mock.calls[0][2]).toHaveLength(3);
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking_request.owner_substituted",
@@ -659,6 +679,119 @@ describe("approveSchoolBookingRequest", () => {
           substituteMemberId: "school-member",
         }),
       })
+    );
+    // #1377 parity: the school path also fires the active admin email alert
+    // post-commit (fire-and-forget) so finance/Xero admins reconcile the invoice.
+    expect(mockedSendOwnerSubstitution).toHaveBeenCalledTimes(1);
+    expect(mockedSendOwnerSubstitution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "req-school",
+        bookingId: "held-1",
+        intendedMemberId: "held-invalid-school",
+        substituteMemberId: "school-member",
+      })
+    );
+  });
+
+  it("re-checks per-night capacity on the held-reuse branch and rejects with capacityExceeded (#1352)", async () => {
+    // F6: PRICED request -> admin held slots for 3 guests -> approve with a
+    // larger override. The hold reserved only the ORIGINAL guest count, so
+    // the new list must clear the same per-night capacity gate as the
+    // fresh-create branch — previously this branch skipped it entirely and
+    // silently oversold the lodge.
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        status: BookingRequestStatus.PRICED,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-school-owner",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    // Owner re-validation passes: a valid non-login SCHOOL contact.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-school-owner",
+      canLogin: false,
+      role: "SCHOOL",
+      archivedAt: null,
+      active: true,
+    } as never);
+    mockedCheckCapacity.mockResolvedValue({
+      available: false,
+      minAvailable: -3,
+      nightDetails: [
+        { date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: -3 },
+        { date: new Date("2026-08-02T00:00:00.000Z"), availableBeds: 2 },
+      ],
+    } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { CHILD: 6 } },
+    });
+
+    expect(result).toEqual({
+      type: "capacityExceeded",
+      fullNights: ["2026-08-01"],
+    });
+    // The re-check runs against the NEW (regenerated) guest list, excludes
+    // the held booking's own guests, and uses the locked transaction client.
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      CHECK_IN,
+      CHECK_OUT,
+      expect.any(Array),
+      "held-1",
+      prisma
+    );
+    expect(mockedCheckCapacity.mock.calls[0][2]).toHaveLength(7); // 1 teacher + 6 children
+    // Nothing was swapped or confirmed: the guest swap, the CONFIRMED flip,
+    // and the payment row must all be absent (the tx rolled back).
+    expect(prisma.bookingGuest.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.createMany).not.toHaveBeenCalled();
+    expect(prisma.booking.update).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("approves the held-reuse branch when the per-night re-check passes (#1352)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({
+        status: BookingRequestStatus.PRICED,
+        heldBookingId: "held-1",
+      }) as never
+    );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-school-owner",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-school-owner",
+      canLogin: false,
+      role: "SCHOOL",
+      archivedAt: null,
+      active: true,
+    } as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.bookingGuest.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.bookingGuest.createMany).mockResolvedValue({ count: 5 } as never);
+    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { CHILD: 4 } },
+    });
+
+    expect(result).toMatchObject({ type: "approved", bookingId: "held-1" });
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      CHECK_IN,
+      CHECK_OUT,
+      expect.any(Array),
+      "held-1",
+      prisma
     );
   });
 

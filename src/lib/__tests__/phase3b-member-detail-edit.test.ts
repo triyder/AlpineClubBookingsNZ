@@ -86,6 +86,12 @@ vi.mock("@/lib/xero", () => ({
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { PUT as updateMember, GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
+import {
+  buildAccountEditForm,
+  buildAccountPayload,
+  buildContactEditForm,
+  buildContactPayload,
+} from "@/lib/admin-member-edit-groups";
 
 const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
@@ -488,6 +494,61 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ firstName: "Bob", lastName: "Jones" }),
     }));
+  });
+
+  // ── Per-group inline-edit payloads (member detail page) ──
+  // The detail page saves each group with only that group's fields; these
+  // pin the server-side effect of those scoped payloads.
+
+  const contactSource = {
+    title: null, firstName: "Alice", lastName: "Smith", gender: null,
+    email: "alice@test.com", phoneCountryCode: null, phoneAreaCode: null,
+    phoneNumber: "021-123", dateOfBirth: "1990-01-15T00:00:00.000Z",
+    joinedDate: null, occupation: null, comments: null, ageTier: "ADULT",
+    streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
+    streetRegion: null, streetPostalCode: null, streetCountry: null,
+    postalAddressLine1: null, postalAddressLine2: null, postalCity: null,
+    postalRegion: null, postalPostalCode: null, postalCountry: null,
+  };
+
+  it("a contact-group payload never touches access, auth, or lifeMemberDate columns", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, xeroContactId: null } as any);
+
+    const payload = buildContactPayload(buildContactEditForm(contactSource));
+    const res = await updateMember(makePutRequest("m1", payload), { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(200);
+
+    const updateArgs = vi.mocked(prisma.member.update).mock.calls[0][0] as { data: Record<string, unknown> };
+    const dataKeys = Object.keys(updateArgs.data);
+    for (const forbidden of ["role", "financeAccessLevel", "canLogin", "active", "forcePasswordChange", "requiresInduction", "inheritEmailFromId", "lifeMemberDate"]) {
+      expect(dataKeys, `contact save must not write ${forbidden}`).not.toContain(forbidden);
+    }
+    expect(updateArgs.data.firstName).toBe("Alice");
+  });
+
+  it("an account-group payload never touches contact columns", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, xeroContactId: null } as any);
+
+    const payload = buildAccountPayload(
+      buildAccountEditForm({
+        canLogin: true, active: true, forcePasswordChange: true,
+        requiresInduction: false, inheritEmailFromId: null,
+        accessRoles: ["USER"], role: "USER", financeAccessLevel: "NONE",
+      }),
+    );
+    const res = await updateMember(makePutRequest("m1", payload), { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(200);
+
+    const updateArgs = vi.mocked(prisma.member.update).mock.calls[0][0] as { data: Record<string, unknown> };
+    const dataKeys = Object.keys(updateArgs.data);
+    for (const forbidden of ["email", "firstName", "lastName", "phoneNumber", "dateOfBirth", "comments", "streetAddressLine1", "lifeMemberDate"]) {
+      expect(dataKeys, `account save must not write ${forbidden}`).not.toContain(forbidden);
+    }
+    expect(updateArgs.data.forcePasswordChange).toBe(true);
   });
 
   it("calls updateXeroContact when member contact fields change and Xero is connected", async () => {

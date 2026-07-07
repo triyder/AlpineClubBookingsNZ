@@ -2,22 +2,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
 const {
-  mockBuildFinanceMappedPnlSummary,
+  mockBuildFinanceMonthlyPnlSummary,
+  mockBuildFinanceMonthlyBalanceSeries,
+  mockBuildFinanceRatioMatrix,
+  mockBuildFinanceFinancialYearsPanelItems,
   mockBuildFinanceRevenueReconciliation,
+  mockBuildFinanceSyncHealth,
   mockGetFinanceBookingMetrics,
   mockGetFinanceSyncDiagnosticsStatus,
   mockListFinanceSnapshots,
-  mockParseBalanceSheetSnapshot,
   mockParseCashSnapshot,
+  mockRefreshFinancialYearConfig,
   mockSeasonFindMany,
 } = vi.hoisted(() => ({
-  mockBuildFinanceMappedPnlSummary: vi.fn(),
+  mockBuildFinanceMonthlyPnlSummary: vi.fn(),
+  mockBuildFinanceMonthlyBalanceSeries: vi.fn(),
+  mockBuildFinanceRatioMatrix: vi.fn(),
+  mockBuildFinanceFinancialYearsPanelItems: vi.fn(),
   mockBuildFinanceRevenueReconciliation: vi.fn(),
+  mockBuildFinanceSyncHealth: vi.fn(),
   mockGetFinanceBookingMetrics: vi.fn(),
   mockGetFinanceSyncDiagnosticsStatus: vi.fn(),
   mockListFinanceSnapshots: vi.fn(),
-  mockParseBalanceSheetSnapshot: vi.fn(),
   mockParseCashSnapshot: vi.fn(),
+  mockRefreshFinancialYearConfig: vi.fn(),
   mockSeasonFindMany: vi.fn(),
 }));
 
@@ -33,12 +41,29 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
   getFinanceSyncDiagnosticsStatus: mockGetFinanceSyncDiagnosticsStatus,
 }));
 
+vi.mock("@/lib/finance-sync-health", () => ({
+  buildFinanceSyncHealth: mockBuildFinanceSyncHealth,
+}));
+
 vi.mock("@/lib/finance-booking-metrics", () => ({
   getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
 }));
 
-vi.mock("@/lib/finance-report-mappings", () => ({
-  buildFinanceMappedPnlSummary: mockBuildFinanceMappedPnlSummary,
+vi.mock("@/lib/finance-monthly-pnl", () => ({
+  buildFinanceMonthlyPnlSummary: mockBuildFinanceMonthlyPnlSummary,
+}));
+
+vi.mock("@/lib/finance-monthly-balance", () => ({
+  buildFinanceMonthlyBalanceSeries: mockBuildFinanceMonthlyBalanceSeries,
+}));
+
+vi.mock("@/lib/finance-ratio-insights", () => ({
+  buildFinanceRatioMatrix: mockBuildFinanceRatioMatrix,
+  buildFinanceFinancialYearsPanelItems: mockBuildFinanceFinancialYearsPanelItems,
+}));
+
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: mockRefreshFinancialYearConfig,
 }));
 
 vi.mock("@/lib/finance-revenue-reconciliation", () => ({
@@ -50,12 +75,8 @@ vi.mock("@/lib/finance-sync-storage", () => ({
   listFinanceSnapshots: mockListFinanceSnapshots,
 }));
 
-vi.mock("@/lib/finance-cash-report-page", () => ({
+vi.mock("@/lib/finance-cash-snapshot", () => ({
   parseCashSnapshot: mockParseCashSnapshot,
-}));
-
-vi.mock("@/lib/finance-balance-sheet-report-page", () => ({
-  parseBalanceSheetSnapshot: mockParseBalanceSheetSnapshot,
 }));
 
 import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
@@ -225,16 +246,12 @@ function bookingMetrics() {
 function mappedSummary(kind: "REVENUE" | "EXPENSE") {
   return {
     kind,
-    from: "2026-05-01",
-    to: "2026-05-31",
-    compareFrom: "2026-04-01",
-    compareTo: "2026-04-30",
     amountCents: kind === "REVENUE" ? 100_000 : 40_000,
     comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
     deltaCents: kind === "REVENUE" ? 20_000 : 5_000,
-    formattedAmount: kind === "REVENUE" ? "$1000.00" : "$400.00",
-    formattedComparisonAmount: kind === "REVENUE" ? "$800.00" : "$350.00",
-    formattedDelta: kind === "REVENUE" ? "+$200.00" : "+$50.00",
+    formattedAmount: kind === "REVENUE" ? "$1,000" : "$400",
+    formattedComparisonAmount: kind === "REVENUE" ? "$800" : "$350",
+    formattedDelta: kind === "REVENUE" ? "+$200" : "+$50",
     groups: [
       {
         id: "group-1",
@@ -245,9 +262,9 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
         amountCents: kind === "REVENUE" ? 100_000 : 40_000,
         comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
         deltaCents: kind === "REVENUE" ? 20_000 : 5_000,
-        formattedAmount: kind === "REVENUE" ? "$1000.00" : "$400.00",
-        formattedComparisonAmount: kind === "REVENUE" ? "$800.00" : "$350.00",
-        formattedDelta: kind === "REVENUE" ? "+$200.00" : "+$50.00",
+        formattedAmount: kind === "REVENUE" ? "$1,000" : "$400",
+        formattedComparisonAmount: kind === "REVENUE" ? "$800" : "$350",
+        formattedDelta: kind === "REVENUE" ? "+$200" : "+$50",
         lineCount: 1,
         lines: [
           {
@@ -257,9 +274,9 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
             accountCode: kind === "REVENUE" ? "200" : null,
             amountCents: kind === "REVENUE" ? 100_000 : 40_000,
             comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
-            formattedAmount: kind === "REVENUE" ? "$1000.00" : "$400.00",
-            formattedComparisonAmount: kind === "REVENUE" ? "$800.00" : "$350.00",
-            formattedDelta: kind === "REVENUE" ? "+$200.00" : "+$50.00",
+            formattedAmount: kind === "REVENUE" ? "$1,000" : "$400",
+            formattedComparisonAmount: kind === "REVENUE" ? "$800" : "$350",
+            formattedDelta: kind === "REVENUE" ? "+$200" : "+$50",
             periodsPresent: 1,
           },
         ],
@@ -271,14 +288,48 @@ function mappedSummary(kind: "REVENUE" | "EXPENSE") {
         valueCents: kind === "REVENUE" ? 100_000 : 40_000,
       },
     ],
-    trend: [{ label: "May 2026", amountCents: kind === "REVENUE" ? 100_000 : 40_000 }],
+    trend: [
+      {
+        monthKey: "2026-05",
+        label: "May 2026",
+        amountCents: kind === "REVENUE" ? 100_000 : 40_000,
+        comparisonAmountCents: kind === "REVENUE" ? 80_000 : 35_000,
+        isProvisional: false,
+      },
+    ],
     availableExpenseLines:
       kind === "EXPENSE"
-        ? [{ value: "Insurance", label: "Insurance", categoryId: "group-1" }]
+        ? [{ value: "INSURANCE", label: "Insurance", categoryId: "group-1" }]
         : [],
     warnings: [],
-    selectedSnapshotCount: 1,
-    comparisonSnapshotCount: 1,
+    monthsWithData: 1,
+    includesProvisionalMonth: false,
+  };
+}
+
+function balanceSeries() {
+  const point = {
+    monthKey: "2026-05",
+    label: "May 2026",
+    assetsCents: 500_000,
+    liabilitiesCents: 120_000,
+    equityCents: 380_000,
+    netAssetsCents: 380_000,
+    currentAssetsCents: 200_000,
+    currentLiabilitiesCents: 50_000,
+    workingCapitalCents: 150_000,
+    bankCents: 150_000,
+    hasData: true,
+    isProvisional: false,
+  };
+  return {
+    points: [point],
+    latest: point,
+    latestBankAccounts: [
+      { label: "Operating", balanceCents: 100_000 },
+      { label: "Savings", balanceCents: 50_000 },
+    ],
+    monthsWithData: 1,
   };
 }
 
@@ -297,9 +348,41 @@ describe("finance dashboard page model", () => {
       cron: { schedule: "0 5 * * *", timezone: "Pacific/Auckland" },
     });
     mockGetFinanceBookingMetrics.mockResolvedValue(bookingMetrics());
-    mockBuildFinanceMappedPnlSummary.mockImplementation(async (input: { kind: "REVENUE" | "EXPENSE" }) =>
+    mockRefreshFinancialYearConfig.mockResolvedValue(3);
+    mockBuildFinanceMonthlyPnlSummary.mockImplementation(async (input: { kind: "REVENUE" | "EXPENSE" }) =>
       mappedSummary(input.kind)
     );
+    mockBuildFinanceMonthlyBalanceSeries.mockResolvedValue(balanceSeries());
+    mockBuildFinanceRatioMatrix.mockResolvedValue({
+      months: ["2026-05", "2026-06"],
+      provisionalMonths: [],
+      series: [
+        {
+          id: "total-income",
+          name: "Total income",
+          kind: "REVENUE",
+          isTotal: true,
+          valuesCents: [100_000, 80_000],
+        },
+        {
+          id: "cat-hut",
+          name: "Hut Fees",
+          kind: "REVENUE",
+          isTotal: false,
+          valuesCents: [100_000, 80_000],
+        },
+      ],
+      financialYearEndMonth: 3,
+      currentMonth: "2026-07",
+    });
+    mockBuildFinanceFinancialYearsPanelItems.mockReturnValue([
+      {
+        label: "Total income",
+        value: "$1,800",
+        detail: "FY2026 $0 · FY2025 $0",
+        emphasis: true,
+      },
+    ]);
     mockBuildFinanceRevenueReconciliation.mockResolvedValue({
       overallStatus: "TIES",
       periods: [
@@ -308,6 +391,45 @@ describe("finance dashboard page model", () => {
           varianceCents: 0,
           xeroHutFeesIncomeCents: 100_000,
           bookingHutFeesCents: 100_000,
+        },
+      ],
+    });
+    mockBuildFinanceSyncHealth.mockResolvedValue({
+      overallTone: "amber",
+      overallLabel: "Needs attention",
+      warnings: ["Pending operations: 2."],
+      sections: [
+        {
+          id: "daily-sync",
+          title: "Daily Xero sync",
+          description: "The scheduled pull.",
+          tone: "green",
+          signals: [
+            {
+              id: "latest-sync-run",
+              label: "Latest sync run",
+              value: "Succeeded 2h ago",
+              tone: "green",
+              href: "/admin/xero",
+              linkLabel: "Open Xero admin",
+            },
+          ],
+        },
+        {
+          id: "xero-operations",
+          title: "Xero operations",
+          description: "Outbound writes.",
+          tone: "amber",
+          signals: [
+            {
+              id: "pending-operations",
+              label: "Pending operations",
+              value: "2",
+              detail: "Queued writes.",
+              tone: "amber",
+              href: "/admin/xero",
+            },
+          ],
         },
       ],
     });
@@ -323,33 +445,18 @@ describe("finance dashboard page model", () => {
         { label: "Savings", balanceCents: 50_000 },
       ],
     });
-    mockParseBalanceSheetSnapshot.mockReturnValue({
-      snapshotLabel: "31 May 2026",
-      totalAssets: "$5000.00",
-      totalLiabilities: "$1200.00",
-      netAssets: "$3800.00",
-      totalAssetsCents: 500_000,
-      totalLiabilitiesCents: 120_000,
-      netAssetsCents: 380_000,
-      currentAssets: "$2000.00",
-      currentLiabilities: "$500.00",
-      workingCapital: "$1500.00",
-      currentAssetsCents: 200_000,
-      currentLiabilitiesCents: 50_000,
-      workingCapitalCents: 150_000,
-      currentRatio: 4,
-      lineItemCount: 8,
-    });
   });
 
   it.each<FinanceDashboardView>([
     "bookings",
     "revenue",
     "costs",
+    "ratios",
     "pricing-sensitivity",
     "working-capital",
     "cash",
     "balance-sheet",
+    "sync-health",
   ])("builds the %s dashboard from stored/modelled data", async (view) => {
     const model = await buildFinanceDashboardPageModel({
       member: financeManager(),
@@ -357,9 +464,86 @@ describe("finance dashboard page model", () => {
     });
 
     expect(model.selection.view).toBe(view);
-    expect(model.cards.length).toBeGreaterThan(0);
+    if (view === "ratios") {
+      expect(model.ratios?.matrix.months.length).toBeGreaterThan(0);
+    } else {
+      expect(model.cards.length).toBeGreaterThan(0);
+      expect(model.ratios).toBeNull();
+    }
     expect(model.exportSections[0].title).toBe("Dashboard selection");
     expect(model.sourceNotes.length).toBeGreaterThan(0);
+  });
+
+  it("maps sync-health sections onto status panels with tones, links, and warnings", async () => {
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "sync-health" },
+    });
+
+    expect(model.cards[0]).toMatchObject({
+      title: "Sync confidence",
+      value: "Needs attention",
+    });
+
+    const opsPanel = model.statusPanels.find(
+      (panel) => panel.title === "Xero operations"
+    );
+    expect(opsPanel).toMatchObject({
+      badgeLabel: "Attention",
+      badgeTone: "warning",
+    });
+    expect(opsPanel?.items[0]).toMatchObject({
+      label: "Pending operations",
+      value: "2",
+      emphasis: true,
+      href: "/admin/xero",
+    });
+
+    const syncPanel = model.statusPanels.find(
+      (panel) => panel.title === "Daily Xero sync"
+    );
+    expect(syncPanel).toMatchObject({ badgeLabel: "OK", badgeTone: "success" });
+    expect(syncPanel?.items[0]).toMatchObject({ emphasis: false });
+
+    expect(model.warnings).toContain("Pending operations: 2.");
+    expect(
+      model.exportSections.some((section) => section.title === "Sync health signals")
+    ).toBe(true);
+  });
+
+  it("appends the financial-years committee panel to revenue and costs views", async () => {
+    const revenue = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue" },
+    });
+    const costs = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "costs" },
+    });
+
+    for (const model of [revenue, costs]) {
+      const panel = model.statusPanels.find(
+        (statusPanel) => statusPanel.title === "Financial years"
+      );
+      expect(panel).toBeDefined();
+      expect(panel?.items[0]).toMatchObject({ label: "Total income" });
+    }
+  });
+
+  it("passes the ratio explorer selection through from query params", async () => {
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: {
+        view: "ratios",
+        ratioNumerator: "cat-catering",
+        ratioDenominator: "cat-hut",
+      },
+    });
+
+    expect(model.ratios).toMatchObject({
+      initialNumeratorId: "cat-catering",
+      initialDenominatorId: "cat-hut",
+    });
   });
 
   it("groups mapped P&L categories under subtype sub-headings with sub-totals", async () => {
@@ -373,7 +557,7 @@ describe("finance dashboard page model", () => {
     );
     expect(panel).toBeDefined();
     const subheading = panel?.items.find((item) => item.emphasis);
-    expect(subheading).toMatchObject({ label: "Operating", value: "$1000.00" });
+    expect(subheading).toMatchObject({ label: "Operating", value: "$1,000" });
     expect(panel?.items.some((item) => item.label === "Hut Fees")).toBe(true);
   });
 
@@ -391,7 +575,13 @@ describe("finance dashboard page model", () => {
     expect(viewerModel.isManager).toBe(false);
   });
 
-  it("surfaces missing stored snapshot coverage as a compact warning", async () => {
+  it("surfaces missing stored monthly data as a compact warning", async () => {
+    mockBuildFinanceMonthlyBalanceSeries.mockResolvedValue({
+      points: [],
+      latest: null,
+      latestBankAccounts: [],
+      monthsWithData: 0,
+    });
     mockListFinanceSnapshots.mockImplementation(async (input?: { snapshotType?: FinanceSnapshotType }) => {
       if (input?.snapshotType === FinanceSnapshotType.BANK_BALANCES) {
         return [];
@@ -404,8 +594,77 @@ describe("finance dashboard page model", () => {
       searchParams: { view: "cash" },
     });
 
-    expect(model.warnings).toContain(
-      "No stored bank-balance snapshots cover the selected range."
+    expect(
+      model.warnings.some((warning) =>
+        warning.includes("No monthly Xero balance data is stored")
+      )
+    ).toBe(true);
+  });
+
+  it("overlays the comparison series on the revenue trend and omits it when compare is none", async () => {
+    const withComparison = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue" },
+    });
+    const revenueTrend = withComparison.trends[0];
+    expect(revenueTrend.series.map((series) => series.key)).toEqual([
+      "amount",
+      "comparison",
+    ]);
+    expect(revenueTrend.data[0]).toMatchObject({
+      label: "May 2026",
+      amount: 100_000,
+      comparison: 80_000,
+    });
+
+    const withoutComparison = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue", compare: "none" },
+    });
+    expect(mockBuildFinanceMonthlyPnlSummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ comparison: null })
     );
+    expect(withoutComparison.selectionLabels.comparisonWindow).toBe("None");
+  });
+
+  it("renders a gap, not a $0 bar, for unaligned trailing comparison months", async () => {
+    mockBuildFinanceMonthlyPnlSummary.mockImplementation(
+      async (input: { kind: "REVENUE" | "EXPENSE" }) => ({
+        ...mappedSummary(input.kind),
+        trend: [
+          {
+            monthKey: "2026-05",
+            label: "May 2026",
+            amountCents: 100_000,
+            comparisonAmountCents: 80_000,
+            isProvisional: false,
+          },
+          {
+            // A comparison window shorter than the primary leaves this month
+            // unaligned (null), which must render as a gap rather than $0.
+            monthKey: "2026-06",
+            label: "Jun 2026",
+            amountCents: 120_000,
+            comparisonAmountCents: null,
+            isProvisional: false,
+          },
+        ],
+      })
+    );
+
+    const model = await buildFinanceDashboardPageModel({
+      member: financeManager(),
+      searchParams: { view: "revenue" },
+    });
+    const trend = model.trends[0];
+
+    expect(trend.data[0]).toMatchObject({
+      label: "May 2026",
+      amount: 100_000,
+      comparison: 80_000,
+    });
+    expect(trend.data[1]).toMatchObject({ label: "Jun 2026", amount: 120_000 });
+    // The unaligned month omits the comparison key so the chart draws a gap.
+    expect("comparison" in trend.data[1]).toBe(false);
   });
 });

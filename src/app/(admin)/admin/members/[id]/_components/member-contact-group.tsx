@@ -1,0 +1,460 @@
+"use client";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Pencil } from "lucide-react";
+import { MemberAddressFields } from "@/components/member-address-fields";
+import {
+  formatMemberDateNz,
+  formatMemberPhone,
+  memberUsesSamePostalAddress,
+} from "@/lib/admin-member-detail-helpers";
+import type { MemberContactEditForm } from "@/lib/admin-member-edit-groups";
+import { hasPrivilegedAccess } from "@/lib/access-roles";
+import {
+  formatGenderLabel,
+  formatTitleLabel,
+  GENDER_OPTIONS,
+  TITLE_OPTIONS,
+} from "@/lib/member-enums";
+import type { MemberAddressValues } from "@/lib/member-address";
+import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
+import type { MemberGroupEditState } from "../_hooks/use-member-group-edit";
+import type { MemberDetail } from "../_types";
+
+interface MemberContactGroupProps {
+  member: MemberDetail;
+  isSelf: boolean;
+  actorIsFullAdmin: boolean;
+  edit: MemberGroupEditState<MemberContactEditForm>;
+}
+
+function addressLines(input: {
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  country: string | null;
+}) {
+  return [
+    input.line1,
+    input.line2,
+    [input.city, input.region, input.postalCode].filter(Boolean).join(" "),
+    input.country,
+  ].filter((line): line is string => Boolean(line && line.trim()));
+}
+
+function AddressBlock({ lines }: { lines: string[] }) {
+  if (lines.length === 0) {
+    return <span className="text-xs text-slate-500">Not provided</span>;
+  }
+  return (
+    <span>
+      {lines.map((line, index) => (
+        <span key={index} className="block">
+          {line}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export function MemberContactGroup({
+  member,
+  isSelf,
+  actorIsFullAdmin,
+  edit,
+}: MemberContactGroupProps) {
+  const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
+  // Mirror of the server-side Full Admin gate: only a Full Admin may change a
+  // privileged member's login email (self-service excepted).
+  const emailLockedForActor =
+    !actorIsFullAdmin && !isSelf && hasPrivilegedAccess(member);
+  // Mirror of the server-side org predicate (#1440): ORG access role, or the
+  // legacy SCHOOL role (whose resolved tokens omit ORG when login is off).
+  const isOrganisationMember =
+    (member.accessRoles ?? []).includes("ORG") || member.role === "SCHOOL";
+
+  const { editing, form, saving, error, errorRef } = edit;
+
+  if (editing && form) {
+    const updateForm = edit.updateForm;
+    const updateAddressFields = (patch: Partial<MemberAddressValues>) => {
+      updateForm((current) => ({ ...current, ...patch }));
+    };
+    return (
+      <div className="space-y-4">
+        {error && (
+          <div
+            ref={errorRef}
+            role="alert"
+            tabIndex={-1}
+            className="scroll-mt-20 whitespace-pre-line rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700 focus:outline-none"
+          >
+            {error}
+          </div>
+        )}
+        {(showTitle || showGender) && (
+          <div className="grid grid-cols-2 gap-4">
+            {showTitle && (
+              <div className="space-y-2">
+                <Label htmlFor="contact-title">Title</Label>
+                <Select
+                  value={form.title || "__none__"}
+                  onValueChange={(value) =>
+                    updateForm((f) => ({
+                      ...f,
+                      title:
+                        value === "__none__"
+                          ? ""
+                          : (value as MemberContactEditForm["title"]),
+                    }))
+                  }
+                >
+                  <SelectTrigger id="contact-title">
+                    <SelectValue placeholder="Select title" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {TITLE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {showGender && (
+              <div className="space-y-2">
+                <Label htmlFor="contact-gender">Gender</Label>
+                <Select
+                  value={form.gender || "__none__"}
+                  onValueChange={(value) =>
+                    updateForm((f) => ({
+                      ...f,
+                      gender:
+                        value === "__none__"
+                          ? ""
+                          : (value as MemberContactEditForm["gender"]),
+                    }))
+                  }
+                >
+                  <SelectTrigger id="contact-gender">
+                    <SelectValue placeholder="Select gender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">None</SelectItem>
+                    {GENDER_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="contact-firstName">First Name *</Label>
+            <Input
+              id="contact-firstName"
+              value={form.firstName}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, firstName: e.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="contact-lastName">Last Name *</Label>
+            <Input
+              id="contact-lastName"
+              value={form.lastName}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, lastName: e.target.value }))
+              }
+            />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="contact-email">Email *</Label>
+          <Input
+            id="contact-email"
+            type="email"
+            value={form.email}
+            disabled={emailLockedForActor}
+            onChange={(e) =>
+              updateForm((f) => ({ ...f, email: e.target.value }))
+            }
+          />
+          {emailLockedForActor && (
+            <p className="text-xs text-muted-foreground">
+              Only a Full Admin can change a privileged member&apos;s login
+              email.
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label>Phone</Label>
+          <div className="flex gap-2">
+            <Input
+              className="w-20"
+              placeholder="64"
+              value={form.phoneCountryCode}
+              onChange={(e) =>
+                updateForm((f) => ({
+                  ...f,
+                  phoneCountryCode: e.target.value,
+                }))
+              }
+              maxLength={5}
+              aria-label="Country code"
+            />
+            <Input
+              className="w-20"
+              placeholder="27"
+              value={form.phoneAreaCode}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, phoneAreaCode: e.target.value }))
+              }
+              maxLength={5}
+              aria-label="Area code"
+            />
+            <Input
+              className="flex-1"
+              placeholder="123 4567"
+              value={form.phoneNumber}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, phoneNumber: e.target.value }))
+              }
+              maxLength={15}
+              aria-label="Phone number"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="contact-dateOfBirth">Date of Birth</Label>
+            <Input
+              id="contact-dateOfBirth"
+              type="date"
+              value={form.dateOfBirth}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, dateOfBirth: e.target.value }))
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Age tier is calculated automatically from date of birth.
+            </p>
+          </div>
+          {isOrganisationMember ? (
+            // Organisations/schools have no age (#1440): the server always
+            // stores NOT_APPLICABLE for them, so the picker is replaced with
+            // a fixed N/A readout.
+            <div className="space-y-2">
+              <Label>Age Tier</Label>
+              <p className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                N/A — organisations don&apos;t have an age tier
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>Age Tier</Label>
+              <Select
+                value={form.ageTier === "NOT_APPLICABLE" ? "" : form.ageTier}
+                onValueChange={(v) => updateForm((f) => ({ ...f, ageTier: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="INFANT">Infant</SelectItem>
+                  <SelectItem value="CHILD">Child</SelectItem>
+                  <SelectItem value="YOUTH">Youth</SelectItem>
+                  <SelectItem value="ADULT">Adult</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="contact-joinedDate">Joined Date</Label>
+          <Input
+            id="contact-joinedDate"
+            type="date"
+            value={form.joinedDate}
+            onChange={(e) =>
+              updateForm((f) => ({ ...f, joinedDate: e.target.value }))
+            }
+          />
+          <p className="text-xs text-muted-foreground">
+            Used for finance and Xero-linked member history.
+          </p>
+        </div>
+        {showOccupation && form.ageTier === "ADULT" && (
+          <div className="space-y-2">
+            <Label htmlFor="contact-occupation">Occupation</Label>
+            <Input
+              id="contact-occupation"
+              value={form.occupation}
+              maxLength={100}
+              onChange={(e) =>
+                updateForm((f) => ({ ...f, occupation: e.target.value }))
+              }
+            />
+          </div>
+        )}
+        <MemberAddressFields
+          idPrefix="contact-group"
+          onSameAsPhysicalChange={(value) =>
+            updateForm((f) => ({ ...f, postalSameAsPhysical: value }))
+          }
+          onValuesChange={updateAddressFields}
+          sameAsPhysical={form.postalSameAsPhysical}
+          values={form}
+        />
+        <div className="space-y-2">
+          <Label htmlFor="contact-comments">Comments</Label>
+          <Textarea
+            id="contact-comments"
+            rows={4}
+            value={form.comments}
+            onChange={(e) =>
+              updateForm((f) => ({ ...f, comments: e.target.value }))
+            }
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={edit.cancelEdit} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={() => void edit.save()} disabled={saving}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const physicalLines = addressLines({
+    line1: member.streetAddressLine1,
+    line2: member.streetAddressLine2,
+    city: member.streetCity,
+    region: member.streetRegion,
+    postalCode: member.streetPostalCode,
+    country: member.streetCountry,
+  });
+  const postalSameAsPhysical = memberUsesSamePostalAddress(member);
+  const postalLines = addressLines({
+    line1: member.postalAddressLine1,
+    line2: member.postalAddressLine2,
+    city: member.postalCity,
+    region: member.postalRegion,
+    postalCode: member.postalPostalCode,
+    country: member.postalCountry,
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={edit.startEdit}>
+          <Pencil className="h-4 w-4 mr-1" />
+          Edit
+        </Button>
+      </div>
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+        {showTitle && (
+          <div>
+            <dt className="text-slate-500">Title</dt>
+            <dd className="font-medium">
+              {formatTitleLabel(member.title) || "Not set"}
+            </dd>
+          </div>
+        )}
+        {showGender && (
+          <div>
+            <dt className="text-slate-500">Gender</dt>
+            <dd className="font-medium">
+              {formatGenderLabel(member.gender) || "Not set"}
+            </dd>
+          </div>
+        )}
+        <div>
+          <dt className="text-slate-500">First Name</dt>
+          <dd className="font-medium">{member.firstName}</dd>
+        </div>
+        <div>
+          <dt className="text-slate-500">Last Name</dt>
+          <dd className="font-medium">{member.lastName}</dd>
+        </div>
+        <div>
+          <dt className="text-slate-500">Email</dt>
+          <dd className="font-medium break-all">{member.email}</dd>
+        </div>
+        <div>
+          <dt className="text-slate-500">Phone</dt>
+          <dd className="font-medium">
+            {formatMemberPhone(member) || "Not provided"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-500">Date of Birth</dt>
+          <dd className="font-medium">
+            {member.dateOfBirth
+              ? formatMemberDateNz(member.dateOfBirth)
+              : "Not set"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-500">Member Since</dt>
+          <dd className="font-medium">
+            {formatMemberDateNz(member.joinedDate || member.createdAt)}
+            {member.joinedDate && (
+              <span className="ml-1 text-xs text-slate-400">(from Xero)</span>
+            )}
+          </dd>
+        </div>
+        {showOccupation && (
+          <div>
+            <dt className="text-slate-500">Occupation</dt>
+            <dd className="font-medium">{member.occupation || "Not set"}</dd>
+          </div>
+        )}
+        <div>
+          <dt className="text-slate-500">Physical Address</dt>
+          <dd className="font-medium">
+            <AddressBlock lines={physicalLines} />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-500">Postal Address</dt>
+          <dd className="font-medium">
+            {postalSameAsPhysical ? (
+              <span className="text-xs text-slate-500">Same as physical</span>
+            ) : (
+              <AddressBlock lines={postalLines} />
+            )}
+          </dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-slate-500">Comments</dt>
+          <dd className="font-medium whitespace-pre-wrap">
+            {member.comments || "None"}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}

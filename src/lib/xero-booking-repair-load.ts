@@ -6,11 +6,13 @@ import {
   bookingRepairSelect,
   xeroObjectLinkSelect,
   xeroOperationSelect,
+  type BookingCancellationRefundRecoveryRecord,
   type BookingClassificationContext,
   type BookingXeroRepairScope,
   type XeroObjectLinkRecord,
   type XeroOperationRecord,
 } from "./xero-booking-repair-types";
+import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { addDays, makeLocalKey, startOfDay } from "./xero-booking-repair-utils";
 
@@ -101,7 +103,7 @@ export async function loadAuditData(
     });
   }
 
-  const [links, operations] = await Promise.all([
+  const [links, operations, cancellationRefundRecoveryOperations] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
           where: {
@@ -127,6 +129,27 @@ export async function loadAuditData(
           ],
         })
       : Promise.resolve([] as XeroOperationRecord[]),
+    // #1491: booking-cancel card refunds freeze their decision as a recovery
+    // operation keyed booking_cancel_refund_recovery_<bookingId> — matched by
+    // exact key so booking-modification refund recoveries never alias in.
+    bookingIds.length > 0
+      ? deps.prisma.paymentRecoveryOperation.findMany({
+          where: {
+            idempotencyKey: {
+              in: bookingIds.map((bookingId) =>
+                buildBookingCancellationRefundIdempotencyKey(bookingId)
+              ),
+            },
+          },
+          select: {
+            id: true,
+            bookingId: true,
+            status: true,
+            amountCents: true,
+            createdAt: true,
+          },
+        })
+      : Promise.resolve([] as BookingCancellationRefundRecoveryRecord[]),
   ]);
 
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
@@ -135,6 +158,19 @@ export async function loadAuditData(
     const list = linksByLocalKey.get(key) ?? [];
     list.push(link);
     linksByLocalKey.set(key, list);
+  }
+
+  const cancellationRecoveryByBookingId = new Map<
+    string,
+    BookingCancellationRefundRecoveryRecord[]
+  >();
+  for (const operation of cancellationRefundRecoveryOperations) {
+    if (!operation.bookingId) {
+      continue;
+    }
+    const list = cancellationRecoveryByBookingId.get(operation.bookingId) ?? [];
+    list.push(operation);
+    cancellationRecoveryByBookingId.set(operation.bookingId, list);
   }
 
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
@@ -170,5 +206,7 @@ export async function loadAuditData(
         operationsByLocalKey.get(makeLocalKey("BookingModification", modification.id)) ?? [],
       ])
     ),
+    cancellationRefundRecoveryOperations:
+      cancellationRecoveryByBookingId.get(booking.id) ?? [],
   }));
 }

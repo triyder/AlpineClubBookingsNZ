@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
 
 export const LODGE_VISIBLE_BOOKING_STATUSES = [
   ...OPERATIONAL_STAY_BOOKING_STATUSES,
@@ -15,6 +16,10 @@ export async function findLodgeGuestForDate(bookingGuestId: string, date: Date) 
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         checkIn: { lte: date },
         checkOut: { gt: date },
+        // Enforcement path (#1372 / #1422): keep excluding a booking blocked by
+        // a pending admin review so its guest resolves to null and the arrive
+        // endpoint 404s — even though the guest LIST now shows it flagged.
+        ...checkinNotBlockedByPendingReviewFilter(),
       },
     },
     select: {
@@ -47,6 +52,10 @@ export async function findLodgeGuestDepartingOnDate(
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         checkIn: { lte: date },
         checkOut: { gte: date },
+        // Enforcement path (#1372 / #1422): keep excluding a booking blocked by
+        // a pending admin review so its guest resolves to null and the depart
+        // endpoint 404s — even though the guest LIST now shows it flagged.
+        ...checkinNotBlockedByPendingReviewFilter(),
       },
     },
     select: {
@@ -83,6 +92,10 @@ export async function validateRosterAllocationsForDate(
         status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
         checkIn: { lte: date },
         checkOut: { gt: date },
+        // Enforcement path (#1372 / #1422): keep excluding a booking blocked by
+        // a pending admin review so roster-confirm rejects it — even though the
+        // guest LIST now shows it flagged.
+        ...checkinNotBlockedByPendingReviewFilter(),
       },
     },
     select: {

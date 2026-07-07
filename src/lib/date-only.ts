@@ -145,6 +145,15 @@ export function formatDateOnlyForTimeZone(
   return `${year}-${month}-${day}`;
 }
 
+// Returns "now" as a yyyy-MM-dd string in the given time zone. Admin default
+// activity windows are interpreted server-side via start/endOfDateOnlyForTimeZone
+// (club time), so seeding those defaults from the browser's local date hides
+// post-midnight activity for operators (or CI) whose clock trails NZ. Deriving
+// the default in the club time zone keeps the seed and the interpretation aligned.
+export function todayDateOnlyForTimeZone(timeZone = APP_TIME_ZONE): string {
+  return formatDateOnlyForTimeZone(new Date(), timeZone);
+}
+
 export function normalizeDateOnlyForTimeZone(
   date: Date,
   timeZone = APP_TIME_ZONE

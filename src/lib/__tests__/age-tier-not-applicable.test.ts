@@ -1,0 +1,371 @@
+// #1440: AgeTier NOT_APPLICABLE is the organisation/school tier. The server
+// forces it onto org-type members (ORG access role or legacy SCHOOL role) on
+// every create/update, rejects it for everyone else, restores a DOB-derived
+// tier when a member is reclassified away from Organisation, and keeps
+// organisations out of booking-guest flows entirely.
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    member: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      count: vi.fn(),
+    },
+    accessRoleDefinition: {
+      // Empty definitions: permission resolution falls back to the legacy
+      // hardcoded bundles.
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn(),
+    },
+    memberAccessRole: {
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
+    familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    memberFieldsSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    passwordResetToken: { create: vi.fn() },
+    xeroContactCache: { findUnique: vi.fn().mockResolvedValue(null) },
+    $transaction: vi.fn(),
+  },
+}));
+
+const mockRequireAdmin = vi.fn();
+vi.mock("@/lib/session-guards", () => ({
+  requireAdmin: (...args: unknown[]) => mockRequireAdmin(...args),
+  requireActiveSessionUser: vi.fn(async () => null),
+}));
+vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+const mockComputeAgeTier = vi.fn();
+vi.mock("@/lib/age-tier", () => ({
+  computeAgeTier: (...args: unknown[]) => mockComputeAgeTier(...args),
+  getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
+}));
+vi.mock("@/lib/xero", () => ({
+  isXeroConnected: vi.fn().mockResolvedValue(false),
+  syncManagedXeroContactGroupForMember: vi.fn(),
+  updateXeroContact: vi.fn(),
+}));
+vi.mock("@/lib/rate-limit", () => ({
+  applyRateLimit: vi.fn().mockReturnValue(null),
+}));
+vi.mock("@/lib/email", () => ({ sendMemberSetupInviteEmail: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
+  getAuditEmailDomain: vi.fn(() => null),
+  getAuditRequestContext: vi.fn(() => ({ ipAddress: "127.0.0.1" })),
+  createAuditLog: vi.fn(),
+  logAudit: vi.fn(),
+}));
+vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
+import { prisma } from "@/lib/prisma";
+import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
+import { POST as createMember } from "@/app/api/admin/members/route";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import {
+  formatAgeTierName,
+  getAgeTierLabel,
+} from "@/lib/use-age-tier-options";
+import { resolveLinkedBookingMembers } from "@/lib/booking-guests";
+
+const fullAdminGuard = {
+  ok: true,
+  session: { user: { id: "actor1", role: "ADMIN", accessRoles: ["ADMIN"] } },
+};
+
+const personMember = {
+  id: "m1",
+  firstName: "Alice",
+  lastName: "Smith",
+  email: "alice@test.com",
+  phoneCountryCode: null,
+  phoneAreaCode: null,
+  phoneNumber: null,
+  dateOfBirth: null,
+  role: "USER",
+  financeAccessLevel: "NONE",
+  accessRoles: [{ role: "USER" }],
+  ageTier: "ADULT",
+  active: true,
+  forcePasswordChange: false,
+  canLogin: true,
+  xeroContactId: null,
+  joinedDate: null,
+  createdAt: new Date("2025-01-01"),
+};
+
+const orgMember = {
+  ...personMember,
+  id: "org1",
+  firstName: "Springfield",
+  lastName: "School",
+  email: "office@school.test",
+  role: "SCHOOL",
+  accessRoles: [{ role: "ORG" }],
+  ageTier: "NOT_APPLICABLE",
+};
+
+function jsonRequest(
+  url: string,
+  body: Record<string, unknown>,
+  method = "POST",
+) {
+  return new NextRequest(url, {
+    method,
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function putMember(id: string, body: Record<string, unknown>) {
+  return updateMember(
+    jsonRequest(`http://localhost/api/admin/members/${id}`, body, "PUT"),
+    { params: Promise.resolve({ id }) },
+  );
+}
+
+function mockUpdateTransaction() {
+  vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) =>
+    operation({
+      member: {
+        update: prisma.member.update,
+        updateMany: prisma.member.updateMany,
+      },
+      memberAccessRole: {
+        createMany: prisma.memberAccessRole.createMany,
+        deleteMany: prisma.memberAccessRole.deleteMany,
+      },
+      familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      auditLog: { create: prisma.auditLog.create },
+    }),
+  );
+}
+
+describe("#1440 — server-side NOT_APPLICABLE enforcement on member writes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.memberFieldsSettings.findUnique).mockResolvedValue(null);
+    mockRequireAdmin.mockResolvedValue(fullAdminGuard);
+    mockComputeAgeTier.mockResolvedValue("ADULT");
+  });
+
+  describe("PUT /api/admin/members/[id]", () => {
+    beforeEach(() => {
+      mockUpdateTransaction();
+    });
+
+    it("forces NOT_APPLICABLE on an ORG-role member even when a person tier is submitted", async () => {
+      vi.mocked(prisma.member.findUnique).mockResolvedValue(orgMember as any);
+      vi.mocked(prisma.member.update).mockResolvedValue(orgMember as any);
+
+      const res = await putMember("org1", { ageTier: "ADULT" });
+
+      expect(res.status).toBe(200);
+      expect(prisma.member.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ ageTier: "NOT_APPLICABLE" }),
+        }),
+      );
+    });
+
+    it("forces NOT_APPLICABLE on a legacy SCHOOL member whose resolved tokens omit ORG", async () => {
+      const legacySchool = {
+        ...orgMember,
+        accessRoles: [],
+        canLogin: false,
+        ageTier: "ADULT",
+      };
+      vi.mocked(prisma.member.findUnique).mockResolvedValue(
+        legacySchool as any,
+      );
+      vi.mocked(prisma.member.update).mockResolvedValue(legacySchool as any);
+
+      const res = await putMember("org1", { firstName: "Updated" });
+
+      expect(res.status).toBe(200);
+      expect(prisma.member.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ ageTier: "NOT_APPLICABLE" }),
+        }),
+      );
+    });
+
+    it("rejects NOT_APPLICABLE for a non-organisation member with 422", async () => {
+      vi.mocked(prisma.member.findUnique).mockResolvedValue(
+        personMember as any,
+      );
+
+      const res = await putMember("m1", { ageTier: "NOT_APPLICABLE" });
+
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toMatch(/organisation/i);
+      expect(prisma.member.update).not.toHaveBeenCalled();
+    });
+
+    it("restores a DOB-derived tier when a member is reclassified away from Organisation", async () => {
+      vi.mocked(prisma.member.findUnique).mockResolvedValue({
+        ...orgMember,
+        dateOfBirth: new Date("2012-06-01"),
+      } as any);
+      vi.mocked(prisma.member.update).mockResolvedValue(personMember as any);
+      mockComputeAgeTier.mockResolvedValue("YOUTH");
+
+      const res = await putMember("org1", {
+        role: "USER",
+        accessRoles: ["USER"],
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockComputeAgeTier).toHaveBeenCalled();
+      expect(prisma.member.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ ageTier: "YOUTH" }),
+        }),
+      );
+    });
+
+    it("falls back to ADULT on reclassification when the member has no date of birth", async () => {
+      vi.mocked(prisma.member.findUnique).mockResolvedValue(orgMember as any);
+      vi.mocked(prisma.member.update).mockResolvedValue(personMember as any);
+
+      const res = await putMember("org1", {
+        role: "USER",
+        accessRoles: ["USER"],
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockComputeAgeTier).not.toHaveBeenCalled();
+      expect(prisma.member.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ ageTier: "ADULT" }),
+        }),
+      );
+    });
+  });
+
+  describe("POST /api/admin/members (create)", () => {
+    function createRequest(body: Record<string, unknown>) {
+      return createMember(
+        jsonRequest("http://localhost/api/admin/members", body),
+      );
+    }
+
+    it("forces NOT_APPLICABLE when creating an ORG-role member", async () => {
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+      const create = vi.fn().mockResolvedValue({
+        ...orgMember,
+        id: "org9",
+      });
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) =>
+        fn({
+          member: { create },
+          memberAccessRole: {
+            createMany: vi.fn().mockResolvedValue({ count: 1 }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+          // SCHOOL-role creates seed a NOT_REQUIRED subscription row.
+          memberSubscription: { upsert: vi.fn().mockResolvedValue({}) },
+        }),
+      );
+
+      const res = await createRequest({
+        firstName: "Springfield",
+        lastName: "School",
+        email: "office@school.test",
+        accessRoles: ["ORG"],
+        ageTier: "ADULT",
+      });
+
+      expect(res.status).toBe(201);
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ ageTier: "NOT_APPLICABLE" }),
+        }),
+      );
+    });
+
+    it("rejects NOT_APPLICABLE with 422 when creating a non-organisation member", async () => {
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+
+      const res = await createRequest({
+        firstName: "Plain",
+        lastName: "Member",
+        email: "plain@example.com",
+        ageTier: "NOT_APPLICABLE",
+      });
+
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toMatch(/organisation/i);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("#1440 — bookable tier validator and display labels", () => {
+  it("bookableAgeTierEnum accepts the four person tiers and rejects NOT_APPLICABLE", () => {
+    for (const tier of ["INFANT", "CHILD", "YOUTH", "ADULT"]) {
+      expect(bookableAgeTierEnum.safeParse(tier).success).toBe(true);
+    }
+    expect(bookableAgeTierEnum.safeParse("NOT_APPLICABLE").success).toBe(false);
+  });
+
+  it("formatAgeTierName renders NOT_APPLICABLE as N/A and person tiers title-cased", () => {
+    expect(formatAgeTierName("NOT_APPLICABLE")).toBe("N/A");
+    expect(formatAgeTierName("ADULT")).toBe("Adult");
+    expect(formatAgeTierName("INFANT")).toBe("Infant");
+  });
+
+  it("getAgeTierLabel falls back to N/A for NOT_APPLICABLE, which never has a settings row", () => {
+    const options = [
+      { tier: "ADULT" as const, label: "Adult (18+)", sortOrder: 3 },
+    ];
+    expect(getAgeTierLabel(options, "ADULT")).toBe("Adult (18+)");
+    expect(getAgeTierLabel(options, "NOT_APPLICABLE")).toBe("N/A");
+  });
+});
+
+describe("#1440 — organisations cannot be linked as booking guests", () => {
+  it("resolveLinkedBookingMembers rejects a NOT_APPLICABLE linked member", async () => {
+    const db = {
+      member: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "org1", ageTier: "NOT_APPLICABLE", active: true },
+        ]),
+      },
+      familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
+    } as any;
+
+    await expect(
+      resolveLinkedBookingMembers(db, "booker1", ["org1"], {
+        skipAuthorization: true,
+      }),
+    ).rejects.toThrow(/Organisation accounts cannot be added/);
+  });
+
+  it("resolveLinkedBookingMembers still resolves person members", async () => {
+    const db = {
+      member: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "m1", ageTier: "ADULT", active: true },
+        ]),
+      },
+      familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
+    } as any;
+
+    const resolved = await resolveLinkedBookingMembers(db, "booker1", ["m1"], {
+      skipAuthorization: true,
+    });
+
+    expect(resolved.get("m1")).toMatchObject({ ageTier: "ADULT" });
+  });
+});

@@ -28,6 +28,7 @@ interface RolesResponse {
 interface MemberCommitteeAssignmentsCardProps {
   member: MemberDetail;
   onSaved: () => Promise<void>;
+  className?: string;
 }
 
 const emptyForm = {
@@ -73,6 +74,7 @@ function VisibilityBadge({ visible }: { visible: boolean }) {
 export function MemberCommitteeAssignmentsCard({
   member,
   onSaved,
+  className,
 }: MemberCommitteeAssignmentsCardProps) {
   const assignments = member.committeeAssignments ?? [];
   const [roles, setRoles] = useState<CommitteeRoleSummary[]>([]);
@@ -272,7 +274,7 @@ export function MemberCommitteeAssignmentsCard({
   }
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle className="flex items-center gap-2">

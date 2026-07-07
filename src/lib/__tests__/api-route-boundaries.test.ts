@@ -394,6 +394,9 @@ describe("API route boundary metadata", () => {
       GET: "session-redirect",
     },
     "src/app/api/finance/legacy-dashboard/bookings/route.ts": { GET: "viewer" },
+    "src/app/api/finance/sync/backfill-monthly-facts/route.ts": {
+      POST: "manager",
+    },
     "src/app/api/finance/sync/run/route.ts": { POST: "manager" },
     "src/app/api/finance/sync/status/route.ts": { GET: "manager" },
   };

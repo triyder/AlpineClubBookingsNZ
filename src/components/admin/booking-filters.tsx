@@ -19,6 +19,27 @@ interface BookingFiltersProps {
   showBedAllocation?: boolean;
 }
 
+const KNOWN_BOOKING_FILTER_QUERY_KEYS = [
+  "status",
+  "updatedFrom",
+  "updatedTo",
+  "checkInFrom",
+  "checkInTo",
+  "from",
+  "to",
+  "search",
+  "sort",
+  "sortBy",
+  "sortDir",
+  "month",
+  "deleted",
+  "paymentSource",
+  "xeroState",
+  "bedState",
+  "changeState",
+  "page",
+] as const;
+
 export function BookingFilters({ showBedAllocation = true }: BookingFiltersProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -40,6 +61,21 @@ export function BookingFilters({ showBedAllocation = true }: BookingFiltersProps
   const sortBy = searchParams.get("sortBy") || searchParams.get("sort") || "updatedAt";
   const sortDir = searchParams.get("sortDir") || "desc";
   const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
+  function statusFilterLabel(value: string) {
+    if (value === "all") return "All";
+
+    const statuses = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (statuses.length === 0) return "Custom status filter";
+    return statuses.map((item) => bookingStatusLabel(item)).join(" + ");
+  }
+
+  const hasCustomStatusValue =
+    status !== "all" &&
+    !bookingStatuses.includes(status as (typeof bookingStatuses)[number]);
 
   // Generate month options: current year ±1
   const monthOptions: Array<{ value: string; label: string }> = [];
@@ -59,7 +95,10 @@ export function BookingFilters({ showBedAllocation = true }: BookingFiltersProps
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams(window.location.search);
+      for (const key of KNOWN_BOOKING_FILTER_QUERY_KEYS) {
+        params.delete(key);
+      }
       if (status !== "all") params.set("status", status);
       if (updatedFrom) params.set("updatedFrom", updatedFrom);
       if (updatedTo) params.set("updatedTo", updatedTo);
@@ -113,6 +152,9 @@ export function BookingFilters({ showBedAllocation = true }: BookingFiltersProps
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All</SelectItem>
+            {hasCustomStatusValue ? (
+              <SelectItem value={status}>{statusFilterLabel(status)}</SelectItem>
+            ) : null}
             {bookingStatuses.map((bookingStatus) => (
               <SelectItem key={bookingStatus} value={bookingStatus}>
                 {bookingStatusLabel(bookingStatus)}

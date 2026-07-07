@@ -9,6 +9,7 @@ import {
   redactSensitiveText,
 } from "./redact-sensitive-json";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -34,6 +35,16 @@ export interface XeroObjectLinkInput {
   role: string;
   active?: boolean;
   metadata?: unknown;
+  /**
+   * F4 (#1354): merge the new metadata over the existing row's metadata
+   * instead of replacing it wholesale. Inbound reconcile writes
+   * {status,total,appliedAmount,remainingCredit} onto links whose outbound
+   * writer stored {amountCents,watermarkCents} — a replace destroyed the
+   * per-delta idempotency/covering inputs minutes after every refund credit
+   * note was created. Only inbound writers should set this; outbound writers
+   * own their metadata shape and keep replace semantics.
+   */
+  mergeMetadata?: boolean;
 }
 
 export interface XeroSyncOperationCompletion {
@@ -139,9 +150,12 @@ export function buildXeroIdempotencyKey(
  * note carries.
  */
 export async function sumCoveredRefundCreditNoteCents(
-  paymentId: string
+  paymentId: string,
+  // Optional transaction client (#1357) so a tx-scoped enqueue sees its own
+  // uncommitted writes; defaults to the global client for existing callers.
+  db: Prisma.TransactionClient = prisma
 ): Promise<number> {
-  const links = await prisma.xeroObjectLink.findMany({
+  const links = await db.xeroObjectLink.findMany({
     where: {
       localModel: "Payment",
       localId: paymentId,
@@ -160,7 +174,7 @@ export async function sumCoveredRefundCreditNoteCents(
       coveredCents += Math.max(0, Math.round(recorded));
       continue;
     }
-    const operation = await prisma.xeroSyncOperation.findFirst({
+    const operation = await db.xeroSyncOperation.findFirst({
       where: {
         direction: "OUTBOUND",
         entityType: "CREDIT_NOTE",
@@ -183,68 +197,71 @@ export async function sumCoveredRefundCreditNoteCents(
 }
 
 export async function findCanonicalPaymentRefundCreditNote(
-  paymentId: string
+  paymentId: string,
+  // Optional transaction client (#1357); defaults to the global client.
+  db: Prisma.TransactionClient = prisma
 ): Promise<CanonicalPaymentRefundCreditNoteLink | null> {
-  const [payment, refundCreditNoteLinks, refundPaymentLinks, succeededOperation] =
-    await Promise.all([
-      prisma.payment.findUnique({
-        where: { id: paymentId },
-        select: {
-          xeroRefundCreditNoteId: true,
-        },
-      }),
-      prisma.xeroObjectLink.findMany({
-        where: {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "CREDIT_NOTE",
-          role: "REFUND_CREDIT_NOTE",
-          active: true,
-        },
-        orderBy: [
-          { updatedAt: "desc" },
-          { createdAt: "desc" },
-        ],
-        select: {
-          xeroObjectId: true,
-          xeroObjectNumber: true,
-        },
-      }),
-      prisma.xeroObjectLink.findMany({
-        where: {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "PAYMENT",
-          role: "REFUND_PAYMENT",
-          active: true,
-        },
-        orderBy: [
-          { updatedAt: "desc" },
-          { createdAt: "desc" },
-        ],
-        select: {
-          metadata: true,
-        },
-      }),
-      prisma.xeroSyncOperation.findFirst({
-        where: {
-          status: "SUCCEEDED",
-          entityType: "CREDIT_NOTE",
-          operationType: "CREATE",
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectId: { not: null },
-        },
-        orderBy: [
-          { completedAt: "desc" },
-          { createdAt: "desc" },
-        ],
-        select: {
-          xeroObjectId: true,
-          xeroObjectNumber: true,
-        },
-      }),
-    ]);
+  // Sequential on purpose (#1357): an interactive transaction client
+  // serializes queries onto one connection anyway, and concurrent dispatch on
+  // an itx lets a failing sibling surface as a masking secondary
+  // "transaction already closed" error.
+  const payment = await db.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      xeroRefundCreditNoteId: true,
+    },
+  });
+  const refundCreditNoteLinks = await db.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "REFUND_CREDIT_NOTE",
+      active: true,
+    },
+    orderBy: [
+      { updatedAt: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      xeroObjectId: true,
+      xeroObjectNumber: true,
+    },
+  });
+  const refundPaymentLinks = await db.xeroObjectLink.findMany({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "PAYMENT",
+      role: "REFUND_PAYMENT",
+      active: true,
+    },
+    orderBy: [
+      { updatedAt: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      metadata: true,
+    },
+  });
+  const succeededOperation = await db.xeroSyncOperation.findFirst({
+    where: {
+      status: "SUCCEEDED",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectId: { not: null },
+    },
+    orderBy: [
+      { completedAt: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      xeroObjectId: true,
+      xeroObjectNumber: true,
+    },
+  });
 
   const xeroObjectNumberById = new Map<string, string | null>();
   for (const link of refundCreditNoteLinks) {
@@ -332,23 +349,58 @@ export async function startXeroSyncOperation(
     ? (await db.xeroSyncOperation.count({ where: attemptWhere })) + 1
     : 1;
 
-  return db.xeroSyncOperation.create({
-    data: {
-      direction: input.direction,
-      entityType: input.entityType,
-      operationType: input.operationType,
-      localModel: input.localModel ?? null,
-      localId: input.localId ?? null,
-      status: input.status ?? "RUNNING",
-      idempotencyKey: input.idempotencyKey ?? null,
-      correlationKey: input.correlationKey ?? null,
-      attemptCount,
-      replayable: input.replayable ?? true,
-      requestPayload: sanitizeForJson(input.requestPayload),
-      createdByMemberId: input.createdByMemberId ?? null,
-      startedAt: input.status === "PENDING" ? null : new Date(),
-    },
-  });
+  // Denormalized copy of the outbox queue type (#1271, item 3 of #1208),
+  // captured once here at enqueue and never updated afterward. Derive it from
+  // the SAME sanitized payload that gets persisted so it mirrors the
+  // enqueue-time `requestPayload.queueType` exactly. Dispatch reads queueType
+  // from the payload (not this column) BEFORE handlers may overwrite
+  // requestPayload, so the two can legitimately diverge post-dispatch. The
+  // booking-vs-Xero repair pass reads this column as the AUTHORITATIVE
+  // discriminator precisely because it survives those overwrites (#1427).
+  // Rows without a queueType (REQUEUE, inbound reconciles, backfill) stay
+  // null.
+  const requestPayload = sanitizeForJson(input.requestPayload);
+  const payloadRecord = asRecord(requestPayload);
+  const queueType = payloadRecord ? readString(payloadRecord.queueType) : null;
+
+  try {
+    return await db.xeroSyncOperation.create({
+      data: {
+        direction: input.direction,
+        entityType: input.entityType,
+        operationType: input.operationType,
+        localModel: input.localModel ?? null,
+        localId: input.localId ?? null,
+        status: input.status ?? "RUNNING",
+        idempotencyKey: input.idempotencyKey ?? null,
+        correlationKey: input.correlationKey ?? null,
+        attemptCount,
+        replayable: input.replayable ?? true,
+        requestPayload,
+        queueType,
+        createdByMemberId: input.createdByMemberId ?? null,
+        startedAt: input.status === "PENDING" ? null : new Date(),
+      },
+    });
+  } catch (error) {
+    // #1354: the partial unique index (one ACTIVE operation per correlation
+    // key) turns a lost concurrent-enqueue race into a unique violation here.
+    // Resolve it the same way the findFirst fast-path dedup would have:
+    // return the winner's active row so the caller's enqueue is idempotent.
+    if (isPrismaUniqueConstraintError(error) && input.correlationKey) {
+      const existing = await db.xeroSyncOperation.findFirst({
+        where: {
+          correlationKey: input.correlationKey,
+          status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+    throw error;
+  }
 }
 
 async function normalizePaymentRefundLinkWithClient(
@@ -497,6 +549,37 @@ async function upsertXeroObjectLinkWithClient(
     normalizedLink.xeroObjectUrl ??
     buildXeroObjectUrl(normalizedLink.xeroObjectType, normalizedLink.xeroObjectId);
 
+  let metadataForUpdate: unknown = normalizedLink.metadata;
+  if (normalizedLink.mergeMetadata) {
+    const existing = await client.xeroObjectLink.findUnique({
+      where: {
+        localModel_localId_xeroObjectType_xeroObjectId_role: {
+          localModel: normalizedLink.localModel,
+          localId: normalizedLink.localId,
+          xeroObjectType: normalizedLink.xeroObjectType,
+          xeroObjectId: normalizedLink.xeroObjectId,
+          role: normalizedLink.role,
+        },
+      },
+      select: { metadata: true },
+    });
+    const existingRecord =
+      existing?.metadata &&
+      typeof existing.metadata === "object" &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : null;
+    const incomingRecord =
+      normalizedLink.metadata &&
+      typeof normalizedLink.metadata === "object" &&
+      !Array.isArray(normalizedLink.metadata)
+        ? (normalizedLink.metadata as Record<string, unknown>)
+        : null;
+    if (existingRecord || incomingRecord) {
+      metadataForUpdate = { ...(existingRecord ?? {}), ...(incomingRecord ?? {}) };
+    }
+  }
+
   return client.xeroObjectLink.upsert({
     where: {
       localModel_localId_xeroObjectType_xeroObjectId_role: {
@@ -522,12 +605,20 @@ async function upsertXeroObjectLinkWithClient(
       xeroObjectNumber: normalizedLink.xeroObjectNumber ?? null,
       xeroObjectUrl,
       active: normalizedLink.active ?? true,
-      metadata: sanitizeForJson(normalizedLink.metadata),
+      metadata: sanitizeForJson(metadataForUpdate),
     },
   });
 }
 
-export async function upsertXeroObjectLink(link: XeroObjectLinkInput) {
+export async function upsertXeroObjectLink(
+  link: XeroObjectLinkInput,
+  // Optional in-flight transaction client (#1357): callers already inside a
+  // transaction must not open a nested one, so the write joins theirs.
+  options?: { store?: Prisma.TransactionClient }
+) {
+  if (options?.store) {
+    return upsertXeroObjectLinkWithClient(options.store, link);
+  }
   return prisma.$transaction((tx) => upsertXeroObjectLinkWithClient(tx, link));
 }
 

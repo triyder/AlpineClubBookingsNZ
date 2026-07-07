@@ -29,7 +29,7 @@ import {
   validatePromoCodeFull,
 } from "@/lib/promo";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -76,7 +76,7 @@ const modifyQuoteSchema = z.object({
       z.object({
         firstName: nameField(),
         lastName: nameField(),
-        ageTier: ageTierEnum,
+        ageTier: bookableAgeTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
         stayStart: z.string().optional(),
@@ -303,6 +303,9 @@ export async function POST(
       input: { guestUpdates, removeGuestIds },
       // Quoted bookings rename placeholder students even after payment.
       allowWhenFullyPaid: quotePriced,
+      // Preview mirrors the server gate (#1386): identity-only typo fixes on a
+      // fully-paid booking are allowed; swaps are rejected the same way.
+      allowTypoFixWhenFullyPaid: requestIsIdentityOnly,
     });
   } catch (error) {
     if (error instanceof ApiError) {

@@ -159,4 +159,77 @@ describe("age-tier Xero contact group mismatch snapshot", () => {
       }),
     ]);
   });
+
+  it("flags NOT_APPLICABLE members only when they sit in a managed age-tier group (#1440)", async () => {
+    vi.mocked(prisma.ageTierSetting.findMany).mockResolvedValue([
+      {
+        tier: "ADULT",
+        label: "Adult",
+        sortOrder: 3,
+        xeroContactGroupId: "group-adult",
+        xeroContactGroupName: "Adult Members",
+        xeroAcceptedContactGroups: [],
+      },
+    ] as any);
+    vi.mocked(prisma.xeroSyncCursor.findUnique).mockResolvedValue({
+      lastSuccessfulSyncAt: new Date("2026-07-01T00:00:00.000Z"),
+    } as any);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      {
+        // Org left in the managed Adults group from before the backfill.
+        id: "org-stale",
+        firstName: "Springfield",
+        lastName: "School",
+        email: "office@school.test",
+        ageTier: "NOT_APPLICABLE",
+        xeroContactId: "xc-org-stale",
+      },
+      {
+        // Org outside every managed group: no expected group, no mismatch.
+        id: "org-clean",
+        firstName: "Shelbyville",
+        lastName: "School",
+        email: "office@shelbyville.test",
+        ageTier: "NOT_APPLICABLE",
+        xeroContactId: "xc-org-clean",
+      },
+    ] as any);
+    vi.mocked(prisma.xeroContactGroupMembershipCache.findMany).mockResolvedValue([
+      {
+        contactId: "xc-org-stale",
+        contactGroupId: "group-adult",
+        group: {
+          name: "Adult Members",
+        },
+      },
+      {
+        contactId: "xc-org-clean",
+        contactGroupId: "group-unmanaged",
+        group: {
+          name: "Newsletter",
+        },
+      },
+    ] as any);
+
+    const snapshot = await getXeroContactGroupMismatchSnapshot();
+
+    expect(snapshot.cacheReady).toBe(true);
+    expect(snapshot.count).toBe(1);
+    expect(snapshot.mismatches).toEqual([
+      expect.objectContaining({
+        memberId: "org-stale",
+        ageTier: "NOT_APPLICABLE",
+        defaultGroup: null,
+        acceptedGroups: [],
+        missingExpectedGroup: false,
+        unexpectedManagedGroups: [
+          {
+            id: "group-adult",
+            name: "Adult Members",
+            tier: "ADULT",
+          },
+        ],
+      }),
+    ]);
+  });
 });

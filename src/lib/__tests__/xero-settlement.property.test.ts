@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { classifyXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
+import { lineTotalCents } from "@/lib/__tests__/helpers";
 
 /**
  * Property-based tests (fast-check) for the Xero-side settlement money math
  * (issue #1131, epic #1125): the booking-edit settlement classifier must route
- * every possible delta to exactly one financial action whose amounts are
- * non-negative integers matching the delta's sign, and invoice line items must
- * reconcile back to the cent ledger they were built from.
+ * every possible delta to exactly one financial action whose integer-cent
+ * amounts reconcile to the delta's net (#1356: supplementary-invoice
+ * components stay signed and sum to the net; credit-note amounts stay
+ * positive), and invoice line items must reconcile back to the cent ledger
+ * they were built from.
  */
 
 const classifyInputArb = fc.record({
@@ -67,11 +70,17 @@ describe("classifyXeroBookingEditSettlement properties", () => {
         if (expectedNet > 0) {
           expect(decision.financialAction.type).toBe("supplementary-invoice");
           if (decision.financialAction.type === "supplementary-invoice") {
+            // #1356: the components pass through SIGNED — a mixed-sign edit
+            // (negative price diff, larger fee) must keep its reduction so the
+            // invoice components always sum to the net the member is charged.
             expect(decision.financialAction.priceDiffCents).toBe(
-              Math.max(input.priceDiffCents, 0)
+              input.priceDiffCents
             );
-            expect(decision.financialAction.priceDiffCents).toBeGreaterThanOrEqual(0);
             expect(decision.financialAction.changeFeeCents).toBe(changeFee);
+            expect(
+              decision.financialAction.priceDiffCents +
+                decision.financialAction.changeFeeCents
+            ).toBe(expectedNet);
             // A payment is recorded only when a confirmed additional Stripe
             // intent exists to wait for.
             if (decision.financialAction.recordPayment) {
@@ -145,14 +154,6 @@ describe("buildInvoiceLineItems properties", () => {
     }),
     isMember: fc.boolean(),
   });
-
-  function lineTotalCents(lines: Array<{ quantity?: number; unitAmount?: number }>) {
-    return lines.reduce(
-      (sum, line) =>
-        sum + Math.round((line.quantity ?? 0) * (line.unitAmount ?? 0) * 100),
-      0
-    );
-  }
 
   it("uniformly-priced night sets reconcile exactly to the cent ledger", () => {
     fc.assert(
