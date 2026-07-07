@@ -98,6 +98,27 @@ export function MemberCommitteeAssignmentsCard({
   const selectedRoleEmail =
     roles.find((role) => role.id === form.committeeRoleId)?.contactEmail ?? null;
 
+  // Mirror the /api/contact per-mode resolution (incl. the ROLE→member fallback)
+  // so the operator sees the EXACT address a public contact message will reach,
+  // and — critically — which source it comes from (it is not the member's own
+  // inbox unless MEMBER is chosen).
+  const resolvedContact = (() => {
+    const memberEmail = member.email?.trim() || null;
+    const roleEmail = selectedRoleEmail?.trim() || null;
+    const customEmail = form.contactEmailOverride.trim() || null;
+    if (form.contactEmailMode === "CUSTOM") {
+      return { email: customEmail, source: "the custom address below" };
+    }
+    if (form.contactEmailMode === "MEMBER") {
+      return memberEmail
+        ? { email: memberEmail, source: "this member's own email" }
+        : { email: roleEmail, source: "the committee role email (this member has no email on file)" };
+    }
+    return roleEmail
+      ? { email: roleEmail, source: "the committee role email" }
+      : { email: memberEmail, source: "this member's own email (the role has no email set)" };
+  })();
+
   async function loadRoles() {
     setRolesLoading(true);
     setError("");
@@ -416,6 +437,11 @@ export function MemberCommitteeAssignmentsCard({
             {form.contactable ? (
               <div className="mt-4 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
                 <Label htmlFor="committeeContactEmailMode">Contact email</Label>
+                <p className="text-xs text-slate-500">
+                  Choose where the public contact form delivers messages for this
+                  committee role. The default is the committee role email — not this
+                  member&apos;s own inbox.
+                </p>
                 <Select
                   value={form.contactEmailMode}
                   onValueChange={(value) =>
@@ -462,6 +488,18 @@ export function MemberCommitteeAssignmentsCard({
                     />
                   </div>
                 ) : null}
+                <p
+                  className="rounded border border-blue-200 bg-blue-50 px-2.5 py-2 text-sm text-blue-900"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Public contact messages will be sent to{" "}
+                  <span className="font-semibold">
+                    {resolvedContact.email ?? "— no address set —"}
+                  </span>{" "}
+                  <span className="text-blue-700">({resolvedContact.source})</span>
+                  {resolvedContact.email ? "." : " — set an address so messages are not lost."}
+                </p>
               </div>
             ) : null}
             <div className="mt-4 flex gap-2">
