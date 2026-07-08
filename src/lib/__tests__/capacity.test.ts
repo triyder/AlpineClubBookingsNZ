@@ -168,6 +168,69 @@ describe("capacity calendar availability", () => {
     });
   });
 
+  it("caps configured beds at a lower capacity ceiling (#22)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(40);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 30 }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 30,
+      source: "capped_beds",
+      bedAllocationEnabled: true,
+      activeBedCount: 40,
+      fallbackCapacity: 30,
+    });
+  });
+
+  it("does not cap when the capacity equals the bed count (#22)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(30);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 30 }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 30,
+      source: "configured_beds",
+      activeBedCount: 30,
+    });
+  });
+
+  it("uses the per-lodge capacity when the module is on but no beds exist yet (#22)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(0);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 25 }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 25,
+      source: "capacity_override",
+      bedAllocationEnabled: true,
+      activeBedCount: 0,
+    });
+  });
+
   it("emits one key for each date-only day in the requested month", async () => {
     const availability = await getMonthAvailability(LODGE_A, 2026, 3);
     const keys = [...availability.keys()];

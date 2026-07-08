@@ -35,11 +35,18 @@ Future reviews and issues should cite this file when proposing changes.
   is now a strict `{ lodgeId }`. Policy/settings tables keep a **nullable**
   `lodgeId` (null = club-wide default), scoped via `resolvePolicyRowsForLodge`.
   See `docs/multi-lodge/contract-release.md`.
-- Each lodge's capacity resolves through `getLodgeCapacityStatus`: active
-  configured beds when the Bed Allocation module is on, else the per-lodge
-  `LodgeSettings.capacity` override, else the club-config bed total for the
-  default lodge only. An additional lodge with neither configured beds nor a
-  capacity override resolves to capacity 0 (`unconfigured_lodge`), so a
+- Each lodge's capacity resolves through `getLodgeCapacityStatus` (full
+  scenario table in `docs/CAPACITY_MODEL.md`). When the Bed Allocation module
+  is on with ≥1 active bed, the physical bed inventory is the placement set and
+  the per-lodge `LodgeSettings.capacity` acts as a **maximum sleeping capacity
+  ceiling**: the effective capacity is the lower of the two, so a lodge may
+  have more beds installed than it is allowed to sleep (`capped_beds`). No
+  capacity set — or one at/above the bed count — leaves the bed count as the
+  figure (`configured_beds`); only an explicit capacity caps it, never the
+  club-config fallback. When the module is off, or on with no active beds, the
+  capacity is the per-lodge `LodgeSettings.capacity`, else the club-config bed
+  total for the default lodge only. An additional lodge with neither configured
+  beds nor a capacity resolves to capacity 0 (`unconfigured_lodge`), so a
   freshly created lodge is unbookable rather than overbookable until it is set
   up.
 - A booking consumes beds when it is capacity-holding. The implementation

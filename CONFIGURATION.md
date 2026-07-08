@@ -56,10 +56,13 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 
 When the bed allocation module is effectively enabled and at least one active
 bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
-active bed count from that configurator. If the module is disabled, or the
+active bed count from that configurator — unless a per-lodge capacity is set
+below that count, which caps it (the lower of the two applies, so a lodge may
+have more beds than it is allowed to sleep). If the module is disabled, or the
 module is enabled but no active beds exist yet, the system falls back to the
-`beds[].capacity` total in `config/club.json`. Use the Rooms & Beds import
-action to seed the configurator from `config/club.json` during transition.
+per-lodge capacity, else the `beds[].capacity` total in `config/club.json`. Use
+the Rooms & Beds import action to seed the configurator from `config/club.json`
+during transition. See `docs/CAPACITY_MODEL.md` for the full resolution table.
 
 Keep all money values in integer cents.
 
@@ -255,8 +258,10 @@ public page route.
 Admin > Setup includes lodge-wide settings stored in the singleton
 `LodgeSettings` row:
 
-- Capacity override: optional. Leave blank to use the bed total from club
-  configuration, unless the Bed Allocation module is enabled with active beds.
+- Capacity: optional per-lodge maximum sleeping capacity. Leave blank to use the
+  active bed count (Bed Allocation on) or the club-config bed total. When set
+  alongside configured beds it acts as a ceiling — the lower of the capacity and
+  the active bed count applies (`docs/CAPACITY_MODEL.md`).
 - Hut-leader lookahead: defaults to 14 days and controls how far ahead
   unassigned hut-leader dates are reported on the admin dashboard, stuck-state
   dashboard, the hut-leader assignment API, and the queue-driven Needs
