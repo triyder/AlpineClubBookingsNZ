@@ -30,10 +30,13 @@ export async function POST(request: Request) {
 
   let bytes: Uint8Array;
   let expectedFingerprint: string;
+  let mode: "merge" | "overwrite" = "merge";
   try {
     const form = await request.formData();
     const file = form.get("bundle");
     const fingerprint = form.get("expectedFingerprint");
+    // Default to the safe "merge" mode unless the admin explicitly overwrites.
+    if (form.get("mode") === "overwrite") mode = "overwrite";
     if (!(file instanceof File)) {
       return NextResponse.json(
         { error: "Missing 'bundle' file." },
@@ -67,6 +70,7 @@ export async function POST(request: Request) {
       bundleBytes: bytes,
       actorMemberId: guard.session.user.id,
       expectedFingerprint,
+      mode,
     });
     return NextResponse.json({ result });
   } catch (error) {

@@ -6,6 +6,7 @@ import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   hashRow,
+  updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
   type CategoryImporter,
@@ -98,7 +99,7 @@ async function applyCommittee(ctx: ApplyContext): Promise<CategoryApplyResult> {
     await ctx.tx.committeeRole.upsert({
       where: { key },
       create: { key, ...data },
-      update: data,
+      update: updateDataForMode(ctx.mode, raw, data),
     });
     if (existing) result.updated += 1;
     else result.created += 1;

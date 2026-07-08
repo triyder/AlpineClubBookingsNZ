@@ -4,6 +4,7 @@ import type { BundleEntry } from "../bundle";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
+  updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
   type CategoryImporter,
@@ -139,7 +140,7 @@ async function applyInduction(ctx: ApplyContext): Promise<CategoryApplyResult> {
       select: { id: true },
     });
     if (existing) {
-      await ctx.tx.inductionChecklistTemplate.update({ where: { id: existing.id }, data: tplData });
+      await ctx.tx.inductionChecklistTemplate.update({ where: { id: existing.id }, data: updateDataForMode(ctx.mode, tpl as unknown as Record<string, unknown>, tplData) });
       templateId = existing.id;
       result.updated += 1;
     } else {
@@ -163,7 +164,7 @@ async function applyInduction(ctx: ApplyContext): Promise<CategoryApplyResult> {
         select: { id: true },
       });
       if (existingSection) {
-        await ctx.tx.inductionChecklistSection.update({ where: { id: existingSection.id }, data: secData });
+        await ctx.tx.inductionChecklistSection.update({ where: { id: existingSection.id }, data: updateDataForMode(ctx.mode, section as unknown as Record<string, unknown>, secData) });
         sectionId = existingSection.id;
       } else {
         const createdSection = await ctx.tx.inductionChecklistSection.create({
@@ -187,7 +188,7 @@ async function applyInduction(ctx: ApplyContext): Promise<CategoryApplyResult> {
           select: { id: true },
         });
         if (existingItem) {
-          await ctx.tx.inductionChecklistItem.update({ where: { id: existingItem.id }, data: itemData });
+          await ctx.tx.inductionChecklistItem.update({ where: { id: existingItem.id }, data: updateDataForMode(ctx.mode, item as unknown as Record<string, unknown>, itemData) });
         } else {
           await ctx.tx.inductionChecklistItem.create({ data: { sectionId, label: item.label, ...itemData } });
         }

@@ -14,10 +14,16 @@ admins at **Admin → Setup & Configuration → Export & Import**
   `.zip` bundle.
 - **Import:** upload a bundle → a mandatory **dry-run** shows exactly what will
   be created/updated per entity (plus door-code, Xero-org, and any bundle
-  integrity warnings) → confirm to apply. The server takes a `pg_dump` backup
-  first, applies inside one transaction under a single-flight advisory lock, and
-  audits the result. Import **never deletes**, so a "restore" won't remove
-  anything added since the export; the pre-apply backup is the true rollback.
+  integrity warnings) → choose a **write mode** → confirm to apply. The server
+  takes a `pg_dump` backup first, applies inside one transaction under a
+  single-flight advisory lock, and audits the result. Import **never deletes**,
+  so a "restore" won't remove anything added since the export; the pre-apply
+  backup is the true rollback.
+- **Write mode (per import, default Merge):** *Merge* writes only the fields
+  that carry a value in the bundle — blank/omitted fields keep the record's
+  existing value, so a partial or skeleton bundle patches rather than wipes.
+  *Overwrite* makes the bundle fully define each record (blank fields clear the
+  value). Creates always use the bundle's values in either mode.
 - **Hand-editing:** bundles are meant to be edited (e.g. tweak a CSV, add a
   lodge folder). The manifest's per-file checksums and row counts are
   **advisory** — a mismatch is surfaced as a dry-run warning, never a hard

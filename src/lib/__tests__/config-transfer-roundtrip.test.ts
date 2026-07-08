@@ -99,6 +99,7 @@ describe("config-transfer round-trip (site-content)", () => {
       tx: store.db as unknown as TxDb,
       files,
       manifest,
+      mode: "overwrite" as const,
       actorMemberId: "admin-1",
       imageRemap: new Map<string, string>(),
     };

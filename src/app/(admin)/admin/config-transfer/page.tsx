@@ -69,6 +69,7 @@ export default function ConfigTransferPage() {
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [planning, setPlanning] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [mode, setMode] = useState<"merge" | "overwrite">("merge");
   const [resealing, setResealing] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [applied, setApplied] = useState<string | null>(null);
@@ -186,6 +187,7 @@ export default function ConfigTransferPage() {
       const form = new FormData();
       form.append("bundle", file);
       form.append("expectedFingerprint", plan.fingerprint);
+      form.append("mode", mode);
       const res = await fetch("/api/admin/config-transfer/apply", {
         method: "POST",
         body: form,
@@ -324,6 +326,40 @@ export default function ConfigTransferPage() {
                 Plan: {plan.summary.create} new, {plan.summary.update} updated,{" "}
                 {plan.summary.unchanged} unchanged.
               </p>
+              <fieldset className="rounded-md border p-3">
+                <legend className="px-1 text-xs font-medium text-muted-foreground">
+                  How to apply to existing records
+                </legend>
+                <label className="flex items-start gap-2" htmlFor="mode-merge">
+                  <input
+                    id="mode-merge"
+                    type="radio"
+                    name="import-mode"
+                    className="mt-1"
+                    checked={mode === "merge"}
+                    onChange={() => setMode("merge")}
+                  />
+                  <span>
+                    <span className="font-medium">Merge</span> (recommended) — only
+                    fields with a value in the bundle are written; blank fields keep
+                    the existing value.
+                  </span>
+                </label>
+                <label className="mt-2 flex items-start gap-2" htmlFor="mode-overwrite">
+                  <input
+                    id="mode-overwrite"
+                    type="radio"
+                    name="import-mode"
+                    className="mt-1"
+                    checked={mode === "overwrite"}
+                    onChange={() => setMode("overwrite")}
+                  />
+                  <span>
+                    <span className="font-medium">Overwrite</span> — the bundle fully
+                    defines each record; blank fields clear the existing value.
+                  </span>
+                </label>
+              </fieldset>
               {plan.doorCodesIncluded && (
                 <p className="text-amber-800">
                   This bundle includes door codes.

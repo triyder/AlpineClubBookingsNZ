@@ -36,7 +36,11 @@ All notable public reference-release changes should be recorded here.
   org id in a sealed `xero-config/source.json`). Bundles are hand-editable:
   manifest checksums/row counts are advisory (mismatches warn in the dry-run,
   never block; import is files-first), with a "reseal" action to regenerate the
-  manifest; only structural/safety problems are hard-refused. Never carries
+  manifest; only structural/safety problems are hard-refused. Import has a
+  per-run **write mode** (default **merge**): merge writes only fields that
+  carry a value in the bundle (blank/omitted fields keep the record's existing
+  value, so a partial or skeleton bundle patches rather than wipes); overwrite
+  makes the bundle fully define each record (blanks clear). Never carries
   secrets, members, transactional data, or (by default) door codes. Not a
   database backup; the `pg_dump` subsystem remains the disaster-recovery tool.
   No schema migration. See `docs/config-transfer/`.

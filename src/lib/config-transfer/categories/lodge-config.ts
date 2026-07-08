@@ -10,6 +10,7 @@ import {
   type CategoryApplyResult,
   type CategoryImporter,
   type CategoryPlanResult,
+  updateDataForMode,
   type PlanContext,
   type PlanItem,
 } from "../import-types";
@@ -361,7 +362,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
     const lodge = await ctx.tx.lodge.upsert({
       where: { slug },
       create: { slug, ...(lodgeData as { name: string }) },
-      update: lodgeData,
+      update: updateDataForMode(ctx.mode, descriptor, lodgeData),
       select: { id: true },
     });
     if (existingLodge) result.updated += 1;
@@ -374,7 +375,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       if (!name) { result.skipped += 1; continue; }
       const data = { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active), notes: raw.notes || null };
       const existing = await ctx.tx.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name } }, select: { id: true } });
-      await ctx.tx.lodgeRoom.upsert({ where: { lodgeId_name: { lodgeId, name } }, create: { lodgeId, name, ...data }, update: data });
+      await ctx.tx.lodgeRoom.upsert({ where: { lodgeId_name: { lodgeId, name } }, create: { lodgeId, name, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
       if (existing) result.updated += 1;
       else result.created += 1;
     }
@@ -387,7 +388,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       if (!name) { result.skipped += 1; continue; }
       const data = { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active) };
       const existing = await ctx.tx.lodgeBed.findUnique({ where: { roomId_name: { roomId: room.id, name } }, select: { id: true } });
-      await ctx.tx.lodgeBed.upsert({ where: { roomId_name: { roomId: room.id, name } }, create: { roomId: room.id, name, ...data }, update: data });
+      await ctx.tx.lodgeBed.upsert({ where: { roomId_name: { roomId: room.id, name } }, create: { roomId: room.id, name, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
       if (existing) result.updated += 1;
       else result.created += 1;
     }
@@ -400,7 +401,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       const data = { type: raw.type as never, startDate: fromDateStr(raw.startDate), endDate: fromDateStr(raw.endDate), active: coerceBool(raw.active) };
       const existing = await ctx.tx.season.findFirst({ where: { lodgeId, name }, select: { id: true } });
       if (existing) {
-        await ctx.tx.season.update({ where: { id: existing.id }, data });
+        await ctx.tx.season.update({ where: { id: existing.id }, data: updateDataForMode(ctx.mode, raw, data) });
         seasonIdByName.set(name, existing.id);
         result.updated += 1;
       } else {
@@ -422,7 +423,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       const isMember = coerceBool(raw.isMember);
       const data = { pricePerNightCents: coerceInt(raw.pricePerNightCents, 0) };
       const existing = await ctx.tx.seasonRate.findUnique({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, select: { id: true } });
-      await ctx.tx.seasonRate.upsert({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, create: { seasonId, ageTier, isMember, ...data }, update: data });
+      await ctx.tx.seasonRate.upsert({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, create: { seasonId, ageTier, isMember, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
       if (existing) result.updated += 1;
       else result.created += 1;
     }

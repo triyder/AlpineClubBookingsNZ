@@ -8,7 +8,7 @@ import { readBundle } from "./bundle";
 import { buildImportPlan } from "./import";
 import { CATEGORY_IMPORTERS } from "./import";
 import { recreateBundleMedia } from "./media";
-import type { CategoryApplyResult, TxDb } from "./import-types";
+import type { CategoryApplyResult, ImportMode, TxDb } from "./import-types";
 
 // Apply orchestrator: re-plans against current DB, refuses on fingerprint drift,
 // takes a pre-apply database backup, then applies every selected category inside
@@ -42,6 +42,8 @@ export type ApplyConfigImportParams = {
   actorMemberId: string;
   /** Fingerprint from the dry-run; apply refuses if the DB has since drifted. */
   expectedFingerprint: string;
+  /** merge (default) keeps existing values for blank fields; overwrite clears. */
+  mode: ImportMode;
 };
 
 export type ApplyConfigImportResult = {
@@ -53,7 +55,8 @@ export type ApplyConfigImportResult = {
 export async function applyConfigImport(
   params: ApplyConfigImportParams,
 ): Promise<ApplyConfigImportResult> {
-  const { prisma, bundleBytes, actorMemberId, expectedFingerprint } = params;
+  const { prisma, bundleBytes, actorMemberId, expectedFingerprint, mode } =
+    params;
 
   // Validate the bundle up front (throws on any integrity problem).
   const { manifest, files } = readBundle(bundleBytes);
@@ -90,6 +93,7 @@ export async function applyConfigImport(
           tx,
           files,
           manifest,
+          mode,
           actorMemberId,
           imageRemap,
         });
@@ -113,6 +117,7 @@ export async function applyConfigImport(
     metadata: {
       includedCategories: manifest.includedCategories,
       doorCodesIncluded: manifest.doorCodesIncluded,
+      mode,
       sourceApp: manifest.app,
       totals,
       perCategory,

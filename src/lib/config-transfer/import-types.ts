@@ -11,6 +11,43 @@ import type { ConfigTransferCategory, ConfigTransferManifest } from "./manifest"
 export type ReadDb = PrismaClient;
 export type TxDb = Prisma.TransactionClient;
 
+/**
+ * How an import writes fields onto an EXISTING row:
+ * - "merge" (default): only fields whose bundle value is present + non-empty are
+ *   written; blank/omitted fields keep the target's existing value. Safe with
+ *   the always-emitted full skeleton — a partial bundle patches, never wipes.
+ * - "overwrite": the bundle fully defines the row; blank fields clear the target.
+ * Creates always use the bundle's values regardless of mode (nothing to keep).
+ */
+export type ImportMode = "merge" | "overwrite";
+
+/** True if a bundle row carries a present, non-empty value for `field`. */
+export function rawHasValue(
+  raw: Record<string, unknown>,
+  field: string,
+): boolean {
+  return String(raw[field] ?? "").trim() !== "";
+}
+
+/**
+ * The field set to write on UPDATE for the given mode. In merge mode, drop any
+ * field whose bundle source (`raw`) is blank/omitted so the target keeps its
+ * existing value; in overwrite mode, write everything. `data` keys must match
+ * the bundle column/key names (they do across all categories).
+ */
+export function updateDataForMode<T extends Record<string, unknown>>(
+  mode: ImportMode,
+  raw: Record<string, unknown>,
+  data: T,
+): Partial<T> {
+  if (mode === "overwrite") return data;
+  const out: Partial<T> = {};
+  for (const key of Object.keys(data) as (keyof T & string)[]) {
+    if (rawHasValue(raw, key)) out[key] = data[key];
+  }
+  return out;
+}
+
 export type PlanAction = "create" | "update" | "unchanged";
 
 export interface PlanItem {
@@ -74,6 +111,8 @@ export interface ApplyContext {
   tx: TxDb;
   files: Map<string, Uint8Array>;
   manifest: ConfigTransferManifest;
+  /** merge (blank fields keep existing) vs overwrite (blank fields clear). */
+  mode: ImportMode;
   /** Member id performing the import, for audit-of-who fields. */
   actorMemberId: string;
   /** Old MediaImage id → new id, for rewriting /api/images/<id> in content. */

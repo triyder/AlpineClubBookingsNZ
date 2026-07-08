@@ -12,6 +12,7 @@ import { registerEntity, type EntityDescriptor } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   hashRow,
+  updateDataForMode,
   type CategoryImporter,
   type CategoryApplyResult,
   type CategoryPlanResult,
@@ -397,7 +398,7 @@ async function applySiteContent(
     await ctx.tx.pageContent.upsert({
       where: { slug: page.slug },
       create: { slug: page.slug, ...data },
-      update: data,
+      update: updateDataForMode(ctx.mode, raw, data),
     });
     if (existing) result.updated += 1;
     else result.created += 1;
@@ -416,7 +417,7 @@ async function applySiteContent(
     await ctx.tx.siteContent.upsert({
       where: { key: key as never },
       create: { key: key as never, contentHtml: html },
-      update: { contentHtml: html },
+      update: updateDataForMode(ctx.mode, row, { contentHtml: html }),
     });
     if (existing) result.updated += 1;
     else result.created += 1;
@@ -439,7 +440,7 @@ async function applySiteContent(
     await ctx.tx.clubTheme.upsert({
       where: { id: "default" },
       create: { id: "default", ...data } as Prisma.ClubThemeUncheckedCreateInput,
-      update: data,
+      update: updateDataForMode(ctx.mode, theme, data),
     });
     if (existing) result.updated += 1;
     else result.created += 1;

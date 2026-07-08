@@ -46,12 +46,18 @@ database backup, not this tool.
 2. **Resolve.** The admin answers the open questions in the UI:
    - ambiguous candidate match → *match to existing X* or *create new*
      (this is also the rename path);
-   - conflicting values → *overwrite with imported*, *keep existing*, or
-     *merge* where meaningful;
-   - singletons → shown as a field diff; apply mode is chosen per object:
-     **replace-present / keep-omitted** (default; an older bundle cannot
-     wipe newer fields) or **full row replace** (bundle fully defines the
-     object; omitted fields reset to defaults);
+   - **write mode** (applies to every entity, chosen at apply time, default
+     **merge**): in *merge*, only fields whose bundle value is present +
+     non-empty are written onto an existing row, so blank/omitted fields keep
+     the target's existing value (an older or partial bundle cannot wipe
+     populated fields — the safe default, and what makes the always-emitted full
+     skeleton safe to hand-edit); in *overwrite*, the bundle fully defines each
+     row and blank fields clear the target. Creates always use the bundle's
+     values regardless of mode. Mode affects only which fields are written, not
+     the create/update classification, so the dry-run plan is mode-independent;
+     (a per-field keep/change/clear diff in the preview is a planned follow-up —
+     deferred so the diff handles date/enum/type coercion correctly rather than
+     mislabel unchanged values);
    - Xero category → if the bundle's source tenant id (from
      `xero-config/source.json`, not the manifest) differs from the connected
      org (or none is connected), a prominent warning with *apply anyway* /

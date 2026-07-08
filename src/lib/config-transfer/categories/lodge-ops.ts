@@ -19,6 +19,7 @@ import {
   type CategoryApplyResult,
   type CategoryImporter,
   type CategoryPlanResult,
+  updateDataForMode,
   type PlanContext,
   type PlanItem,
   type ReadDb,
@@ -218,7 +219,11 @@ async function applyLodgeOps(ctx: ApplyContext): Promise<CategoryApplyResult> {
       select: { id: true },
     });
     if (existing) {
-      await ctx.tx.lodgeInstruction.update({ where: { id: existing.id }, data: { contentHtml: html } });
+      // Merge: a blank instruction body keeps the existing content.
+      await ctx.tx.lodgeInstruction.update({
+        where: { id: existing.id },
+        data: updateDataForMode(ctx.mode, { contentHtml: contentHtml ?? "" }, { contentHtml: html }),
+      });
       result.updated += 1;
     } else {
       await ctx.tx.lodgeInstruction.create({ data: { lodgeId, key: (key ?? "") as never, contentHtml: html } });
@@ -262,7 +267,7 @@ async function applyLodgeOps(ctx: ApplyContext): Promise<CategoryApplyResult> {
       };
       const existing = await ctx.tx.choreTemplate.findFirst({ where: { lodgeId, name }, select: { id: true } });
       if (existing) {
-        await ctx.tx.choreTemplate.update({ where: { id: existing.id }, data });
+        await ctx.tx.choreTemplate.update({ where: { id: existing.id }, data: updateDataForMode(ctx.mode, raw, data) });
         result.updated += 1;
       } else {
         await ctx.tx.choreTemplate.create({ data: { lodgeId, name, ...data } });

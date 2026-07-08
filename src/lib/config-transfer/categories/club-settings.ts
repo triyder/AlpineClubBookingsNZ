@@ -5,6 +5,7 @@ import { registerEntity, type EntityDescriptor } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   hashRow,
+  updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
   type CategoryImporter,
@@ -224,7 +225,7 @@ async function applyClubSettings(
     await delegate.upsert({
       where: { id: "default" },
       create: { id: "default", ...data },
-      update: data,
+      update: updateDataForMode(ctx.mode, incoming, data),
     });
     if (existing) result.updated += 1;
     else result.created += 1;

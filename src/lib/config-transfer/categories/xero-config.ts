@@ -8,6 +8,7 @@ import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   hashRow,
+  updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
   type CategoryImporter,
@@ -193,7 +194,7 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
     if (!key) { result.skipped += 1; continue; }
     const data = { code: nz(raw.code), itemCode: nz(raw.itemCode) };
     const existing = await ctx.tx.xeroAccountMapping.findUnique({ where: { key }, select: { id: true } });
-    await ctx.tx.xeroAccountMapping.upsert({ where: { key }, create: { key, ...data }, update: data });
+    await ctx.tx.xeroAccountMapping.upsert({ where: { key }, create: { key, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
     if (existing) result.updated += 1;
     else result.created += 1;
   }
@@ -212,7 +213,7 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
       ...data,
     };
     const existing = await ctx.tx.xeroItemCodeMapping.findUnique({ where, select: { id: true } });
-    await ctx.tx.xeroItemCodeMapping.upsert({ where, create, update: data });
+    await ctx.tx.xeroItemCodeMapping.upsert({ where, create, update: updateDataForMode(ctx.mode, raw, data) });
     if (existing) result.updated += 1;
     else result.created += 1;
   }
