@@ -136,19 +136,23 @@ export const lodgeOpsExporter: CategoryExporter = {
       choresByLodge.set(c.lodge.slug, list);
     }
 
-    const entries: BundleEntry[] = [];
-    if (clubInstructions.length > 0) {
-      entries.push({ path: CLUB_INSTRUCTION_FILE, category: "lodge-config", rowCount: clubInstructions.length, bytes: strToU8(serialiseCsv([...INSTRUCTION_FIELDS], clubInstructions)) });
-    }
-    // folderSegment mirrors lodge-config: slugs are url-safe, guard anyway.
+    // Always emit the top-level club-wide (lodgeId null) instructions file so
+    // the "shown for every lodge unless overridden" slot is discoverable.
+    const entries: BundleEntry[] = [
+      { path: CLUB_INSTRUCTION_FILE, category: "lodge-config", rowCount: clubInstructions.length, bytes: strToU8(serialiseCsv([...INSTRUCTION_FIELDS], clubInstructions)) },
+    ];
+
+    // Emit the per-lodge instructions + chore-template skeletons for EVERY
+    // lodge (header-only when empty), so each lodge folder captures the full
+    // config and its per-lodge instruction-override slot is visible.
+    const lodges = await ctx.db.lodge.findMany({ orderBy: { slug: "asc" }, select: { slug: true } });
     const segmentFor = (slug: string) => slug.replace(/[^A-Za-z0-9._-]/g, "_");
-    const lodgeSlugs = new Set<string>([...instructionsByLodge.keys(), ...choresByLodge.keys()]);
-    for (const slug of [...lodgeSlugs].sort()) {
+    for (const { slug } of lodges) {
       const paths = lodgeFolderFiles(segmentFor(slug));
       const ins = instructionsByLodge.get(slug) ?? [];
       const ch = choresByLodge.get(slug) ?? [];
-      if (ins.length > 0) entries.push({ path: paths.instructions, category: "lodge-config", rowCount: ins.length, bytes: strToU8(serialiseCsv([...INSTRUCTION_FIELDS], ins)) });
-      if (ch.length > 0) entries.push({ path: paths.choreTemplates, category: "lodge-config", rowCount: ch.length, bytes: strToU8(serialiseCsv([...CHORE_FIELDS], ch)) });
+      entries.push({ path: paths.instructions, category: "lodge-config", rowCount: ins.length, bytes: strToU8(serialiseCsv([...INSTRUCTION_FIELDS], ins)) });
+      entries.push({ path: paths.choreTemplates, category: "lodge-config", rowCount: ch.length, bytes: strToU8(serialiseCsv([...CHORE_FIELDS], ch)) });
     }
     return entries;
   },

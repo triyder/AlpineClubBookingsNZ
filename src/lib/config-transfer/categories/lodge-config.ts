@@ -241,8 +241,10 @@ export const lodgeConfigExporter: CategoryExporter = {
         bytes: strToU8(JSON.stringify(descriptor, null, 2)),
       });
 
+      // Always emit the full per-lodge skeleton (header-only when empty) so a
+      // lodge folder captures the entire lodge config and the format is
+      // self-documenting for hand-authoring from scratch.
       const emit = (path: string, fields: readonly string[], rows: Record<string, unknown>[]) => {
-        if (rows.length === 0) return;
         entries.push({ path, category: "lodge-config", rowCount: rows.length, bytes: strToU8(serialiseCsv([...fields], rows)) });
       };
       emit(paths.rooms, ROOM_FIELDS, roomsBy.get(lodge.slug) ?? []);

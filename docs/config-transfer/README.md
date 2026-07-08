@@ -42,8 +42,12 @@ admins at **Admin → Setup & Configuration → Export & Import**
   in) plus `rooms.csv` / `beds.csv` / `seasons.csv` / `season-rates.csv` /
   `instructions.csv` / `chore-templates.csv`. The lodge a row belongs to is
   **implied by its folder**, not a CSV column, so a whole lodge is easy to add,
-  curate, or spot as a unit. Club-wide (lodge-less) instructions live in a
-  top-level `lodge-config/instructions.csv`.
+  curate, or spot as a unit. The full per-lodge file set is always emitted
+  (header-only when a collection is empty) so a folder captures the entire
+  lodge config and the format is discoverable for hand-authoring. Instructions
+  are two-level: the top-level `lodge-config/instructions.csv` holds the
+  **club-wide base** shown for every lodge, while a lodge folder's
+  `instructions.csv` holds that lodge's **overrides** of the same keys.
 - **committee** — the `CommitteeRole` definitions only (the new, live
   role/assignment model's config). The legacy standalone committee directory
   (`CommitteeMember`) is **not** transferred — it is a migration aid, not

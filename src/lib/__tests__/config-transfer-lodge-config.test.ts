@@ -115,6 +115,16 @@ describe("config-transfer lodge-config (per-lodge folders)", () => {
       ageTier: "ADULT",
       pricePerNightCents: "5000",
     });
+
+    // Full skeleton is emitted even when empty (header-only), so a lodge folder
+    // captures the entire config shape and hand-authoring is discoverable.
+    const instructions = parseCsv(strFromU8(files.get("lodge-config/lodges/main/instructions.csv")!));
+    expect(instructions.headers).toEqual(["key", "contentHtml"]);
+    expect(instructions.rows).toEqual([]);
+    const chores = parseCsv(strFromU8(files.get("lodge-config/lodges/main/chore-templates.csv")!));
+    expect(chores.rows).toEqual([]);
+    // The club-wide (all-lodges) instructions base file is at the top level.
+    expect(files.get("lodge-config/instructions.csv")).toBeDefined();
   });
 
   it("includes door code in lodge.json only when opted in", async () => {
