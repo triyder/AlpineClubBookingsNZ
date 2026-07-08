@@ -19,6 +19,10 @@ AlpineClubBookingsNZ.
 - `DOMAIN_INVARIANTS.md`, `STATE_MACHINES.md`,
   `END_TO_END_TEST_MATRIX.md`, and `UX_FLOW_MAP.md` capture the first-pass
   domain and review map used by Codex issue work.
+- `CONCURRENCY_AND_LOCKING.md` maps the advisory-lock families (capacity,
+  credit, member-night, and the single-domain locks), what each protects, and
+  the ordering disciplines — read it before changing any lock key or adding a
+  capacity/credit write path.
 - `agents/CODEX_WORKFLOW.md` is the operating guide for Codex agents.
   `agents/ISSUE_WORKFLOW.md`, `agents/CODEX_PROMPTS.md`,
   `agents/PROFILE_GUIDE.md`, `agents/SUBAGENT_GUIDE.md`,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BackLink } from "@/components/admin/back-link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getClubThemeForAdmin } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
@@ -10,7 +11,8 @@ export default async function SiteStylePage() {
   return (
     <div className={`space-y-8 ${clubThemeFontVariableClassName}`}>
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Site Style</h1>
+        <BackLink href="/admin/appearance" label="Site Appearance & Content" />
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">Site Style</h1>
         <p className="mt-1 text-sm text-slate-500">
           Set the public website colours, fonts, and logo for this club.
         </p>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BackLink } from "@/components/admin/back-link";
 import { DefaultCancellationPolicySection } from "@/components/admin/booking-policies/default-cancellation-policy-section";
 import {
   detectStaleHoldPolicyCopy,
@@ -11,12 +12,7 @@ export default async function CancellationPolicyPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link
-          href="/admin/booking-policies"
-          className="text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-        >
-          ← Booking Policies
-        </Link>
+        <BackLink href="/admin/booking-policies" label="Booking Policies" />
         <h1 className="mt-2 text-2xl font-bold text-slate-900">
           Default Cancellation Policy
         </h1>

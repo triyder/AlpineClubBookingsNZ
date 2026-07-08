@@ -6,6 +6,7 @@ import {
   emptyAdminPermissionMatrix,
   getAdminPermissionMatrix,
 } from "@/lib/admin-permissions";
+import { BackLink } from "@/components/admin/back-link";
 import { RoomsBedsManager } from "@/components/admin/rooms-beds-manager";
 
 // Thin server wrapper. This page lives under the lodge area, but its manager's
@@ -35,5 +36,10 @@ export default async function AdminRoomsBedsPage() {
     ? getAdminPermissionMatrix(member)
     : emptyAdminPermissionMatrix();
 
-  return <RoomsBedsManager permissionMatrix={permissionMatrix} />;
+  return (
+    <div className="space-y-6">
+      <BackLink href="/admin/bookings-setup" label="Bookings Setup" />
+      <RoomsBedsManager permissionMatrix={permissionMatrix} />
+    </div>
+  );
 }

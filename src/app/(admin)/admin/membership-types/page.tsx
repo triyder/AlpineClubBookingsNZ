@@ -16,6 +16,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { BackLink } from "@/components/admin/back-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1760,8 +1761,11 @@ export default function AdminMembershipTypesPage() {
 
   if (loading && membershipTypes.length === 0) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div className="space-y-6">
+        <BackLink href="/admin/membership-setup" label="Membership & Members" />
+        <div className="flex min-h-[320px] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+        </div>
       </div>
     );
   }
@@ -1773,6 +1777,7 @@ export default function AdminMembershipTypesPage() {
 
   return (
     <div ref={pageRef} className="space-y-8">
+      <BackLink href="/admin/membership-setup" label="Membership & Members" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">

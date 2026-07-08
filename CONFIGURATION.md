@@ -491,11 +491,11 @@ after migrations and seed data run.
 
 After signing in as an administrator, open `/admin/setup` to review:
 
-- club config and module controls
+- readiness KPIs, blockers, setup hub cards, club config, and module controls
 - first admin and seeded database settings
 - booking policies, membership cancellation settings, age tiers, seasons, and rates
 - Stripe, SES/email, Sentry, operational Xero, and finance-dashboard readiness
-- Xero account and item-code mappings
+- Xero account and item-code mappings from the `/admin/setup/finance` drill-down
 
 Provider tests on `/admin/setup` run only when an admin clicks the relevant test
 button. They should use test/demo provider credentials until the environment is

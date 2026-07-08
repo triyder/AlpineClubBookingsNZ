@@ -58,6 +58,7 @@ export async function sendHutLeaderAssignmentEmail(params: {
   startDate: Date;
   endDate: Date;
   pin: string;
+  assignmentId: string;
 }) {
   await sendEmail({
     to: params.email,

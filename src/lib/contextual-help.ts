@@ -1264,12 +1264,12 @@ const adminHelpEntries: HelpEntry[] = [
     "/admin/setup",
     help(
       "Setup",
-      "Setup collects core club configuration needed before operating the app.",
+      "Setup collects first-install readiness and links to focused setup hubs.",
       [
         "Complete required setup steps before opening public workflows.",
         "Use provider tests and progress indicators to confirm configuration is working.",
-        "Review finance mappings if Xero-backed reports or invoices are enabled.",
-        "Use the setup hub links for lower-frequency membership, booking, content, integration, and notification setup pages.",
+        "Open the setup hub cards for lower-frequency membership, booking, finance, integration, cancellation, and notification setup pages.",
+        "Review Finance Report Mappings from the Finance drill-down when Xero-backed reports are enabled.",
       ],
       [
         {
@@ -1283,9 +1283,154 @@ const adminHelpEntries: HelpEntry[] = [
             "Safe checks that confirm external configuration without using exploratory live data.",
         },
         {
-          name: "Finance mappings",
+          name: "Setup hubs",
           description:
-            "Groups Xero report lines for the finance dashboard.",
+            "Cards that route setup work into focused drill-down pages instead of one long checklist.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/setup/foundations",
+    help(
+      "Initial Setup",
+      "Initial Setup groups first-install readiness, modules, lodge records, and health checks.",
+      [
+        "Open Setup Checklist before marking setup complete.",
+        "Review Modules and Lodges before enabling module-backed or multi-lodge workflows.",
+        "Use System Health to confirm runtime readiness before launch.",
+      ],
+      [
+        {
+          name: "Setup Checklist",
+          description:
+            "Readiness KPIs, blockers, provider tests, and setup progress.",
+        },
+        {
+          name: "Modules",
+          description:
+            "Club-level activation controls for optional workflows.",
+        },
+        {
+          name: "System Health",
+          description:
+            "Runtime and provider readiness checks used before launch.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/setup/finance",
+    help(
+      "Finance setup",
+      "Finance setup groups finance reporting, Xero setup, sync mappings, and the finance report mapping editor.",
+      [
+        "Open Finance Dashboard for reporting views and sync-health context.",
+        "Open Xero Setup or Xero Mappings before changing accounting sync behavior.",
+        "Expand Finance Report Mappings only when editing the report groups used by the finance dashboard.",
+      ],
+      [
+        {
+          name: "Finance Dashboard",
+          description:
+            "Finance reporting views that read from synced accounting data.",
+        },
+        {
+          name: "Xero Mappings",
+          description:
+            "Account and item-code mappings used by operational Xero sync.",
+        },
+        {
+          name: "Finance Report Mappings",
+          description:
+            "Collapsed editor for grouping Xero profit-and-loss lines into dashboard report sections.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/setup/booking-rules",
+    help(
+      "Booking Rules",
+      "Booking Rules groups the setup pages that define booking eligibility, pricing, capacity, and booking copy.",
+      [
+        "Open Booking Policies before changing cancellation, minimum-stay, public-request, or group-discount behavior.",
+        "Review Hut Fees & Seasons and Age Groups before accepting priced bookings.",
+        "Use Rooms & Beds and Booking Messages for inventory and member-facing booking copy.",
+      ],
+      [
+        {
+          name: "Booking Policies",
+          description:
+            "Rules that affect holds, cancellation, minimum stays, public requests, and group discounts.",
+        },
+        {
+          name: "Hut Fees & Seasons",
+          description:
+            "Season windows and nightly rates used by booking pricing.",
+        },
+        {
+          name: "Rooms & Beds",
+          description:
+            "Capacity and allocation inventory used by lodge stays.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/setup/integrations",
+    help(
+      "Operational Integrations",
+      "Operational Integrations groups provider-backed setup pages for accounting, email, modules, and health checks.",
+      [
+        "Open Xero Setup before connecting or changing operational accounting sync.",
+        "Review Modules before enabling provider-backed workflows.",
+        "Use Email Deliverability and Provider Health for runtime diagnostics.",
+      ],
+      [
+        {
+          name: "Xero Setup",
+          description:
+            "OAuth connection and accounting settings used by Xero-backed workflows.",
+        },
+        {
+          name: "Email Deliverability",
+          description:
+            "SES/SMTP delivery and suppression diagnostics.",
+        },
+        {
+          name: "Provider Health",
+          description:
+            "Safe runtime checks for provider readiness.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/setup/cancellation",
+    help(
+      "Cancellation setup",
+      "Cancellation setup groups member cancellation settings, request handling, and related email copy.",
+      [
+        "Open Membership Cancellation before changing cancellation warning or rejoin-process text.",
+        "Review Cancellation Requests before changing live policy that affects pending requests.",
+        "Use Email Messages for cancellation and lifecycle message wording.",
+      ],
+      [
+        {
+          name: "Membership Cancellation",
+          description:
+            "Settings for cancellation copy and Xero cancellation handling.",
+        },
+        {
+          name: "Cancellation Requests",
+          description:
+            "Pending member requests that may be affected by policy changes.",
+        },
+        {
+          name: "Email Messages",
+          description:
+            "Audited templates used by cancellation and member lifecycle workflows.",
         },
       ],
     ),

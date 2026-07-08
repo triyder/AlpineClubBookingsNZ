@@ -57,6 +57,7 @@ export async function POST(
         startDate: assignment.startDate,
         endDate: assignment.endDate,
         pin,
+        assignmentId: id,
       });
     } catch (err) {
       emailSent = false;

@@ -2,6 +2,8 @@
 
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MODULE_KEYS } from "@/config/modules";
+import type { FeatureFlags } from "@/config/schema";
 import {
   emptyAdminPermissionMatrix,
   type AdminPermissionMatrix,
@@ -20,9 +22,29 @@ import { SetupPageClient } from "@/app/(admin)/admin/setup/setup-page-client";
 
 const setupBody = {
   readiness: {
-    status: "not_started",
-    summary: { total: 0, complete: 0, warning: 0, blocked: 0, skipped: 0 },
-    categories: [],
+    status: "blocked",
+    summary: { total: 1, complete: 0, warning: 0, blocked: 1, skipped: 0 },
+    categories: [
+      {
+        id: "foundation",
+        title: "Foundation",
+        description: "Club identity and first-install readiness.",
+        status: "blocked",
+        checks: [
+          {
+            id: "runtime-env",
+            title: "Runtime Environment",
+            description: "Database, auth, app origin, cron, and seed admin.",
+            status: "blocked",
+            required: true,
+            message: "Required runtime variables are missing or invalid.",
+            details: ["Fix DATABASE_URL"],
+            href: "/admin/setup/foundations",
+            progress: "open",
+          },
+        ],
+      },
+    ],
     generatedAt: "2026-01-01T00:00:00.000Z",
   },
   progress: {
@@ -42,10 +64,23 @@ function stubSetupFetch() {
   vi.stubGlobal("fetch", fetchMock);
 }
 
+const allOn: FeatureFlags = Object.fromEntries(
+  MODULE_KEYS.map((key) => [key, true]),
+) as FeatureFlags;
+
 function matrix(
   overrides: Partial<AdminPermissionMatrix>,
 ): AdminPermissionMatrix {
   return { ...emptyAdminPermissionMatrix(), ...overrides };
+}
+
+function renderSetup(overrides: Partial<AdminPermissionMatrix>) {
+  return render(
+    <SetupPageClient
+      permissionMatrix={matrix(overrides)}
+      features={allOn}
+    />,
+  );
 }
 
 afterEach(() => {
@@ -59,7 +94,7 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
   });
 
   it("hides the lodge card when the viewer lacks lodge access", async () => {
-    render(<SetupPageClient permissionMatrix={matrix({ support: "view" })} />);
+    renderSetup({ support: "view" });
 
     await waitFor(() => {
       expect(screen.getByText("Setup Wizard")).toBeTruthy();
@@ -68,35 +103,55 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
   });
 
   it("renders the lodge card when the viewer has lodge view", async () => {
-    render(
-      <SetupPageClient
-        permissionMatrix={matrix({ support: "view", lodge: "view" })}
-      />,
-    );
+    renderSetup({ support: "view", lodge: "view" });
 
     await waitFor(() => {
       expect(screen.getByTestId("lodge-card")).toBeTruthy();
     });
   });
 
-  it("hides the finance panel when the viewer lacks finance access", async () => {
-    render(<SetupPageClient permissionMatrix={matrix({ support: "view" })} />);
+  it("hides the finance drill-down when the viewer lacks finance access", async () => {
+    const { container } = renderSetup({ support: "view" });
 
     await waitFor(() => {
       expect(screen.getByText("Setup Wizard")).toBeTruthy();
     });
     expect(screen.queryByTestId("finance-panel")).toBeNull();
+    expect(container.querySelector('a[href="/admin/setup/finance"]')).toBeNull();
   });
 
-  it("renders the finance panel when the viewer has finance view", async () => {
-    render(
-      <SetupPageClient
-        permissionMatrix={matrix({ support: "view", finance: "view" })}
-      />,
-    );
+  it("links to finance setup without rendering mappings on the main page", async () => {
+    const { container } = renderSetup({ support: "view", finance: "view" });
 
     await waitFor(() => {
-      expect(screen.getByTestId("finance-panel")).toBeTruthy();
+      expect(screen.getByText("Setup hubs")).toBeTruthy();
     });
+    expect(container.querySelector('a[href="/admin/setup/finance"]')).toBeTruthy();
+    expect(screen.queryByTestId("finance-panel")).toBeNull();
+  });
+
+  it("places KPIs, blockers, hubs, and checks in the expected order", async () => {
+    const { container } = renderSetup({
+      support: "view",
+      finance: "view",
+      bookings: "view",
+      lodge: "view",
+      membership: "view",
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Setup hubs")).toBeTruthy();
+    });
+
+    const html = container.innerHTML;
+    expect(html.indexOf("Overall")).toBeLessThan(
+      html.indexOf("Resolve or explicitly skip"),
+    );
+    expect(html.indexOf("Resolve or explicitly skip")).toBeLessThan(
+      html.indexOf("Setup hubs"),
+    );
+    expect(html.indexOf("Setup hubs")).toBeLessThan(
+      html.indexOf("Readiness checks"),
+    );
   });
 });

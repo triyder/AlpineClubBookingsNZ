@@ -402,6 +402,14 @@ describe("admin route requirements", () => {
       area: "membership",
       level: "view",
     });
+    expect(getAdminRouteRequirement("/admin/setup/finance", "GET")).toEqual({
+      area: "finance",
+      level: "view",
+    });
+    expect(getAdminRouteRequirement("/admin/setup", "GET")).toEqual({
+      area: "support",
+      level: "view",
+    });
     expect(
       canViewAdminHref({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/page-content"),
     ).toBe(true);
@@ -619,6 +627,15 @@ describe("definition-backed access roles", () => {
       true,
     );
     expect(canViewAdminHrefWithMatrix(matrix, "/admin/payments")).toBe(false);
+
+    const financeMatrix = getAdminPermissionMatrix({
+      accessRoles: ["FINANCE_USER"],
+      canLogin: true,
+    });
+    expect(canViewAdminHrefWithMatrix(financeMatrix, "/admin/setup/finance")).toBe(
+      true,
+    );
+    expect(canViewAdminHrefWithMatrix(financeMatrix, "/admin/setup")).toBe(false);
   });
 });
 

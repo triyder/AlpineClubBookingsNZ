@@ -1,10 +1,12 @@
+import { BackLink } from "@/components/admin/back-link";
 import { SiteContentPanel } from "@/components/admin/site-content-panel";
 
 export default function SiteContentAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Site Content</h1>
+        <BackLink href="/admin/appearance" label="Site Appearance & Content" />
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">Site Content</h1>
         <p className="mt-1 text-sm text-slate-500">
           Edit the shared site chrome shown on every public page. The footer
           columns below render exactly as written (after sanitising); the

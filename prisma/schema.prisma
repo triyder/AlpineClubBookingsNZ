@@ -3607,12 +3607,6 @@ enum InductionCompletionSource {
   ADMIN_OVERRIDE
 }
 
-enum InductionItemResultValue {
-  YES
-  NO
-  NOT_APPLICABLE
-}
-
 enum InductionSectionPriority {
   EMERGENCY
   SECURITY
@@ -3664,7 +3658,6 @@ model InductionChecklistItem {
   legacySourceText      String?
 
   section InductionChecklistSection   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  results MemberInductionItemResult[]
 
   @@index([sectionId])
 }
@@ -3691,7 +3684,6 @@ model MemberInduction {
   member          Member                          @relation("MemberInductions", fields: [memberId], references: [id], onDelete: Cascade)
   template        InductionChecklistTemplate      @relation(fields: [templateId], references: [id], onDelete: Restrict)
   application     MemberApplication?              @relation(fields: [applicationId], references: [id], onDelete: SetNull)
-  itemResults     MemberInductionItemResult[]
   signOffs        MemberInductionSignOff[]
   assignedSigners MemberInductionAssignedSigner[]
 
@@ -3699,25 +3691,6 @@ model MemberInduction {
   @@index([templateId])
   @@index([status])
   @@index([kind])
-}
-
-model MemberInductionItemResult {
-  id                    String                   @id @default(cuid())
-  inductionId           String
-  itemId                String
-  result                InductionItemResultValue
-  explanationProvided   Boolean                  @default(false)
-  demonstrationProvided Boolean                  @default(false)
-  notes                 String?
-  recordedByMemberId    String?
-  completedAt           DateTime?
-
-  induction MemberInduction        @relation(fields: [inductionId], references: [id], onDelete: Cascade)
-  item      InductionChecklistItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
-
-  @@unique([inductionId, itemId])
-  @@index([inductionId])
-  @@index([itemId])
 }
 
 model MemberInductionSignOff {

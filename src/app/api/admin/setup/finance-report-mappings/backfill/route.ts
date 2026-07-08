@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     datasets: getFinanceSyncDatasets(),
     metadata: {
       source: "admin-setup",
-      initiatedFrom: "/admin/setup",
+      initiatedFrom: "/admin/setup/finance",
       reason:
         "Backfill stored finance snapshots for dashboard historical coverage.",
     },

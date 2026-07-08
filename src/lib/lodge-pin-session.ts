@@ -193,6 +193,46 @@ export async function findActiveHutLeaderAssignmentByPin(
   return null;
 }
 
+/**
+ * Verify a hut leader's PIN against ONE specific assignment (by id), for the
+ * remote pre-arrival instructions view (#1642). Unlike the kiosk PIN login,
+ * this needs no prior session: the assignment id (a non-enumerable cuid, sent
+ * in the assignment email link) disambiguates which lodge the PIN belongs to —
+ * hut-leader PINs are not globally unique — and confines a brute-force attempt
+ * to this single assignment's PIN (the caller layers IP lockout + rate limiting
+ * on top). Access is granted for a **current or upcoming** assignment
+ * (endDate >= today), matching the login-gated instructions rule, so a hut
+ * leader can read the instructions BEFORE their stay. Returns the matched
+ * assignment (carrying lodgeId) or null; never reveals whether the id or the
+ * PIN was the mismatch.
+ */
+export async function verifyHutLeaderPinForAssignment(
+  assignmentId: string,
+  pin: string,
+  date = getTodayDateOnly()
+) {
+  const assignment = await prisma.hutLeaderAssignment.findFirst({
+    where: {
+      id: assignmentId,
+      hutLeaderPin: { not: null },
+      // Current or upcoming only: an assignment whose stay has already ended
+      // no longer grants instructions access.
+      endDate: { gte: date },
+    },
+    include: {
+      member: { select: { id: true, active: true } },
+    },
+  });
+
+  if (!assignment || !assignment.hutLeaderPin || !assignment.member.active) {
+    return null;
+  }
+  if (!(await bcrypt.compare(pin, assignment.hutLeaderPin))) {
+    return null;
+  }
+  return assignment;
+}
+
 export function createLodgePinSessionWithVersion(
   assignmentId: string,
   memberId: string,

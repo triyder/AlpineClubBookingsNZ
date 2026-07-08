@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
+import { BackLink } from "@/components/admin/back-link"
 import { useClubIdentity } from "@/components/club-identity-provider"
 import { buildPathWithSearch } from "@/lib/internal-return-path"
 import {
@@ -61,7 +62,8 @@ export default function XeroSetupPage() {
 
   return (
     <div className="max-w-6xl p-6">
-      <h1 className="mb-2 text-2xl font-bold">Xero Setup</h1>
+      <BackLink href="/admin/integrations" label="Integrations" />
+      <h1 className="mt-2 mb-2 text-2xl font-bold">Xero Setup</h1>
       <p className="mb-2 text-muted-foreground">
         Connect Xero, configure account and item mappings, and run one-time contact import and linking.
       </p>

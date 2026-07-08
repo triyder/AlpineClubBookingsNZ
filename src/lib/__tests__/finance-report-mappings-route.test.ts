@@ -180,6 +180,7 @@ describe("admin finance report mappings route", () => {
     );
     expect(mockRevalidatePath).toHaveBeenCalledWith("/finance");
     expect(mockRevalidatePath).toHaveBeenCalledWith("/admin/setup");
+    expect(mockRevalidatePath).toHaveBeenCalledWith("/admin/setup/finance");
     await expect(response.json()).resolves.toEqual(mappingState);
   });
 });

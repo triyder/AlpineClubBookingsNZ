@@ -137,6 +137,7 @@ const ROUTE_AREA_PREFIXES: Array<{
   {
     area: "finance",
     prefixes: [
+      "/admin/setup/finance",
       "/admin/integrations",
       "/admin/xero",
       "/admin/payments",

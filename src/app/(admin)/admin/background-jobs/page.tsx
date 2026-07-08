@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { BackLink } from "@/components/admin/back-link";
 import { RefreshCw } from "lucide-react";
 import { useHealthData } from "../health/_components/use-health-data";
 import { BackgroundJobsSection } from "../health/_components/background-jobs-section";
@@ -11,12 +11,7 @@ export default function BackgroundJobsPage() {
   return (
     <div className="p-6 space-y-6">
       <div>
-        <Link
-          href="/admin/health"
-          className="text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-        >
-          ← System Health
-        </Link>
+        <BackLink href="/admin/health" label="System Health" />
         <div className="flex items-center justify-between mt-2">
           <h1 className="text-2xl font-bold text-slate-900">Background Jobs</h1>
           <div className="flex items-center gap-3">
