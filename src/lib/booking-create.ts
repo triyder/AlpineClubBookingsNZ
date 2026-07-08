@@ -52,6 +52,7 @@ import {
   sendWaitlistConfirmationEmail,
 } from "@/lib/email";
 import {
+  enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
@@ -1149,8 +1150,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
         createdByMemberId: sessionUserId,
       });
-      if (queuedInvoice.queueOperationId) {
-        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      // #1620 — allocate the member's existing floating credit notes against this
+      // invoice so they pay the effective (credit-reduced) amount. Enqueued after
+      // the invoice op (older createdAt → processed first). Skips itself when no
+      // credit was applied.
+      const queuedAllocation = await enqueueXeroAppliedCreditAllocationOperation(
+        booking.id,
+        { createdByMemberId: sessionUserId },
+      );
+      if (queuedInvoice.queueOperationId || queuedAllocation.queueOperationId) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 2 });
       }
     } catch (err) {
       logger.error(

@@ -100,7 +100,17 @@ describe("xero operation outbox payload parsing", () => {
     expect(getQueuedOutboxExpectedOperation("CREDIT_NOTE_ALLOCATION")).toEqual({
       entityType: "ALLOCATION",
       operationType: "ALLOCATE",
-      localModels: ["Payment", "Booking", "BookingModification"],
+      localModels: [
+        "Payment",
+        "Booking",
+        "BookingModification",
+        "MemberCreditNoteAllocation",
+      ],
+    });
+    expect(getQueuedOutboxExpectedOperation("APPLIED_CREDIT_ALLOCATION")).toEqual({
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      localModels: ["Payment"],
     });
     expect(getQueuedOutboxExpectedOperation("MODIFICATION_ACCOUNT_CREDIT_NOTE")).toEqual({
       entityType: "CREDIT_NOTE",
@@ -131,6 +141,7 @@ describe("xero operation outbox payload parsing", () => {
       "MODIFICATION_CREDIT_NOTE",
       "MODIFICATION_ACCOUNT_CREDIT_NOTE",
       "CREDIT_NOTE_ALLOCATION",
+      "APPLIED_CREDIT_ALLOCATION",
       "MEMBERSHIP_CANCELLATION_CREDIT_NOTE",
       "MEMBERSHIP_CANCELLATION_CONTACT",
       "GROUP_SETTLEMENT_INVOICE",
@@ -153,6 +164,7 @@ describe("xero operation outbox payload parsing", () => {
       ["MODIFICATION_CREDIT_NOTE", "CREDIT_NOTE"],
       ["MODIFICATION_ACCOUNT_CREDIT_NOTE", "CREDIT_NOTE"],
       ["CREDIT_NOTE_ALLOCATION", "ALLOCATION"],
+      ["APPLIED_CREDIT_ALLOCATION", "ALLOCATION"],
       ["MEMBERSHIP_CANCELLATION_CREDIT_NOTE", "CREDIT_NOTE"],
       ["MEMBERSHIP_CANCELLATION_CONTACT", "CONTACT"],
       ["GROUP_SETTLEMENT_INVOICE", "INVOICE"],

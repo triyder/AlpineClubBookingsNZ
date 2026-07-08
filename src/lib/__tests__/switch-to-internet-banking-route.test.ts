@@ -15,8 +15,10 @@ const mocks = vi.hoisted(() => ({
   recordInternetBankingPaymentTransaction: vi.fn(),
   cancelPaymentIntentIfCancellable: vi.fn(),
   enqueueXeroBookingInvoiceOperation: vi.fn(),
+  enqueueXeroAppliedCreditAllocationOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   isXeroConnected: vi.fn(),
+  creditAggregate: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -30,6 +32,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: { findUnique: mocks.findUnique, update: mocks.bookingUpdate },
     payment: { upsert: mocks.upsert },
+    memberCredit: { aggregate: mocks.creditAggregate },
     internetBankingPaymentSettings: { findUnique: mocks.settingsFindUnique },
     $transaction: mocks.transaction,
   },
@@ -43,6 +46,8 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mocks.enqueueXeroBookingInvoiceOperation,
+  enqueueXeroAppliedCreditAllocationOperation:
+    mocks.enqueueXeroAppliedCreditAllocationOperation,
   kickQueuedXeroOutboxOperationsIfConnected:
     mocks.kickQueuedXeroOutboxOperationsIfConnected,
 }));
@@ -126,6 +131,11 @@ beforeEach(() => {
   mocks.enqueueXeroBookingInvoiceOperation.mockResolvedValue({
     queueOperationId: "queue-1",
   });
+  mocks.enqueueXeroAppliedCreditAllocationOperation.mockResolvedValue({
+    queueOperationId: null,
+  });
+  // Default booking has no applied credit → effective amount == finalPrice.
+  mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: 0 } });
   mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue(undefined);
   mocks.isXeroConnected.mockResolvedValue(true);
 });
@@ -273,11 +283,14 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
     // Voids the open Stripe intent.
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_123");
 
-    // Flips the payment to Internet Banking, clearing the Stripe intent.
+    // Flips the payment to Internet Banking, clearing the Stripe intent. With no
+    // applied credit the effective amount is the full price and the mirror is 0.
     expect(mocks.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { bookingId: BOOKING_ID },
         update: expect.objectContaining({
+          amountCents: 4500,
+          creditAppliedCents: 0,
           source: PaymentSource.INTERNET_BANKING,
           reference: REFERENCE,
           status: PaymentStatus.PENDING,
@@ -295,6 +308,44 @@ describe("POST /api/payments/switch-to-internet-banking", () => {
       expect.objectContaining({ createdByMemberId: "member-1" })
     );
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalled();
+  });
+
+  it("switches at the credit-reduced effective amount and queues the allocation (#1620)", async () => {
+    // Member applied NZ$15.00 credit to this $45.00 booking (BOOKING_APPLIED
+    // ledger sum = -1500; the card-origin payment mirror was 0).
+    mocks.creditAggregate.mockResolvedValue({ _sum: { amountCents: -1500 } });
+    mocks.enqueueXeroAppliedCreditAllocationOperation.mockResolvedValue({
+      queueOperationId: "queue-alloc-1",
+    });
+
+    const res = await POST(postRequest());
+    expect(res.status).toBe(200);
+
+    // §3 mirror: amountCents = finalPrice − applied; creditAppliedCents = applied.
+    // (amount + credit = finalPrice preserved.)
+    expect(mocks.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          amountCents: 3000,
+          creditAppliedCents: 1500,
+        }),
+        update: expect.objectContaining({
+          amountCents: 3000,
+          creditAppliedCents: 1500,
+        }),
+      })
+    );
+
+    // The invoice is reduced to effective by the allocation op.
+    expect(
+      mocks.enqueueXeroAppliedCreditAllocationOperation
+    ).toHaveBeenCalledWith(
+      BOOKING_ID,
+      expect.objectContaining({ createdByMemberId: "member-1" })
+    );
+    expect(mocks.recordInternetBankingPaymentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 3000 })
+    );
   });
 
   it("does not kick the outbox when Xero is disconnected", async () => {

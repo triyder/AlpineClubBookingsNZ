@@ -366,6 +366,30 @@ describe("releaseExpiredInternetBankingHolds invoice-clearing sizing (#1597)", (
     );
   });
 
+  it("conserves on hold-expiry with #1620-allocated applied credit (reduced clearing + 100% restore)", async () => {
+    // #1620 allocate-existing makes xeroAllocatedAppliedCredit non-zero: the
+    // applied credit was allocated to the invoice as a Xero note (stamped
+    // BOOKING_APPLIED, -5000) AND is restored 100% at release. Clearing =
+    // finalPrice − allocated = 10000, and the member's credit is made whole.
+    // Together these conserve: the invoice nets to zero (5000 allocated note +
+    // 10000 clearing, no cash) and the credit balance is restored — the exact
+    // interaction the owner asked to pin now that the term can be non-zero.
+    mocks.txMemberCreditAggregate.mockResolvedValue({
+      _sum: { amountCents: -5000 },
+    });
+    mocks.restoreCreditFromBooking.mockResolvedValue(5000);
+
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(1);
+    expect(mocks.restoreCreditFromBooking).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "pay_ib_1",
+      10000,
+      { store: txRef.current },
+    );
+  });
+
   it("enqueues no clearing note when the released hold has no issued invoice", async () => {
     // The create-time hold-slots shape is CONFIRMED and booking-create only
     // enqueues the invoice for a PAYMENT_PENDING booking, so this shape reaches

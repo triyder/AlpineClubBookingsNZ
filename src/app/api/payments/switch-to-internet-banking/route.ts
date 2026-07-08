@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
+import {
+  BookingStatus,
+  CreditType,
+  PaymentSource,
+  PaymentStatus,
+} from "@prisma/client";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -22,6 +27,7 @@ import {
 import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import {
+  enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
@@ -160,7 +166,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const amountCents = booking.finalPriceCents;
+  // #1620 §3 — preserve the payment-mirror invariant `amountCents +
+  // creditAppliedCents = finalPriceCents`. The pre-switch (card-origin) payment
+  // carries creditAppliedCents = 0 even though credit was consumed, so derive the
+  // applied amount from the authoritative BOOKING_APPLIED ledger (NOT the stale
+  // mirror) and set the IB payment to the effective amount the member now owes.
+  // The invoice is reduced to this effective amount by the applied-credit
+  // allocation op enqueued below (Option A: member pays effective).
+  const appliedCreditAgg = await prisma.memberCredit.aggregate({
+    where: { appliedToBookingId: booking.id, type: CreditType.BOOKING_APPLIED },
+    _sum: { amountCents: true },
+  });
+  const creditAppliedCents = Math.max(
+    0,
+    -(appliedCreditAgg._sum.amountCents ?? 0),
+  );
+  const amountCents = Math.max(0, booking.finalPriceCents - creditAppliedCents);
   const holdBedSlots = internetBankingSettings.holdBedSlots;
   const holdUntil = buildInternetBankingHoldUntil(internetBankingSettings);
   const paymentResult = await prisma.$transaction(async (tx) => {
@@ -186,6 +207,7 @@ export async function POST(request: NextRequest) {
       create: {
         bookingId: booking.id,
         amountCents,
+        creditAppliedCents,
         source: PaymentSource.INTERNET_BANKING,
         reference,
         status: PaymentStatus.PENDING,
@@ -195,6 +217,7 @@ export async function POST(request: NextRequest) {
       },
       update: {
         amountCents,
+        creditAppliedCents,
         source: PaymentSource.INTERNET_BANKING,
         reference,
         status: PaymentStatus.PENDING,
@@ -242,8 +265,19 @@ export async function POST(request: NextRequest) {
     const queued = await enqueueXeroBookingInvoiceOperation(booking.id, {
       createdByMemberId: session.user.id,
     });
-    if (queued.queueOperationId && (await isXeroConnected())) {
-      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+    // #1620 — enqueue the applied-credit allocation AFTER the invoice op (older
+    // createdAt → processed first) so the invoice exists when the allocation
+    // runs; if not yet raised the allocation handler throws and the outbox
+    // retries. Skips itself when there is no unallocated applied credit.
+    const queuedAllocation = await enqueueXeroAppliedCreditAllocationOperation(
+      booking.id,
+      { createdByMemberId: session.user.id },
+    );
+    if (
+      (queued.queueOperationId || queuedAllocation.queueOperationId) &&
+      (await isXeroConnected())
+    ) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 2 });
     }
   } catch (err) {
     logger.error(

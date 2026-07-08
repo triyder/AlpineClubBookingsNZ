@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   allocateCreditNoteToInvoice: vi.fn(),
   checkMembershipStatus: vi.fn(),
   createXeroMembershipCancellationCreditNote: vi.fn(),
+  allocateAppliedCreditForBooking: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -75,6 +76,10 @@ vi.mock("@/lib/membership-cancellation-xero", () => ({
   createXeroMembershipCancellationCreditNote: mocks.createXeroMembershipCancellationCreditNote,
 }));
 
+vi.mock("@/lib/xero-applied-credit-allocation", () => ({
+  allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+}));
+
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
 
@@ -89,6 +94,7 @@ import {
   retryXeroSyncOperation,
   XeroOperationRetryError,
 } from "@/lib/xero-operation-retry";
+import { XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { CLUB_NAME } from "@/config/club-identity";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
@@ -225,6 +231,26 @@ describe("getXeroOperationRetryMeta", () => {
       supported: false,
       reason: "Stored contact update payload is incomplete.",
     });
+  });
+
+  it("supports an applied-credit allocation queued op (#1620)", () => {
+    // The op carries the {queueType, bookingId} queued payload, NOT the
+    // creditNoteId/invoiceId/amountCents shape the generic allocation parser
+    // wants — without the dedicated branch this would strand on FAILED.
+    const result = getXeroOperationRetryMeta(
+      makeOperation({
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        localModel: "Payment",
+        localId: "pay_123",
+        requestPayload: {
+          queueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+          bookingId: "b1",
+        },
+      })
+    );
+
+    expect(result).toEqual({ supported: true, reason: null });
   });
 });
 
@@ -1226,6 +1252,35 @@ describe("retryXeroSyncOperation", () => {
       createdByMemberId: "admin_1",
       syncOperationId: "op_123",
     });
+  });
+
+  it("re-drives the applied-credit allocation engine on retry (#1620)", async () => {
+    // A FAILED applied-credit allocation op must re-run the idempotent engine
+    // (there is no auto FAILED->PENDING reaper), threading the op id so the
+    // engine completes/skips it.
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        localModel: "Payment",
+        localId: "pay_123",
+        requestPayload: {
+          queueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+          bookingId: "b1",
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({ message: "Retried applied-credit allocation." });
+
+    expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith("b1", {
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_123",
+    });
+    // Must NOT fall through to the generic single-note allocation path.
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
   });
 
   it("throws a typed retry error for unsupported operations", async () => {

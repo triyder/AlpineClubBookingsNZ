@@ -341,6 +341,24 @@ expected to report zero on most tenants. A non-empty result means a hold-slots
 booking reached release with both an issued invoice and a credit-reduced
 `amountCents` (e.g. an operator-created invoice on a credit-carrying hold).
 
+The same script also prints a second, separate **#1620 applied-credit strand
+enumeration** (also read-only): every non-cancelled Internet-Banking payment
+whose booking still carries UN-allocated applied credit (a `BOOKING_APPLIED`
+ledger row not yet stamped with an allocated Xero note), split into REALIZED
+(payment captured — the member already double-paid the full invoice) and PENDING
+(not yet paid). CANCELLED bookings are excluded (the #1547 restore domain).
+Repair guidance under the #1620 allocate-existing mechanism:
+
+- **PENDING** rows are fixed forward automatically: the applied-credit allocation
+  op reduces their already-raised invoice to the effective amount. If a legacy
+  PENDING row predates the fix and never got an allocation op, re-running the
+  raise path (or re-enqueuing `enqueueXeroAppliedCreditAllocationOperation`)
+  allocates it.
+- **REALIZED** rows already paid the full invoice in cash, so allocating a credit
+  note now would over-pay the invoice. The repair is a LOCAL credit restore for
+  the strand amount (a Xero credit note does not refund cash already sent);
+  handle by hand per the reported per-row figures.
+
 ## Quarterly Backup Restore Drill
 
 A backup you have never restored is a hope, not a backup. `scripts/backup-restore-drill.sh`

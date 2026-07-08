@@ -34,6 +34,7 @@ import {
   type EntranceFeeContext,
 } from "@/lib/xero-mappings";
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
+import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
@@ -42,6 +43,7 @@ import {
   readQueuedOutboxPayload,
   readQueueType,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_TYPE,
   XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
@@ -306,6 +308,101 @@ export async function enqueueXeroBookingInvoiceOperation(
   return {
     queueOperationId: queuedOperation.id,
     message: "Xero booking invoice queued for background processing.",
+  };
+}
+
+/**
+ * #1620 — enqueue the applied-credit allocation orchestration op for a booking.
+ * Skips when the booking carries no unallocated applied credit. The handler runs
+ * after the invoice op and reduces the invoice to the effective amount by
+ * allocating the member's existing floating credit notes.
+ *
+ * Payment-method-agnostic (#1641): keyed on the booking's payment + BOOKING_APPLIED
+ * ledger, never on payment.source. In #1620 the only call sites are Internet
+ * Banking (create-time IB + switch-to-IB); #1641 adds a card caller.
+ */
+export async function enqueueXeroAppliedCreditAllocationOperation(
+  bookingId: string,
+  options?: { createdByMemberId?: string }
+) {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      id: true,
+      payment: { select: { id: true } },
+    },
+  });
+
+  if (!booking?.payment) {
+    return {
+      queueOperationId: null,
+      message: "No payment record for booking; nothing to allocate.",
+    };
+  }
+
+  // Unallocated applied credit = BOOKING_APPLIED rows not yet stamped with an
+  // allocated Xero note (the ledger-truth predicate the handler also uses).
+  const appliedAgg = await prisma.memberCredit.aggregate({
+    where: {
+      appliedToBookingId: bookingId,
+      type: "BOOKING_APPLIED",
+      xeroCreditNoteId: null,
+    },
+    _sum: { amountCents: true },
+  });
+  const appliedCents = Math.max(0, -(appliedAgg._sum.amountCents ?? 0));
+  if (appliedCents === 0) {
+    return {
+      queueOperationId: null,
+      message: "No unallocated applied credit; nothing to allocate.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "booking",
+    bookingId,
+    "applied-credit-allocation",
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      localModel: "Payment",
+      localId: booking.payment.id,
+      status: { in: ["PENDING", "RUNNING"] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Applied-credit allocation is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "ALLOCATION",
+    operationType: "ALLOCATE",
+    localModel: "Payment",
+    localId: booking.payment.id,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
+      bookingId,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Applied-credit allocation queued for background processing.",
   };
 }
 
@@ -1987,6 +2084,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
             syncOperationId: queuedOperation.id,
           }
         );
+      } else if (
+        payload?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE
+      ) {
+        await allocateAppliedCreditForBooking(payload.bookingId, {
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
       } else {
         throw new Error("Queued Xero outbox payload is incomplete.");
       }

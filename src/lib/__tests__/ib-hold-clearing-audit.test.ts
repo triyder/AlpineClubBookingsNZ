@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveIbAppliedCreditStrandFinding,
   deriveIbHoldClearingFinding,
+  type IbAppliedCreditStrandRow,
   type IbHoldClearingRow,
 } from "@/lib/ib-hold-clearing-audit";
 
@@ -77,5 +79,71 @@ describe("deriveIbHoldClearingFinding (#1597 audit sizing)", () => {
     // expected = 15000 + 1000 − 0 = 16000; delta = 16000 − 12345 = 3655.
     expect(finding?.expectedClearingCents).toBe(16000);
     expect(finding?.deltaCents).toBe(3655);
+  });
+});
+
+function makeStrandRow(
+  overrides: Partial<IbAppliedCreditStrandRow> = {},
+): IbAppliedCreditStrandRow {
+  return {
+    paymentId: "pay_1",
+    bookingId: "booking_1",
+    bookingStatus: "PAYMENT_PENDING",
+    paymentStatus: "PENDING",
+    amountCents: 10000,
+    creditAppliedCents: 3000,
+    finalPriceCents: 10000,
+    ledgerAppliedCents: 3000,
+    ...overrides,
+  };
+}
+
+describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
+  it("returns null when the booking carries no applied credit", () => {
+    expect(
+      deriveIbAppliedCreditStrandFinding(
+        makeStrandRow({ ledgerAppliedCents: 0, creditAppliedCents: 0 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("flags a not-yet-paid IB booking as a PENDING (unrealized) strand", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(makeStrandRow());
+    expect(finding).not.toBeNull();
+    expect(finding?.realized).toBe(false);
+    expect(finding?.strandExposureCents).toBe(3000);
+  });
+
+  it("flags a paid IB booking as a REALIZED double-pay", () => {
+    const finding = deriveIbAppliedCreditStrandFinding(
+      makeStrandRow({ paymentStatus: "SUCCEEDED", bookingStatus: "PAID" }),
+    );
+    expect(finding?.realized).toBe(true);
+    expect(finding?.strandExposureCents).toBe(3000);
+  });
+
+  it("surfaces the stale mirror on a switched (card-origin) payment", () => {
+    // Switch overwrote amountCents → finalPrice and never set creditAppliedCents,
+    // yet the BOOKING_APPLIED ledger consumed 3000. Mirror is stale by 3000; the
+    // internal payment invariant (amount + credit − final) still nets to 0.
+    const finding = deriveIbAppliedCreditStrandFinding(
+      makeStrandRow({
+        creditAppliedCents: 0,
+        amountCents: 10000,
+        ledgerAppliedCents: 3000,
+      }),
+    );
+    expect(finding?.mirrorLedgerMismatchCents).toBe(3000);
+    expect(finding?.mirrorInvariantDeltaCents).toBe(0);
+    expect(finding?.strandExposureCents).toBe(3000);
+  });
+
+  it("shows a consistent mirror on a create-time IB booking", () => {
+    // amountCents = effective (7000), creditApplied mirror = ledger = 3000.
+    const finding = deriveIbAppliedCreditStrandFinding(
+      makeStrandRow({ amountCents: 7000, creditAppliedCents: 3000 }),
+    );
+    expect(finding?.mirrorLedgerMismatchCents).toBe(0);
+    expect(finding?.mirrorInvariantDeltaCents).toBe(0);
   });
 });
