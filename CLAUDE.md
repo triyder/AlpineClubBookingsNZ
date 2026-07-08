@@ -22,7 +22,8 @@ written." Follow `AGENTS.md` → "Completion and Merge":
 2. Monitor CI to green. Fix any failure — lint, typecheck, `npm test`, build,
    migration-drift, dependency/secret/static scans — and push until every
    required check passes. `main` is now branch-protected (the `verify`,
-   `Migration drift check`, `Playwright E2E`, and `Static analysis gate` checks
+   `Migration drift check`, `Playwright E2E`, `E2E multi-lodge`, and
+   `Static analysis gate` checks
    must pass to merge, and force-pushes/deletions are blocked), but because
    `enforce_admins` is off and no review approval is required, an admin merge can
    still occasionally land `main` red, so keep comparing against `main`'s own
