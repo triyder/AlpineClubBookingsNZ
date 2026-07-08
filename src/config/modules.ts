@@ -101,6 +101,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description: "Room and bed setup plus admin guest-to-bed allocation.",
     dependencies: [
       "Room and bed inventory is configured separately.",
+      "When on, each lodge's capacity is its active bed count; set a lower per-lodge capacity on the lodge page to cap sleeping below the installed beds.",
     ],
   },
   internetBankingPayments: {

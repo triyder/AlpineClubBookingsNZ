@@ -4,7 +4,17 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- No changes yet.
+- **Behaviour change — lodge capacity now honours a max-sleeping-capacity
+  ceiling (#1653).** A per-lodge `LodgeSettings.capacity` value now caps the bed
+  count when Bed Allocation is on: effective capacity is the lower of the
+  installed active beds and the capacity, so a lodge may have more beds than it
+  is allowed to sleep. Previously the capacity was *ignored* whenever beds were
+  configured. **Operator action:** if a lodge has both configured beds **and** a
+  capacity set *below* its bed count, its bookable capacity will drop to that
+  value on upgrade. Run the read-only detection query in
+  `docs/CAPACITY_MODEL.md` to list any affected lodge and confirm the cap is
+  intended before deploying. No schema migration; code-only. See
+  `docs/CAPACITY_MODEL.md` for the full resolution table.
 
 ## 0.10.1 - 2026-07-07
 

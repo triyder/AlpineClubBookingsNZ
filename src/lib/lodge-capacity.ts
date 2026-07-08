@@ -55,7 +55,12 @@ interface LodgeCapacityDb {
 
 export interface LodgeCapacityStatus {
   capacity: number;
-  source: "configured_beds" | "capacity_override" | "club_config" | "unconfigured_lodge";
+  source:
+    | "configured_beds"
+    | "capped_beds"
+    | "capacity_override"
+    | "club_config"
+    | "unconfigured_lodge";
   bedAllocationEnabled: boolean;
   activeBedCount: number;
   fallbackCapacity: number;
@@ -112,12 +117,22 @@ async function isDefaultLodge(
  * Capacity for one lodge on one night. Never sums beds across lodges
  * (docs/multi-lodge/lodge-scoping-contract.md).
  *
- * Resolution order:
- * 1. Active configured beds in the lodge's rooms (Bed Allocation module on).
- * 2. Admin capacity override (LodgeSettings row linked to this lodge).
+ * Resolution order (see docs/CAPACITY_MODEL.md for the full scenario table):
+ * 1. Bed Allocation module ON with ≥1 active bed: the physical bed inventory
+ *    is the placement set, and the admin capacity value acts as a *maximum
+ *    sleeping capacity* ceiling on top of it. Effective capacity is the LOWER
+ *    of the two — a lodge may have more beds installed than it is licensed to
+ *    sleep (#1653). No capacity set (or set ≥ bed count) → the bed count wins
+ *    ("configured_beds"); a capacity below the bed count caps it ("capped_beds").
+ * 2. Otherwise (module off, or on with no active beds): the admin capacity
+ *    value for this lodge (LodgeSettings row linked to this lodge).
  * 3. Default lodge only: club-config bed total (legacy single-lodge fallback).
- *    Additional lodges resolve to 0 until beds or an override are configured,
+ *    Additional lodges resolve to 0 until beds or a capacity are configured,
  *    so an unconfigured lodge can never be overbooked.
+ *
+ * The club-config fallback (step 3) is never treated as a ceiling — only an
+ * explicit per-lodge capacity caps the bed count, so enabling Bed Allocation
+ * on the default lodge keeps using the bed count unless a capacity is set.
  */
 export async function getLodgeCapacityStatus(
   lodgeId: string,
@@ -158,9 +173,28 @@ export async function getLodgeCapacityStatus(
     where: { active: true, room: { lodgeId } },
   });
 
+  if (activeBedCount <= 0) {
+    // Module on but no beds configured yet: fall back to the capacity value
+    // (or the club-config/unconfigured fallback), unchanged.
+    return {
+      capacity: fallbackCapacity,
+      source: fallbackSource,
+      bedAllocationEnabled: true,
+      activeBedCount,
+      fallbackCapacity,
+    };
+  }
+
+  // Beds are the placement inventory; an explicit per-lodge capacity is the
+  // maximum sleeping capacity ceiling. Effective capacity is the lower of the
+  // two (#1653). Only an explicit override caps — the club-config fallback does
+  // not, so `override` (not `fallbackCapacity`) is the ceiling here.
+  const capped =
+    override !== null && override !== undefined && override < activeBedCount;
+
   return {
-    capacity: activeBedCount > 0 ? activeBedCount : fallbackCapacity,
-    source: activeBedCount > 0 ? "configured_beds" : fallbackSource,
+    capacity: capped ? override : activeBedCount,
+    source: capped ? "capped_beds" : "configured_beds",
     bedAllocationEnabled: true,
     activeBedCount,
     fallbackCapacity,

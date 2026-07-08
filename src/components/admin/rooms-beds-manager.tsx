@@ -32,6 +32,7 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
+import type { LodgeCapacityStatus } from "@/lib/lodge-capacity";
 
 interface DashboardBed {
   id: string;
@@ -52,13 +53,7 @@ interface DashboardRoom {
 
 interface RoomsBedsPayload {
   rooms: DashboardRoom[];
-  capacity: {
-    capacity: number;
-    source: "configured_beds" | "club_config";
-    bedAllocationEnabled: boolean;
-    activeBedCount: number;
-    fallbackCapacity: number;
-  };
+  capacity: LodgeCapacityStatus;
   canImportFromConfig: boolean;
   configBeds: Array<{
     id: string;
@@ -461,6 +456,24 @@ export function RoomsBedsManager({
           </div>
           Booking capacity is using {payload.capacity.fallbackCapacity} beds from
           club config until at least one active bed is configured.
+        </div>
+      ) : null}
+
+      {payload?.capacity.source === "capped_beds" ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="mb-1 flex items-center gap-2 font-medium">
+            <AlertTriangle className="h-4 w-4" />
+            Sleeping capacity capped below the installed beds
+          </div>
+          {payload.capacity.activeBedCount} active bed
+          {payload.capacity.activeBedCount === 1 ? " is" : "s are"} configured, but
+          this lodge is capped at {payload.capacity.capacity}. The extra{" "}
+          {payload.capacity.activeBedCount - payload.capacity.capacity} bed
+          {payload.capacity.activeBedCount - payload.capacity.capacity === 1
+            ? ""
+            : "s"}{" "}
+          stay available for allocation but cannot be booked into. Change the
+          capacity on the lodge&apos;s configuration page.
         </div>
       ) : null}
 
