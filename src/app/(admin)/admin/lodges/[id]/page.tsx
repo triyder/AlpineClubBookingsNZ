@@ -48,6 +48,7 @@ const EMPTY_SUMMARY: AreaSummary = { loaded: false, count: 0 };
 
 const CAPACITY_SOURCE_LABELS: Record<string, string> = {
   configured_beds: "active configured beds",
+  capped_beds: "the capacity set below, capping the bed count",
   capacity_override: "the capacity set below",
   club_config: "the club's default lodge capacity",
   unconfigured_lodge: "not configured yet",
@@ -70,6 +71,9 @@ export default function LodgeConfigurationHubPage() {
   // here even when the Bed Allocation module is off.
   const [resolvedCapacity, setResolvedCapacity] = useState<number | null>(null);
   const [capacitySource, setCapacitySource] = useState<string | null>(null);
+  // Active bed inventory for this lodge, used to warn when the capacity is set
+  // below the installed beds (it then caps the lodge — #1653).
+  const [activeBedCount, setActiveBedCount] = useState<number | null>(null);
   const [capacityOverride, setCapacityOverride] = useState("");
   const [savedCapacityOverride, setSavedCapacityOverride] = useState("");
   const [savingCapacity, setSavingCapacity] = useState(false);
@@ -97,14 +101,17 @@ export default function LodgeConfigurationHubPage() {
         if (cancelled) return;
         setLodge(found);
         if (modulesRes.ok) {
-          const moduleData = (await modulesRes.json()) as Record<
-            string,
-            unknown
-          >;
+          // /api/admin/modules returns { settings: {<key>: boolean}, modules,
+          // ... } — the flat effective toggles live under `settings`, not at the
+          // top level. Reading the top level left every flag undefined, so
+          // bedAllocationOn was always false here.
+          const moduleData = (await modulesRes.json()) as {
+            settings?: Record<string, unknown>;
+          };
           if (!cancelled) {
             setModules(
               Object.fromEntries(
-                Object.entries(moduleData).filter(
+                Object.entries(moduleData.settings ?? {}).filter(
                   ([, value]) => typeof value === "boolean",
                 ),
               ) as Record<string, boolean>,
@@ -151,6 +158,7 @@ export default function LodgeConfigurationHubPage() {
         if (data.capacity) {
           setResolvedCapacity(data.capacity.capacity ?? 0);
           setCapacitySource(data.capacity.source ?? null);
+          setActiveBedCount(data.capacity.activeBedCount ?? 0);
         }
       })
       .catch(() => {});
@@ -235,7 +243,7 @@ export default function LodgeConfigurationHubPage() {
       }
       setSavedCapacityOverride(trimmed);
       setCapacityMessage({ type: "success", text: "Capacity saved" });
-      // Re-read the resolved figure (beds still win when they drive it).
+      // Re-read the resolved figure (the lower of beds and this capacity wins).
       const refreshed = await fetch(
         `/api/admin/bed-allocation/rooms?lodgeId=${encodeURIComponent(lodgeId)}`,
         { cache: "no-store" },
@@ -245,6 +253,7 @@ export default function LodgeConfigurationHubPage() {
       if (refreshed?.capacity) {
         setResolvedCapacity(refreshed.capacity.capacity ?? 0);
         setCapacitySource(refreshed.capacity.source ?? null);
+        setActiveBedCount(refreshed.capacity.activeBedCount ?? 0);
       }
     } catch (err) {
       setCapacityMessage({
@@ -392,7 +401,7 @@ export default function LodgeConfigurationHubPage() {
           </CardTitle>
           <CardDescription>
             {bedAllocationOn
-              ? "Bed Allocation is on, so this lodge's capacity is the count of its active beds. The override below only applies if the beds are removed."
+              ? "Bed Allocation is on, so this lodge's capacity is the count of its active beds. Setting a capacity below caps it — the lower of the two applies, so you can install more beds than the lodge may sleep. Leave it blank to use the bed count."
               : "Bed Allocation is off, so this lodge's capacity comes from the value below. Set it before taking bookings — an unset lodge resolves to zero capacity and cannot be booked."}
           </CardDescription>
         </CardHeader>
@@ -432,6 +441,26 @@ export default function LodgeConfigurationHubPage() {
               Leave blank to fall back to the club default (default lodge) or
               zero (additional lodges).
             </p>
+            {/* activeBedCount is only > 0 when Bed Allocation is on with beds
+                (getLodgeCapacityStatus), so it is the authoritative signal here
+                — the separate module flag can lag on this page. */}
+            {activeBedCount !== null &&
+              activeBedCount > 0 &&
+              capacityOverride.trim() !== "" &&
+              Number.isFinite(Number(capacityOverride)) &&
+              Number(capacityOverride) < activeBedCount && (
+                <p
+                  className="rounded-md bg-amber-50 p-2 text-xs text-amber-800"
+                  role="status"
+                >
+                  This is below the {activeBedCount} active bed
+                  {activeBedCount === 1 ? "" : "s"} configured for this lodge, so
+                  it will cap the lodge at {Number(capacityOverride)} — the extra{" "}
+                  {activeBedCount - Number(capacityOverride)} bed
+                  {activeBedCount - Number(capacityOverride) === 1 ? "" : "s"}{" "}
+                  stay available for allocation but cannot be booked into.
+                </p>
+              )}
           </div>
           {capacityMessage && (
             <div

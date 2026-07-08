@@ -90,7 +90,8 @@ At the successful end of a meaningful piece of work:
    trace, add a justified `entry` or file-scoped `ignoreIssues` carve-out to
    `knip.jsonc` (see CONTRIBUTING.md "Dead-code gate") rather than deleting live
    code. `main` is branch-protected: the `verify`,
-   `Migration drift check`, `Playwright E2E`, and `Static analysis gate` checks
+   `Migration drift check`, `Playwright E2E`, `E2E multi-lodge`, and
+   `Static analysis gate` checks
    must pass to merge, and force-pushes and branch deletions are blocked.
    Because `enforce_admins` is off and no review approval is required, an admin
    merge can still occasionally land `main` red, so investigate before assuming

@@ -168,6 +168,119 @@ describe("capacity calendar availability", () => {
     });
   });
 
+  it("caps configured beds at a lower capacity ceiling (#1653)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(40);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 30 }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 30,
+      source: "capped_beds",
+      bedAllocationEnabled: true,
+      activeBedCount: 40,
+      fallbackCapacity: 30,
+    });
+  });
+
+  it("does not cap when the capacity equals the bed count (#1653)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(30);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 30 }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 30,
+      source: "configured_beds",
+      activeBedCount: 30,
+    });
+  });
+
+  it("uses the per-lodge capacity when the module is on but no beds exist yet (#1653)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(0);
+
+    const status = await getLodgeCapacityStatus(
+      LODGE_A,
+      singleLodgeDb({
+        lodgeSettings: {
+          findUnique: vi.fn().mockResolvedValue({ capacity: 25 }),
+        },
+      }),
+    );
+
+    expect(status).toMatchObject({
+      capacity: 25,
+      source: "capacity_override",
+      bedAllocationEnabled: true,
+      activeBedCount: 0,
+    });
+  });
+
+  it("does not cap the bed count with the club-config fallback — only an explicit capacity caps (#1653)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    // More active beds than the club-config total, and NO per-lodge capacity.
+    mocks.lodgeBedCount.mockResolvedValue(TEST_LODGE_CAPACITY + 10);
+
+    const status = await getLodgeCapacityStatus(LODGE_A, singleLodgeDb());
+
+    expect(status).toMatchObject({
+      capacity: TEST_LODGE_CAPACITY + 10,
+      source: "configured_beds",
+      activeBedCount: TEST_LODGE_CAPACITY + 10,
+    });
+  });
+
+  it("checkCapacity enforces the capped capacity, not the raw bed count (#1653)", async () => {
+    mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
+    mocks.lodgeBedCount.mockResolvedValue(40);
+    mocks.bookingFindMany.mockResolvedValue([]);
+
+    const db = singleLodgeDb({
+      lodgeSettings: {
+        findUnique: vi.fn().mockResolvedValue({ capacity: 30 }),
+      },
+      booking: { findMany: mocks.bookingFindMany },
+    });
+
+    // 35 guests fit the 40 installed beds but exceed the 30 sleeping cap.
+    const rejected = await checkCapacity(
+      LODGE_A,
+      parseDateOnly("2026-04-10"),
+      parseDateOnly("2026-04-12"),
+      35,
+      undefined,
+      db,
+    );
+    expect(rejected.available).toBe(false);
+    expect(rejected.minAvailable).toBe(30);
+
+    // 30 guests sit exactly on the cap and are allowed.
+    const allowed = await checkCapacity(
+      LODGE_A,
+      parseDateOnly("2026-04-10"),
+      parseDateOnly("2026-04-12"),
+      30,
+      undefined,
+      db,
+    );
+    expect(allowed.available).toBe(true);
+  });
+
   it("emits one key for each date-only day in the requested month", async () => {
     const availability = await getMonthAvailability(LODGE_A, 2026, 3);
     const keys = [...availability.keys()];

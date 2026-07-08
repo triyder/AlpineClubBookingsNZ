@@ -23,6 +23,8 @@ AlpineClubBookingsNZ.
   credit, member-night, and the single-domain locks), what each protects, and
   the ordering disciplines — read it before changing any lock key or adding a
   capacity/credit write path.
+- `CAPACITY_MODEL.md` documents how each lodge's bookable capacity is decided
+  (bed inventory vs the max-sleeping-capacity ceiling, in every configuration).
 - `agents/CODEX_WORKFLOW.md` is the operating guide for Codex agents.
   `agents/ISSUE_WORKFLOW.md`, `agents/CODEX_PROMPTS.md`,
   `agents/PROFILE_GUIDE.md`, `agents/SUBAGENT_GUIDE.md`,

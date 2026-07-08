@@ -99,9 +99,10 @@ failures land in `test-results/`.
 The suite is serial (one worker) on purpose: specs assert on lodge capacity
 and share seeded personas, so they must not interleave.
 
-## Multi-lodge advisory project (issue #1568)
+## Multi-lodge project (issue #1568)
 
-A small, **advisory** (non-blocking) `multi-lodge` Playwright project covers the
+A small `multi-lodge` Playwright project — a **blocking** CI check since #1655
+(launched advisory in #1623) — covers the
 cross-lodge behaviours the default single-lodge suite cannot exercise: the
 `/book` lodge-selection step and per-lodge availability isolation, a
 capacity-holding booking at lodge B not consuming lodge A's capacity, a kiosk
@@ -119,7 +120,7 @@ unaffected:
   `multiLodge` module. Without the flag none of this runs.
 - **Project:** the `multi-lodge` Playwright project is only added to
   `playwright.config.ts` when `E2E_MULTI_LODGE=1`, and the default `chromium`
-  project always ignores `e2e/multi-lodge/`, so the blocking suite's project and
+  project always ignores `e2e/multi-lodge/`, so the default suite's project and
   spec list are byte-identical (verify with `npx playwright test --list`).
 
 Run it locally (uses the same staging stack; keep off ports 5432/3001 in use):
@@ -282,13 +283,15 @@ hold genuine Stripe **test-mode** keys, and otherwise `test.skip` cleanly (they
 are also retry-scoped to absorb the datacenter-IP Link/hCaptcha flake). So a
 green E2E run does not imply Stripe E2E coverage ran unless those secrets are set.
 
-The same workflow also runs a separate **`E2E multi-lodge (advisory)`** job (the
-`multi-lodge` project, above). It is `continue-on-error: true` and its name is
-not a required status check, so a red run never blocks a merge — it exists to
-make two-lodge regressions and the project's flake rate observable via its own
-`playwright-report-multi-lodge` artifact. Decide any advisory→blocking flip only
-after a stable green window (precedent: the #1315 advisory→blocking promotion of
-the main suite).
+The same workflow also runs a separate **`E2E multi-lodge`** job (the
+`multi-lodge` project, above), and it too is a required status check: launched
+advisory in #1623 and promoted to blocking in #1655 (the #1315 precedent) after
+its observation window — the one observed flake class was root-caused and fixed
+test-side in #1650, and the job's first functional run caught a real product
+bug (#1628). A red run blocks a (non-admin) merge exactly like `Playwright
+E2E`; check the job log and the `playwright-report-multi-lodge` artifact when
+it goes red. It stays a separate job so the second-lodge seed never reaches
+the single-lodge stack the main suite asserts on.
 
 ## Safety
 

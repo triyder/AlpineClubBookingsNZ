@@ -4,6 +4,22 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Behaviour change — lodge capacity now honours a max-sleeping-capacity
+  ceiling (#1653).** A per-lodge `LodgeSettings.capacity` value now caps the bed
+  count when Bed Allocation is on: effective capacity is the lower of the
+  installed active beds and the capacity, so a lodge may have more beds than it
+  is allowed to sleep. Previously the capacity was *ignored* whenever beds were
+  configured. **Operator action:** if a lodge has both configured beds **and** a
+  capacity set *below* its bed count, its bookable capacity will drop to that
+  value on upgrade. Run the read-only detection query in
+  `docs/CAPACITY_MODEL.md` to list any affected lodge and confirm the cap is
+  intended before deploying. No schema migration; code-only. See
+  `docs/CAPACITY_MODEL.md` for the full resolution table.
+- Promoted the two-lodge `E2E multi-lodge` CI job from advisory to a blocking
+  required status check (#1655; launched advisory in #1623 for #1568, its one
+  observed flake class root-caused and fixed test-side in #1650). Cross-lodge
+  E2E regressions now block merges the same way the single-lodge Playwright
+  suite does. CI-only; no application behaviour change.
 - Added **Configuration Export & Import** (config transfer): a full-admin tool
   (Admin → Setup & Configuration → Export & Import) to export a club's
   configuration, site content, and lodge setup as a portable, database-id-free
@@ -14,10 +30,10 @@ All notable public reference-release changes should be recorded here.
   embedded-image bundling + reference remap), club settings singletons, lodge
   configuration (lodges/rooms/beds/seasons/rates/instructions/chore templates),
   committee (roles + standalone members), induction checklist templates, and
-  Xero account/item-code mappings. Never carries secrets,
-  members, transactional data, or (by default) door codes. Not a database
-  backup; the `pg_dump` subsystem remains the disaster-recovery tool. No schema
-  migration. See `docs/config-transfer/`.
+  Xero account/item-code mappings. Never carries secrets, members, transactional
+  data, or (by default) door codes. Not a database backup; the `pg_dump`
+  subsystem remains the disaster-recovery tool. No schema migration. See
+  `docs/config-transfer/`.
 
 ## 0.10.1 - 2026-07-07
 

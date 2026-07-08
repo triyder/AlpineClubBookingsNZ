@@ -11,7 +11,7 @@ import {
   WAITLISTER,
 } from "../helpers/fixtures";
 
-// Advisory multi-lodge coverage (issue #1568), member-facing scenarios. Runs
+// Multi-lodge coverage (issue #1568), member-facing scenarios. Runs
 // ONLY in the `multi-lodge` Playwright project against a two-lodge database
 // (E2E_MULTI_LODGE=1 → e2e/setup/seed-second-lodge.ts). This is a coverage
 // project, NOT a substitute for the manual staging matrix in

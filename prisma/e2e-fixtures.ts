@@ -182,7 +182,7 @@ export const PUBLIC_APPLICANT_EMAIL = demoEmail("penny.public");
 
 // --- Multi-lodge fixtures (e2e/multi-lodge/*, gated on E2E_MULTI_LODGE) ----
 // A SECOND active lodge ("lodge B") plus the rooms, season, kiosk binding, and
-// bookings the advisory multi-lodge Playwright project asserts on. Seeded ONLY
+// bookings the multi-lodge Playwright project asserts on. Seeded ONLY
 // by e2e/setup/seed-second-lodge.ts when E2E_MULTI_LODGE=1, run AFTER the base
 // seed (so lodge A's seasons exist to mirror). The default single-lodge suite
 // never runs that script, so it never sees a second lodge and its behaviour is
