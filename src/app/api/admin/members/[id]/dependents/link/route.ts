@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { isFullAdmin, memberHoldsPrivilegedRole } from "@/lib/access-roles";
+import {
+  AdminAccountGuardError,
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+  wouldRemoveLastFullAdmin,
+} from "@/lib/admin-account-guards";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
@@ -171,6 +179,11 @@ export async function POST(
             select: { id: true, inheritEmailFromId: true },
           },
           canLogin: true,
+          // Role fields feed the #1604/#1622 privileged-target guard, evaluated
+          // canLogin-blind via memberHoldsPrivilegedRole.
+          role: true,
+          financeAccessLevel: true,
+          accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
           archivedAt: true,
           dependents: {
             select: { id: true },
@@ -305,6 +318,22 @@ export async function POST(
       }
 
       if (data.disableLogin) {
+        // Admin-account guards (issue #1604/#1622): linking a member as a
+        // dependent with disableLogin flips canLogin false on an existing
+        // account — the same de-login class the #1604 guards protect. Guard only
+        // a real true→false flip (an already non-login target is a no-op echo),
+        // inside this transaction so the last-admin count sees its read view.
+        if (target.canLogin) {
+          if (!isFullAdmin(session.user) && memberHoldsPrivilegedRole(target)) {
+            throw new AdminAccountGuardError(
+              PRIVILEGED_TARGET_GUARD_MESSAGE,
+              403,
+            );
+          }
+          if (await wouldRemoveLastFullAdmin(tx, target.id)) {
+            throw new AdminAccountGuardError(LAST_FULL_ADMIN_GUARD_MESSAGE, 409);
+          }
+        }
         updateData.canLogin = false;
       }
 
@@ -366,6 +395,13 @@ export async function POST(
   } catch (error) {
     if (error instanceof LinkDependentError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
+    if (error instanceof AdminAccountGuardError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode },
+      );
     }
 
     logger.error({ err: error }, "Failed to link dependant");

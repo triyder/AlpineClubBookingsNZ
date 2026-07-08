@@ -3,6 +3,14 @@ import {
   MembershipCancellationRequestStatus,
   type Prisma,
 } from "@prisma/client";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { memberHoldsPrivilegedRole } from "@/lib/access-roles";
+import {
+  actorIsFullAdmin,
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+  wouldRemoveLastFullAdmin,
+} from "@/lib/admin-account-guards";
 import { createAuditLog } from "@/lib/audit";
 import {
   sendMembershipCancellationApprovedEmail,
@@ -499,6 +507,39 @@ export async function reviewMembershipCancellationParticipant({
   const now = new Date();
   await prisma.$transaction(async (tx) => {
     if (action === "approve") {
+      // Admin-account guards (issue #1604/#1622). Approving a cancellation
+      // clears active/canLogin on the target, a de-login of the same class the
+      // #1604 guards protect. Enforced inside the transaction so the last-admin
+      // count sees this mutation's read view. The target's role fields are read
+      // in-transaction and evaluated canLogin-blind via memberHoldsPrivilegedRole.
+      const guardTarget = await tx.member.findUnique({
+        where: { id: participant.memberId },
+        select: {
+          role: true,
+          financeAccessLevel: true,
+          accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
+        },
+      });
+      if (
+        guardTarget &&
+        !(await actorIsFullAdmin(tx, adminMemberId)) &&
+        memberHoldsPrivilegedRole(guardTarget)
+      ) {
+        throw new MembershipCancellationAdminError(
+          PRIVILEGED_TARGET_GUARD_MESSAGE,
+          403,
+        );
+      }
+      // Single-target: a per-participant approval de-logins exactly this member
+      // (the sibling updateMany calls below null FK links, not canLogin), so the
+      // single-target end-state check is the correct primitive here.
+      if (await wouldRemoveLastFullAdmin(tx, participant.memberId)) {
+        throw new MembershipCancellationAdminError(
+          LAST_FULL_ADMIN_GUARD_MESSAGE,
+          409,
+        );
+      }
+
       await tx.member.update({
         where: { id: participant.memberId },
         data: {

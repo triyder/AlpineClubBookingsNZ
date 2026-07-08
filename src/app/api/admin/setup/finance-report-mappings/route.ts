@@ -128,6 +128,7 @@ export async function PUT(request: NextRequest) {
 
   revalidatePath("/finance");
   revalidatePath("/admin/setup");
+  revalidatePath("/admin/setup/finance");
 
   return NextResponse.json(await getFinanceReportMappingsState());
 }

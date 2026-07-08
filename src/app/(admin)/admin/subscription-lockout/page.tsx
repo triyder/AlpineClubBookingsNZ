@@ -6,6 +6,7 @@ import {
   emptyAdminPermissionMatrix,
   getAdminPermissionMatrix,
 } from "@/lib/admin-permissions";
+import { BackLink } from "@/components/admin/back-link";
 import { SubscriptionLockoutSettingsPanel } from "@/components/admin/subscription-lockout-settings-panel";
 
 // Thin server wrapper. This page (support area) embeds a panel whose backing
@@ -40,7 +41,8 @@ export default async function AdminSubscriptionLockoutPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold">Subscription lockout settings</h1>
+        <BackLink href="/admin/membership-setup" label="Membership & Members" />
+        <h1 className="mt-2 text-2xl font-bold">Subscription lockout settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Turn the unpaid-subscription booking lockout on or off, set the
           financial year, and configure how a paid subscription is detected in

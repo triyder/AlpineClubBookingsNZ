@@ -23,6 +23,12 @@ vi.mock("@/lib/logger", () => ({
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { POST } from "@/app/api/admin/members/[id]/dependents/link/route";
+import {
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+} from "@/lib/admin-account-guards";
+
+type MockAccessRole = { role: string | null; roleDefinitionId?: string | null; roleDefinition?: unknown };
 
 type MockMember = {
   id: string;
@@ -35,12 +41,18 @@ type MockMember = {
   secondaryParentId: string | null;
   inheritEmailFromId: string | null;
   canLogin: boolean;
+  role: string;
+  financeAccessLevel: string;
+  accessRoles: MockAccessRole[];
   dependents: Array<{ id: string }>;
   secondaryDependents: Array<{ id: string }>;
   familyGroupMemberships: Array<{ familyGroupId: string }>;
 };
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+// A Membership Officer: admin-portal access but not a Full Admin.
+const officerSession = { user: { id: "officer-1", role: "USER", accessRoles: [{ role: "ADMIN_MEMBERSHIP" }] } } as any;
+const adminAccessRoles: MockAccessRole[] = [{ role: "ADMIN", roleDefinitionId: null, roleDefinition: null }];
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/admin/members/parent-1/dependents/link", {
@@ -62,6 +74,9 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     secondaryParentId: null,
     inheritEmailFromId: null,
     canLogin: true,
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [],
     dependents: [],
     secondaryDependents: [],
     familyGroupMemberships: [{ familyGroupId: "fg-1" }, { familyGroupId: "fg-2" }],
@@ -81,6 +96,9 @@ function makeMember(overrides: Partial<MockMember> = {}): MockMember {
     secondaryParentId: null,
     inheritEmailFromId: null,
     canLogin: true,
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [],
     dependents: [],
     secondaryDependents: [],
     familyGroupMemberships: [],
@@ -96,7 +114,20 @@ function setupTransaction(members: MockMember[]) {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         return membersById.get(where.id) ?? null;
       }),
-      count: vi.fn(async ({ where }: { where: { email: string; id: { not: string } } }) => {
+      count: vi.fn(async ({ where }: { where: any }) => {
+        // Last-admin guard query (ACTIVE_FULL_ADMIN_WHERE): active + login +
+        // ADMIN access-role row, optionally scoped to one id or excluding a set.
+        if (where.accessRoles) {
+          return members.filter((member) => {
+            if (!member.active || !member.canLogin) return false;
+            const holdsAdmin = member.accessRoles.some((r) => r.role === "ADMIN");
+            if (!holdsAdmin) return false;
+            if (typeof where.id === "string") return member.id === where.id;
+            if (where.id?.notIn) return !where.id.notIn.includes(member.id);
+            return true;
+          }).length;
+        }
+        // Shared-email orphan check.
         return members.filter((member) => member.email === where.email && member.id !== where.id.not).length;
       }),
       findFirst: vi.fn(async ({ where }: { where: { email: string; id: { not: string }; canLogin: boolean } }) => {
@@ -327,5 +358,115 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
     expect(res.status).toBe(422);
     expect((await res.json()).error).toMatch(/family groups the parent belongs to/i);
     expect(tx.member.update).not.toHaveBeenCalled();
+  });
+
+  describe("admin-account guards (#1604/#1622)", () => {
+    it("blocks a Membership Officer from de-logging an admin-holding account", async () => {
+      vi.mocked(auth).mockResolvedValue(officerSession);
+      const tx = setupTransaction([
+        makeParent(),
+        makeMember({
+          ageTier: "ADULT",
+          email: "adminuser@example.com",
+          canLogin: true,
+          role: "ADMIN",
+          accessRoles: adminAccessRoles,
+        }),
+      ]);
+
+      const res = await linkDependent({
+        memberId: "target-1",
+        inheritEmail: false,
+        disableLogin: true,
+        addToFamilyGroupIds: [],
+      });
+
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toBe(PRIVILEGED_TARGET_GUARD_MESSAGE);
+      expect(tx.member.update).not.toHaveBeenCalled();
+    });
+
+    it("blocks de-logging the last active Full Admin", async () => {
+      const tx = setupTransaction([
+        makeParent(),
+        makeMember({
+          ageTier: "ADULT",
+          email: "lastadmin@example.com",
+          canLogin: true,
+          role: "ADMIN",
+          accessRoles: adminAccessRoles,
+        }),
+      ]);
+
+      const res = await linkDependent({
+        memberId: "target-1",
+        inheritEmail: false,
+        disableLogin: true,
+        addToFamilyGroupIds: [],
+      });
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe(LAST_FULL_ADMIN_GUARD_MESSAGE);
+      expect(tx.member.update).not.toHaveBeenCalled();
+    });
+
+    it("allows de-logging a Full Admin target when another active Full Admin survives", async () => {
+      // Target IS a Full Admin, so wouldRemoveLastFullAdmin does not
+      // short-circuit — it counts survivors. The parent is a second active
+      // Full Admin, so the end-state count is non-zero and the flip is allowed.
+      const tx = setupTransaction([
+        makeParent({ role: "ADMIN", accessRoles: adminAccessRoles }),
+        makeMember({
+          ageTier: "ADULT",
+          email: "survivingadmintarget@example.com",
+          canLogin: true,
+          role: "ADMIN",
+          accessRoles: adminAccessRoles,
+        }),
+      ]);
+
+      const res = await linkDependent({
+        memberId: "target-1",
+        inheritEmail: false,
+        disableLogin: true,
+        addToFamilyGroupIds: [],
+      });
+
+      expect(res.status).toBe(200);
+      expect(tx.member.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "target-1" },
+          data: expect.objectContaining({ canLogin: false }),
+        })
+      );
+    });
+
+    it("leaves the disableLogin:false path unguarded (no de-login, admin target allowed)", async () => {
+      vi.mocked(auth).mockResolvedValue(officerSession);
+      const tx = setupTransaction([
+        makeParent(),
+        makeMember({
+          ageTier: "ADULT",
+          email: "adminuser@example.com",
+          canLogin: true,
+          role: "ADMIN",
+          accessRoles: adminAccessRoles,
+        }),
+      ]);
+
+      const res = await linkDependent({
+        memberId: "target-1",
+        inheritEmail: false,
+        disableLogin: false,
+        addToFamilyGroupIds: [],
+      });
+
+      expect(res.status).toBe(200);
+      expect(tx.member.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { parent: { connect: { id: "parent-1" } } },
+        })
+      );
+    });
   });
 });

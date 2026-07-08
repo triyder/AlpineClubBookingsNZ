@@ -12,10 +12,10 @@ This audit covers mail sent by this repository through its Nodemailer/SES path.
 I did not find a repo path that instructs Xero to email invoices; any Xero-side
 invoice email would be outside this repo's sender inventory.
 
-The `/admin/setup` and `/admin/notifications` interfaces expose email message
-settings so administrators can edit shared email variables and template wording
-without changing TypeScript files. Admin/system notification delivery policies
-are managed from `/admin/notifications`.
+The `/admin/setup` hub links to `/admin/notifications`, where administrators
+can edit shared email variables and template wording without changing
+TypeScript files. Admin/system notification delivery policies are managed from
+`/admin/notifications`.
 
 Sensitive tokens (`{{doorCode}}`, `{{token}}`, `{{pin}}`, `{{resetUrl}}`,
 `{{verifyUrl}}`, `{{confirmationUrl}}`) are body-only: subjects are persisted

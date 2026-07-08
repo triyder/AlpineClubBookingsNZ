@@ -10,6 +10,7 @@ const { mockPrisma, mockTx, mockRequireActiveSessionUser } = vi.hoisted(() => {
       findUnique: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      count: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
@@ -40,9 +41,16 @@ vi.mock("@/lib/logger", () => ({
 
 import { auth } from "@/lib/auth";
 import { POST } from "@/app/api/admin/family-groups/[id]/login-holder/route";
+import {
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+} from "@/lib/admin-account-guards";
 
 const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
+// A Membership Officer: has admin-portal access but is not a Full Admin.
+const officerSession = { user: { id: "officer-1", role: "USER", accessRoles: [{ role: "ADMIN_MEMBERSHIP" }] } } as any;
+const adminAccessRoles = [{ role: "ADMIN", roleDefinitionId: null, roleDefinition: null }];
 const passwordDate = new Date("2026-05-01T00:00:00.000Z");
 
 function makeReq(body: unknown) {
@@ -67,6 +75,9 @@ function makeMember(overrides: Record<string, unknown> = {}) {
     lastLoginAt: null,
     inheritEmailFromId: "old-holder",
     inheritEmailFrom: { email: "shared@example.com" },
+    role: "USER",
+    financeAccessLevel: "NONE",
+    accessRoles: [],
     ...overrides,
   };
 }
@@ -91,6 +102,9 @@ describe("POST /api/admin/family-groups/[id]/login-holder", () => {
       parentMemberId: null,
       inheritEmailFromId: null,
     });
+    // Last-admin end-state (#1604/#1622) counts active Full Admins AFTER the
+    // transfer's writes; default to one surviving so the guard is a no-op.
+    mockTx.member.count.mockResolvedValue(1);
   });
 
   it("swaps login holder in a shared 2-adult cluster", async () => {
@@ -256,6 +270,133 @@ describe("POST /api/admin/family-groups/[id]/login-holder", () => {
         targetId: "old-holder",
         details: expect.stringContaining("up to 8 hours"),
       }),
+    });
+  });
+
+  describe("admin-account guards (#1604/#1622)", () => {
+    it("blocks a Membership Officer from transferring away an admin-holding login holder", async () => {
+      mockedAuth.mockResolvedValue(officerSession);
+      mockTx.familyGroup.findUnique.mockResolvedValue(
+        makeGroup([
+          makeMember({
+            id: "old-holder",
+            canLogin: true,
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+            role: "ADMIN",
+            accessRoles: adminAccessRoles,
+          }),
+          makeMember({ id: "new-holder" }),
+        ])
+      );
+
+      const res = await POST(makeReq({
+        email: "shared@example.com",
+        newHolderId: "new-holder",
+      }), {
+        params: Promise.resolve({ id: "group-1" }),
+      });
+
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toEqual({
+        error: PRIVILEGED_TARGET_GUARD_MESSAGE,
+      });
+      expect(mockTx.member.update).not.toHaveBeenCalled();
+    });
+
+    it("allows a Full Admin to transfer an admin-holding login holder", async () => {
+      mockTx.familyGroup.findUnique.mockResolvedValue(
+        makeGroup([
+          makeMember({
+            id: "old-holder",
+            canLogin: true,
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+            role: "ADMIN",
+            accessRoles: adminAccessRoles,
+          }),
+          makeMember({ id: "new-holder" }),
+        ])
+      );
+
+      const res = await POST(makeReq({
+        email: "shared@example.com",
+        newHolderId: "new-holder",
+      }), {
+        params: Promise.resolve({ id: "group-1" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockTx.member.update).toHaveBeenCalledWith({
+        where: { id: "old-holder" },
+        data: expect.objectContaining({ canLogin: false }),
+      });
+    });
+
+    it("blocks a transfer whose end-state leaves no active Full Admin", async () => {
+      // End-state count (post-write, incl. the new holder's canLogin grant) is
+      // zero: the transfer would strand the club, so it rolls back with 409.
+      mockTx.member.count.mockResolvedValue(0);
+      mockTx.familyGroup.findUnique.mockResolvedValue(
+        makeGroup([
+          makeMember({
+            id: "old-holder",
+            canLogin: true,
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+          }),
+          makeMember({ id: "new-holder" }),
+        ])
+      );
+
+      const res = await POST(makeReq({
+        email: "shared@example.com",
+        newHolderId: "new-holder",
+      }), {
+        params: Promise.resolve({ id: "group-1" }),
+      });
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toEqual({
+        error: LAST_FULL_ADMIN_GUARD_MESSAGE,
+      });
+    });
+
+    it("allows the transfer when the incoming holder keeps a Full Admin in the end-state", async () => {
+      // The outgoing holder was the last admin, but the incoming holder is
+      // himself a Full Admin whose canLogin flips true, so the post-write count
+      // stays positive and the transfer is allowed.
+      mockTx.member.count.mockResolvedValue(1);
+      mockTx.familyGroup.findUnique.mockResolvedValue(
+        makeGroup([
+          makeMember({
+            id: "old-holder",
+            canLogin: true,
+            inheritEmailFromId: null,
+            inheritEmailFrom: null,
+            role: "ADMIN",
+            accessRoles: adminAccessRoles,
+          }),
+          makeMember({
+            id: "new-holder",
+            role: "ADMIN",
+            accessRoles: adminAccessRoles,
+          }),
+        ])
+      );
+
+      const res = await POST(makeReq({
+        email: "shared@example.com",
+        newHolderId: "new-holder",
+      }), {
+        params: Promise.resolve({ id: "group-1" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockTx.member.update).toHaveBeenCalledWith({
+        where: { id: "new-holder" },
+        data: expect.objectContaining({ canLogin: true }),
+      });
     });
   });
 });

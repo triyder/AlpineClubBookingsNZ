@@ -1,3 +1,4 @@
+import { BackLink } from "@/components/admin/back-link";
 import {
   Card,
   CardContent,
@@ -11,7 +12,8 @@ export default function MountainConditionsAdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">
+        <BackLink href="/admin/appearance" label="Site Appearance & Content" />
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">
           Mountain Conditions
         </h1>
         <p className="mt-1 text-sm text-slate-500">

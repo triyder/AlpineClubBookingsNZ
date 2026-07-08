@@ -108,8 +108,9 @@ function chartSnapshot() {
   };
 }
 
-// Mappings now match by Xero account code only; the rows still carry the
-// legacy sectionLabel/lineLabel columns to prove they are ignored.
+// Mappings match by Xero account code only. The legacy sectionLabel/lineLabel
+// fallback columns have been dropped from the schema (contract migration
+// 20260708220300), so the mock mapping rows carry account codes alone.
 const categories = [
   {
     id: "cat-hut-fees",
@@ -118,9 +119,7 @@ const categories = [
     subtype: "Operating",
     sortOrder: 10,
     archived: false,
-    mappings: [
-      { id: "map-hut", accountCode: "200", sectionLabel: null, lineLabel: null },
-    ],
+    mappings: [{ id: "map-hut", accountCode: "200" }],
   },
   {
     id: "cat-entrance",
@@ -129,14 +128,7 @@ const categories = [
     subtype: "Operating",
     sortOrder: 20,
     archived: false,
-    mappings: [
-      {
-        id: "map-entrance",
-        accountCode: "210",
-        sectionLabel: "ignored",
-        lineLabel: "ignored",
-      },
-    ],
+    mappings: [{ id: "map-entrance", accountCode: "210" }],
   },
   {
     id: "cat-insurance",
@@ -145,9 +137,7 @@ const categories = [
     subtype: "Overheads",
     sortOrder: 50,
     archived: false,
-    mappings: [
-      { id: "map-insurance", accountCode: "400", sectionLabel: null, lineLabel: null },
-    ],
+    mappings: [{ id: "map-insurance", accountCode: "400" }],
   },
 ];
 

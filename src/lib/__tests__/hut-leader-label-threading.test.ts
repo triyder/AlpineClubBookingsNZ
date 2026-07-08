@@ -34,6 +34,7 @@ describe("hut-leader label flows into prose surfaces (#1262 follow-up)", () => {
       startDate: new Date("2026-07-15"),
       endDate: new Date("2026-07-18"),
       pin: "123456",
+      assignmentId: "assign-abc123",
     });
 
     // Heading is standalone/title-case; body prose is mid-sentence lowercase.
@@ -52,6 +53,7 @@ describe("hut-leader label flows into prose surfaces (#1262 follow-up)", () => {
       startDate: new Date("2026-07-15"),
       endDate: new Date("2026-07-18"),
       pin: "123456",
+      assignmentId: "assign-abc123",
     });
 
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);

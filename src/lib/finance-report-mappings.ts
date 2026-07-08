@@ -263,8 +263,6 @@ function toCategoryDto(category: {
   mappings: Array<{
     id: string;
     accountCode: string | null;
-    sectionLabel: string | null;
-    lineLabel: string | null;
   }>;
 }): FinanceReportCategoryDto {
   return {

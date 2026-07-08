@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RefreshCw, Save, UserCog } from "lucide-react";
+import { BackLink } from "@/components/admin/back-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -150,14 +151,18 @@ export default function AdminMemberFieldsPage() {
 
   if (loading && !payload) {
     return (
-      <div className="flex min-h-[320px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+      <div className="space-y-6">
+        <BackLink href="/admin/membership-setup" label="Membership & Members" />
+        <div className="flex min-h-[320px] items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+        </div>
       </div>
     );
   }
 
   return (
     <div ref={pageRef} className="space-y-8">
+      <BackLink href="/admin/membership-setup" label="Membership & Members" />
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Member fields</h1>

@@ -81,7 +81,9 @@ Future reviews and issues should cite this file when proposing changes.
   footprint takes the global booking advisory lock (`pg_advisory_xact_lock(1)`)
   before running the guard (`assertNoBookingMemberNightConflicts`); that
   lock-before-guard ordering is frozen for every such writer by
-  `review-findings-contracts.test.ts`. Writes that do not change the member-night
+  `review-findings-contracts.test.ts`. (`CONCURRENCY_AND_LOCKING.md` maps this
+  lock alongside the per-lodge capacity and per-member credit locks and the
+  ordering discipline each follows.) Writes that do not change the member-night
   footprint — re-pricing, name-only guest edits, lodge arrive/depart timestamps,
   and anonymization that clears the member link — legitimately skip the guard, as
   does the non-member group-join path (`verifyAndCreateNonMemberJoin`, which
@@ -863,23 +865,31 @@ Lodge kiosk; `ORG` ⇒ Organisation; otherwise User) and save it back as plain
 `USER` token. No new stored classification field may be introduced for it,
 organisations cannot hold admin roles, and the server-side Full-Admin gates
 on access-role writes remain the authority (the UI only mirrors them).
-The admin population is protected against lock-out on the four member-write
-paths that can deactivate, de-login, or archive an account (#1604): member
-edit, bulk update, lifecycle archive, and deletion-request approval. On those
-paths the last active, login-enabled Full Admin can never be deactivated,
-de-logined, or archived — by anyone, including another Full Admin — and only a
-Full Admin may deactivate, de-login, or archive an account holding a privileged
-role. Both guards are enforced server-side; the last-admin count runs inside
-each mutation's transaction, and "Full Admin" means an active, login-enabled
-member with the `ADMIN` access-role row (the runtime grant), not a bare legacy
-`Member.role`. The guarantee is scoped to those paths, not absolute: three
-other routes can still clear `canLogin` on an admin and are NOT yet guarded —
-(a) membership cancellation approval, which sets `active`/`canLogin` false
-(#1622); (b) family-group login-holder transfer
-(`POST /api/admin/family-groups/[id]/login-holder`), a second
-`membership:edit`-reachable de-login path (#1622); and (c) the age-down cron,
-where editing a date of birth to a minor tier can indirectly clear `canLogin`
-(informational).
+The admin population is protected against lock-out on the seven member-write
+paths that can deactivate, de-login, or archive an EXISTING account (#1604,
+extended by #1622): member edit, bulk update, lifecycle archive,
+deletion-request approval, membership-cancellation approval, family-group
+login-holder transfer (`POST /api/admin/family-groups/[id]/login-holder`), and
+linking a member as a dependent with `disableLogin`
+(`POST /api/admin/members/[id]/dependents/link`). On those paths the last
+active, login-enabled Full Admin can never be deactivated, de-logined, or
+archived — by anyone, including another Full Admin — and only a Full Admin may
+deactivate, de-login, or archive an account holding a privileged role. Both
+guards are enforced server-side; the last-admin count runs inside each
+mutation's transaction, and "Full Admin" means an active, login-enabled member
+with the `ADMIN` access-role row (the runtime grant), not a bare legacy
+`Member.role`. The login-holder transfer both revokes and grants `canLogin` in
+one operation, so it counts active Full Admins on its post-write read view — the
+incoming holder's grant is part of the evaluated end-state. This is a
+closed-world guarantee: every other `canLogin` writer in the codebase either
+CREATES a brand-new member (booking-request/school/group/Xero-import contacts,
+nomination and family-request dependants, plus admin member-create and CSV
+member-import rows — whose `canLogin` value seeds a new row, never de-logins an
+existing one) or passes `canLogin` only as a read/token filter
+(`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
+strand an existing admin. The one remaining path that can clear `canLogin` on an existing
+admin and is NOT guarded is indirect — the age-down cron, where editing a date
+of birth to a minor tier can indirectly clear `canLogin` (informational).
 On-behalf booking must not depend on `membership:view`: a Booking Officer
 (`bookings:edit`) reaches the booking owner's or target member's family group
 through the bookings-scoped pickers

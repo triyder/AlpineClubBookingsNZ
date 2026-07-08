@@ -97,9 +97,10 @@ Chart-of-Accounts snapshot) counts as an expense, matching the ratio explorer,
 so no line is dropped from both the revenue and costs views. On the dashboard,
 groups render under their `subtype` sub-heading with a per-subtype sub-total.
 
-> Note: the legacy `FinanceReportCategoryMapping.sectionLabel` / `lineLabel`
-> fallback-label columns are retained in the schema but are no longer read or
-> written — text-label fallback matching has been removed.
+> Note: text-label fallback matching has been removed — the legacy
+> `FinanceReportCategoryMapping.sectionLabel` / `lineLabel` fallback-label
+> columns have been dropped from the schema (contract migration
+> `20260708220300`). Matching is by account code only.
 
 ## Snapshot Contract
 

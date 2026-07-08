@@ -1,0 +1,191 @@
+"use client";
+
+import { useState } from "react";
+import { Printer, ShieldAlert, KeyRound } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+
+type InstructionDocument = {
+  key: "OPEN" | "CLOSE" | "DAY_TO_DAY";
+  title: string;
+  description: string;
+  contentHtml: string;
+  updatedAt: string | null;
+};
+
+// Shared typography for the sanitised instruction HTML (parity with the
+// login/kiosk instruction surfaces). contentHtml is sanitised server-side.
+const INSTRUCTION_HTML_CLASSES =
+  "text-base leading-7 text-slate-800 [&_a]:text-blue-700 [&_a]:underline [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-4 [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6";
+
+function formatUpdatedAt(value: string | null): string | null {
+  if (!value) return null;
+  return new Date(value).toLocaleDateString("en-NZ", { dateStyle: "long" });
+}
+
+export function HutLeaderInstructionsClient({
+  assignmentId,
+}: {
+  assignmentId: string | null;
+}) {
+  const [pin, setPin] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<InstructionDocument[] | null>(null);
+
+  // No assignment reference in the link — nothing we can verify against.
+  if (!assignmentId) {
+    return (
+      <Card className="mx-auto max-w-2xl">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldAlert className="h-5 w-5 text-amber-600" />
+            Lodge Instructions
+          </CardTitle>
+          <CardDescription>This link is incomplete.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-slate-600">
+            Please open the lodge instructions using the link in your assignment
+            email. If it still doesn&apos;t work, contact a club administrator.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/lodge/instructions/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ assignmentId, pin }),
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { documents: InstructionDocument[] };
+        setDocuments(body.documents);
+        return;
+      }
+      if (res.status === 429) {
+        setError("Too many attempts. Please wait a few minutes and try again.");
+      } else if (res.status === 401) {
+        setError("That link and PIN don't match. Check your assignment email.");
+      } else if (res.status === 400) {
+        setError("Please enter your 6-digit kiosk PIN.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+    } catch {
+      setError("Couldn't reach the server. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Verified — show the instructions.
+  if (documents) {
+    return (
+      <div className="lodge-instructions-print-root space-y-8">
+        <div className="flex flex-wrap items-start justify-between gap-4 print:hidden">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              Lodge Instructions
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Opening, closing, and day-to-day instructions for your stay. Print
+              a copy to bring with you.
+            </p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => window.print()}>
+            <Printer className="mr-2 h-4 w-4" />
+            Print
+          </Button>
+        </div>
+
+        {documents.map((doc) => {
+          const updated = formatUpdatedAt(doc.updatedAt);
+          return (
+            <section
+              key={doc.key}
+              className="lodge-instructions-print-section rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+            >
+              <h2 className="text-xl font-semibold text-slate-900">
+                {doc.title}
+              </h2>
+              {updated ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Last updated {updated}
+                </p>
+              ) : null}
+              {doc.contentHtml ? (
+                <div
+                  className={`mt-4 ${INSTRUCTION_HTML_CLASSES}`}
+                  // Sanitised server-side (sanitizePageContentHtml) before it
+                  // reaches the client.
+                  dangerouslySetInnerHTML={{ __html: doc.contentHtml }}
+                />
+              ) : (
+                <p className="mt-4 text-sm text-slate-500">
+                  No instructions have been written for this section yet.
+                </p>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // PIN entry.
+  return (
+    <Card className="mx-auto max-w-md">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="h-5 w-5 text-slate-600" />
+          Lodge Instructions
+        </CardTitle>
+        <CardDescription>
+          Enter the kiosk PIN from your assignment email to view the opening,
+          closing, and day-to-day instructions for your stay.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="hut-leader-pin">Kiosk PIN</Label>
+            <Input
+              id="hut-leader-pin"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              pattern="\d{6}"
+              placeholder="6-digit PIN"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              className="tracking-[0.4em] text-center text-lg"
+            />
+          </div>
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={submitting || pin.length !== 6}
+          >
+            {submitting ? "Checking..." : "View instructions"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}

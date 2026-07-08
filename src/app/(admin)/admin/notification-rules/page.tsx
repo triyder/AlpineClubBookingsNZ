@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/admin/back-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { listNotificationDeliveryPolicySettings } from "@/lib/notification-delivery-policies";
 import { NotificationDeliveryPolicySettings } from "@/components/admin/email-settings/notification-delivery-policy-settings";
@@ -9,12 +9,7 @@ export default async function NotificationRulesPage() {
   return (
     <div className="space-y-8">
       <div>
-        <Link
-          href="/admin/notifications"
-          className="text-sm font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-        >
-          ← Notifications &amp; Email
-        </Link>
+        <BackLink href="/admin/notifications" label="Notifications & Email" />
         <h1 className="mt-2 text-2xl font-bold text-slate-900">
           Delivery Rules
         </h1>

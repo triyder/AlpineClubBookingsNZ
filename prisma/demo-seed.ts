@@ -123,7 +123,6 @@ async function cleanup() {
   await prisma.promoCode.deleteMany();
   await prisma.lodgeBed.deleteMany();
   await prisma.lodgeRoom.deleteMany();
-  await prisma.memberInductionItemResult.deleteMany();
   await prisma.memberInductionSignOff.deleteMany();
   await prisma.memberInductionAssignedSigner.deleteMany();
   await prisma.memberInduction.deleteMany();
