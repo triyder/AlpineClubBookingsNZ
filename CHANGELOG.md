@@ -15,6 +15,11 @@ All notable public reference-release changes should be recorded here.
   `docs/CAPACITY_MODEL.md` to list any affected lodge and confirm the cap is
   intended before deploying. No schema migration; code-only. See
   `docs/CAPACITY_MODEL.md` for the full resolution table.
+- Promoted the two-lodge `E2E multi-lodge` CI job from advisory to a blocking
+  required status check (#1655; launched advisory in #1623 for #1568, its one
+  observed flake class root-caused and fixed test-side in #1650). Cross-lodge
+  E2E regressions now block merges the same way the single-lodge Playwright
+  suite does. CI-only; no application behaviour change.
 
 ## 0.10.1 - 2026-07-07
 

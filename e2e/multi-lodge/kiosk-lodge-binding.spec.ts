@@ -8,7 +8,7 @@ import {
   SECOND_LODGE,
 } from "../helpers/fixtures";
 
-// Advisory multi-lodge coverage (issue #1568), scenario (c): a kiosk bound to
+// Multi-lodge coverage (issue #1568), scenario (c): a kiosk bound to
 // lodge B must serve only lodge B's roster and never lodge A's. Runs ONLY in
 // the `multi-lodge` project against a two-lodge database (E2E_MULTI_LODGE=1).
 // NOT a substitute for the manual staging matrix (docs/multi-lodge/test-plan.md).

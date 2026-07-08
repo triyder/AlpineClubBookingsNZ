@@ -165,17 +165,17 @@ jobs:
         if: always()
         run: bash scripts/e2e-stack.sh down
 
-  # Advisory (non-blocking) two-lodge coverage — issue #1568. Runs the small
-  # `multi-lodge` Playwright project against a stack seeded with a SECOND active
-  # lodge (E2E_MULTI_LODGE=1 → e2e/setup/seed-second-lodge.ts). It is a separate
-  # job with a name outside branch protection's required checks AND
-  # continue-on-error: true, so a red run never gates a merge — the uploaded
-  # report is where flake rate is observed before any advisory→blocking flip
-  # (precedent: #1315). The blocking `playwright` job above is untouched.
+  # Blocking two-lodge coverage — issue #1568, promoted advisory→blocking in
+  # #1655 (precedent: #1315) after the observation window: the one observed
+  # flake class was root-caused and fixed test-side in #1650. Runs the small
+  # `multi-lodge` Playwright project against a stack seeded with a SECOND
+  # active lodge (E2E_MULTI_LODGE=1 → e2e/setup/seed-second-lodge.ts). It stays
+  # a separate job so the second-lodge seed never reaches the single-lodge
+  # stack the `playwright` job's specs assert on. Its name is one of branch
+  # protection's required status checks — a red run blocks (non-admin) merges.
   multi-lodge:
-    name: E2E multi-lodge (advisory)
+    name: E2E multi-lodge
     runs-on: ubuntu-latest
-    continue-on-error: true
     timeout-minutes: 60
     env:
       STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}

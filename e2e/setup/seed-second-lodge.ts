@@ -1,13 +1,13 @@
 // E2E multi-lodge provisioning: add a SECOND active lodge (lodge B) with its
 // own rooms, seasons, a kiosk binding, and the deterministic fixtures the
-// advisory `multi-lodge` Playwright project asserts on. Run by
+// `multi-lodge` Playwright project asserts on. Run by
 // scripts/e2e-stack.sh ONLY when E2E_MULTI_LODGE=1, AFTER prisma/seed.ts (so
 // lodge A's Winter/Summer seasons already exist to mirror). The default
 // single-lodge suite never runs this, so it never sees a second lodge and its
 // behaviour is byte-identical.
 //
-// This is provisioning for an ADVISORY (non-blocking) coverage project and is
-// NOT a substitute for the manual two-lodge staging matrix in
+// This is provisioning for a coverage project (a blocking CI check since
+// #1655) and is NOT a substitute for the manual two-lodge staging matrix in
 // docs/multi-lodge/test-plan.md.
 //
 // Idempotent: the stack drops the schema before every prepare and the demo
