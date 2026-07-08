@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Users,
+  ArrowRightLeft,
   CalendarRange,
   BookOpen,
   Clock,
@@ -286,6 +287,12 @@ const navSections: NavSection[] = [
         href: "/admin/access-roles",
         label: "Access Roles",
         icon: Shield,
+        fullAdminOnly: true,
+      },
+      {
+        href: "/admin/config-transfer",
+        label: "Export & Import",
+        icon: ArrowRightLeft,
         fullAdminOnly: true,
       },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
