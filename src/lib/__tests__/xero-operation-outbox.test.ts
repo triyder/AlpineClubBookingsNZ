@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   allocateCreditNoteToInvoice: vi.fn(),
   createXeroCreditNote: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
+  allocateAppliedCreditForBooking: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
   createXeroInvoiceForGroupSettlement: vi.fn(),
@@ -120,6 +121,9 @@ vi.mock("@/lib/xero-mappings", () => ({
   getEntranceFeeContext: mocks.getEntranceFeeContext,
 }));
 
+vi.mock("@/lib/xero-applied-credit-allocation", () => ({
+  allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+}));
 vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
 }));
@@ -1241,8 +1245,8 @@ describe("processQueuedXeroOutboxOperations", () => {
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
     });
-    expect(args.where.queueType.in).toHaveLength(12);
-    // The legacy 12-branch `requestPayload->>'queueType'` OR predicate is gone.
+    expect(args.where.queueType.in).toHaveLength(13);
+    // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
     expect(JSON.stringify(args.where)).not.toContain("requestPayload");
     expect(args.orderBy).toEqual({ createdAt: "asc" });
@@ -1861,6 +1865,19 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
       },
       handler: mocks.allocateCreditNoteToInvoice,
     },
+    APPLIED_CREDIT_ALLOCATION: {
+      op: {
+        id: "op_applied_credit_alloc_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "APPLIED_CREDIT_ALLOCATION",
+          bookingId: "booking_1",
+        },
+      },
+      handler: mocks.allocateAppliedCreditForBooking,
+    },
     MEMBERSHIP_CANCELLATION_CREDIT_NOTE: {
       op: {
         id: "op_membership_cancel_credit_1",
@@ -1919,6 +1936,7 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
     mocks.createXeroCreditNoteForModification.mockResolvedValue("cn");
     mocks.createUnappliedXeroCreditNoteForModification.mockResolvedValue("cn");
     mocks.allocateCreditNoteToInvoice.mockResolvedValue(undefined);
+    mocks.allocateAppliedCreditForBooking.mockResolvedValue(undefined);
     mocks.createXeroMembershipCancellationCreditNote.mockResolvedValue("cn");
     mocks.syncXeroMembershipCancellationContact.mockResolvedValue({
       memberId: "member_1",

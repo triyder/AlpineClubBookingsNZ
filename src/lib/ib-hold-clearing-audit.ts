@@ -15,7 +15,7 @@
  * hand (see docs/MAINTENANCE.md; the existing xero-booking-repair CLI cannot
  * express this remainder repair — see the note there).
  */
-import { CreditType, PaymentSource } from "@prisma/client";
+import { BookingStatus, CreditType, PaymentSource } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export interface IbHoldClearingRow {
@@ -234,6 +234,277 @@ export function formatIbHoldClearingAuditReport(
     lines.push(`    expected clearing: ${formatCents(finding.expectedClearingCents)}`);
     lines.push(`    actual clearing:   ${formatCents(finding.enqueuedClearingCents)}`);
     lines.push(`    OPEN DELTA:        ${formatCents(finding.deltaCents)}`);
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// #1620 — Internet-Banking + applied-credit strand enumeration (read-only)
+// ---------------------------------------------------------------------------
+//
+// Distinct from the #1597 hold-clearing audit above. The booking invoice is
+// raised at the FULL finalPrice and locally-applied member credit is never
+// allocated against it (DOMAIN_INVARIANTS.md:124-128, "locally-applied credit
+// never reduced the invoice"). So every Internet-Banking payment carrying
+// applied credit is exposed: a member who pays that full invoice loses the
+// applied-credit slice (realized double-pay); one who has not yet paid is still
+// exposed (recoverable). This enumeration sizes that population.
+//
+// CANCELLED bookings are intentionally EXCLUDED — their applied credit is the
+// #1547 domain (restored on cancel; orphans surfaced by
+// cron-credit-reconciliation + backfill-orphaned-applied-credits). This targets
+// the never-cancelled PAID (realized) and PAYMENT_PENDING (not-yet-realized)
+// shapes. Read-only: local SELECTs only, no Xero calls.
+//
+// Load-bearing invariant that lets the scan use Σ BOOKING_APPLIED directly (no
+// restore subtraction): EVERY path that writes a CANCELLATION_REFUND restore row
+// against a booking also sets that booking to CANCELLED — every `cancelBooking`
+// branch, the IB hold-expiry release (`internet-banking-payment-cron.ts`
+// `releaseOneHold` sets `status: CANCELLED`), and the capacity-failed
+// system-void. So a NON-cancelled booking never carries a restore row, and its
+// Σ BOOKING_APPLIED is the true unrestored applied credit. (Booking
+// modifications mint BOOKING_MODIFICATION_REFUND rows; they never reverse a
+// BOOKING_APPLIED row, so they do not perturb this sum.)
+
+export interface IbAppliedCreditStrandRow {
+  paymentId: string;
+  bookingId: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  /** payment.amountCents mirror. */
+  amountCents: number;
+  /** payment.creditAppliedCents mirror (0 on a card-origin switched payment,
+   * even though the ledger consumed credit — the §4 staleness). */
+  creditAppliedCents: number;
+  finalPriceCents: number;
+  /** |Σ BOOKING_APPLIED(appliedToBookingId=booking)| — the ledger truth, stored
+   * negative and negated here to a positive applied total. */
+  ledgerAppliedCents: number;
+}
+
+export interface IbAppliedCreditStrandFinding {
+  bookingId: string;
+  paymentId: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  /** true once the payment captured cash: the member has already double-paid.
+   * Repair is a LOCAL credit restore (a Xero credit note does not refund cash a
+   * member already sent). */
+  realized: boolean;
+  amountCents: number;
+  creditAppliedCents: number;
+  finalPriceCents: number;
+  ledgerAppliedCents: number;
+  /** ledgerAppliedCents − creditAppliedCents; non-zero ⇒ the payment mirror is
+   * stale (e.g. a switched booking whose creditAppliedCents stayed 0). */
+  mirrorLedgerMismatchCents: number;
+  /** amountCents + creditAppliedCents − finalPriceCents; the §4 payment-mirror
+   * invariant residual (0 when the mirror is internally consistent). */
+  mirrorInvariantDeltaCents: number;
+  /** Credit the member stands to lose (pending) or has lost (realized). */
+  strandExposureCents: number;
+}
+
+export interface IbAppliedCreditStrandAuditResult {
+  scannedInternetBankingPayments: number;
+  /** Payments that captured cash while holding applied credit — double-paid. */
+  realized: IbAppliedCreditStrandFinding[];
+  /** Payments not yet captured — credit still recoverable before they pay. */
+  pending: IbAppliedCreditStrandFinding[];
+  realizedStrandedCents: number;
+  pendingExposureCents: number;
+}
+
+// A payment is "realized" once cash has been captured. Internet-Banking payments
+// flip to SUCCEEDED when the Xero invoice reconciles to PAID; the refunded
+// variants imply an earlier capture. Everything else (PENDING / PROCESSING /
+// FAILED) has not taken the member's money yet.
+const REALIZED_PAYMENT_STATUSES = new Set<string>([
+  "SUCCEEDED",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+]);
+
+/**
+ * Pure per-row classification. Returns a finding only when the ledger shows
+ * applied credit still consumed against this booking; otherwise null.
+ */
+export function deriveIbAppliedCreditStrandFinding(
+  row: IbAppliedCreditStrandRow,
+): IbAppliedCreditStrandFinding | null {
+  if (row.ledgerAppliedCents <= 0) {
+    return null;
+  }
+
+  return {
+    bookingId: row.bookingId,
+    paymentId: row.paymentId,
+    bookingStatus: row.bookingStatus,
+    paymentStatus: row.paymentStatus,
+    realized: REALIZED_PAYMENT_STATUSES.has(row.paymentStatus),
+    amountCents: row.amountCents,
+    creditAppliedCents: row.creditAppliedCents,
+    finalPriceCents: row.finalPriceCents,
+    ledgerAppliedCents: row.ledgerAppliedCents,
+    mirrorLedgerMismatchCents: row.ledgerAppliedCents - row.creditAppliedCents,
+    mirrorInvariantDeltaCents:
+      row.amountCents + row.creditAppliedCents - row.finalPriceCents,
+    strandExposureCents: row.ledgerAppliedCents,
+  };
+}
+
+/**
+ * Scan every non-cancelled Internet-Banking payment and enumerate the ones
+ * whose booking still carries locally-applied credit against a full invoice.
+ * Read-only: it issues only SELECTs.
+ */
+export async function auditIbAppliedCreditStrands(options?: {
+  db?: typeof prisma;
+}): Promise<IbAppliedCreditStrandAuditResult> {
+  const db = options?.db ?? prisma;
+
+  const payments = await db.payment.findMany({
+    where: {
+      source: PaymentSource.INTERNET_BANKING,
+      booking: { status: { not: BookingStatus.CANCELLED } },
+    },
+    select: {
+      id: true,
+      bookingId: true,
+      amountCents: true,
+      creditAppliedCents: true,
+      status: true,
+      booking: { select: { finalPriceCents: true, status: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const result: IbAppliedCreditStrandAuditResult = {
+    scannedInternetBankingPayments: payments.length,
+    realized: [],
+    pending: [],
+    realizedStrandedCents: 0,
+    pendingExposureCents: 0,
+  };
+
+  for (const payment of payments) {
+    const applied = await db.memberCredit.aggregate({
+      where: {
+        appliedToBookingId: payment.bookingId,
+        type: CreditType.BOOKING_APPLIED,
+        // #1620: only UN-allocated applied credit is a strand. Once the
+        // allocate-existing engine reduces the invoice it stamps the
+        // BOOKING_APPLIED row with the allocated note id, so a fixed booking
+        // (xeroCreditNoteId set) drops out of this enumeration.
+        xeroCreditNoteId: null,
+      },
+      _sum: { amountCents: true },
+    });
+    const ledgerAppliedCents = Math.max(0, -(applied._sum.amountCents ?? 0));
+
+    const finding = deriveIbAppliedCreditStrandFinding({
+      paymentId: payment.id,
+      bookingId: payment.bookingId,
+      bookingStatus: payment.booking.status,
+      paymentStatus: payment.status,
+      amountCents: payment.amountCents,
+      creditAppliedCents: payment.creditAppliedCents,
+      finalPriceCents: payment.booking.finalPriceCents,
+      ledgerAppliedCents,
+    });
+
+    if (!finding) {
+      continue;
+    }
+    if (finding.realized) {
+      result.realized.push(finding);
+      result.realizedStrandedCents += finding.strandExposureCents;
+    } else {
+      result.pending.push(finding);
+      result.pendingExposureCents += finding.strandExposureCents;
+    }
+  }
+
+  return result;
+}
+
+function formatIbAppliedCreditStrandRow(
+  finding: IbAppliedCreditStrandFinding,
+): string[] {
+  const lines: string[] = [];
+  lines.push(`- booking ${finding.bookingId} (payment ${finding.paymentId})`);
+  lines.push(`    booking status:    ${finding.bookingStatus}`);
+  lines.push(`    payment status:    ${finding.paymentStatus}`);
+  lines.push(`    final price:       ${formatCents(finding.finalPriceCents)}`);
+  lines.push(`    amountCents:       ${formatCents(finding.amountCents)}`);
+  lines.push(`    creditApplied (mirror): ${formatCents(finding.creditAppliedCents)}`);
+  lines.push(`    applied (ledger):  ${formatCents(finding.ledgerAppliedCents)}`);
+  lines.push(`    mirror vs ledger:  ${formatCents(finding.mirrorLedgerMismatchCents)}`);
+  lines.push(`    mirror invariant delta: ${formatCents(finding.mirrorInvariantDeltaCents)}`);
+  lines.push(`    STRAND EXPOSURE:   ${formatCents(finding.strandExposureCents)}`);
+  return lines;
+}
+
+export function formatIbAppliedCreditStrandReport(
+  result: IbAppliedCreditStrandAuditResult,
+): string {
+  const lines: string[] = [];
+  lines.push("Internet-Banking + applied-credit strand enumeration (#1620)");
+  lines.push("REPORT ONLY — no changes were made and no provider was called.");
+  lines.push("CANCELLED bookings are excluded (the #1547 restore domain).");
+  lines.push("");
+  lines.push(
+    `IB payments scanned (non-cancelled):   ${result.scannedInternetBankingPayments}`,
+  );
+  lines.push(
+    `REALIZED strands (member double-paid): ${result.realized.length}`,
+  );
+  lines.push(
+    `  credit already lost:                 ${formatCents(result.realizedStrandedCents)}`,
+  );
+  lines.push(
+    `PENDING strands (not yet paid):        ${result.pending.length}`,
+  );
+  lines.push(
+    `  credit at risk:                      ${formatCents(result.pendingExposureCents)}`,
+  );
+  lines.push("");
+
+  if (result.realized.length === 0 && result.pending.length === 0) {
+    lines.push("No Internet-Banking payment carries applied credit. Nothing to size.");
+    return lines.join("\n");
+  }
+
+  if (result.realized.length > 0) {
+    lines.push(
+      "REALIZED — the member already paid the FULL invoice by bank transfer while",
+    );
+    lines.push(
+      "the applied credit was consumed. Repair is a LOCAL credit restore for the",
+    );
+    lines.push(
+      "strand exposure (a Xero credit note does not refund cash already sent).",
+    );
+    lines.push("");
+    for (const finding of result.realized) {
+      lines.push(...formatIbAppliedCreditStrandRow(finding));
+    }
+    lines.push("");
+  }
+
+  if (result.pending.length > 0) {
+    lines.push(
+      "PENDING — not yet captured. These are fixed forward by the chosen #1620",
+    );
+    lines.push(
+      "remedy (reduce the outstanding invoice to effective, or restore + re-bill)",
+    );
+    lines.push("before the member pays; no realized loss yet.");
+    lines.push("");
+    for (const finding of result.pending) {
+      lines.push(...formatIbAppliedCreditStrandRow(finding));
+    }
   }
 
   return lines.join("\n");

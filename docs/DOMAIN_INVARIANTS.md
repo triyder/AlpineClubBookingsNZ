@@ -126,8 +126,13 @@ Future reviews and issues should cite this file when proposing changes.
   credit-reduced payment amount: the booking invoice is raised at the FULL
   finalPrice, so the note is `max(0, finalPrice + changeFee − Xero-allocated
   applied credit)` (only credit already allocated to the invoice AS A XERO
-  credit note is subtracted; locally-applied credit never reduced the invoice,
-  and the 100% local restore does not double-count). It is gated on an ISSUED
+  credit note — `BOOKING_APPLIED` rows carrying `xeroCreditNoteId` — is
+  subtracted, and the 100% local restore does not double-count: the allocated
+  note stays on the cancelled invoice while the restore re-creates the credit
+  locally, netting out). Since #1620 (allocate-existing, see the invariant below)
+  that term is non-zero for an Internet-Banking booking whose applied credit was
+  allocated to its invoice; before #1620 locally-applied credit never reduced the
+  invoice and the term was always 0. It is gated on an ISSUED
   invoice: the create-time hold-slots shape is CONFIRMED and booking-create
   enqueues the invoice only for PAYMENT_PENDING, so that shape reaches release
   with no invoice and enqueues nothing (a refund note against no invoice was a
@@ -208,6 +213,53 @@ Future reviews and issues should cite this file when proposing changes.
   `ADMIN_ADJUSTMENT`/`BOOKING_MODIFICATION_REFUND` row, net-non-zero ledger,
   Xero-linked note, or independently captured/refunded payment still blocks
   (owner decision 2026-07-07, FINAL).
+- Applied credit reduces the Internet-Banking invoice by ALLOCATING the member's
+  EXISTING floating credit notes (#1620, "allocate-existing"; owner decision
+  2026-07-08). A member's credit is already represented in Xero as floating
+  ACCRECCREDIT notes (minted at cancellation / modification, back-linked to the
+  positive `MemberCredit` row's `xeroCreditNoteId`). When credit is applied to an
+  IB booking (create-time or switch-to-IB), the raise-path engine
+  (`xero-applied-credit-allocation.ts`, an outbox op enqueued after the invoice
+  op) allocates those existing notes against the new invoice oldest-first, up to
+  the applied amount, so the member pays the EFFECTIVE (credit-reduced) amount.
+  Minting a fresh note for the whole applied amount would double-count the
+  still-floating original; only the noteless remainder (admin-adjustment credit,
+  and #1547-restored credit whose funding note was consumed by a prior cancel)
+  is covered by a freshly minted note. Per-note remaining balances live in
+  `MemberCreditNoteAllocation` (remaining = the positive lot's `amountCents` minus
+  the sum of its allocation rows); lot order is conservation-neutral. The
+  `payment` mirror holds `amountCents + creditAppliedCents = finalPriceCents`
+  (the switch path derives the applied amount from the `BOOKING_APPLIED` ledger,
+  since the card-origin mirror is 0). The engine STAMPS the booking's
+  `BOOKING_APPLIED` rows with a representative allocated note id LAST — only once
+  the full applied amount is covered — so the #1597 clearing term above is exact;
+  the partial-window residual (some notes allocated, stamp not yet written)
+  differs by path: a concurrent CANCEL treats the credit as unallocated and its
+  clearing note plus the allocations can exceed the invoice, which Xero rejects
+  LOUDLY (the cancel path allocates its note against the invoice); a concurrent
+  HOLD-EXPIRY settles its clearing note by bank payment instead of invoice
+  allocation, so the same window silently over-credits Xero by the
+  already-allocated slice — a bookkeeping-only divergence (member LOCAL money is
+  conserved either way by the 100% restore) that an operator reconciles in Xero.
+  In both paths the op's idempotent retry (the `@@unique(memberCreditId,
+  appliedToBookingId)` join key + per-row completion links) finishes the
+  allocations then stamps. The retry's re-plan reads each lot's remaining balance
+  EXCLUDING this booking's own already-committed allocation rows — the plan phase
+  commits those rows before the (out-of-transaction) Xero allocations run, so
+  counting them on a retry after a mid-flight provider failure would read the lot
+  as consumed and throw a spurious ledger inconsistency, permanently bricking the
+  op. A FAILED allocation op has no auto FAILED→PENDING reaper, so recovery runs
+  through the Xero outbox retry stack (`xero-operation-retry.ts`), which re-drives
+  the same idempotent engine keyed on the queued `{bookingId}` payload.
+  Cancellation is UNCHANGED and still conserves: the
+  100% restore + `finalPrice − allocated` clearing note void the invoice while
+  returning the credit LOCALLY. This leaves a transient representation divergence
+  — after a cancel of an allocated-credit booking the restored credit is
+  local-only (its funding note was consumed by the cancelled invoice); the local
+  ledger is the source of truth and Xero catches up when the credit is next used,
+  via the noteless mint-fresh branch. ACCOUNTING-POLICY flag (open): the minted
+  remainder note posts to the shared `hutFeeRefunds` mapping; whether admin /
+  goodwill credit should post to a distinct write-off account is an owner call.
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357) — but a PAID invoice event alone proves
   nothing: Xero also reports PAID when OUR OWN clearing credit note is

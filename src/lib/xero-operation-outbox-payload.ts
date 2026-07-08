@@ -15,6 +15,12 @@ export const XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE =
   "MODIFICATION_ACCOUNT_CREDIT_NOTE";
 export const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE =
   "CREDIT_NOTE_ALLOCATION";
+// #1620 — orchestration op: on IB invoice raise, allocate the member's existing
+// floating credit notes against the booking's invoice (allocate-existing applied
+// credit). The handler does the local lot math + enqueues the per-note
+// CREDIT_NOTE_ALLOCATION ops; it is NOT itself a single Xero call.
+export const XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE =
+  "APPLIED_CREDIT_ALLOCATION";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE =
   "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE =
@@ -41,6 +47,7 @@ export const XERO_OUTBOX_QUEUE_TYPES = [
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
@@ -112,6 +119,11 @@ interface QueuedCreditNoteAllocationOutboxPayload {
   role?: string;
 }
 
+interface QueuedAppliedCreditAllocationOutboxPayload {
+  queueType: typeof XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE;
+  bookingId: string;
+}
+
 interface QueuedMembershipCancellationCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE;
   subscriptionId: string;
@@ -141,6 +153,7 @@ export type QueuedOutboxPayload =
   | QueuedModificationCreditNoteOutboxPayload
   | QueuedModificationAccountCreditNoteOutboxPayload
   | QueuedCreditNoteAllocationOutboxPayload
+  | QueuedAppliedCreditAllocationOutboxPayload
   | QueuedMembershipCancellationCreditNoteOutboxPayload
   | QueuedMembershipCancellationContactOutboxPayload
   | QueuedGroupSettlementInvoiceOutboxPayload;
@@ -156,6 +169,7 @@ export interface QueuedOutboxExpectedOperation {
     | "MemberSubscription"
     | "MembershipCancellationRequestParticipant"
     | "GroupBookingSettlement"
+    | "MemberCreditNoteAllocation"
   >;
 }
 
@@ -322,6 +336,18 @@ export function readQueuedOutboxPayload(
     };
   }
 
+  if (queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    if (!bookingId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      bookingId,
+    };
+  }
+
   if (queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE) {
     const subscriptionId = readString(payload.subscriptionId);
     const requestId = readString(payload.requestId);
@@ -416,7 +442,25 @@ export function getQueuedOutboxExpectedOperation(
     return {
       entityType: "ALLOCATION",
       operationType: "ALLOCATE",
-      localModels: ["Payment", "Booking", "BookingModification"],
+      // "MemberCreditNoteAllocation" (#1620): the applied-credit engine anchors
+      // each per-note allocation op on its join row so multi-note allocations to
+      // one invoice do not collapse the (localModel, localId, role) enqueue dedup.
+      localModels: [
+        "Payment",
+        "Booking",
+        "BookingModification",
+        "MemberCreditNoteAllocation",
+      ],
+    };
+  }
+
+  if (queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
+    // Orchestration op anchored on the booking's Payment. Reuses the ALLOCATION
+    // entity/op shape; dispatch routes by queueType, not by entity.
+    return {
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      localModels: ["Payment"],
     };
   }
 

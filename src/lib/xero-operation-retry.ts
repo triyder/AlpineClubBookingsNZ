@@ -2,6 +2,7 @@ import type { XeroContactUpdateData } from "@/lib/xero-contacts";
 import {
   readQueuedOutboxPayload,
   XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
@@ -600,6 +601,17 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   }
 
   if (operation.entityType === "ALLOCATION" && operation.operationType === "ALLOCATE") {
+    // #1620 applied-credit allocation ops carry a {queueType, bookingId} queued
+    // payload (never the creditNoteId/invoiceId/amountCents shape parsed below),
+    // and there is no auto FAILED->PENDING reaper for outbox ops — so without
+    // this branch a transiently-failed allocation would strand here, leaving the
+    // IB invoice un-reduced and re-manifesting the #1620 double-pay. The engine
+    // replay is idempotent (join-key + per-note completion links + re-plan that
+    // excludes this booking's own rows).
+    const queued = readQueuedOutboxPayload(operation.requestPayload);
+    if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
+      return { supported: true, reason: null };
+    }
     return parseAllocationRetryInput(operation)
       ? { supported: true, reason: null }
       : { supported: false, reason: "Stored allocation payload is incomplete." };
@@ -996,6 +1008,21 @@ export async function retryXeroSyncOperation(
   }
 
   if (operation.entityType === "ALLOCATION" && operation.operationType === "ALLOCATE") {
+    // #1620 applied-credit allocation: re-drive the idempotent engine, which
+    // completes (or skips) this op via its syncOperationId. See the matching
+    // note in getXeroOperationRetryMeta.
+    const queued = readQueuedOutboxPayload(operation.requestPayload);
+    if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
+      const { allocateAppliedCreditForBooking } = await import(
+        "@/lib/xero-applied-credit-allocation"
+      );
+      await allocateAppliedCreditForBooking(queued.bookingId, {
+        createdByMemberId,
+        syncOperationId: operation.id,
+      });
+      return { message: "Retried applied-credit allocation." };
+    }
+
     const retryInput = parseAllocationRetryInput(operation);
     if (!retryInput) {
       throw new XeroOperationRetryError("Stored allocation payload is incomplete.");

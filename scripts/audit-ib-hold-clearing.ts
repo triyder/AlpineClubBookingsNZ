@@ -20,7 +20,9 @@
 import "dotenv/config";
 import process from "node:process";
 import {
+  auditIbAppliedCreditStrands,
   auditIbHoldClearingUnderclears,
+  formatIbAppliedCreditStrandReport,
   formatIbHoldClearingAuditReport,
 } from "../src/lib/ib-hold-clearing-audit";
 import { prisma } from "../src/lib/prisma";
@@ -64,11 +66,24 @@ async function main() {
 
   console.log(formatIbHoldClearingAuditReport(result));
 
+  // #1620 — enumerate every Internet-Banking payment carrying applied credit
+  // against a full invoice (realized double-pay vs pending exposure). Read-only.
+  const strandResult = await auditIbAppliedCreditStrands();
+
+  console.log("");
+  console.log("=".repeat(70));
+  console.log("");
+  console.log(formatIbAppliedCreditStrandReport(strandResult));
+
   if (args.json) {
     console.log("");
     console.log("---BEGIN IB HOLD CLEARING AUDIT JSON---");
     console.log(JSON.stringify(result, null, 2));
     console.log("---END IB HOLD CLEARING AUDIT JSON---");
+    console.log("");
+    console.log("---BEGIN IB APPLIED-CREDIT STRAND JSON---");
+    console.log(JSON.stringify(strandResult, null, 2));
+    console.log("---END IB APPLIED-CREDIT STRAND JSON---");
   }
 }
 

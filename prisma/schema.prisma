@@ -3405,12 +3405,50 @@ model MemberCredit {
   sourceBooking             Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
   sourceBookingModification BookingModification?          @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: SetNull)
   appliedToBooking          Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
+  // #1620: slices of THIS credit lot (a positive funding row) that have been
+  // allocated to booking invoices as Xero credit notes. Empty for negative
+  // BOOKING_APPLIED rows and for lots never used to reduce an IB invoice.
+  noteAllocations           MemberCreditNoteAllocation[]  @relation("CreditLotAllocations")
 
   @@index([memberId])
   @@index([requestedById])
   @@index([approvedById])
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+}
+
+/// #1620 — per-note credit-lot allocation ledger for "allocate-existing" applied
+/// credit. When a member applies account credit to an Internet-Banking booking,
+/// the raise-path allocation engine reduces the FULL Xero invoice by allocating
+/// the member's existing floating ACCRECCREDIT notes (or a freshly minted note
+/// for an admin-adjustment remainder that has no Xero note). Each row records one
+/// slice of one funding lot consumed against one booking's invoice. A funding
+/// note's remaining unallocated balance = MemberCredit.amountCents (the positive
+/// lot) minus the sum of amountCents over its allocation rows. Idempotency anchor
+/// for the per-note Xero allocation outbox op (localModel
+/// "MemberCreditNoteAllocation", localId = this row's id).
+model MemberCreditNoteAllocation {
+  id                 String   @id @default(cuid())
+  // The positive funding MemberCredit lot this slice draws from.
+  memberCreditId     String
+  // The Xero credit note carrying the slice: the lot's existing floating note,
+  // or a freshly minted note for an admin-adjustment (noteless) lot.
+  xeroCreditNoteId   String
+  // The booking whose Xero invoice the note is allocated against.
+  appliedToBookingId String
+  // Positive cents drawn from the lot for this booking (never exceeds the lot's
+  // remaining balance).
+  amountCents        Int
+  createdAt          DateTime @default(now())
+
+  memberCredit MemberCredit @relation("CreditLotAllocations", fields: [memberCreditId], references: [id], onDelete: Restrict)
+
+  // One slice per (lot, booking): the allocation engine re-runs idempotently and
+  // upserts on this key. Explicit map: the default name would exceed Postgres's
+  // 63-char identifier limit.
+  @@unique([memberCreditId, appliedToBookingId], map: "MemberCreditNoteAllocation_lot_booking_key")
+  @@index([appliedToBookingId])
+  @@index([xeroCreditNoteId])
 }
 
 model AdminCreditAdjustmentRequest {
