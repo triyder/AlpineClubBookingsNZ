@@ -3682,8 +3682,6 @@ model MemberInduction {
   finalComments      String?
   voidedReason       String?
   createdByMemberId  String?
-  selfAssessedAt     DateTime?
-  selfAssessmentJson String?
   createdAt          DateTime                   @default(now())
   updatedAt          DateTime                   @updatedAt
 
