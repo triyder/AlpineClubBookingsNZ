@@ -642,8 +642,12 @@ describe("hut leader assignment email", () => {
       startDate: new Date("2026-07-15"),
       endDate: new Date("2026-07-18"),
       pin: "123456",
+      assignmentId: "assign-abc123",
     });
 
-    expect(html).toContain("/lodge-instructions");
+    // Links to the remote, PIN-gated instructions view scoped to this
+    // assignment (#1642) — reachable by non-login hut leaders, unlike the old
+    // login-gated /lodge-instructions page.
+    expect(html).toContain("/hut-leader-instructions?a=assign-abc123");
   });
 });
