@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Landmark, Plug, RefreshCw } from "lucide-react";
+import { BackLink } from "@/components/admin/back-link";
 import { FinanceReportMappingsPanel } from "@/components/admin/finance-report-mappings-panel";
 import {
   Accordion,
@@ -55,6 +56,9 @@ export default async function FinanceSetupPage() {
   return (
     <div className="space-y-8">
       <div>
+        <div className="mb-2">
+          <BackLink href="/admin/setup" label="Setup Wizard" />
+        </div>
         <h1 className="text-2xl font-bold text-slate-900">Finance</h1>
         <p className="mt-1 text-sm text-slate-500">
           Open finance reporting, Xero setup, sync mappings, and the finance

@@ -57,6 +57,8 @@ export default async function OperationalIntegrationsSetupHubPage() {
       sections={sections}
       features={features}
       permissionMatrix={permissionMatrix}
+      backHref="/admin/setup"
+      backLabel="Setup Wizard"
     />
   );
 }

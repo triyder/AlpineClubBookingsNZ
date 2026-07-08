@@ -71,6 +71,8 @@ export default async function BookingRulesSetupHubPage() {
       sections={sections}
       features={features}
       permissionMatrix={permissionMatrix}
+      backHref="/admin/setup"
+      backLabel="Setup Wizard"
     />
   );
 }

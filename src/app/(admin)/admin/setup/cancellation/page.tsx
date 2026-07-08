@@ -43,6 +43,8 @@ export default async function CancellationSetupHubPage() {
       sections={sections}
       features={features}
       permissionMatrix={permissionMatrix}
+      backHref="/admin/setup"
+      backLabel="Setup Wizard"
     />
   );
 }

@@ -50,6 +50,8 @@ export default async function FoundationsSetupHubPage() {
       sections={sections}
       features={features}
       permissionMatrix={permissionMatrix}
+      backHref="/admin/setup"
+      backLabel="Setup Wizard"
     />
   );
 }

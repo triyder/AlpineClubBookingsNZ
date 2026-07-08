@@ -121,6 +121,24 @@ describe("admin setup hub pages", () => {
     expect(cancellationHtml).toContain("/admin/membership-cancellation");
   });
 
+  it("renders a back link to the Setup Wizard on every setup sub-hub", async () => {
+    // The sub-hubs are drilled into from /admin/setup, so each gets the shared
+    // BackLink (label matches the destination page's heading, "Setup Wizard").
+    // Distinct from Foundations' own "Setup Checklist" card, which is a grid link.
+    const pages = [
+      FoundationsSetupHubPage,
+      BookingRulesSetupHubPage,
+      CancellationSetupHubPage,
+      OperationalIntegrationsSetupHubPage,
+      FinanceSetupPage,
+    ];
+    for (const Page of pages) {
+      const html = await renderPage(Page);
+      expect(html).toContain("Setup Wizard");
+      expect(html).toContain('href="/admin/setup"');
+    }
+  });
+
   it("keeps finance report mappings collapsed by default in the finance drill-down", async () => {
     const html = await renderPage(FinanceSetupPage);
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
+import { BackLink } from "@/components/admin/back-link";
 import {
   Card,
   CardDescription,
@@ -39,12 +40,19 @@ export function AdminHubPage({
   sections,
   features,
   permissionMatrix,
+  backHref,
+  backLabel,
 }: {
   title: string;
   description: string;
   sections: AdminHubSection[];
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
+  // Optional back-to-parent link, rendered above the title for a sub-hub that
+  // is drilled into from another hub (e.g. the Setup sub-hubs off /admin/setup).
+  // Top-level sidebar destinations omit these.
+  backHref?: string;
+  backLabel?: string;
 }) {
   const visibleSections = getVisibleAdminHubSections(
     sections,
@@ -55,6 +63,11 @@ export function AdminHubPage({
   return (
     <div className="space-y-8">
       <div>
+        {backHref && backLabel ? (
+          <div className="mb-2">
+            <BackLink href={backHref} label={backLabel} />
+          </div>
+        ) : null}
         <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
         <p className="mt-1 text-sm text-slate-500">{description}</p>
       </div>
