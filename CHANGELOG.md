@@ -5,7 +5,7 @@ All notable public reference-release changes should be recorded here.
 ## Unreleased
 
 - **Behaviour change — lodge capacity now honours a max-sleeping-capacity
-  ceiling (#22).** A per-lodge `LodgeSettings.capacity` value now caps the bed
+  ceiling (#1653).** A per-lodge `LodgeSettings.capacity` value now caps the bed
   count when Bed Allocation is on: effective capacity is the lower of the
   installed active beds and the capacity, so a lodge may have more beds than it
   is allowed to sleep. Previously the capacity was *ignored* whenever beds were

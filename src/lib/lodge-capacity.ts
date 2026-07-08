@@ -122,7 +122,7 @@ async function isDefaultLodge(
  *    is the placement set, and the admin capacity value acts as a *maximum
  *    sleeping capacity* ceiling on top of it. Effective capacity is the LOWER
  *    of the two — a lodge may have more beds installed than it is licensed to
- *    sleep (#22). No capacity set (or set ≥ bed count) → the bed count wins
+ *    sleep (#1653). No capacity set (or set ≥ bed count) → the bed count wins
  *    ("configured_beds"); a capacity below the bed count caps it ("capped_beds").
  * 2. Otherwise (module off, or on with no active beds): the admin capacity
  *    value for this lodge (LodgeSettings row linked to this lodge).
@@ -187,7 +187,7 @@ export async function getLodgeCapacityStatus(
 
   // Beds are the placement inventory; an explicit per-lodge capacity is the
   // maximum sleeping capacity ceiling. Effective capacity is the lower of the
-  // two (#22). Only an explicit override caps — the club-config fallback does
+  // two (#1653). Only an explicit override caps — the club-config fallback does
   // not, so `override` (not `fallbackCapacity`) is the ceiling here.
   const capped =
     override !== null && override !== undefined && override < activeBedCount;

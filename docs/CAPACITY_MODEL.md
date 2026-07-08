@@ -17,7 +17,7 @@ uniformly.
 
 A lodge can legitimately have more beds than it may sleep — e.g. extra beds
 crammed into a room, but a lower whole-lodge cap for fire / consent / licence
-reasons (backlog #22). Booking availability must respect the **ceiling**, while
+reasons (#1653). Booking availability must respect the **ceiling**, while
 bed allocation still places people across the **larger** physical bed set.
 
 ## Resolution
@@ -64,7 +64,7 @@ value entered is below the active bed count (it will cap the lodge). The
 allocation board still shows all physical beds; a capped lodge simply leaves
 some beds unbooked.
 
-## Behaviour change (introduced with #22)
+## Behaviour change (introduced with #1653)
 
 Previously, when Bed Allocation was on with beds configured, an
 `LodgeSettings.capacity` value was **ignored** — the bed count always won. It is
@@ -88,4 +88,4 @@ HAVING s.capacity IS NOT NULL
 ```
 
 Any row returned is a lodge whose capacity will now be capped below its bed
-count. Confirm that is intended (it usually is — that is the point of #22).
+count. Confirm that is intended (it usually is — that is the point of #1653).

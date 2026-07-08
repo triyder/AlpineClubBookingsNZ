@@ -168,7 +168,7 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("caps configured beds at a lower capacity ceiling (#22)", async () => {
+  it("caps configured beds at a lower capacity ceiling (#1653)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(40);
 
@@ -190,7 +190,7 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("does not cap when the capacity equals the bed count (#22)", async () => {
+  it("does not cap when the capacity equals the bed count (#1653)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(30);
 
@@ -210,7 +210,7 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("uses the per-lodge capacity when the module is on but no beds exist yet (#22)", async () => {
+  it("uses the per-lodge capacity when the module is on but no beds exist yet (#1653)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(0);
 
@@ -231,7 +231,7 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("does not cap the bed count with the club-config fallback — only an explicit capacity caps (#22)", async () => {
+  it("does not cap the bed count with the club-config fallback — only an explicit capacity caps (#1653)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     // More active beds than the club-config total, and NO per-lodge capacity.
     mocks.lodgeBedCount.mockResolvedValue(TEST_LODGE_CAPACITY + 10);
@@ -245,7 +245,7 @@ describe("capacity calendar availability", () => {
     });
   });
 
-  it("checkCapacity enforces the capped capacity, not the raw bed count (#22)", async () => {
+  it("checkCapacity enforces the capped capacity, not the raw bed count (#1653)", async () => {
     mocks.clubModuleSettingsFindUnique.mockResolvedValue({ bedAllocation: true });
     mocks.lodgeBedCount.mockResolvedValue(40);
     mocks.bookingFindMany.mockResolvedValue([]);

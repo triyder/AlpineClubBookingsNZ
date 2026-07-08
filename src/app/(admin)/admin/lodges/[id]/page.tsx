@@ -72,7 +72,7 @@ export default function LodgeConfigurationHubPage() {
   const [resolvedCapacity, setResolvedCapacity] = useState<number | null>(null);
   const [capacitySource, setCapacitySource] = useState<string | null>(null);
   // Active bed inventory for this lodge, used to warn when the capacity is set
-  // below the installed beds (it then caps the lodge — #22).
+  // below the installed beds (it then caps the lodge — #1653).
   const [activeBedCount, setActiveBedCount] = useState<number | null>(null);
   const [capacityOverride, setCapacityOverride] = useState("");
   const [savedCapacityOverride, setSavedCapacityOverride] = useState("");
