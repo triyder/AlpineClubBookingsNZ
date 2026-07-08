@@ -101,14 +101,17 @@ export default function LodgeConfigurationHubPage() {
         if (cancelled) return;
         setLodge(found);
         if (modulesRes.ok) {
-          const moduleData = (await modulesRes.json()) as Record<
-            string,
-            unknown
-          >;
+          // /api/admin/modules returns { settings: {<key>: boolean}, modules,
+          // ... } — the flat effective toggles live under `settings`, not at the
+          // top level. Reading the top level left every flag undefined, so
+          // bedAllocationOn was always false here.
+          const moduleData = (await modulesRes.json()) as {
+            settings?: Record<string, unknown>;
+          };
           if (!cancelled) {
             setModules(
               Object.fromEntries(
-                Object.entries(moduleData).filter(
+                Object.entries(moduleData.settings ?? {}).filter(
                   ([, value]) => typeof value === "boolean",
                 ),
               ) as Record<string, boolean>,
@@ -438,8 +441,10 @@ export default function LodgeConfigurationHubPage() {
               Leave blank to fall back to the club default (default lodge) or
               zero (additional lodges).
             </p>
-            {bedAllocationOn &&
-              activeBedCount !== null &&
+            {/* activeBedCount is only > 0 when Bed Allocation is on with beds
+                (getLodgeCapacityStatus), so it is the authoritative signal here
+                — the separate module flag can lag on this page. */}
+            {activeBedCount !== null &&
               activeBedCount > 0 &&
               capacityOverride.trim() !== "" &&
               Number.isFinite(Number(capacityOverride)) &&
