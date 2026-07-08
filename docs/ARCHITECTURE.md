@@ -481,13 +481,20 @@ plus a forgot-password request would hand the account and its roles to the
 new address (`hasPrivilegedAccess` in `src/lib/access-roles.ts`).
 
 Two further guards protect the admin population itself against being locked
-out (issue #1604), enforced server-side across every path that can deactivate,
-disable login for, or archive an account — member edit, bulk update, member
-lifecycle archive, and deletion-request approval. The **last-admin guard**
-blocks any actor, including another Full Admin, from removing the final active,
-login-enabled Full Admin; a bulk deactivate is evaluated on its end state so a
-selection that collectively removes every remaining Full Admin fails as a
-whole. The **privileged-target guard** restricts deactivating, de-logging, or
+out (issue #1604, extended to three more verbs by #1622), enforced server-side
+across every path that can deactivate, disable login for, or archive an existing
+account — member edit, bulk update, member lifecycle archive, deletion-request
+approval, membership-cancellation approval, family-group login-holder
+transfer (`POST /api/admin/family-groups/[id]/login-holder`), and dependent
+linking with `disableLogin` (`POST /api/admin/members/[id]/dependents/link`).
+The **last-admin guard** blocks any actor, including another Full Admin, from removing the final
+active, login-enabled Full Admin; a bulk deactivate is evaluated on its end
+state so a selection that collectively removes every remaining Full Admin fails
+as a whole. The login-holder transfer both revokes and grants `canLogin` in one
+operation, so it evaluates the end state as a raw count of active Full Admins on
+its post-write read view (`countActiveFullAdmins` inside the transaction) rather
+than the exclude-based helpers — the incoming holder's grant is thereby counted.
+The **privileged-target guard** restricts deactivating, de-logging, or
 archiving an account that holds — or dormantly stores — a privileged role to
 Full Admins only, matching the #1012 role gate and so a scoped admin such as
 the seeded Membership Officer can no longer touch admin-holding accounts. A
@@ -495,17 +502,22 @@ the seeded Membership Officer can no longer touch admin-holding accounts. A
 login-enabled member with the `ADMIN` access-role row (a legacy `Member.role =
 ADMIN` without that row is not counted, because it confers no runtime admin
 access). The helpers live in `src/lib/admin-account-guards.ts`
-(`wouldRemoveLastFullAdmin`, `wouldRemoveAllFullAdmins`, `actorIsFullAdmin`) and
-`memberHoldsPrivilegedRole` in `src/lib/access-roles.ts`; the last-admin count
-runs inside each path's mutation transaction so it sees that transaction's read
-view. Two concurrent deactivations of the last two admins remain a narrow
-residual TOCTOU on the paths without an advisory lock, acceptable at club
-scale. Three other flows outside these four paths can also clear `canLogin` on
-an admin and are not yet guarded: membership cancellation approval and
-family-group login-holder transfer
-(`POST /api/admin/family-groups/[id]/login-holder`), both `membership:edit`-
-reachable (#1622), and the age-down cron via a date-of-birth edit into a minor
-tier (indirect).
+(`wouldRemoveLastFullAdmin`, `wouldRemoveAllFullAdmins`, `countActiveFullAdmins`,
+`actorIsFullAdmin`) and `memberHoldsPrivilegedRole` in
+`src/lib/access-roles.ts`; the last-admin count runs inside each path's mutation
+transaction so it sees that transaction's read view. Two concurrent
+deactivations of the last two admins remain a narrow residual TOCTOU on the
+paths without an advisory lock, acceptable at club scale. The guarantee is
+closed-world over de-logins of existing accounts: every other `canLogin` writer
+in the codebase either creates a brand-new member (booking-request, school,
+group-booking, and Xero-import contacts; nomination and family-request
+dependants; admin member-create and CSV member-import rows, whose `canLogin`
+value only seeds the new row) or passes `canLogin` as a read/token filter
+(`normalizeAssignableAccessRoleTokens`, list/where clauses), and so cannot
+strand an existing admin. The one remaining flow
+outside these seven paths that can clear `canLogin` on an existing admin and is
+not guarded is indirect: the age-down cron via a date-of-birth edit into a minor
+tier.
 
 Seasonal membership types are policy records, not access roles. `MembershipType`
 stores the stable identifier, display text, active/archive state, sort order,

@@ -1903,7 +1903,7 @@ const adminHelpEntries: HelpEntry[] = [
         "Each area grants none, view, or edit. Edit implies view; anything other than a read requires edit, and a read-only page needs only view.",
         "A member can hold several roles; their access is the maximum level each role grants per area — levels merge upward and never subtract.",
         "The six seeded roles (Read-only Admin, Booking Officer, Membership Officer, Content Manager, Treasurer, Finance Viewer) are starting points you can edit or delete; an edit applies to every holder on their next request.",
-        "Full Admin is a protected role with edit everywhere. Its permissions are never editable, and you cannot demote or deactivate your own account. Member edit, bulk update, archive, and deletion approval will not deactivate, de-login, or archive the last active Full Admin, and only a Full Admin can perform those actions on another account that holds privileged access — so a scoped admin (such as a Membership Officer) cannot lock admins out through them. Still keep a second Full Admin account for continuity.",
+        "Full Admin is a protected role with edit everywhere. Its permissions are never editable, and you cannot demote or deactivate your own account. No admin action that deactivates, de-logins, or archives an account — member edit, bulk update, archive, deletion approval, membership cancellation, login-holder transfer, or dependent linking — can remove the last active Full Admin, and only a Full Admin can perform those actions on another account that holds privileged access, so a scoped admin (such as a Membership Officer) cannot lock admins out this way. Still keep a second Full Admin account for continuity.",
       ],
     ),
   ),

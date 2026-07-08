@@ -1,5 +1,14 @@
+import { type Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
+import { isFullAdmin, memberHoldsPrivilegedRole } from "@/lib/access-roles";
+import {
+  AdminAccountGuardError,
+  countActiveFullAdmins,
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+} from "@/lib/admin-account-guards";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveEmail } from "@/lib/member-utils";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
@@ -42,6 +51,13 @@ type GroupMemberForLoginHolder = {
   lastLoginAt: Date | null;
   inheritEmailFromId: string | null;
   inheritEmailFrom: { email: string } | null;
+  // Role fields feed the #1604/#1622 privileged-target guard, evaluated
+  // canLogin-blind via memberHoldsPrivilegedRole.
+  role: string | null;
+  financeAccessLevel: string | null;
+  accessRoles: Prisma.MemberGetPayload<{
+    select: { accessRoles: { select: typeof MEMBER_ACCESS_ROLE_SELECT } };
+  }>["accessRoles"];
 };
 
 /**
@@ -97,6 +113,9 @@ export async function POST(
                   inheritEmailFrom: {
                     select: { email: true },
                   },
+                  role: true,
+                  financeAccessLevel: true,
+                  accessRoles: { select: MEMBER_ACCESS_ROLE_SELECT },
                 },
               },
             },
@@ -170,6 +189,21 @@ export async function POST(
         touchedById.set(member.id, member);
       }
 
+      // Privileged-target guard (issue #1604/#1622): the transfer flips
+      // canLogin false on every cluster member that currently has it except the
+      // incoming holder (who ends canLogin true). Only a Full Admin may
+      // de-login an account holding a privileged role, evaluated canLogin-blind.
+      const deLoginTargets = cluster.filter(
+        (member) => member.canLogin && member.id !== newHolderId,
+      );
+      if (
+        deLoginTargets.length > 0 &&
+        !isFullAdmin(session.user) &&
+        deLoginTargets.some((member) => memberHoldsPrivilegedRole(member))
+      ) {
+        throw new AdminAccountGuardError(PRIVILEGED_TARGET_GUARD_MESSAGE, 403);
+      }
+
       if (currentHolder) {
         await tx.member.update({
           where: { id: currentHolder.id },
@@ -214,6 +248,20 @@ export async function POST(
         });
       }
 
+      // Last-admin end-state guard (issue #1604/#1622). Counted after the
+      // writes above so the read view already reflects both changes this
+      // transfer makes to the admin set: the outgoing holder losing canLogin
+      // AND the incoming holder gaining it. This is why a raw end-state count is
+      // used here rather than the exclude-based wouldRemove* helpers — those
+      // model only removals, not the concurrent grant to the new holder. If the
+      // transfer would leave zero active, login-enabled Full Admins it rolls
+      // back (e.g. the last admin shared a cluster login and the new holder is
+      // not an admin); a new holder who is himself a Full Admin keeps the count
+      // positive and is allowed.
+      if ((await countActiveFullAdmins(tx)) === 0) {
+        throw new AdminAccountGuardError(LAST_FULL_ADMIN_GUARD_MESSAGE, 409);
+      }
+
       const auditDetailsBase = {
         familyGroupId: groupId,
         email: requestedEmail,
@@ -251,6 +299,13 @@ export async function POST(
   } catch (error) {
     if (error instanceof LoginHolderRequestError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
+    if (error instanceof AdminAccountGuardError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode },
+      );
     }
 
     logger.error(

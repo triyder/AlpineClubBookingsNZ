@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => {
     member: {
       update: vi.fn(),
       updateMany: vi.fn(),
+      findUnique: vi.fn(),
+      count: vi.fn(),
     },
     familyGroupMember: {
       deleteMany: vi.fn(),
@@ -83,6 +85,14 @@ import {
   MembershipCancellationAdminError,
   reviewMembershipCancellationParticipant,
 } from "@/lib/membership-cancellation-admin";
+import {
+  LAST_FULL_ADMIN_GUARD_MESSAGE,
+  PRIVILEGED_TARGET_GUARD_MESSAGE,
+} from "@/lib/admin-account-guards";
+
+const ADMIN_ACCESS_ROLES = [
+  { role: "ADMIN", roleDefinitionId: null, roleDefinition: null },
+];
 
 function member(overrides: Record<string, unknown> = {}) {
   return {
@@ -164,6 +174,14 @@ describe("membership cancellation admin review", () => {
     mocks.participantFindUnique.mockResolvedValue(participant());
     mocks.bookingFindMany.mockResolvedValue([]);
     mocks.bookingGuestFindMany.mockResolvedValue([]);
+    // Admin-account guard defaults (#1604/#1622): a plain, non-privileged
+    // target with no admins to strand, so neither guard trips.
+    mocks.tx.member.findUnique.mockResolvedValue({
+      role: "USER",
+      financeAccessLevel: "NONE",
+      accessRoles: [],
+    });
+    mocks.tx.member.count.mockResolvedValue(0);
     mocks.tx.membershipCancellationRequestParticipant.findMany.mockResolvedValue([
       { status: "CANCELLED" },
     ]);
@@ -390,5 +408,84 @@ describe("membership cancellation admin review", () => {
         adminNote: "Request withdrawn",
       }),
     );
+  });
+
+  describe("admin-account guards (#1604/#1622)", () => {
+    it("blocks a scoped admin from cancelling an account holding a privileged role", async () => {
+      // Target holds ADMIN; the acting admin is not a Full Admin
+      // (actorIsFullAdmin count → 0), so the privileged-target guard trips.
+      mocks.tx.member.findUnique.mockResolvedValue({
+        role: "ADMIN",
+        financeAccessLevel: "NONE",
+        accessRoles: ADMIN_ACCESS_ROLES,
+      });
+      mocks.tx.member.count.mockResolvedValue(0);
+
+      await expect(
+        reviewMembershipCancellationParticipant({
+          requestId: "request-1",
+          participantId: "participant-1",
+          action: "approve",
+          adminMemberId: "officer-1",
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        message: PRIVILEGED_TARGET_GUARD_MESSAGE,
+      } satisfies Partial<MembershipCancellationAdminError>);
+
+      expect(mocks.tx.member.update).not.toHaveBeenCalled();
+    });
+
+    it("blocks cancelling the last active Full Admin even for a Full Admin actor", async () => {
+      mocks.tx.member.findUnique.mockResolvedValue({
+        role: "ADMIN",
+        financeAccessLevel: "NONE",
+        accessRoles: ADMIN_ACCESS_ROLES,
+      });
+      // actorIsFullAdmin → 1 (privileged-target passes); wouldRemoveLastFullAdmin
+      // → target is an active Full Admin (1) with no other survivor (0).
+      mocks.tx.member.count
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0);
+
+      await expect(
+        reviewMembershipCancellationParticipant({
+          requestId: "request-1",
+          participantId: "participant-1",
+          action: "approve",
+          adminMemberId: "admin-2",
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: LAST_FULL_ADMIN_GUARD_MESSAGE,
+      } satisfies Partial<MembershipCancellationAdminError>);
+
+      expect(mocks.tx.member.update).not.toHaveBeenCalled();
+    });
+
+    it("allows a Full Admin to cancel an admin-holding account when another Full Admin survives", async () => {
+      mocks.tx.member.findUnique.mockResolvedValue({
+        role: "ADMIN",
+        financeAccessLevel: "NONE",
+        accessRoles: ADMIN_ACCESS_ROLES,
+      });
+      // actorIsFullAdmin → 1; target is an active Full Admin (1) but another
+      // survives (1), so wouldRemoveLastFullAdmin is false.
+      mocks.tx.member.count.mockResolvedValue(1);
+
+      const result = await reviewMembershipCancellationParticipant({
+        requestId: "request-1",
+        participantId: "participant-1",
+        action: "approve",
+        adminMemberId: "admin-2",
+      });
+
+      expect(result.request.participants[0].status).toBe("CANCELLED");
+      expect(mocks.tx.member.update).toHaveBeenCalledWith({
+        where: { id: "member-1" },
+        data: expect.objectContaining({ active: false, canLogin: false }),
+      });
+    });
   });
 });
