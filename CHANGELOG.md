@@ -4,7 +4,18 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
-- No changes yet.
+- Added **Configuration Export & Import** (config transfer): a full-admin tool
+  (Admin → Setup & Configuration → Export & Import) to export a club's
+  configuration, site content, and lodge setup as a portable, database-id-free
+  `.zip` bundle and import it into another (or the same) instance through a
+  mandatory dry-run → confirm flow. Import is upsert-only (never deletes), takes
+  a `pg_dump` backup before applying, runs under a single-flight advisory lock,
+  and is audited. Implemented categories: site content (pages/site-content/theme,
+  with embedded-image bundling + reference remap), club settings singletons, and
+  lodge configuration (lodges/rooms/beds/seasons/rates). Never carries secrets,
+  members, transactional data, or (by default) door codes. Not a database
+  backup; the `pg_dump` subsystem remains the disaster-recovery tool. No schema
+  migration. See `docs/config-transfer/`.
 
 ## 0.10.1 - 2026-07-07
 

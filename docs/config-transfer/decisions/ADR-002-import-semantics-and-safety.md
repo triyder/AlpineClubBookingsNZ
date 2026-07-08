@@ -35,11 +35,14 @@ database backup, not this tool.
 
 ### Plan → resolve → apply
 
-1. **Plan (dry-run, mandatory).** Parse and validate the bundle; compute and
-   **persist a plan**: every action (create / update / unchanged / skip +
-   field-level diffs) and every open question. The plan is bound to the
-   bundle's checksum and to a **fingerprint of current DB state** for the
-   touched categories.
+1. **Plan (dry-run, mandatory).** Parse and validate the bundle; compute a plan:
+   every action (create / update / unchanged) and any warning, plus a
+   **fingerprint of current DB state** for the touched rows. The plan is
+   **stateless** — returned to the client, not persisted. (An earlier draft
+   persisted the plan in a new table; the implementation instead re-derives it
+   at apply time and guards with the fingerprint, which meets the same safety
+   goals without a schema migration. A persisted plan can be added later if
+   cross-session resumability is wanted.)
 2. **Resolve.** The admin answers the open questions in the UI:
    - ambiguous candidate match → *match to existing X* or *create new*
      (this is also the rename path);
