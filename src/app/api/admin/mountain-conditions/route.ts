@@ -217,6 +217,10 @@ export async function PATCH(request: NextRequest) {
   const visibility: WhakapapaSectionVisibility =
     coerceWhakapapaSectionVisibility(rawVisibility);
 
+  // Read-modify-write: a concurrent POST/PUT/public-GET refresh between this
+  // read and the upsert below can clobber a just-fetched report with the older
+  // report data carried on this toggle (last write wins). Accepted at club
+  // scale — admin toggles are rare and self-heal on the next upstream refresh.
   const existing = await whakapapaReportCache.findUnique({
     where: { source: WHAKAPAPA_SOURCE },
   });
@@ -227,7 +231,12 @@ export async function PATCH(request: NextRequest) {
     coerceWhakapapaCurlData(existing?.payload) ?? emptyWhakapapaCurlData();
   payload.visibility = visibility;
 
-  const fetchedAt = existing?.fetchedAt ?? new Date();
+  // On the create path (no cache row yet) the report data is empty, so backdate
+  // fetchedAt to the epoch to mark the row stale. Otherwise the public GET would
+  // treat this visibility-only row as "fresh" for the TTL window and serve empty
+  // sections instead of triggering an upstream fetch. An existing row keeps its
+  // real fetch timestamp so a genuine cached report stays fresh.
+  const fetchedAt = existing?.fetchedAt ?? new Date(0);
   const frozenUntil = existing?.frozenUntil ?? null;
 
   const record = await whakapapaReportCache.upsert({
