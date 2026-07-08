@@ -341,6 +341,27 @@ export async function applyCreditToBooking(
  * cancellation tier as the card slice. When omitted, the FULL applied total is
  * restored — the payment-reconciliation `capacity_failed` system void relies on
  * this default (a system void must never penalise the member).
+ *
+ * Idempotency (#1636): the restore row carries `restoredFromBookingId = bookingId`,
+ * a nullable-unique key that only this function sets, so at most ONE restore row
+ * per booking can exist REGARDLESS of the caller's advisory-lock granularity. The
+ * insert goes through `createMany({ skipDuplicates: true })` — i.e. `INSERT ...
+ * ON CONFLICT DO NOTHING` — so a duplicate (a concurrent or sequential second
+ * restore of the same booking, e.g. after a future per-lodge lock split moves a
+ * credit-restoring path off the shared `lock(1)`) neither raises nor aborts the
+ * caller's transaction: it inserts nothing and returns 0. (The no-abort property
+ * is READ COMMITTED-scoped — every current caller's isolation level; under
+ * SERIALIZABLE a raced duplicate aborts as 40001, but that attempt writes
+ * nothing, so "never a second credit" holds at every isolation level.)
+ * First call returns the
+ * restored amount unchanged. A plain `create` + catch-P2002 would NOT work here —
+ * a unique violation aborts the whole Postgres transaction, breaking every caller
+ * that does more work after the restore. Returning 0 (not the existing amount) is
+ * the correct no-op: it keeps the orphaned-applied-credit backfill's
+ * `restoredCents <= 0 => did not heal` contract honest and avoids double
+ * notifications. This is ledger-level dedupe, not a claim-first status layer —
+ * the callers' status-guard already single-flights the path, so a second claim
+ * would invert to money-loss (house precedent); a unique key cannot.
  */
 export async function restoreCreditFromBooking(
   memberId: string,
@@ -378,16 +399,30 @@ export async function restoreCreditFromBooking(
     return 0;
   }
 
-  // Create a positive entry to restore the credit
-  await db.memberCredit.create({
-    data: {
-      memberId,
-      amountCents: amount,
-      type: CreditType.CANCELLATION_REFUND,
-      description: `Credit restored from cancelled booking ${bookingId.slice(0, 8)}`,
-      sourceBookingId: bookingId,
-    },
+  // Create a positive entry to restore the credit. `skipDuplicates` makes this an
+  // INSERT ... ON CONFLICT DO NOTHING keyed on the unique restoredFromBookingId,
+  // so a second restore of this booking is a structural no-op that does not abort
+  // the caller's transaction (see the idempotency note above). A restore row sets
+  // no other unique column, so the only conflict this can hit is restoredFromBookingId.
+  const inserted = await db.memberCredit.createMany({
+    data: [
+      {
+        memberId,
+        amountCents: amount,
+        type: CreditType.CANCELLATION_REFUND,
+        description: `Credit restored from cancelled booking ${bookingId.slice(0, 8)}`,
+        sourceBookingId: bookingId,
+        restoredFromBookingId: bookingId,
+      },
+    ],
+    skipDuplicates: true,
   });
+
+  // count === 0 => a restore row for this booking already existed; nothing was
+  // written and no credit was restored on THIS call.
+  if (inserted.count === 0) {
+    return 0;
+  }
 
   return amount;
 }

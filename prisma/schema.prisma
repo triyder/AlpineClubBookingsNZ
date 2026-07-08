@@ -3393,6 +3393,19 @@ model MemberCredit {
   approvedById                String? // Admin who approved a manual adjustment
   approvalRequestId           String?    @unique // Links approved manual adjustments to their request
   sourceBookingId             String? // Booking that generated the credit (cancellation)
+  // #1636: restore-per-source-booking dedupe key. Set ONLY by
+  // restoreCreditFromBooking (alongside sourceBookingId), so a second restore of
+  // the same booking's applied credit is structurally impossible independent of
+  // the caller's advisory-lock granularity. A dedicated column — NOT the shared
+  // sourceBookingId — because sourceBookingId + type=CANCELLATION_REFUND is
+  // written by THREE legitimate paths for one booking (restoreCreditFromBooking,
+  // createCancellationCredit's held-as-credit refund, and the Xero inbound
+  // invoice-paid-effects late-cash credit), so a unique over (sourceBookingId,
+  // type) would reject those co-occurring rows. Nullable + @unique => Postgres
+  // permits many NULLs (every non-restore row) but at most one non-null per
+  // booking. Bare scalar, not a FK: sourceBookingId's FK already carries
+  // referential integrity to the same booking.
+  restoredFromBookingId       String?    @unique
   sourceBookingModificationId String?    @unique // Booking modification that generated the credit
   appliedToBookingId          String? // Booking where credit was spent
   xeroCreditNoteId            String? // Linked Xero credit note ID

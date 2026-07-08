@@ -6,6 +6,7 @@ const prismaMock = {
   memberCredit: {
     aggregate: vi.fn(),
     create: vi.fn(),
+    createMany: vi.fn(),
     findUnique: vi.fn(),
     findMany: vi.fn(),
     groupBy: vi.fn(),
@@ -364,19 +365,25 @@ describe("member-credit helpers", () => {
         { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
         { id: "c2", amountCents: -2000, type: "BOOKING_APPLIED" },
       ] as any);
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
 
       const { restoreCreditFromBooking } = await import("@/lib/member-credit");
       const restored = await restoreCreditFromBooking("member-1", "booking-cancelled");
 
       expect(restored).toBe(5000);
-      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          memberId: "member-1",
-          amountCents: 5000,
-          type: "CANCELLATION_REFUND",
-          sourceBookingId: "booking-cancelled",
-        }),
+      // #1636: the restore now inserts via createMany + skipDuplicates (ON
+      // CONFLICT DO NOTHING on the unique restoredFromBookingId key).
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            memberId: "member-1",
+            amountCents: 5000,
+            type: "CANCELLATION_REFUND",
+            sourceBookingId: "booking-cancelled",
+            restoredFromBookingId: "booking-cancelled",
+          }),
+        ],
+        skipDuplicates: true,
       });
     });
 
@@ -386,7 +393,7 @@ describe("member-credit helpers", () => {
         { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
         { id: "c2", amountCents: -2000, type: "BOOKING_APPLIED" },
       ] as any);
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
 
       const { restoreCreditFromBooking } = await import("@/lib/member-credit");
       // Tiered override of 2500 against a 5000 applied total restores 2500.
@@ -398,13 +405,17 @@ describe("member-credit helpers", () => {
       );
 
       expect(restored).toBe(2500);
-      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          memberId: "member-1",
-          amountCents: 2500,
-          type: "CANCELLATION_REFUND",
-          sourceBookingId: "booking-cancelled",
-        }),
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            memberId: "member-1",
+            amountCents: 2500,
+            type: "CANCELLATION_REFUND",
+            sourceBookingId: "booking-cancelled",
+            restoredFromBookingId: "booking-cancelled",
+          }),
+        ],
+        skipDuplicates: true,
       });
     });
 
@@ -414,7 +425,7 @@ describe("member-credit helpers", () => {
         { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
         { id: "c2", amountCents: -2000, type: "BOOKING_APPLIED" },
       ] as any);
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
 
       const { restoreCreditFromBooking } = await import("@/lib/member-credit");
       // Override 9000 exceeds the 5000 applied total -> capped to 5000.
@@ -426,8 +437,9 @@ describe("member-credit helpers", () => {
       );
 
       expect(restored).toBe(5000);
-      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ amountCents: 5000 }),
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ amountCents: 5000 })],
+        skipDuplicates: true,
       });
     });
 
@@ -446,7 +458,7 @@ describe("member-credit helpers", () => {
       );
 
       expect(restored).toBe(0);
-      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+      expect(prisma.memberCredit.createMany).not.toHaveBeenCalled();
     });
 
     it("returns 0 when no credit was applied", async () => {
@@ -457,7 +469,7 @@ describe("member-credit helpers", () => {
       const restored = await restoreCreditFromBooking("member-1", "booking-new");
 
       expect(restored).toBe(0);
-      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+      expect(prisma.memberCredit.createMany).not.toHaveBeenCalled();
     });
 
     it("conserves the ledger: a never-captured cancel restore nets applied credit to 0 (#1547)", async () => {
@@ -472,15 +484,18 @@ describe("member-credit helpers", () => {
       vi.mocked(prisma.memberCredit.findMany).mockResolvedValue(
         appliedRows as never
       );
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as never);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
 
       const { restoreCreditFromBooking } = await import("@/lib/member-credit");
       const restored = await restoreCreditFromBooking("member-1", "booking-nc");
 
       const appliedSum = appliedRows.reduce((s, r) => s + r.amountCents, 0);
       expect(restored).toBe(12000);
-      const createdRow = vi.mocked(prisma.memberCredit.create).mock.calls[0][0]
-        .data;
+      const createManyData = vi.mocked(prisma.memberCredit.createMany).mock
+        .calls[0][0]!.data;
+      const createdRow = Array.isArray(createManyData)
+        ? createManyData[0]
+        : createManyData;
       expect(createdRow).toMatchObject({
         amountCents: 12000,
         type: "CANCELLATION_REFUND",
@@ -489,6 +504,100 @@ describe("member-credit helpers", () => {
       // Ledger conservation: the negative applied rows plus the positive restore
       // net exactly to zero.
       expect(appliedSum + restored).toBe(0);
+    });
+
+    // ── #1636: structural single-restore per booking ────────────────────────
+    it("is a no-op returning 0 when a restore row for the booking already exists (idempotent re-call)", async () => {
+      // The unique restoredFromBookingId makes the insert an ON CONFLICT DO
+      // NOTHING; a second restore of the same booking inserts nothing (count 0)
+      // and MUST return 0 — never a second credit — WITHOUT throwing or aborting
+      // the caller's transaction. This is the defence the issue exists for: if a
+      // future per-lodge lock split lets two credit-restoring paths race off the
+      // shared lock(1), the DB — not the lock — guarantees single-restore.
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -5000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 0 });
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      const restored = await restoreCreditFromBooking("member-1", "booking-dup");
+
+      expect(restored).toBe(0);
+      // It still ATTEMPTED the insert (the conflict is resolved in-DB, not by a
+      // pre-read) with skipDuplicates so the conflict does not raise.
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skipDuplicates: true })
+      );
+    });
+
+    it("simulates both restore callers: the first restores the amount, the second is a structural no-op", async () => {
+      // Two callers (e.g. booking-cancel and the IB release cron) restore the
+      // SAME booking. The first insert wins (count 1 -> amount); the second hits
+      // the unique restoredFromBookingId and is skipped (count 0 -> 0). Net
+      // ledger effect: exactly one restore row, never two.
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -4000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany)
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
+
+      const { restoreCreditFromBooking } = await import("@/lib/member-credit");
+      const first = await restoreCreditFromBooking("member-1", "booking-race");
+      const second = await restoreCreditFromBooking("member-1", "booking-race");
+
+      expect(first).toBe(4000);
+      expect(second).toBe(0);
+      expect(prisma.memberCredit.createMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("permits the legitimate multi-CANCELLATION_REFUND shape: restore carries the dedupe key, createCancellationCredit does not (they coexist for one booking)", async () => {
+      // The dedupe key is restore-SPECIFIC on purpose. A booking can legitimately
+      // hold BOTH a restore row (reversing applied credit) AND a held-as-credit
+      // refund row (createCancellationCredit) — both type=CANCELLATION_REFUND with
+      // the same sourceBookingId (booking-cancel.ts paid credit path). Only the
+      // restore row sets restoredFromBookingId, so the unique constraint never
+      // rejects the held-as-credit refund. This proves the design still permits
+      // the multi-row shape a naive unique(sourceBookingId, type) would break.
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.memberCredit.findMany).mockResolvedValue([
+        { id: "c1", amountCents: -3000, type: "BOOKING_APPLIED" },
+      ] as any);
+      vi.mocked(prisma.memberCredit.createMany).mockResolvedValue({ count: 1 });
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+
+      const { restoreCreditFromBooking, createCancellationCredit } = await import(
+        "@/lib/member-credit"
+      );
+
+      await restoreCreditFromBooking("member-1", "booking-both", undefined, 3000);
+      await createCancellationCredit("member-1", 2000, "booking-both");
+
+      // Restore row: type=CANCELLATION_REFUND, sourceBookingId set, AND the
+      // restore-specific dedupe key set.
+      const restoreManyData = vi.mocked(prisma.memberCredit.createMany).mock
+        .calls[0][0]!.data;
+      const restoreRow = Array.isArray(restoreManyData)
+        ? restoreManyData[0]
+        : restoreManyData;
+      expect(restoreRow).toMatchObject({
+        type: "CANCELLATION_REFUND",
+        sourceBookingId: "booking-both",
+        restoredFromBookingId: "booking-both",
+      });
+
+      // Held-as-credit refund row: type=CANCELLATION_REFUND, SAME sourceBookingId,
+      // but NO restoredFromBookingId — so the unique constraint cannot reject it.
+      const cancellationRow = vi.mocked(prisma.memberCredit.create).mock.calls[0][0]
+        .data;
+      expect(cancellationRow).toMatchObject({
+        type: "CANCELLATION_REFUND",
+        sourceBookingId: "booking-both",
+      });
+      expect(cancellationRow).not.toHaveProperty("restoredFromBookingId");
     });
   });
 
