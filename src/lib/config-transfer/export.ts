@@ -8,6 +8,10 @@ import type { CategoryExporter, MediaCollector, ReadDb } from "./export-types";
 import { siteContentExporter } from "./categories/site-content";
 import { clubSettingsExporter } from "./categories/club-settings";
 import { lodgeConfigExporter } from "./categories/lodge-config";
+import { lodgeOpsExporter } from "./categories/lodge-ops";
+import { committeeExporter } from "./categories/committee";
+import { inductionExporter } from "./categories/induction";
+import { xeroConfigExporter } from "./categories/xero-config";
 
 // Export orchestrator: runs the selected category exporters, bundles any
 // referenced images (bytes + an id→path map so import can remap references),
@@ -18,6 +22,10 @@ export const CATEGORY_EXPORTERS: CategoryExporter[] = [
   siteContentExporter,
   clubSettingsExporter,
   lodgeConfigExporter,
+  lodgeOpsExporter,
+  committeeExporter,
+  inductionExporter,
+  xeroConfigExporter,
 ];
 
 const CONTENT_TYPE_EXT: Record<string, string> = {
@@ -84,12 +92,19 @@ export async function buildConfigExport(
     appVersion: params.appVersion,
     prismaMigration: params.prismaMigration,
     sourceXeroTenantId: params.sourceXeroTenantId,
-    includedCategories: included,
+    // A category may be produced by more than one module (e.g. lodge-config);
+    // list it once.
+    includedCategories: [...new Set(included)],
     doorCodesIncluded: params.includeDoorCodes,
     generatedAt: params.generatedAt,
   });
 
-  return { zip, categories: included, entryCount: entries.length, imageCount };
+  return {
+    zip,
+    categories: [...new Set(included)],
+    entryCount: entries.length,
+    imageCount,
+  };
 }
 
 /**

@@ -11,6 +11,10 @@ import {
 import { siteContentImporter } from "./categories/site-content";
 import { clubSettingsImporter } from "./categories/club-settings";
 import { lodgeConfigImporter } from "./categories/lodge-config";
+import { lodgeOpsImporter } from "./categories/lodge-ops";
+import { committeeImporter } from "./categories/committee";
+import { inductionImporter } from "./categories/induction";
+import { xeroConfigImporter } from "./categories/xero-config";
 
 // Import plan orchestrator (dry-run). Reads + validates the bundle, runs each
 // selected category's planner, and produces a stateless ImportPlan with a
@@ -21,6 +25,10 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
   siteContentImporter,
   clubSettingsImporter,
   lodgeConfigImporter,
+  lodgeOpsImporter,
+  committeeImporter,
+  inductionImporter,
+  xeroConfigImporter,
 ];
 
 export async function buildImportPlan(
@@ -29,14 +37,25 @@ export async function buildImportPlan(
 ): Promise<ImportPlan> {
   const { manifest, files } = readBundle(bundleBytes);
 
-  const categories: CategoryPlan[] = [];
+  // A category may be served by more than one importer module (e.g.
+  // lodge-config); merge their results into one plan section per category.
+  const byCategory = new Map<string, CategoryPlan>();
   const fingerprintParts: string[] = [];
   const summary = { create: 0, update: 0, unchanged: 0 };
 
   for (const importer of CATEGORY_IMPORTERS) {
     if (!manifest.includedCategories.includes(importer.category)) continue;
     const result = await importer.plan({ db, files, manifest });
-    categories.push({ category: importer.category, ...result });
+    const merged = byCategory.get(importer.category) ?? {
+      category: importer.category,
+      items: [],
+      warnings: [],
+      fingerprintParts: [],
+    };
+    merged.items.push(...result.items);
+    merged.warnings.push(...result.warnings);
+    merged.fingerprintParts.push(...result.fingerprintParts);
+    byCategory.set(importer.category, merged);
     fingerprintParts.push(...result.fingerprintParts);
     for (const item of result.items) {
       if (item.action === "create") summary.create += 1;
@@ -44,6 +63,7 @@ export async function buildImportPlan(
       else summary.unchanged += 1;
     }
   }
+  const categories: CategoryPlan[] = [...byCategory.values()];
 
   // Xero cross-org check only matters when the Xero category is present.
   const xeroInBundle = manifest.includedCategories.includes("xero-config");

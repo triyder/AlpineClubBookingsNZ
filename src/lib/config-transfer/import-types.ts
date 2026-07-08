@@ -70,6 +70,8 @@ export interface ApplyContext {
   manifest: ConfigTransferManifest;
   /** Member id performing the import, for audit-of-who fields. */
   actorMemberId: string;
+  /** Old MediaImage id → new id, for rewriting /api/images/<id> in content. */
+  imageRemap: Map<string, string>;
 }
 
 export interface CategoryImporter {

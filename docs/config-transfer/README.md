@@ -27,15 +27,27 @@ admins at **Admin → Setup & Configuration → Export & Import**
 - **club-settings** — the club-wide settings singletons (modules, booking
   defaults, member-fields, bed-allocation, booking-request, IB payments, email
   message settings, group discount, membership nomination/lockout/cancellation).
-- **lodge-config** — lodges, rooms, beds, seasons, and season rates (foreign
-  keys carried as natural keys — lodge slug, room/season name). Per-lodge
-  capacity/LodgeSettings is intentionally excluded (see ADR-001).
+- **lodge-config** — lodges, rooms, beds, seasons, season rates, lodge
+  instructions (content images bundled + remapped), and chore templates (foreign
+  keys carried as natural keys — lodge slug, room/season name).
+- **committee** — role definitions + the legacy standalone committee members
+  (the member-linked assignment style stays out; members are excluded).
+- **induction** — induction checklist templates with their nested sections and
+  items (as JSON documents; member-specific results excluded).
+- **xero-config** — Xero account mappings and item-code mappings. The manifest
+  stamps the source Xero tenant; the plan warns on an org mismatch so codes are
+  verified before applying.
 
-Remaining designed categories (same pattern, not yet built): lodge policies
-(cancellation / booking-period / minimum-stay), lodge instructions, chore
-templates, committee (roles + standalone), induction templates, and Xero config
-mappings. The `xero-config` cross-org tenant check is wired in the manifest and
-plan for when that category lands.
+Intentionally excluded / deferred:
+
+- Per-lodge capacity / `LodgeSettings` — the `id="default"`-vs-`lodgeId` storage
+  duality is unsafe to round-trip; set it on the lodge page (ADR-001).
+- Cancellation / booking-period / minimum-stay policies — these use
+  replace-the-whole-tier-set semantics that conflict with the upsert-only model
+  and touch refund maths, so they are deferred rather than risk a subtly wrong
+  refund configuration.
+- Xero contact-group rules / accepted groups — FK to member types / age-tier
+  settings and are Xero-org-specific.
 
 ## What it is / is not
 

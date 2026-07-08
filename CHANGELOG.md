@@ -10,9 +10,11 @@ All notable public reference-release changes should be recorded here.
   `.zip` bundle and import it into another (or the same) instance through a
   mandatory dry-run → confirm flow. Import is upsert-only (never deletes), takes
   a `pg_dump` backup before applying, runs under a single-flight advisory lock,
-  and is audited. Implemented categories: site content (pages/site-content/theme,
-  with embedded-image bundling + reference remap), club settings singletons, and
-  lodge configuration (lodges/rooms/beds/seasons/rates). Never carries secrets,
+  and is audited. Categories: site content (pages/site-content/theme, with
+  embedded-image bundling + reference remap), club settings singletons, lodge
+  configuration (lodges/rooms/beds/seasons/rates/instructions/chore templates),
+  committee (roles + standalone members), induction checklist templates, and
+  Xero account/item-code mappings. Never carries secrets,
   members, transactional data, or (by default) door codes. Not a database
   backup; the `pg_dump` subsystem remains the disaster-recovery tool. No schema
   migration. See `docs/config-transfer/`.

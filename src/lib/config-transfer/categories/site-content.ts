@@ -2,12 +2,11 @@ import { strToU8, strFromU8 } from "fflate";
 import type { Prisma } from "@prisma/client";
 
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
-import {
-  detectImageContentType,
-  extractImageDimensions,
-  sanitiseMediaImageFilename,
-} from "@/lib/media-image";
+import { remapImageRefs } from "../media";
 import type { BundleEntry } from "../bundle";
+
+// Re-exported for tests and other categories that rewrite image references.
+export { remapImageRefs };
 import { serialiseCsv, parseCsv } from "../csv";
 import { registerEntity, type EntityDescriptor } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
@@ -205,8 +204,6 @@ export const siteContentExporter: CategoryExporter = {
 // Import side (plan + apply). Upsert-only, never delete (ADR-002).
 // ---------------------------------------------------------------------------
 
-const MEDIA_MAP_FILE = "media/media-map.json";
-
 type TypedPage = {
   slug: string;
   path: string;
@@ -260,19 +257,6 @@ function readJsonFile<T>(
   return JSON.parse(strFromU8(bytes)) as T;
 }
 
-/** Rewrite /api/images/<oldId> references to the remapped new ids. */
-export function remapImageRefs(
-  html: string,
-  oldToNew: Map<string, string>,
-): string {
-  return html.replace(
-    /\/api\/images\/([A-Za-z0-9_-]+)/g,
-    (whole, id: string) => {
-      const next = oldToNew.get(id);
-      return next ? `/api/images/${next}` : whole;
-    },
-  );
-}
 
 async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
   const items: PlanItem[] = [];
@@ -379,54 +363,6 @@ async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
   return { items, warnings, fingerprintParts };
 }
 
-async function ensureMediaImages(
-  ctx: ApplyContext,
-): Promise<Map<string, string>> {
-  const oldToNew = new Map<string, string>();
-  const map = readJsonFile<
-    Record<string, { path: string; filename: string; contentType: string }>
-  >(ctx.files, MEDIA_MAP_FILE);
-  if (!map) return oldToNew;
-
-  for (const [oldId, meta] of Object.entries(map)) {
-    const bytes = ctx.files.get(meta.path);
-    if (!bytes) continue; // integrity already checked; skip defensively
-    const buffer = Buffer.from(bytes);
-    const detected = detectImageContentType(buffer);
-    if (!detected) continue; // untrusted input: skip non-images
-    const filename = sanitiseMediaImageFilename(meta.filename);
-
-    // Reuse an identical existing image (idempotent re-import).
-    const candidates = await ctx.tx.mediaImage.findMany({
-      where: { filename, byteSize: buffer.length },
-      select: { id: true, data: true },
-    });
-    const existing = candidates.find((c) =>
-      Buffer.from(c.data).equals(buffer),
-    );
-    if (existing) {
-      oldToNew.set(oldId, existing.id);
-      continue;
-    }
-
-    const dims = extractImageDimensions(buffer, detected);
-    const created = await ctx.tx.mediaImage.create({
-      data: {
-        filename,
-        contentType: detected,
-        byteSize: buffer.length,
-        data: buffer,
-        width: dims?.width ?? null,
-        height: dims?.height ?? null,
-        uploadedByMemberId: ctx.actorMemberId,
-      },
-      select: { id: true },
-    });
-    oldToNew.set(oldId, created.id);
-  }
-  return oldToNew;
-}
-
 async function applySiteContent(
   ctx: ApplyContext,
 ): Promise<CategoryApplyResult> {
@@ -436,7 +372,7 @@ async function applySiteContent(
     unchanged: 0,
     skipped: 0,
   };
-  const oldToNew = await ensureMediaImages(ctx);
+  const oldToNew = ctx.imageRemap;
 
   // Pages.
   for (const raw of readCsvFile(ctx.files, PAGE_FILE)) {

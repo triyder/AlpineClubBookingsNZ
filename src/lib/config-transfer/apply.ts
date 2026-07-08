@@ -7,6 +7,7 @@ import { runDatabaseBackup } from "@/lib/backup";
 import { readBundle } from "./bundle";
 import { buildImportPlan } from "./import";
 import { CATEGORY_IMPORTERS } from "./import";
+import { recreateBundleMedia } from "./media";
 import type { CategoryApplyResult, TxDb } from "./import-types";
 
 // Apply orchestrator: re-plans against current DB, refuses on fingerprint drift,
@@ -81,6 +82,8 @@ export async function applyConfigImport(
   await prisma.$transaction(
     async (tx) => {
       await acquireConfigImportLock(tx);
+      // Recreate bundled images once, up front; every category shares the map.
+      const imageRemap = await recreateBundleMedia(tx, files, actorMemberId);
       for (const importer of CATEGORY_IMPORTERS) {
         if (!manifest.includedCategories.includes(importer.category)) continue;
         const result = await importer.apply({
@@ -88,6 +91,7 @@ export async function applyConfigImport(
           files,
           manifest,
           actorMemberId,
+          imageRemap,
         });
         perCategory.push({ category: importer.category, ...result });
         totals.created += result.created;

@@ -48,6 +48,8 @@ function sourceDb(): ReadDb {
         },
       ]),
     },
+    lodgeInstruction: { findMany: vi.fn().mockResolvedValue([]) },
+    choreTemplate: { findMany: vi.fn().mockResolvedValue([]) },
   } as unknown as ReadDb;
 }
 
@@ -58,6 +60,8 @@ function emptyTargetDb(): ReadDb {
     lodgeBed: { findUnique: vi.fn().mockResolvedValue(null) },
     season: { findFirst: vi.fn().mockResolvedValue(null) },
     seasonRate: { findUnique: vi.fn().mockResolvedValue(null) },
+    lodgeInstruction: { findFirst: vi.fn().mockResolvedValue(null) },
+    choreTemplate: { findFirst: vi.fn().mockResolvedValue(null) },
     xeroToken: { findFirst: vi.fn().mockResolvedValue(null) },
   } as unknown as ReadDb;
 }
