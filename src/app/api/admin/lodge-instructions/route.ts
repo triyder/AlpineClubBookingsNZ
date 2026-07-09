@@ -164,8 +164,10 @@ export async function PUT(request: NextRequest) {
   // The composite unique is [lodgeId, key], but nulls are distinct under it,
   // so the club-wide partition cannot be addressed by upsert. findFirst +
   // create/update instead; requireAdmin traffic is low enough that the race
-  // window is acceptable until the contract release adds the null-partition
-  // partial unique index.
+  // window is acceptable, and a lost race on the club-wide partition now
+  // fails the second create with a unique violation instead of writing a
+  // duplicate (LodgeInstruction_clubwide_key_unique partial index,
+  // migration 20260709000100).
   const existing = await prisma.lodgeInstruction.findFirst({
     where: { key, lodgeId: lodgeId ?? null },
     select: { id: true, contentHtml: true },
