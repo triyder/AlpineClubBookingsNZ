@@ -1999,13 +1999,14 @@ model CancellationPolicy {
   lodge Lodge? @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
 
   // Tier uniqueness is per partition: [lodgeId, daysBeforeStay]. PostgreSQL
-  // treats nulls as distinct here, so this does not hard-enforce uniqueness
-  // within the club-wide (null lodgeId) partition — the admin route enforces
-  // it app-side inside a Serializable replace transaction, and the phase-2
-  // contract release adds the partial unique index over the null partition
-  // (WHERE "lodgeId" IS NULL) to restore the database-level guarantee
-  // (Prisma cannot express partial indexes in this schema, and the drift
-  // check compares migrations to the schema).
+  // treats nulls as distinct here, so this alone does not enforce uniqueness
+  // within the club-wide (null lodgeId) partition. That partition is guarded
+  // by the raw-SQL partial unique index
+  // CancellationPolicy_clubwide_daysBeforeStay_unique (WHERE "lodgeId" IS
+  // NULL, migration 20260709000100) — Prisma cannot express it here, and
+  // `prisma migrate diff` does not surface it, so keep the migration and
+  // this comment in sync. The admin route additionally replaces the
+  // partition inside a Serializable transaction.
   @@unique([lodgeId, daysBeforeStay])
   @@index([lodgeId])
 }
@@ -2632,6 +2633,15 @@ model Lodge {
   name       String
   slug       String   @unique
   active     Boolean  @default(true)
+  // Durable default-lodge marker (#1656/#1627 option b): getDefaultLodgeId()
+  // and the default_lodge_id() SQL function resolve the club default from this
+  // flag instead of earliest-createdAt ordering (which inverts on TZ-skewed
+  // seeds). At most one lodge is default, enforced by the partial unique index
+  // "Lodge_isDefault_key" (WHERE "isDefault") created in migration
+  // 20260709120000 — a raw partial index Prisma cannot express in-schema (same
+  // pattern as XeroSyncOperation_active_correlationKey_unique). To change the
+  // default, unset the current one and set the new one in a single transaction.
+  isDefault  Boolean  @default(false)
   doorCode   String?  @db.VarChar(80)
   travelNote String?
   createdAt  DateTime @default(now())
@@ -3090,9 +3100,12 @@ model LodgeInstruction {
   // 2026-07-03): null rows are the club-wide documents; a row for
   // [lodgeId, key] replaces the club-wide document of that key at that
   // lodge (replace, never merge — same rule as the booking policies).
-  // Nulls are distinct under the composite unique, so the admin route
-  // guards the club-wide partition until the contract release adds a
-  // null-partition partial unique index.
+  // Nulls are distinct under the composite unique, so the club-wide
+  // partition is guarded by the raw-SQL partial unique index
+  // LodgeInstruction_clubwide_key_unique (WHERE "lodgeId" IS NULL,
+  // migration 20260709000100) — invisible to Prisma/migrate diff, so keep
+  // the migration and this comment in sync. The admin route's
+  // findFirst-then-write remains the first line of defence.
   lodgeId           String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt

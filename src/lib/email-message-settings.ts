@@ -127,10 +127,11 @@ type LodgeIdentityRow = {
 /**
  * Resolve the lodge whose identity an email should carry. An explicit lodgeId is
  * looked up directly; a falsy id, or a lookup that misses, falls back to the
- * club's DEFAULT lodge — oldest active, else oldest of any state. That ordering
- * mirrors `getDefaultLodgeId` in lodges.ts and the SQL `default_lodge_id()`
- * function (migration 20260708001100), so email identity and the column DEFAULT
- * always resolve the same lodge.
+ * club's DEFAULT lodge — the Lodge.isDefault flag, else oldest active, else
+ * oldest of any state. That resolution mirrors `getDefaultLodgeId` in lodges.ts
+ * (see its MIRROR CONTRACT comment) and the SQL `default_lodge_id()` function
+ * (replaced in migration 20260709120000), so email identity and the column
+ * DEFAULT always resolve the same lodge.
  *
  * Returns null when no Lodge row exists (fresh pre-seed install), when the DB is
  * unreachable (vitest runs with an unreachable DATABASE_URL), or when the lodge
@@ -157,6 +158,10 @@ async function resolveLodgeIdentity(
       if (lodge) return lodge;
     }
     return (
+      (await delegate.findFirst({
+        where: { isDefault: true },
+        select,
+      })) ??
       (await delegate.findFirst({
         where: { active: true },
         orderBy: lodgeOrderBy(),

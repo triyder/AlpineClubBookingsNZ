@@ -71,9 +71,15 @@ function assertLockBeforeDelegatedGuard(
   ).toBeGreaterThan(lockIdx);
 }
 
-function createTempMigration(sql: string, ledger: string) {
+function createTempMigration(
+  sql: string,
+  ledger: string,
+  // Far-future default so fixtures sort after every gate baseline. Override to
+  // a pre-baseline timestamp to exercise the session-clock DML exemption.
+  migrationName = "20990101000000_test_migration"
+) {
   const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
-  const migrationDir = path.join(tempDir, "20990101000000_test_migration");
+  const migrationDir = path.join(tempDir, migrationName);
   const migrationPath = path.join(migrationDir, "migration.sql");
   const ledgerPath = path.join(tempDir, "safety.tsv");
 
@@ -1415,6 +1421,123 @@ describe("review finding source/schema contracts", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stderr).toContain("Reviewed no-outage NOT NULL");
+    }
+  );
+
+  it(
+    "blocks CURRENT_TIMESTAMP/now() in an INSERT or UPDATE payload, non-overridably (#1656 / #1627)",
+    { timeout: 20000 },
+    () => {
+      // Session (DB-local) time written into a naive timestamp column renders
+      // local wall-clock on a non-UTC database and skews createdAt ordering —
+      // the #1627 default-lodge inversion. The gate must flag the clock even
+      // when it sits several lines below the INSERT keyword (multi-line VALUES),
+      // and in an UPDATE ... SET payload. It is a hard block: the
+      // ALLOW_BREAKING override must NOT rescue it (unlike breaking-SQL), so the
+      // PR-time coverage gate (which sets ALLOW_BREAKING=1) still enforces it.
+      const fixture = createTempMigration(
+        [
+          'INSERT INTO "Foo" ("id", "createdAt")',
+          "VALUES (",
+          "  'x',",
+          "  CURRENT_TIMESTAMP",
+          ");",
+          'UPDATE "Bar" SET "updatedAt" = now() WHERE "id" = \'y\';',
+          "",
+        ].join("\n"),
+        `${LEDGER_HEADER}\n`
+      );
+
+      try {
+        const blocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+        const stillBlocked = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath,
+          {
+            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+              "session-clock DML is non-overridable; this must not rescue it",
+          }
+        );
+
+        expect(blocked.status, blocked.stderr).not.toBe(0);
+        expect(blocked.stderr).toContain("Session-clock CURRENT_TIMESTAMP/now()");
+        // Both the multi-line INSERT and the UPDATE payload are reported.
+        expect(blocked.stderr).toMatch(/INSERT INTO "Foo"/);
+        expect(blocked.stderr).toMatch(/UPDATE "Bar"/);
+        // The override cannot waive it.
+        expect(stillBlocked.status, stillBlocked.stderr).not.toBe(0);
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "allows DDL DEFAULT CURRENT_TIMESTAMP and INSERT/UPDATE with explicit values (#1656 / #1627)",
+    { timeout: 20000 },
+    () => {
+      // The ban is scoped to DML payloads. A column DEFAULT CURRENT_TIMESTAMP
+      // (CREATE TABLE and ALTER COLUMN ... SET DEFAULT) is DDL, not an
+      // INSERT/UPDATE, and an INSERT/UPDATE that writes an explicit literal is
+      // fine — neither must trip the gate.
+      const fixture = createTempMigration(
+        [
+          'CREATE TABLE "Baz" (',
+          '  "id" TEXT NOT NULL,',
+          '  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+          ");",
+          'ALTER TABLE "Baz" ALTER COLUMN "createdAt" SET DEFAULT CURRENT_TIMESTAMP;',
+          'INSERT INTO "Baz" ("id", "createdAt") VALUES (\'a\', \'2026-01-01T00:00:00Z\');',
+          'UPDATE "Baz" SET "createdAt" = \'2026-01-02T00:00:00Z\' WHERE "id" = \'a\';',
+          "",
+        ].join("\n"),
+        `${LEDGER_HEADER}\n`
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).not.toContain("Session-clock CURRENT_TIMESTAMP/now()");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it(
+    "exempts migrations before the session-clock baseline so committed history never retro-fails (#1656 / #1627)",
+    { timeout: 20000 },
+    () => {
+      // Existing committed migrations legitimately used CURRENT_TIMESTAMP/now()
+      // in DML payloads before this gate existed (e.g. 20260708000000 seeds the
+      // lodge, 20260708220000 repairs the skew with now()). The gate scopes to
+      // migrations at or after the baseline; a pre-baseline name with the same
+      // DML clock must pass, so the ratchet applies only going forward.
+      const fixture = createTempMigration(
+        'INSERT INTO "Foo" ("id", "createdAt") VALUES (\'x\', CURRENT_TIMESTAMP);\n',
+        `${LEDGER_HEADER}\n`,
+        "20260101000000_pre_baseline_migration"
+      );
+
+      try {
+        const result = runMigrationSafetyValidator(
+          fixture.migrationPath,
+          fixture.ledgerPath
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stderr).not.toContain("Session-clock CURRENT_TIMESTAMP/now()");
+      } finally {
+        rmSync(fixture.tempDir, { recursive: true, force: true });
+      }
     }
   );
 

@@ -27,7 +27,7 @@ sequencing):
 | `BedAllocationSettings` | per-lodge row | converted from singleton |
 | `BookingDefaults` | per-lodge row | converted from singleton |
 | `BookingRequestSettings` | per-lodge row | converted from singleton |
-| Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709001000`) |
+| Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`) |
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 
@@ -206,6 +206,30 @@ re-validates per lodge.
   is written mid-cutover. `lodgeNullTolerantScope` is now a strict `{ lodgeId }`.
   Policy/settings tables keep a nullable `lodgeId` (null = club-wide default) and
   scope via `resolvePolicyRowsForLodge`. See `contract-release.md`.
+- **The club default lodge is the `Lodge.isDefault`-flagged row**, not the
+  earliest-`createdAt` one (#1656 / #1627 option b, migration
+  `20260709120000`). `getDefaultLodgeId()` and the `default_lodge_id()` SQL
+  function both resolve `isDefault` first (then oldest active, then oldest of
+  any state, as a defensive fallback), and the two sides are a mirror contract —
+  changing one requires a paired migration for the other. The old
+  `createdAt`-ordering resolution inverted on non-UTC databases when a lodge was
+  created inside the seed's TZ-skew window; the flag removes that class. A slug
+  pin was rejected because both the seed and the admin rename route regenerate a
+  lodge's slug from its name, so no slug stays stable. Exactly one lodge is
+  default, enforced by a partial unique index (`Lodge_isDefault_key`,
+  `WHERE "isDefault"`). The migration backfills the flag onto the current
+  default; there is no admin UI yet, so **to change the default, unset the
+  current row and set the new one in a single transaction** (the partial unique
+  index rejects a transient two-default state). Reassign the default before
+  deactivating a lodge — a flagged-but-inactive lodge deliberately stays the
+  default.
+  - **Known third resolver (#1656 review note):** `isDefaultLodge()` in
+    `src/lib/lodge-capacity.ts` gates the club-config capacity fallback with its
+    own oldest-active logic and does not consult the flag. On current
+    single-lodge data it names the same lodge, so nothing diverges today — but
+    any default-reassignment feature must route it through `getDefaultLodgeId()`
+    (or update it in the same PR), otherwise the capacity fallback follows the
+    oldest-active lodge instead of the flagged default.
   - **Documented exception — reporting occupancy denominator.** The admin
     reports occupancy view and the finance booking-metrics occupancy summary
     may sum the capacity of all active lodges to form the "all lodges"

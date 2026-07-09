@@ -98,7 +98,7 @@ describe("loadEmailMessageSettingsForLodge", () => {
     });
   });
 
-  it("resolves the default lodge (oldest active) when no lodge is given", async () => {
+  it("resolves the default lodge when no lodge is given", async () => {
     mocks.lodgeFindFirst.mockResolvedValue({
       name: "Default Lodge",
       travelNote: "Follow the valley road.",
@@ -113,6 +113,36 @@ describe("loadEmailMessageSettingsForLodge", () => {
     // The default lodge is resolved via findFirst, not a keyed findUnique.
     expect(mocks.lodgeFindUnique).not.toHaveBeenCalled();
     expect(mocks.lodgeFindFirst).toHaveBeenCalled();
+  });
+
+  it("resolves the isDefault-flagged lodge ahead of the oldest active lodge", async () => {
+    // Mirror contract (lodges.ts getDefaultLodgeId / SQL default_lodge_id() as
+    // replaced by 20260709120000): the flagged lodge wins even when an older
+    // active lodge exists. Pin the ordering so the three copies cannot drift.
+    mocks.lodgeFindFirst.mockImplementation(
+      async ({ where }: { where?: { isDefault?: boolean; active?: boolean } }) => {
+        if (where?.isDefault) {
+          return {
+            name: "Flagged Lodge",
+            travelNote: "Flagged route.",
+            doorCode: "5555",
+          };
+        }
+        return {
+          name: "Oldest Active Lodge",
+          travelNote: "Old route.",
+          doorCode: "1111",
+        };
+      },
+    );
+
+    const settings = await loadEmailMessageSettingsForLodge(null);
+
+    expect(settings.lodgeName).toBe("Flagged Lodge");
+    expect(settings.doorCode).toBe("5555");
+    expect(mocks.lodgeFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isDefault: true } }),
+    );
   });
 
   it("falls back to config defaults, without throwing, when no lodge rows exist", async () => {

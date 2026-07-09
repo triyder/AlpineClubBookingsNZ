@@ -27,7 +27,7 @@ writing through to the singleton while exactly one active lodge existed
 (`syncSoleActiveLodgeIdentity`). Email templates read per-booking lodge
 context since phase 8. *Progress note (2026-07-09):* the singleton columns
 are now DROPPED (migration
-`20260709001000_drop_email_message_setting_lodge_identity_columns`), email
+`20260709130000_drop_email_message_setting_lodge_identity_columns`), email
 identity always resolves from `Lodge` (default lodge when no `lodgeId` is
 in scope), and the write-through helper is retired — see
 `contract-release.md`.
@@ -67,8 +67,14 @@ Per ADR-001 sequencing, across several PRs:
   NOT NULL per the ADR-001 sequencing.
 - Nullable `lodgeId` on `CancellationPolicy`, `MinimumStayPolicy`, and
   `BookingPeriod` (permanently nullable — the club-wide-with-override
-  pattern), with a partial unique index preserving today's uniqueness on
-  the club-wide (null) partition.
+  pattern); where a table carries a uniqueness key, a partial unique index
+  preserves today's uniqueness on the club-wide (null) partition.
+  *Progress note (2026-07-09):* the club-wide null-partition partial unique
+  indexes shipped in `20260709000100_add_clubwide_policy_partial_unique_indexes`
+  for `CancellationPolicy` (`daysBeforeStay`) and `LodgeInstruction` (`key`) —
+  raw SQL, invisible to Prisma/`migrate diff`; see `contract-release.md`.
+  `MinimumStayPolicy` and `BookingPeriod` carry no unique key in either
+  partition, so there is nothing to enforce for them.
 - Convert singleton settings tables (`LodgeSettings`,
   `BedAllocationSettings`, `BookingDefaults`, `BookingRequestSettings`)
   to per-lodge rows.
@@ -299,7 +305,7 @@ roster, check-in reminder, modified, card-setup-failed, and the three
 waitlist emails — fifteen senders, twenty-seven call sites) now thread
 the booking's `lodgeId` through `sendEmail` as well, completing the
 sweep. The deferred drop of the `EmailMessageSetting` lodge-identity
-columns landed 2026-07-09 as migration `20260709001000` together with the
+columns landed 2026-07-09 as migration `20260709130000` together with the
 identity-resolution refactor that made it safe (see `contract-release.md`);
 `syncSoleActiveLodgeIdentity` is retired.
 

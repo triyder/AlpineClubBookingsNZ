@@ -30,9 +30,10 @@
 -- docs/BLUE_GREEN_MIGRATION_SAFETY.tsv for the full record.
 
 -- Backfill the default lodge's travelNote/doorCode from the singleton where the
--- Lodge values are NULL. default_lodge_id() (migration 20260708001100) resolves
--- the same default lodge as the app's getDefaultLodgeId (oldest active, else
--- oldest). Touches at most one Lodge row.
+-- Lodge values are NULL. default_lodge_id() (created 20260708001100, replaced by
+-- 20260709120000 which this migration sorts after) resolves the same default
+-- lodge as the app's getDefaultLodgeId and resolveLodgeIdentity: the isDefault
+-- flag first, else oldest active, else oldest. Touches at most one Lodge row.
 UPDATE "Lodge" l
 SET "travelNote" = COALESCE(l."travelNote", s."lodgeTravelNote"),
     "doorCode"   = COALESCE(l."doorCode",   s."doorCode")
