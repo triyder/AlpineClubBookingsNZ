@@ -33,6 +33,7 @@ import {
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
@@ -71,6 +72,8 @@ type BatchModificationTransactionResult =
     promoChanged: boolean;
     choreWarnings: string[];
     datesChanged: boolean;
+    adminOverride: boolean;
+    capacityOverridden: boolean;
     oldCheckIn: Date;
     oldCheckOut: Date;
     oldGuestCount: number;
@@ -118,6 +121,7 @@ export type BatchModificationResponse = {
 function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
   return {
     inProgressPlan: null,
+    capacityOverridden: false,
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
@@ -148,6 +152,39 @@ export async function modifyBookingBatch({
   input: BatchModifyInput;
   ipAddress: string;
 }): Promise<BatchModificationResponse> {
+  // Issue #1668: admin-only date override. The route also rejects non-admins,
+  // but keep the service guard so the invariant holds however it is called.
+  if (input.adminOverride && actor.role !== "ADMIN") {
+    throw new ApiError("Admin override is not available for this account", 403);
+  }
+  const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
+  if (adminOverride) {
+    // Date-only contract: an override edit may change ONLY the dates. Any guest
+    // or promo input is rejected so preview/apply mirroring stays tractable.
+    if (
+      input.addGuests?.length ||
+      input.removeGuestIds?.length ||
+      input.guestStayRanges?.length ||
+      input.guestUpdates?.length ||
+      input.promoCode ||
+      input.promoGuestIndexes?.length ||
+      input.removePromoCode
+    ) {
+      throw new ApiError("Admin override edits change dates only", 400);
+    }
+    if (!input.pricingMode) {
+      throw new ApiError("Choose a pricing mode for the admin override", 400);
+    }
+    // "shift" is dispatched to adminShiftBookingDates at the route and must
+    // never reach the recalculate machinery here.
+    if (input.pricingMode === "shift") {
+      throw new ApiError(
+        "Shift-mode admin overrides are applied through the date-shift path",
+        400,
+      );
+    }
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
     // lock from this read is safe; the eligibility checks, pricing, capacity
@@ -265,6 +302,9 @@ export async function modifyBookingBatch({
           skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
+          // Issue #1668: over-capacity warns-and-confirms under admin override.
+          adminOverride,
+          confirmOverCapacity: input.confirmOverCapacity,
         });
 
     const promo = identityOnlyModification
@@ -427,6 +467,14 @@ export async function modifyBookingBatch({
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
           // Post-payment identity-preserving spelling correction (#1386).
           ...(paidNameTypoFix ? { paidNameTypoFix: true } : {}),
+          // Admin override recalculate (#1668).
+          ...(adminOverride
+            ? {
+                adminOverride: true,
+                pricingMode: "recalculate",
+                capacityOverridden: pricing.capacityOverridden,
+              }
+            : {}),
         },
         priceDiffCents,
         changeFeeCents,
@@ -461,6 +509,8 @@ export async function modifyBookingBatch({
       promoChanged: promo.promoChanged,
       choreWarnings,
       datesChanged: dates.datesChanged,
+      adminOverride,
+      capacityOverridden: pricing.capacityOverridden,
       oldCheckIn: booking.checkIn,
       oldCheckOut: booking.checkOut,
       oldGuestCount: booking.guests.length,
@@ -518,12 +568,23 @@ export async function modifyBookingBatch({
       failureMessage: "Failed to create additional PaymentIntent for batch modification",
     });
 
+  // Issue #1668: under an admin override, link this modification to the
+  // booking's most recent approved-unlinked change request. Best-effort.
+  const linkedChangeRequestId = result.adminOverride
+    ? await linkModificationToOutstandingChangeRequest(
+        prisma,
+        bookingId,
+        result.bookingModificationId,
+      )
+    : null;
+
   await dispatchBatchPostTransactionSideEffects({
     bookingId,
     actorMemberId: actor.id,
     ipAddress,
     result,
     additionalPaymentIntentId,
+    linkedChangeRequestId,
   });
 
   return {
@@ -548,12 +609,14 @@ async function dispatchBatchPostTransactionSideEffects({
   ipAddress,
   result,
   additionalPaymentIntentId,
+  linkedChangeRequestId,
 }: {
   bookingId: string;
   actorMemberId: string;
   ipAddress: string;
   result: BatchModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
+  linkedChangeRequestId: string | null;
 }): Promise<void> {
   const auditDetails = {
     datesChanged: result.datesChanged,
@@ -570,10 +633,29 @@ async function dispatchBatchPostTransactionSideEffects({
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
+    // Admin override recalculate (#1668): before/after dates, capacity decision
+    // and the linked change request, so the override edit is fully auditable.
+    ...(result.adminOverride
+      ? {
+          adminOverride: true,
+          pricingMode: "recalculate" as const,
+          confirmOverCapacity: result.capacityOverridden,
+          capacityOverridden: result.capacityOverridden,
+          oldCheckIn: new Date(result.oldCheckIn).toISOString().split("T")[0],
+          oldCheckOut: new Date(result.oldCheckOut).toISOString().split("T")[0],
+          newCheckIn: result.booking.checkIn.toISOString().split("T")[0],
+          newCheckOut: result.booking.checkOut.toISOString().split("T")[0],
+          linkedChangeRequestId,
+        }
+      : {}),
   };
 
   logAudit({
-    action: "booking.modify.batch",
+    // Issue #1668: every override move audits under the one queryable action
+    // name shared with the shift and modify-dates override paths.
+    action: result.adminOverride
+      ? "booking.modify.admin_override"
+      : "booking.modify.batch",
     memberId: actorMemberId,
     targetId: bookingId,
     subjectMemberId: result.booking.memberId,
@@ -581,7 +663,9 @@ async function dispatchBatchPostTransactionSideEffects({
     entityId: result.bookingModificationId,
     category: "booking",
     outcome: "success",
-    summary: "Booking modified",
+    summary: result.adminOverride
+      ? "Admin override: booking dates recalculated"
+      : "Booking modified",
     details: JSON.stringify(auditDetails),
     metadata: { bookingId, ...auditDetails },
     ipAddress,

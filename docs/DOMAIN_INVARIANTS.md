@@ -535,6 +535,50 @@ PENDING → PAYMENT_PENDING). The same
 change must produce the same booking state regardless of which endpoint made
 it.
 
+Self-service edits obey a date-window edit policy (`getBookingEditPolicy`):
+future bookings edit freely, an in-progress stay (checked in, not yet checked
+out) may only extend its **future** nights with the check-in locked, and a
+fully-past stay is not self-editable at all. Issue #1668 adds an **admin-only
+override** (`adminOverride`, honoured solely when
+`bookingManagementAuthorizationRole(session.user) === "ADMIN"`, i.e. Full Admin
+or Booking Officer) that lifts those date-window locks so an admin can move the
+dates of an in-progress or fully-past booking. The override is **date-only**:
+the modify / modify-dates / modify-quote endpoints reject any guest, promo, or
+name field submitted alongside the flags ("Admin override edits change dates
+only"), and status eligibility (`canModifyBookingStatusForRole`) plus the
+per-lodge capacity lock still apply. Members and officers-without-`bookings:edit`
+see byte-for-byte unchanged behaviour whether or not the flag is present. An
+override requires an explicit `pricingMode`:
+
+- **shift** — a pure relocation: the night count is held constant (a provided
+  single bound derives the other), every cent is frozen (booking totals,
+  per-guest `priceCents`, and each translated `BookingGuestNight.priceCents`
+  move with the stay), and there is no change fee, settlement, Stripe, or Xero
+  activity. The `BookingModification` row is `ADMIN_DATE_SHIFT` with
+  `priceDiffCents`/`changeFeeCents` = 0. All date math is date-only
+  (`addDaysDateOnly` on UTC-midnight-normalised bounds), so the delta is
+  DST-safe. A fully-past shift does not email the member; a shift whose new
+  check-out is still future does.
+- **recalculate** — the existing full-reprice machinery with the locked-period
+  clamps lifted, so locked-night pricing semantics are otherwise preserved
+  (a night the guest already bought keeps its stored `BookingGuestNight` price).
+
+Under an override, an over-capacity target is **warn-and-confirm** rather than a
+hard block: the first apply raises `OverCapacityConfirmationRequiredError`
+(HTTP 409, code `OVER_CAPACITY_CONFIRM_REQUIRED`, with the over-capacity nights),
+and the admin must resubmit with `confirmOverCapacity: true`. The capacity lock
+is still acquired, and the confirmed overbooking is recorded (`capacityOverridden`
+on the modification's `newData` and in the audit trail). Statuses outside the
+active lifecycle (DRAFT, WAITLISTED, WAITLIST_OFFERED, BUMPED) hold no capacity,
+so both pricing modes skip the capacity decision for them entirely — a move that
+cannot overbook must never prompt for (or record) an overbooking confirm. Every override move is
+audited as `booking.modify.admin_override` with before/after dates, `pricingMode`,
+and `confirmOverCapacity`, and is linked (best-effort, post-transaction) to the
+booking's most recent APPROVED-but-unlinked `BookingChangeRequest`, closing the
+approve → apply trail. The modify-quote preview mirrors apply exactly for the
+same input (same date resolution, capacity signal, and member-night conflict
+check), so the operator never sees a clean preview for a move that would fail.
+
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
 approval regardless of how it got there or whether it was already paid: every
 edit path — including single-guest self-removal, which is never blocked for a

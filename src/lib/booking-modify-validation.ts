@@ -64,6 +64,12 @@ export type BatchModifyInput = {
   removePromoCode?: boolean;
   memberReviewJustification?: string;
   settlementMethod?: BookingModificationSettlementMethod;
+  // Admin-only date override (issue #1668). Only honoured for role === "ADMIN";
+  // the callers enforce the date-only contract (no guest/promo inputs) and
+  // require pricingMode when adminOverride is set.
+  adminOverride?: boolean;
+  pricingMode?: "shift" | "recalculate";
+  confirmOverCapacity?: boolean;
 };
 
 export type BookingModificationSettlementMethod = "card" | "credit";
@@ -203,11 +209,15 @@ export function resolveTargetDates({
   role: Role;
   input: BatchModifyInput;
 }): ResolvedTargetDates {
+  // Issue #1668: only an admin may drive the override; a member request that
+  // somehow carried the flag falls through to the normal date-window policy.
+  const effectiveAdminOverride = Boolean(input.adminOverride) && role === "ADMIN";
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    adminOverride: effectiveAdminOverride,
   });
   if (!editPolicy.canModify) {
     throw new ApiError(

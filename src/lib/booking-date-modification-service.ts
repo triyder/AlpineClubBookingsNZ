@@ -13,14 +13,25 @@ import { logAudit } from "@/lib/audit";
 import {
   queueSupersededPrimaryIntentCancellations,
 } from "@/lib/booking-payment-cleanup";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import {
+  canModifyBookingStatusForRole,
+  getBookingEditPolicy,
+  usesActiveBookingEditLifecycle,
+} from "@/lib/booking-edit-policy";
+import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
   createModificationAdditionalPaymentIntent,
   executeBookingModificationRefund,
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
-import { acquireLodgeCapacityLock, checkCapacity } from "@/lib/capacity";
+import {
+  acquireLodgeCapacityLock,
+  checkCapacity,
+  checkCapacityForGuestRanges,
+  OverCapacityConfirmationRequiredError,
+  overCapacityNights,
+} from "@/lib/capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   applyPaymentAdjustments,
@@ -42,7 +53,14 @@ import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
-import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  eachDateOnlyInRange,
+  formatDateOnly,
+  getTodayDateOnly,
+  normalizeDateOnlyForTimeZone,
+  parseDateOnly,
+} from "@/lib/date-only";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -72,6 +90,14 @@ export type ModifyBookingDatesInput = {
   checkIn?: string;
   checkOut?: string;
   settlementMethod?: BookingModificationSettlementMethod;
+  // Admin-only date override (issue #1668). Only honoured for actor.role ADMIN.
+  // adminOverride lifts the date-window locks (in-progress / fully-past);
+  // confirmOverCapacity turns an over-capacity target from a throw into a
+  // confirmed overbooking. pricingMode "shift" is dispatched at the route to
+  // adminShiftBookingDates and never reaches modifyBookingDates; only
+  // "recalculate" flows through here.
+  adminOverride?: boolean;
+  confirmOverCapacity?: boolean;
 };
 
 type ModifiedBooking = Booking & {
@@ -91,6 +117,8 @@ type DateModificationTransactionResult =
     promoRemoved: boolean;
     choreWarnings: string[];
     datesChanged: boolean;
+    adminOverride: boolean;
+    capacityOverridden: boolean;
     oldCheckIn: Date;
     oldCheckOut: Date;
     hasIssuedXeroInvoice: boolean;
@@ -159,6 +187,9 @@ export type DateModificationResponse = {
   stripeRefundId: string | null;
   promoRemoved: boolean;
   choreWarnings: string[];
+  // Admin override (issue #1668): true when an over-capacity target was
+  // explicitly confirmed. Always false on the standard (hard-blocked) path.
+  capacityOverridden: boolean;
 };
 
 export async function modifyBookingDates({
@@ -176,7 +207,10 @@ export async function modifyBookingDates({
     checkIn: newCheckInStr,
     checkOut: newCheckOutStr,
     settlementMethod,
+    confirmOverCapacity,
   } = input;
+  // Issue #1668: only an admin drives the recalculate override on this route.
+  const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
 
   const result = await prisma.$transaction(async (tx) => {
     // Pre-lock read: only the lock key. lodgeId is immutable, so keying the
@@ -224,7 +258,12 @@ export async function modifyBookingDates({
     }
     await assertBookingNotQuotePriced(tx, bookingId);
 
-    if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+    // Under an admin override the fully-past COMPLETED status is editable too
+    // (issue #1668); the standard path keeps the active-lifecycle allowlist.
+    const allowedStatuses = adminOverride
+      ? ["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED"]
+      : ["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"];
+    if (!allowedStatuses.includes(booking.status)) {
       throw new ApiError(
         "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
         400,
@@ -236,6 +275,7 @@ export async function modifyBookingDates({
       role: actor.role,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
+      adminOverride,
     });
     if (!editPolicy.canModify) {
       throw new ApiError(
@@ -243,7 +283,10 @@ export async function modifyBookingDates({
         400,
       );
     }
-    if (editPolicy.mode !== "future") {
+    // In-progress/fully-past date changes are still routed through the full edit
+    // flow — except under an explicit admin override, whose policy mode is
+    // "admin-override" (issue #1668).
+    if (editPolicy.mode !== "future" && editPolicy.mode !== "admin-override") {
       throw new ApiError(
         "Use the full booking edit flow for in-progress booking date changes",
         400,
@@ -289,20 +332,49 @@ export async function modifyBookingDates({
       }
     }
 
-    const capacity = await checkCapacity(
-      bookingLodgeId,
-      newCheckIn,
-      newCheckOut,
-      booking.guests.length,
-      bookingId,
-      tx,
-    );
-
-    if (!capacity.available) {
-      throw new ApiError(
-        "Not enough beds available for the new dates",
-        400,
+    // Standard path hard-blocks over capacity. Under an admin override
+    // (issue #1668) the target nights warn-and-confirm instead: the per-lodge
+    // lock is still held (above); over capacity throws OverCapacityConfirmation
+    // RequiredError unless confirmOverCapacity was sent. A date change resets
+    // every guest to the full new envelope, so the guest-range check (whose
+    // availableBeds bakes in the proposed guests) is the correct signal.
+    let capacityOverridden = false;
+    if (adminOverride) {
+      const capacity = await checkCapacityForGuestRanges(
+        bookingLodgeId,
+        newCheckIn,
+        newCheckOut,
+        booking.guests.map(() => ({
+          stayStart: newCheckIn,
+          stayEnd: newCheckOut,
+        })),
+        bookingId,
+        tx,
       );
+      if (!capacity.available) {
+        if (!confirmOverCapacity) {
+          throw new OverCapacityConfirmationRequiredError(
+            overCapacityNights(capacity),
+          );
+        }
+        capacityOverridden = true;
+      }
+    } else {
+      const capacity = await checkCapacity(
+        bookingLodgeId,
+        newCheckIn,
+        newCheckOut,
+        booking.guests.length,
+        bookingId,
+        tx,
+      );
+
+      if (!capacity.available) {
+        throw new ApiError(
+          "Not enough beds available for the new dates",
+          400,
+        );
+      }
     }
 
     const seasons = await tx.season.findMany({
@@ -640,6 +712,9 @@ export async function modifyBookingDates({
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
+          ...(adminOverride
+            ? { pricingMode: "recalculate", capacityOverridden }
+            : {}),
         },
         priceDiffCents,
         changeFeeCents,
@@ -675,6 +750,8 @@ export async function modifyBookingDates({
       promoRemoved,
       choreWarnings,
       datesChanged,
+      adminOverride,
+      capacityOverridden,
       oldCheckIn,
       oldCheckOut,
       hasSucceededPayment,
@@ -713,12 +790,24 @@ export async function modifyBookingDates({
       failureMessage: "Failed to create additional PaymentIntent for modification",
     });
 
+  // Issue #1668: under an admin override, close the approve → apply trail by
+  // linking this modification to the booking's most recent approved-unlinked
+  // change request. Best-effort; never fails the completed edit.
+  const linkedChangeRequestId = result.adminOverride
+    ? await linkModificationToOutstandingChangeRequest(
+        prisma,
+        bookingId,
+        result.bookingModificationId,
+      )
+    : null;
+
   await dispatchDatePostTransactionSideEffects({
     bookingId,
     actorMemberId: actor.id,
     ipAddress,
     result,
     additionalPaymentIntentId,
+    linkedChangeRequestId,
   });
 
   return {
@@ -734,6 +823,7 @@ export async function modifyBookingDates({
     stripeRefundId: stripeRefundId ?? null,
     promoRemoved: result.promoRemoved,
     choreWarnings: result.choreWarnings,
+    capacityOverridden: result.capacityOverridden,
   };
 }
 
@@ -743,15 +833,30 @@ async function dispatchDatePostTransactionSideEffects({
   ipAddress,
   result,
   additionalPaymentIntentId,
+  linkedChangeRequestId,
 }: {
   bookingId: string;
   actorMemberId: string;
   ipAddress: string;
   result: DateModificationTransactionResult;
   additionalPaymentIntentId: string | undefined;
+  linkedChangeRequestId: string | null;
 }): Promise<void> {
+  // Issue #1668: an admin override records the pricing mode, capacity decision
+  // and linked change request alongside the standard date-change audit fields.
+  const overrideAuditFields = result.adminOverride
+    ? {
+        adminOverride: true,
+        pricingMode: "recalculate",
+        confirmOverCapacity: result.capacityOverridden,
+        capacityOverridden: result.capacityOverridden,
+        linkedChangeRequestId,
+      }
+    : {};
   logAudit({
-    action: "booking.modify.dates",
+    action: result.adminOverride
+      ? "booking.modify.admin_override"
+      : "booking.modify.dates",
     memberId: actorMemberId,
     targetId: bookingId,
     subjectMemberId: result.booking.memberId,
@@ -759,8 +864,11 @@ async function dispatchDatePostTransactionSideEffects({
     entityId: result.bookingModificationId,
     category: "booking",
     outcome: "success",
-    summary: "Booking dates modified",
+    summary: result.adminOverride
+      ? "Admin override: booking dates recalculated"
+      : "Booking dates modified",
     details: JSON.stringify({
+      ...overrideAuditFields,
       oldCheckIn: result.oldCheckIn.toISOString().split("T")[0],
       oldCheckOut: result.oldCheckOut.toISOString().split("T")[0],
       newCheckIn: result.booking.checkIn,
@@ -775,6 +883,7 @@ async function dispatchDatePostTransactionSideEffects({
     }),
     metadata: {
       bookingId,
+      ...overrideAuditFields,
       oldCheckIn: result.oldCheckIn.toISOString().split("T")[0],
       oldCheckOut: result.oldCheckOut.toISOString().split("T")[0],
       newCheckIn: result.booking.checkIn.toISOString().split("T")[0],
@@ -858,4 +967,415 @@ async function dispatchDatePostTransactionSideEffects({
       logger.error({ err, bookingId }, "Failed to process waitlist after date modification"),
     );
   }
+}
+
+const SHIFT_LENGTH_MISMATCH_MESSAGE =
+  'Shift dates only moves the stay without changing its length — use "Recalculate price" to change the number of nights';
+
+/**
+ * Admin override "shift dates only" (issue #1668): pure translation of a stay.
+ * Every cent is frozen — booking totals, per-guest priceCents, per-night
+ * BookingGuestNight.priceCents, promo rows, payment and Xero are all untouched
+ * — and the stay is moved by a whole-day delta with its night count preserved.
+ * Intended for operational relocations (e.g. a road closure) where the member
+ * must not be charged. No settlement, change fee, Stripe or Xero calls.
+ *
+ * The caller (route) guarantees the actor is an admin; this asserts it anyway.
+ */
+export async function adminShiftBookingDates({
+  bookingId,
+  actor,
+  input,
+  ipAddress,
+}: {
+  bookingId: string;
+  actor: { id: string; role: Role };
+  input: { checkIn?: string; checkOut?: string; confirmOverCapacity?: boolean };
+  ipAddress: string;
+}): Promise<DateModificationResponse> {
+  if (actor.role !== "ADMIN") {
+    throw new ApiError("Admin override is not available for this account", 403);
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Pre-lock read of only the lock key; lodgeId is immutable.
+    const lockTarget = await tx.booking.findUnique({
+      where: { id: bookingId },
+      select: { lodgeId: true },
+    });
+    const bookingLodgeId = lockTarget?.lodgeId ?? (await getDefaultLodgeId(tx));
+    await acquireLodgeCapacityLock(tx, bookingLodgeId);
+
+    const booking = await tx.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        guests: {
+          include: { nights: { select: { stayDate: true, priceCents: true } } },
+        },
+        payment: true,
+        member: true,
+      },
+    });
+    if (!booking) {
+      throw new ApiError("Booking not found", 404);
+    }
+
+    // Negotiated-price (booking-request) bookings stay out of scope — same
+    // block/message as every standard edit path.
+    await assertBookingNotQuotePriced(tx, bookingId);
+
+    if (!canModifyBookingStatusForRole(booking.status, "ADMIN")) {
+      throw new ApiError(
+        "This booking cannot be modified in its current status",
+        400,
+      );
+    }
+    const editPolicy = getBookingEditPolicy({
+      status: booking.status,
+      role: "ADMIN",
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      adminOverride: true,
+    });
+    if (!editPolicy.canModify) {
+      throw new ApiError(
+        editPolicy.reason ?? "This booking cannot be modified",
+        400,
+      );
+    }
+
+    // Resolve target dates with night-count parity. All date math is date-only:
+    // both bounds are normalised to UTC midnight first, so the delta and every
+    // shift are DST-safe (addDaysDateOnly for shifting, never raw ms on unnorm-
+    // alised Dates).
+    const oldCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+    const oldCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+    const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
+
+    const providedCheckIn = input.checkIn ? parseDateOnly(input.checkIn) : null;
+    const providedCheckOut = input.checkOut ? parseDateOnly(input.checkOut) : null;
+    if (
+      (providedCheckIn && Number.isNaN(providedCheckIn.getTime())) ||
+      (providedCheckOut && Number.isNaN(providedCheckOut.getTime()))
+    ) {
+      throw new ApiError("Invalid booking dates", 400);
+    }
+
+    let newCheckIn: Date;
+    let newCheckOut: Date;
+    if (providedCheckIn && providedCheckOut) {
+      newCheckIn = providedCheckIn;
+      newCheckOut = providedCheckOut;
+    } else if (providedCheckIn) {
+      // Derive the missing check-out to preserve the original length.
+      newCheckIn = providedCheckIn;
+      newCheckOut = addDaysDateOnly(providedCheckIn, originalNightCount);
+    } else if (providedCheckOut) {
+      newCheckOut = providedCheckOut;
+      newCheckIn = addDaysDateOnly(providedCheckOut, -originalNightCount);
+    } else {
+      throw new ApiError("Provide a new check-in or check-out date", 400);
+    }
+
+    if (newCheckOut <= newCheckIn) {
+      throw new ApiError("Check-out must be after check-in", 400);
+    }
+    const newNightCount = eachDateOnlyInRange(newCheckIn, newCheckOut).length;
+    if (newNightCount !== originalNightCount) {
+      throw new ApiError(SHIFT_LENGTH_MISMATCH_MESSAGE, 400);
+    }
+    if (
+      newCheckIn.getTime() === oldCheckIn.getTime() &&
+      newCheckOut.getTime() === oldCheckOut.getTime()
+    ) {
+      throw new ApiError("The booking already has these dates", 400);
+    }
+
+    // Whole-day delta between two UTC-midnight date-only values (DST-safe).
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const deltaDays = Math.round(
+      (newCheckIn.getTime() - oldCheckIn.getTime()) / MS_PER_DAY,
+    );
+
+    // Translate every guest's envelope and night rows by the same delta; each
+    // stored night keeps its exact priceCents (partial stays and gaps move with
+    // the stay). Guests with no night rows keep envelope-only semantics.
+    const translatedGuests = booking.guests.map((guest) => ({
+      guest,
+      stayStart: addDaysDateOnly(
+        normalizeDateOnlyForTimeZone(guest.stayStart),
+        deltaDays,
+      ),
+      stayEnd: addDaysDateOnly(
+        normalizeDateOnlyForTimeZone(guest.stayEnd),
+        deltaDays,
+      ),
+      nights: guest.nights.map((night) => ({
+        stayDate: addDaysDateOnly(
+          normalizeDateOnlyForTimeZone(night.stayDate),
+          deltaDays,
+        ),
+        priceCents: night.priceCents,
+      })),
+    }));
+
+    const capacityRanges = translatedGuests.map((entry) => ({
+      memberId: entry.guest.memberId ?? null,
+      stayStart: entry.stayStart,
+      stayEnd: entry.stayEnd,
+      nights: entry.nights.map((night) => night.stayDate),
+    }));
+
+    // Non-lifecycle statuses (DRAFT, WAITLISTED, WAITLIST_OFFERED, BUMPED) hold
+    // no capacity, so a shift cannot overbook — skip the check exactly like the
+    // recalculate path's skipBookingLifecycleRules does, or the admin would be
+    // forced through a meaningless over-capacity confirm and the audit would
+    // record a capacityOverridden that overbooked nothing.
+    const capacity = usesActiveBookingEditLifecycle(booking.status)
+      ? await checkCapacityForGuestRanges(
+          bookingLodgeId,
+          newCheckIn,
+          newCheckOut,
+          capacityRanges,
+          bookingId,
+          tx,
+        )
+      : { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
+    let capacityOverridden = false;
+    if (!capacity.available) {
+      if (!input.confirmOverCapacity) {
+        throw new OverCapacityConfirmationRequiredError(
+          overCapacityNights(capacity),
+        );
+      }
+      capacityOverridden = true;
+    }
+
+    await assertNoBookingMemberNightConflicts(tx, {
+      actorMemberId: actor.id,
+      actorRole: "ADMIN",
+      checkIn: newCheckIn,
+      checkOut: newCheckOut,
+      guests: capacityRanges,
+      excludeBookingId: bookingId,
+    });
+
+    // Writes: translate each guest's envelope and rebuild its night rows at the
+    // shifted dates with the SAME priceCents. Guest priceCents is untouched.
+    for (const entry of translatedGuests) {
+      await tx.bookingGuest.update({
+        where: { id: entry.guest.id },
+        data: { stayStart: entry.stayStart, stayEnd: entry.stayEnd },
+      });
+      await tx.bookingGuestNight.deleteMany({
+        where: { bookingGuestId: entry.guest.id },
+      });
+      if (entry.nights.length > 0) {
+        await tx.bookingGuestNight.createMany({
+          data: entry.nights.map((night) => ({
+            bookingGuestId: entry.guest.id,
+            stayDate: night.stayDate,
+            priceCents: night.priceCents,
+          })),
+        });
+      }
+    }
+
+    // Non-member hold recalculation, mirroring modifyBookingDates: the hold
+    // window and the PENDING → PAYMENT_PENDING release both key off the new
+    // check-in. Status is otherwise unchanged.
+    const hasNonMembers = booking.guests.some((guest) => !guest.isMember);
+    let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
+    let newStatus = booking.status;
+    if (hasNonMembers) {
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId);
+      const holdDecision = calculateBookingHoldDecision({
+        hasNonMembers,
+        checkIn: newCheckIn,
+        holdDays: holdPolicy.holdDays,
+        holdEnabled: holdPolicy.enabled,
+      });
+      if (holdDecision.shouldBePending) {
+        newNonMemberHoldUntil = new Date(
+          newCheckIn.getTime() - holdPolicy.holdDays * 24 * 60 * 60 * 1000,
+        );
+      } else {
+        newNonMemberHoldUntil = null;
+        if (booking.status === "PENDING") {
+          newStatus = "PAYMENT_PENDING";
+        }
+      }
+    } else {
+      newNonMemberHoldUntil = null;
+    }
+
+    // Update the booking envelope ONLY — every price field is left as booked.
+    const updatedBooking = await tx.booking.update({
+      where: { id: bookingId },
+      data: {
+        checkIn: newCheckIn,
+        checkOut: newCheckOut,
+        nonMemberHoldUntil: newNonMemberHoldUntil,
+        status: newStatus,
+      },
+      include: { guests: true, payment: true },
+    });
+
+    const dateCleanup = await cleanupChoreAssignmentsForDateChange(
+      tx,
+      bookingId,
+      newCheckIn,
+      newCheckOut,
+    );
+    const rangeCleanup = await cleanupChoreAssignmentsForGuestStayRanges(
+      tx,
+      bookingId,
+    );
+    const choreWarnings = [
+      ...dateCleanup.choreWarnings,
+      ...rangeCleanup.choreWarnings,
+    ];
+
+    await reconcileBedAllocationsForBooking({
+      bookingId,
+      db: tx,
+      previousRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
+    });
+
+    const bookingModification = await tx.bookingModification.create({
+      data: {
+        bookingId,
+        memberId: actor.id,
+        modificationType: "ADMIN_DATE_SHIFT",
+        previousData: {
+          checkIn: formatDateOnly(oldCheckIn),
+          checkOut: formatDateOnly(oldCheckOut),
+          totalPriceCents: booking.totalPriceCents,
+          discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          finalPriceCents: booking.finalPriceCents,
+        },
+        newData: {
+          checkIn: formatDateOnly(newCheckIn),
+          checkOut: formatDateOnly(newCheckOut),
+          totalPriceCents: booking.totalPriceCents,
+          discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          finalPriceCents: booking.finalPriceCents,
+          pricingMode: "shift",
+          capacityOverridden,
+        },
+        priceDiffCents: 0,
+        changeFeeCents: 0,
+      },
+    });
+
+    await assertBookingEnvelopeInvariants(tx);
+
+    return {
+      booking: updatedBooking,
+      oldCheckIn,
+      oldCheckOut,
+      newCheckIn,
+      newCheckOut,
+      capacityOverridden,
+      choreWarnings,
+      bookingModificationId: bookingModification.id,
+      memberId: booking.memberId,
+      memberEmail: booking.member.email,
+      memberFirstName: booking.member.firstName,
+      guestCount: booking.guests.length,
+      finalPriceCents: booking.finalPriceCents,
+      paymentReference: booking.payment?.reference ?? null,
+      xeroInvoiceNumber: booking.payment?.xeroInvoiceNumber ?? null,
+      paymentSource: booking.payment?.source ?? null,
+      lodgeId: booking.lodgeId,
+    };
+  });
+
+  // Post-transaction (no Stripe/Xero/payment mutations at all).
+  const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(
+    prisma,
+    bookingId,
+    result.bookingModificationId,
+  );
+
+  const overrideAuditPayload = {
+    pricingMode: "shift",
+    confirmOverCapacity: Boolean(input.confirmOverCapacity),
+    capacityOverridden: result.capacityOverridden,
+    linkedChangeRequestId,
+    oldCheckIn: formatDateOnly(result.oldCheckIn),
+    oldCheckOut: formatDateOnly(result.oldCheckOut),
+    newCheckIn: formatDateOnly(result.newCheckIn),
+    newCheckOut: formatDateOnly(result.newCheckOut),
+  };
+  logAudit({
+    action: "booking.modify.admin_override",
+    memberId: actor.id,
+    targetId: bookingId,
+    subjectMemberId: result.memberId,
+    entityType: "BookingModification",
+    entityId: result.bookingModificationId,
+    category: "booking",
+    outcome: "success",
+    summary: "Admin override: booking dates shifted",
+    details: JSON.stringify(overrideAuditPayload),
+    metadata: { bookingId, ...overrideAuditPayload },
+    ipAddress,
+  });
+
+  // A fully-past record fix must not email the member; only notify when the new
+  // stay still has a future check-out.
+  if (normalizeDateOnlyForTimeZone(result.newCheckOut) > getTodayDateOnly()) {
+    sendBookingModifiedEmail({
+      email: result.memberEmail,
+      firstName: result.memberFirstName,
+      modificationType: "DATE_CHANGE",
+      oldCheckIn: result.oldCheckIn,
+      oldCheckOut: result.oldCheckOut,
+      newCheckIn: result.newCheckIn,
+      newCheckOut: result.newCheckOut,
+      oldGuestCount: result.guestCount,
+      newGuestCount: result.guestCount,
+      oldFinalPriceCents: result.finalPriceCents,
+      newFinalPriceCents: result.finalPriceCents,
+      changeFeeCents: 0,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 0,
+      additionalAmountCents: 0,
+      additionalPaymentMethod: undefined,
+      paymentReference: result.paymentReference,
+      xeroInvoiceNumber: result.xeroInvoiceNumber,
+      lodgeId: result.lodgeId,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),
+    );
+  }
+
+  // Free the old range for the waitlist (unconditional on a change, matching the
+  // standard date path).
+  processWaitlistForDates({
+    checkIn: result.oldCheckIn,
+    checkOut: result.oldCheckOut,
+    lodgeId: result.lodgeId,
+  }).catch((err) =>
+    logger.error({ err, bookingId }, "Failed to process waitlist after admin date shift"),
+  );
+
+  return {
+    booking: result.booking,
+    priceDiffCents: 0,
+    changeFeeCents: 0,
+    refundAmountCents: 0,
+    accountCreditAmountCents: 0,
+    settlementMethod: null,
+    policyRetainedAmountCents: 0,
+    additionalAmountCents: 0,
+    additionalPaymentClientSecret: null,
+    stripeRefundId: null,
+    promoRemoved: false,
+    choreWarnings: result.choreWarnings,
+    capacityOverridden: result.capacityOverridden,
+  };
 }

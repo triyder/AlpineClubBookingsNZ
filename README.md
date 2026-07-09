@@ -27,6 +27,12 @@ recommended reading paths.
   allocation, payments, seasons, policies, reports, email, audit logs, issue
   reports, waitlist, lodge settings, Xero operations, and hut leaders, with
   contextual help popups on Admin and Finance pages
+- Admin date override for bookings the normal edit window locks (an in-progress
+  or fully-past stay): a Full Admin or Booking Officer can move the dates only,
+  choosing either **Shift** (keep the price and night count — no fee, refund, or
+  Xero activity) or **Recalculate** (reprice at season rates). Moving onto full
+  nights requires an explicit over-capacity confirmation, and every override is
+  audited and linked to any approved change request
 - Admin-editable public website pages and footer sections with sanitised HTML
   content, embed/text tokens where supported, and a menu generated from page
   settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site

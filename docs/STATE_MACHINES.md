@@ -237,6 +237,32 @@ negative delta -> Stripe refund or source-linked member credit
 admin review path -> REQUESTED -> APPROVED or REJECTED
 ```
 
+Edit-eligibility is governed by a date-window edit policy
+(`getBookingEditPolicy`), whose `mode` selects what a request may change:
+
+```text
+checkIn > today                     -> "future"        (edit dates/guests freely)
+checkIn <= today < checkOut         -> "in-progress"   (extend future nights only;
+                                                         check-in locked)
+checkOut <= today                   -> null            (not self-editable)
+
+adminOverride && role === "ADMIN"   -> "admin-override" (issue #1668: date-window
+                                                         locks lifted; status
+                                                         eligibility + capacity
+                                                         lock still enforced)
+```
+
+The admin-override mode is date-only and takes one of two pricing modes:
+`shift` (pure relocation, all cents frozen, night count preserved, no fee /
+settlement / Stripe / Xero — a `BookingModification` of type `ADMIN_DATE_SHIFT`
+with zero deltas) or `recalculate` (the standard reprice with locked-period
+clamps lifted). An over-capacity override is warn-and-confirm: the first apply
+raises `OverCapacityConfirmationRequiredError` (409,
+`OVER_CAPACITY_CONFIRM_REQUIRED`) and only proceeds when resubmitted with
+`confirmOverCapacity: true`, recording `capacityOverridden`. Every override move
+is audited as `booking.modify.admin_override` and linked, best-effort, to the
+booking's most recent APPROVED-but-unlinked change request.
+
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.
 

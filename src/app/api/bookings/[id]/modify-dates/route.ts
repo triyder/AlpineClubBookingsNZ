@@ -3,7 +3,11 @@ import { z } from "zod";
 
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
-import { modifyBookingDates } from "@/lib/booking-date-modification-service";
+import {
+  adminShiftBookingDates,
+  modifyBookingDates,
+} from "@/lib/booking-date-modification-service";
+import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
 import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,
@@ -16,12 +20,17 @@ import {
 } from "@/lib/membership-type-policy";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
+import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 
 const modifyDatesSchema = z
   .object({
     checkIn: z.string().optional(),
     checkOut: z.string().optional(),
     settlementMethod: z.enum(["card", "credit"]).optional(),
+    // Admin-only date override (issue #1668).
+    adminOverride: z.boolean().optional(),
+    pricingMode: z.enum(["shift", "recalculate"]).optional(),
+    confirmOverCapacity: z.boolean().optional(),
   })
   .refine((d) => d.checkIn || d.checkOut, {
     message: "At least one of checkIn or checkOut is required",
@@ -67,19 +76,74 @@ export async function PUT(
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
+  // Issue #1668: admin-only date override gating. The booking-management role
+  // (Booking Officer / Full Admin → ADMIN) applies ONLY when the override is
+  // actually active (adminOverride === true); every other request — including
+  // an explicit adminOverride: false — keeps the legacy access-role mapping, so
+  // a caller-controlled boolean can never flip the standard path's authority.
+  const { adminOverride, pricingMode, confirmOverCapacity } = parsed.data;
+  const hasOverrideFlags =
+    adminOverride !== undefined ||
+    pricingMode !== undefined ||
+    confirmOverCapacity !== undefined;
+  if (
+    hasOverrideFlags &&
+    bookingManagementAuthorizationRole(session.user) !== "ADMIN"
+  ) {
+    return NextResponse.json(
+      { error: "Admin override is not available for this account" },
+      { status: 403 },
+    );
+  }
+  const actorRole =
+    adminOverride === true
+      ? bookingManagementAuthorizationRole(session.user)
+      : authorizationRoleFromAccessRoles(session.user);
+  if (adminOverride && !pricingMode) {
+    return NextResponse.json(
+      { error: "Choose a pricing mode for the admin override" },
+      { status: 400 },
+    );
+  }
+  if (!adminOverride && (pricingMode !== undefined || confirmOverCapacity !== undefined)) {
+    return NextResponse.json(
+      { error: "adminOverride is required for pricingMode/confirmOverCapacity" },
+      { status: 400 },
+    );
+  }
+
   try {
-    const result = await modifyBookingDates({
-      bookingId,
-      actor: {
-        id: session.user.id,
-        role: authorizationRoleFromAccessRoles(session.user),
-      },
-      input: parsed.data,
-      ipAddress,
-    });
+    const result =
+      adminOverride && pricingMode === "shift"
+        ? await adminShiftBookingDates({
+            bookingId,
+            actor: { id: session.user.id, role: actorRole },
+            input: {
+              checkIn: parsed.data.checkIn,
+              checkOut: parsed.data.checkOut,
+              confirmOverCapacity,
+            },
+            ipAddress,
+          })
+        : await modifyBookingDates({
+            bookingId,
+            actor: { id: session.user.id, role: actorRole },
+            input: parsed.data,
+            ipAddress,
+          });
 
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof OverCapacityConfirmationRequiredError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: err.code,
+          nightDetails: err.nightDetails,
+        },
+        { status: err.status },
+      );
+    }
     if (err instanceof MembershipTypeBookingPolicyError) {
       return NextResponse.json(
         getMembershipTypeBookingPolicyErrorBody(err),

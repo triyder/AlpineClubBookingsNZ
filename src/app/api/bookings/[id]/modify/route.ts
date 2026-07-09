@@ -13,6 +13,8 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
+import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
 import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
 import {
   getMembershipTypeBookingPolicyErrorBody,
@@ -65,7 +67,21 @@ const batchModifySchema = z.object({
   removePromoCode: z.boolean().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
   settlementMethod: z.enum(["card", "credit"]).optional(),
+  // Admin-only date override (issue #1668).
+  adminOverride: z.boolean().optional(),
+  pricingMode: z.enum(["shift", "recalculate"]).optional(),
+  confirmOverCapacity: z.boolean().optional(),
 });
+
+const OVERRIDE_DATE_ONLY_FIELDS = [
+  "addGuests",
+  "removeGuestIds",
+  "guestStayRanges",
+  "guestUpdates",
+  "promoCode",
+  "promoGuestIndexes",
+  "removePromoCode",
+] as const;
 
 export async function PUT(
   request: NextRequest,
@@ -107,24 +123,79 @@ export async function PUT(
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
+  // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
+  // so they receive the SAME admin-on-behalf modify authority as a Full Admin.
+  const actorRole = bookingManagementAuthorizationRole(session.user);
+
+  // Issue #1668: admin-only date override gating.
+  const { adminOverride, pricingMode, confirmOverCapacity } = parsed.data;
+  const hasOverrideFlags =
+    adminOverride !== undefined ||
+    pricingMode !== undefined ||
+    confirmOverCapacity !== undefined;
+  if (hasOverrideFlags && actorRole !== "ADMIN") {
+    return NextResponse.json(
+      { error: "Admin override is not available for this account" },
+      { status: 403 },
+    );
+  }
+  if (adminOverride && !pricingMode) {
+    return NextResponse.json(
+      { error: "Choose a pricing mode for the admin override" },
+      { status: 400 },
+    );
+  }
+  if (!adminOverride && (pricingMode !== undefined || confirmOverCapacity !== undefined)) {
+    return NextResponse.json(
+      { error: "adminOverride is required for pricingMode/confirmOverCapacity" },
+      { status: 400 },
+    );
+  }
+  if (
+    adminOverride &&
+    OVERRIDE_DATE_ONLY_FIELDS.some((field) => {
+      const value = parsed.data[field];
+      return Array.isArray(value) ? value.length > 0 : Boolean(value);
+    })
+  ) {
+    return NextResponse.json(
+      { error: "Admin override edits change dates only" },
+      { status: 400 },
+    );
+  }
+
   try {
-    const result = await modifyBookingBatch({
-      bookingId,
-      actor: {
-        id: session.user.id,
-        // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to
-        // ADMIN here so they receive the SAME admin-on-behalf modify authority
-        // (edit-policy relaxations, member-night/subscription bypasses) as a
-        // Full Admin. A Full Admin already resolves to ADMIN; every other actor
-        // keeps their legacy role.
-        role: bookingManagementAuthorizationRole(session.user),
-      },
-      input: parsed.data,
-      ipAddress,
-    });
+    const result =
+      adminOverride && pricingMode === "shift"
+        ? await adminShiftBookingDates({
+            bookingId,
+            actor: { id: session.user.id, role: actorRole },
+            input: {
+              checkIn: parsed.data.checkIn,
+              checkOut: parsed.data.checkOut,
+              confirmOverCapacity,
+            },
+            ipAddress,
+          })
+        : await modifyBookingBatch({
+            bookingId,
+            actor: { id: session.user.id, role: actorRole },
+            input: parsed.data,
+            ipAddress,
+          });
 
     return NextResponse.json(result);
   } catch (err) {
+    if (err instanceof OverCapacityConfirmationRequiredError) {
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: err.code,
+          nightDetails: err.nightDetails,
+        },
+        { status: err.status },
+      );
+    }
     if (err instanceof MembershipTypeBookingPolicyError) {
       return NextResponse.json(
         getMembershipTypeBookingPolicyErrorBody(err),

@@ -79,6 +79,9 @@ interface BookingData {
     today: string;
     editableFrom: string | null;
     checkInEditable: boolean;
+    // Issue #1668: an admin may override the date-window locks for this booking.
+    // Optional so pre-existing fixtures stay valid; the booking page sets it.
+    adminOverrideAvailable?: boolean;
   };
 }
 
@@ -130,6 +133,10 @@ interface QuoteResult {
   } | null;
   itemizedChanges: ItemizedChange[];
   nightDetails?: { date: string; availableBeds: number }[];
+  // Issue #1668: set under an admin override when the target nights are over
+  // capacity — the UI shows a warning and an explicit confirm rather than a
+  // hard block.
+  overCapacityConfirmRequired?: boolean;
 }
 
 function previousDateOnly(dateString: string | null) {
@@ -154,9 +161,14 @@ function formatSignedCents(cents: number) {
 
 export function EditBookingPanel({
   booking,
+  canAdminOverride = false,
   onDone,
 }: {
   booking: BookingData;
+  // Issue #1668: admin override lifts the date-window locks for this booking.
+  // (Whether the standard self-service path is available is expressed by the
+  // booking.editPolicy fields the panel already reads.)
+  canAdminOverride?: boolean;
   onDone: () => void;
 }) {
   const router = useRouter();
@@ -174,9 +186,10 @@ export function EditBookingPanel({
         (guest.stayEnd && guest.stayEnd !== booking.checkOut)
     )
   );
-  const [existingGuestRanges, setExistingGuestRanges] = useState<
-    Record<string, { stayStart: string; stayEnd: string }>
-  >(() =>
+  // Seeded per-guest state, extracted so the admin-override toggle (#1668) can
+  // restore the exact stored baseline — resetting to {} instead would let the
+  // night grid's all-nights-on fallback silently collapse a guest's gaps.
+  const seedExistingGuestRanges = () =>
     Object.fromEntries(
       booking.guests.map((guest) => [
         guest.id,
@@ -185,8 +198,22 @@ export function EditBookingPanel({
           stayEnd: guest.stayEnd ?? booking.checkOut,
         },
       ])
-    )
-  );
+    );
+  const seedExistingGuestNights = () =>
+    Object.fromEntries(
+      booking.guests.map((guest) => [
+        guest.id,
+        guest.nights && guest.nights.length > 0
+          ? [...guest.nights].sort()
+          : eachNightKey(
+              guest.stayStart ?? booking.checkIn,
+              guest.stayEnd ?? booking.checkOut
+            ),
+      ])
+    );
+  const [existingGuestRanges, setExistingGuestRanges] = useState<
+    Record<string, { stayStart: string; stayEnd: string }>
+  >(seedExistingGuestRanges);
   // Multiple date ranges / per-guest night grid (issue #713). Enabled by default
   // when an existing guest already has a non-contiguous stay so the gaps show.
   const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(() =>
@@ -202,19 +229,7 @@ export function EditBookingPanel({
   // or the contiguous range so toggling the grid never wipes a guest's gaps.
   const [existingGuestNights, setExistingGuestNights] = useState<
     Record<string, string[]>
-  >(() =>
-    Object.fromEntries(
-      booking.guests.map((guest) => [
-        guest.id,
-        guest.nights && guest.nights.length > 0
-          ? [...guest.nights].sort()
-          : eachNightKey(
-              guest.stayStart ?? booking.checkIn,
-              guest.stayEnd ?? booking.checkOut
-            ),
-      ])
-    )
-  );
+  >(seedExistingGuestNights);
   const [guestNameEdits, setGuestNameEdits] = useState<
     Record<string, { firstName: string; lastName: string }>
   >(() =>
@@ -230,6 +245,28 @@ export function EditBookingPanel({
     { type: "keep" } | { type: "remove" } | { type: "new"; code: string }
   >({ type: "keep" });
   const [newPromoInput, setNewPromoInput] = useState("");
+
+  // Issue #1668: admin date override. When enabled, the member-facing date
+  // locks are bypassed and the admin chooses how pricing is handled. Every
+  // override edit is date-only, audited, and confirmed if over capacity.
+  // The override control renders only when the server says this viewer may
+  // override (canAdminOverride) AND the serialised edit policy agrees (#1668).
+  const adminOverrideAvailable =
+    canAdminOverride && booking.editPolicy.adminOverrideAvailable !== false;
+  const [overrideEnabled, setOverrideEnabled] = useState(false);
+  const [overridePricingMode, setOverridePricingMode] = useState<
+    "shift" | "recalculate" | null
+  >(null);
+  const [confirmOverCapacity, setConfirmOverCapacity] = useState(false);
+  // Belt-and-braces (a stale quote): an apply 409 re-surfaces the confirm flow.
+  const [saveOverCapacityNights, setSaveOverCapacityNights] = useState<
+    { date: string; availableBeds: number }[] | null
+  >(null);
+  const originalNights = useMemo(
+    () => eachNightKey(booking.checkIn, booking.checkOut).length,
+    [booking.checkIn, booking.checkOut],
+  );
+  const shiftMode = overrideEnabled && overridePricingMode === "shift";
 
   // Quote state
   const [quote, setQuote] = useState<QuoteResult | null>(null);
@@ -253,9 +290,30 @@ export function EditBookingPanel({
 
   const today = booking.editPolicy.today;
   const minEditableDate = booking.editPolicy.editableFrom ?? today;
-  const checkInLocked = !booking.editPolicy.checkInEditable;
-  const isInProgressEdit = booking.editPolicy.mode === "in-progress";
-  const promoLocked = isInProgressEdit;
+  // Issue #1668: an active override lifts the check-in lock and the in-progress
+  // clamps entirely (the edit is date-only), and hides the promo controls.
+  const checkInLocked = overrideEnabled
+    ? false
+    : !booking.editPolicy.checkInEditable;
+  const isInProgressEdit =
+    !overrideEnabled && booking.editPolicy.mode === "in-progress";
+  const promoLocked = isInProgressEdit || overrideEnabled;
+
+  function handleCheckInChange(value: string) {
+    setCheckIn(value);
+    // Shift mode keeps the stay length fixed: deriving the other bound so the
+    // preview and apply both see the same night count (parity is required).
+    if (shiftMode && value) {
+      setCheckOut(shiftDateKey(value, originalNights));
+    }
+  }
+
+  function handleCheckOutChange(value: string) {
+    setCheckOut(value);
+    if (shiftMode && value) {
+      setCheckIn(shiftDateKey(value, -originalNights));
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -291,7 +349,8 @@ export function EditBookingPanel({
     () => booking.guests.filter((g) => !removedGuestIds.has(g.id)),
     [booking.guests, removedGuestIds],
   );
-  const canEditPerGuestDates = !isInProgressEdit && totalGuestCountCandidate() > 1;
+  const canEditPerGuestDates =
+    !isInProgressEdit && !overrideEnabled && totalGuestCountCandidate() > 1;
   function totalGuestCountCandidate() {
     return remainingGuests.length + addedGuests.length;
   }
@@ -451,6 +510,20 @@ export function EditBookingPanel({
   const quoteRequestSeqRef = useRef(0);
 
   const buildModificationPayload = useCallback(() => {
+    // Issue #1668: an admin override is strictly date-only. Send only the dates,
+    // the override flags, and the capacity confirm — never guest/promo inputs,
+    // which the route/service reject anyway.
+    if (overrideEnabled && overridePricingMode) {
+      const overrideBody: Record<string, unknown> = {
+        adminOverride: true,
+        pricingMode: overridePricingMode,
+      };
+      if (checkIn !== booking.checkIn) overrideBody.checkIn = checkIn;
+      if (checkOut !== booking.checkOut) overrideBody.checkOut = checkOut;
+      if (confirmOverCapacity) overrideBody.confirmOverCapacity = true;
+      return overrideBody;
+    }
+
     const body: Record<string, unknown> = {};
     const gridMode = multiDateRangesEnabled && !isInProgressEdit;
     const rangeMode = perGuestDatesEnabled && !isInProgressEdit && !gridMode;
@@ -576,6 +649,9 @@ export function EditBookingPanel({
     promoAction,
     remainingGuests,
     removedGuestIds,
+    overrideEnabled,
+    overridePricingMode,
+    confirmOverCapacity,
   ]);
 
   const fetchQuote = useCallback(
@@ -600,6 +676,11 @@ export function EditBookingPanel({
           return;
         }
         setQuote(data);
+        // A fresh quote that no longer needs an over-capacity confirm clears any
+        // stale apply-side warning (#1668).
+        if (!data.overCapacityConfirmRequired) {
+          setSaveOverCapacityNights(null);
+        }
         if (!data.settlementOptions?.requiresSettlementMethod) {
           setSettlementMethod(null);
         }
@@ -621,9 +702,14 @@ export function EditBookingPanel({
   // (e.g. remainingGuests) are recomputed objects, so a callback dependency
   // changes on every render — including the render caused by a completed
   // fetch — which re-armed the timer and refetched in an endless 500ms loop.
-  const modificationPayloadJson = hasChanges
-    ? JSON.stringify(buildModificationPayload())
-    : null;
+  // Under an override the pricing-mode radio must be chosen before the quote
+  // fires — otherwise a member-shaped quote would run and (for a fully-past
+  // booking) error, confusing the admin.
+  const overrideQuoteReady = !overrideEnabled || Boolean(overridePricingMode);
+  const modificationPayloadJson =
+    hasChanges && overrideQuoteReady
+      ? JSON.stringify(buildModificationPayload())
+      : null;
   useEffect(() => {
     if (quoteTimeoutRef.current) clearTimeout(quoteTimeoutRef.current);
     if (!modificationPayloadJson) {
@@ -727,10 +813,24 @@ export function EditBookingPanel({
 
       const data = await res.json();
       if (!res.ok) {
+        // Belt-and-braces (#1668): a stale quote can miss an over-capacity
+        // target the apply then rejects. Re-surface the confirm flow.
+        if (data.code === "OVER_CAPACITY_CONFIRM_REQUIRED") {
+          setSaveOverCapacityNights(
+            Array.isArray(data.nightDetails) ? data.nightDetails : [],
+          );
+          setConfirmOverCapacity(false);
+          setSaveError(
+            data.error ??
+              "These nights are over lodge capacity. Confirm the override to proceed.",
+          );
+          return;
+        }
         setSaveError(data.error || "Failed to save changes");
         return;
       }
 
+      setSaveOverCapacityNights(null);
       router.refresh();
       onDone();
     } catch {
@@ -788,8 +888,128 @@ export function EditBookingPanel({
       (isLockedChangeError(quoteError) || isLockedChangeError(saveError)));
   const settlementRequired = quote?.settlementOptions?.requiresSettlementMethod ?? false;
 
+  // Issue #1668: over-capacity under an admin override is a confirmable warning,
+  // not a hard block. The signal can come from the quote (preview) or from a
+  // stale-quote apply 409 (saveOverCapacityNights).
+  const overCapacityConfirmActive =
+    Boolean(quote?.overCapacityConfirmRequired) || Boolean(saveOverCapacityNights);
+  const overCapacityNightList = (
+    quote?.overCapacityConfirmRequired
+      ? quote.nightDetails ?? []
+      : saveOverCapacityNights ?? []
+  ).filter((night) => night.availableBeds < 0);
+  const capacityOk = quote
+    ? overCapacityConfirmActive
+      ? confirmOverCapacity
+      : quote.capacityAvailable
+    : false;
+  const showQuoteSummary = Boolean(
+    quote && (quote.capacityAvailable || (overCapacityConfirmActive && confirmOverCapacity)),
+  );
+
   return (
     <div className="space-y-6">
+      {/* Admin override (issue #1668) */}
+      {adminOverrideAvailable && (
+        <Card className="border-amber-300">
+          <CardHeader>
+            <CardTitle>Admin override</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={overrideEnabled}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  setOverrideEnabled(enabled);
+                  if (enabled) {
+                    // An override edit is date-only: discard any pending guest,
+                    // range, night, or promo edits so what the cards show is
+                    // what the save will send — a stacked edit would otherwise
+                    // be silently dropped by the date-only payload. Ranges and
+                    // night sets go back to their stored seeds (not {}), so a
+                    // later grid edit still sees each guest's real gaps.
+                    setRemovedGuestIds(new Set());
+                    setAddedGuests([]);
+                    setGuestNameEdits({});
+                    setExistingGuestRanges(seedExistingGuestRanges());
+                    setExistingGuestNights(seedExistingGuestNights());
+                    setPromoAction({ type: "keep" });
+                    setNewPromoInput("");
+                    setShowAddForm(false);
+                  } else {
+                    setOverridePricingMode(null);
+                    setConfirmOverCapacity(false);
+                    setSaveOverCapacityNights(null);
+                  }
+                }}
+                className="mt-1 h-4 w-4"
+              />
+              <span>
+                <span className="font-medium">
+                  Move locked/past dates (admin override)
+                </span>
+                <span className="block text-gray-500">
+                  Bypasses the member-facing date locks so you can move an
+                  in-progress or fully-past booking. This is date-only and
+                  audited — any pending guest or promo edits are cleared when
+                  you turn it on. Choose how pricing is handled below.
+                </span>
+              </span>
+            </label>
+
+            {overrideEnabled && (
+              <div className="space-y-2 rounded-md border p-3 text-sm">
+                <p className="font-medium">How should pricing be handled?</p>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="radio"
+                    name="overridePricingMode"
+                    value="shift"
+                    checked={overridePricingMode === "shift"}
+                    onChange={() => {
+                      setOverridePricingMode("shift");
+                      setConfirmOverCapacity(false);
+                      setSaveOverCapacityNights(null);
+                    }}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Shift dates only</span> — keep
+                    the current price, payments and invoices.
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="radio"
+                    name="overridePricingMode"
+                    value="recalculate"
+                    checked={overridePricingMode === "recalculate"}
+                    onChange={() => {
+                      setOverridePricingMode("recalculate");
+                      setConfirmOverCapacity(false);
+                      setSaveOverCapacityNights(null);
+                    }}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Recalculate price</span> —
+                    reprice the new nights and settle the difference (a change
+                    fee may apply).
+                  </span>
+                </label>
+                {!overridePricingMode && (
+                  <p className="text-amber-700">
+                    Choose a pricing mode to preview the change.
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Dates */}
       <Card>
         <CardHeader>
@@ -803,9 +1023,9 @@ export function EditBookingPanel({
                 id="edit-checkin"
                 type="date"
                 value={checkIn}
-                min={today}
+                min={overrideEnabled ? undefined : today}
                 disabled={checkInLocked}
-                onChange={(e) => setCheckIn(e.target.value)}
+                onChange={(e) => handleCheckInChange(e.target.value)}
               />
             </div>
             <div className="space-y-1">
@@ -814,14 +1034,20 @@ export function EditBookingPanel({
                 id="edit-checkout"
                 type="date"
                 value={checkOut}
-                min={booking.editPolicy.mode === "in-progress" ? minEditableDate : checkIn || today}
-                onChange={(e) => setCheckOut(e.target.value)}
+                min={isInProgressEdit ? minEditableDate : checkIn || today}
+                onChange={(e) => handleCheckOutChange(e.target.value)}
               />
             </div>
           </div>
           {checkIn !== booking.checkIn || checkOut !== booking.checkOut ? (
             <p className="text-sm text-gray-500 mt-2">
               Originally: {booking.checkIn} to {booking.checkOut}
+            </p>
+          ) : null}
+          {shiftMode ? (
+            <p className="mt-2 text-sm text-slate-600">
+              Shift keeps this {originalNights}-night stay the same length — the
+              price stays exactly as booked.
             </p>
           ) : null}
           {isInProgressEdit ? (
@@ -843,7 +1069,7 @@ export function EditBookingPanel({
               variant="outline"
               size="sm"
               onClick={() => setShowAddForm(true)}
-              disabled={showAddForm}
+              disabled={showAddForm || overrideEnabled}
             >
               {isInProgressEdit ? "+ Add Future Guest" : "+ Add Guest"}
             </Button>
@@ -857,7 +1083,7 @@ export function EditBookingPanel({
               future nights.
             </p>
           ) : null}
-          {familyMembers.length > 0 && (
+          {familyMembers.length > 0 && !overrideEnabled && (
             <div className="space-y-2 rounded-md border border-dashed p-3">
               <p className="text-sm font-medium text-muted-foreground">Quick add family members</p>
               <div className="flex flex-wrap gap-2">
@@ -898,7 +1124,7 @@ export function EditBookingPanel({
             </label>
           ) : null}
 
-          {!isInProgressEdit ? (
+          {!isInProgressEdit && !overrideEnabled ? (
             <div className="space-y-3 rounded-md border p-3 text-sm">
               <label className="flex items-center gap-2">
                 <input
@@ -972,7 +1198,10 @@ export function EditBookingPanel({
           {booking.guests.map((guest) => {
             const isRemoved = removedGuestIds.has(guest.id);
             const canEditGuestName =
-              nonMemberGuestNamesEditable && !guest.isMember && !isRemoved;
+              nonMemberGuestNamesEditable &&
+              !guest.isMember &&
+              !isRemoved &&
+              !overrideEnabled;
             // Fully paid: the field is open only for a spelling correction; a
             // change of who the booking is for must go through the office (#1386).
             const showTypoOnlyHint =
@@ -1036,7 +1265,7 @@ export function EditBookingPanel({
                       {guest.stayEnd ?? booking.checkOut}
                     </p>
                   ) : null}
-                  {perGuestDatesEnabled && !isRemoved ? (
+                  {perGuestDatesEnabled && !isRemoved && !overrideEnabled ? (
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <div className="space-y-1">
                         <Label htmlFor={`guest-${guest.id}-stay-start`} className="text-xs">
@@ -1082,6 +1311,7 @@ export function EditBookingPanel({
                       Undo
                     </Button>
                   ) : (
+                    !overrideEnabled &&
                     remainingGuests.length + addedGuests.length > 1 && (
                       <Button
                         variant="ghost"
@@ -1335,7 +1565,7 @@ export function EditBookingPanel({
               <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{quoteError}</div>
             )}
 
-            {quote && !quote.capacityAvailable && (
+            {quote && !quote.capacityAvailable && !overCapacityConfirmActive && (
               <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
                 <p className="font-medium">Not enough beds available</p>
                 {quote.nightDetails && (
@@ -1352,7 +1582,36 @@ export function EditBookingPanel({
               </div>
             )}
 
-            {quote && quote.capacityAvailable && (
+            {overCapacityConfirmActive && (
+              <div className="space-y-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="font-medium">
+                  These nights are over lodge capacity
+                </p>
+                {overCapacityNightList.length > 0 && (
+                  <ul className="list-disc pl-4">
+                    {overCapacityNightList.map((night) => (
+                      <li key={night.date}>
+                        {night.date}: {Math.abs(night.availableBeds)} bed(s) over
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={confirmOverCapacity}
+                    onChange={(e) => setConfirmOverCapacity(e.target.checked)}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <span>
+                    Book over capacity anyway — I understand this overbooks the
+                    lodge.
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {showQuoteSummary && quote && (
               <div className="space-y-3">
                 {/* Itemized changes */}
                 <div className="space-y-1">
@@ -1520,7 +1779,7 @@ export function EditBookingPanel({
             saving ||
             quoteLoading ||
             !quote ||
-            !quote.capacityAvailable ||
+            !capacityOk ||
             (settlementRequired && !settlementMethod)
           }
         >
