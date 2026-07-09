@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api-error";
-import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
+import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 
 const h = vi.hoisted(() => ({
   checkCapacityForGuestRanges: vi.fn(),

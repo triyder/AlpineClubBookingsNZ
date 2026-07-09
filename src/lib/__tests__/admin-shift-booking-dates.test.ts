@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
+import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 
 // Hoisted spies so the module mocks below can reference them and tests can assert.
 const h = vi.hoisted(() => ({

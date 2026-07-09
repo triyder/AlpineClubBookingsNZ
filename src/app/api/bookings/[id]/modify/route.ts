@@ -14,7 +14,7 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
-import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
+import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import { isBookingEnvelopeInvariantViolation } from "@/lib/booking-envelope-invariants";
 import {
   getMembershipTypeBookingPolicyErrorBody,

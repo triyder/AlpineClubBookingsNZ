@@ -31,11 +31,11 @@ import {
   loadCancellationPolicy,
 } from "@/lib/cancellation";
 import { calculateChangeFee } from "@/lib/change-fee";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
-  checkCapacityForGuestRanges,
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
-} from "@/lib/capacity";
+} from "@/lib/over-capacity-confirmation";
 import {
   type SeasonRateData,
 } from "@/lib/pricing";

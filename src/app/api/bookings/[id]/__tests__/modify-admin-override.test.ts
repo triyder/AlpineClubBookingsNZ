@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
+import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),

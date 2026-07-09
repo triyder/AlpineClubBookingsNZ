@@ -3,10 +3,8 @@ import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import {
-  checkCapacityForGuestRanges,
-  overCapacityNights,
-} from "@/lib/capacity";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
+import { overCapacityNights } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {

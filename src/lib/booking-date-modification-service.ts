@@ -29,9 +29,11 @@ import {
   acquireLodgeCapacityLock,
   checkCapacity,
   checkCapacityForGuestRanges,
+} from "@/lib/capacity";
+import {
   OverCapacityConfirmationRequiredError,
   overCapacityNights,
-} from "@/lib/capacity";
+} from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   applyPaymentAdjustments,

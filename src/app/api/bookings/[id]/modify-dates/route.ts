@@ -7,7 +7,7 @@ import {
   adminShiftBookingDates,
   modifyBookingDates,
 } from "@/lib/booking-date-modification-service";
-import { OverCapacityConfirmationRequiredError } from "@/lib/capacity";
+import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,

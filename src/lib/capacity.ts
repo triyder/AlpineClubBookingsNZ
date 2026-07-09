@@ -1,5 +1,4 @@
 import { prisma } from "./prisma";
-import { ApiError } from "@/lib/api-error";
 import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
@@ -25,42 +24,9 @@ export interface NightAvailability {
   availableBeds: number;
 }
 
-export type OverCapacityNight = { date: string; availableBeds: number };
-
-/**
- * Admin override over-capacity signal (issue #1668). Raised when target nights
- * exceed lodge capacity and the admin has not (yet) confirmed the overbooking.
- * The per-lodge capacity lock is still taken; only the availability *decision*
- * becomes warn-and-confirm. Routes translate this to a 409 with the code and
- * night list so the UI can prompt for an explicit confirm.
- */
-export class OverCapacityConfirmationRequiredError extends ApiError {
-  readonly code = "OVER_CAPACITY_CONFIRM_REQUIRED";
-  constructor(public nightDetails: OverCapacityNight[]) {
-    super(
-      "The target nights are over lodge capacity. Confirm the override to proceed.",
-      409,
-    );
-    this.name = "OverCapacityConfirmationRequiredError";
-  }
-}
-
-/**
- * The over-capacity nights of a {@link checkCapacityForGuestRanges} result:
- * the nights whose availableBeds went negative (guests baked into occupancy),
- * as YYYY-MM-DD. Not valid for {@link checkCapacity}, whose availableBeds
- * excludes the proposed guests — use checkCapacityForGuestRanges under override.
- */
-export function overCapacityNights(capacity: {
-  nightDetails: NightAvailability[];
-}): OverCapacityNight[] {
-  return capacity.nightDetails
-    .filter((night) => night.availableBeds < 0)
-    .map((night) => ({
-      date: formatDateOnly(night.date),
-      availableBeds: night.availableBeds,
-    }));
-}
+// The admin-override over-capacity error/helpers (issue #1668) live in
+// @/lib/over-capacity-confirmation, NOT here: many test files blanket-mock
+// this module, and the routes' instanceof checks need the real class.
 
 // Capacity queries scope to one lodge with a plain `lodgeId` field alongside
 // the capacity-holding filter: Booking.lodgeId is NOT NULL (no null-lodge rows

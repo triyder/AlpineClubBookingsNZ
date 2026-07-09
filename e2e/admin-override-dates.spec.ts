@@ -40,6 +40,13 @@ function isoDay(offsetDays: number): string {
   return `${y}-${m}-${day}`;
 }
 
+// dateOnly + N days, pure date math (matches the panel's derived check-out).
+function isoShiftFrom(dateOnly: string, days: number): string {
+  const d = new Date(`${dateOnly}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // The bold "Total" row on the booking Payment card, reduced to its digits so a
 // frozen price can be compared across shifts.
 async function readTotalDigits(page: Page): Promise<string> {
@@ -61,18 +68,34 @@ async function adminShiftTo(page: Page, newCheckIn: string): Promise<void> {
   await page.getByRole("radio", { name: /Shift dates only/ }).check();
 
   await page.locator("#edit-checkin").fill(newCheckIn);
-  // Shift mode derives the check-out from the check-in; give it a tick to settle.
-  await expect(page.locator("#edit-checkout")).not.toHaveValue(window.checkOut);
+  // Shift mode derives the check-out from the check-in, preserving the length.
+  await expect(page.locator("#edit-checkout")).toHaveValue(
+    isoShiftFrom(newCheckIn, window.nights.length),
+  );
 
   const save = page.getByRole("button", { name: "Save Changes" });
-  await expect(save).toBeEnabled();
-  await save.click();
+  await expect(save).toBeEnabled({ timeout: 30_000 });
+  // Wait for the PUT itself: the button renames to "Saving..." the instant it
+  // is clicked, so any button-based wait passes while the save is still in
+  // flight — the caller's next navigation would abort it mid-request (the
+  // first CI run failed exactly this way, booking unchanged). modify-quote
+  // also matches a "/modify" substring, hence endsWith + method.
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().endsWith(`/api/bookings/${bookingId}/modify`) &&
+        r.request().method() === "PUT",
+      { timeout: 30_000 },
+    ),
+    save.click(),
+  ]);
+  expect(response.ok(), `shift save (${response.status()})`).toBeTruthy();
 
   // On success the editor closes (router.refresh + onDone) and the Stay Details
   // view returns.
   await expect(
-    page.getByRole("button", { name: "Save Changes" }),
-  ).toHaveCount(0, { timeout: 30_000 });
+    page.getByRole("button", { name: "Edit Booking" }),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 test.beforeAll(async ({ browser }) => {
@@ -87,12 +110,36 @@ test.beforeAll(async ({ browser }) => {
   adminContext = await browser.newContext();
   const adminPage = await adminContext.newPage();
   await loginPersona(adminPage, E2E_ADMIN.email);
+
+  // A cross-month shift makes reconcileBedAllocationsForBooking auto-allocate
+  // the whole merged old+new range lodge-wide. With the setting ON, this spec's
+  // Sept→July shifts auto-placed OTHER bookings' guests (it AUTO-placed the
+  // bed-allocation spec's Ken King on the first CI run, emptying that spec's
+  // awaiting-allocation bucket). Disable it for the spec's duration —
+  // bed-allocation.spec.ts manages the same setting for its own run.
+  const disabled = await adminContext.request.put(
+    "/api/admin/bed-allocation/settings",
+    { data: { autoAllocationEnabled: false } },
+  );
+  expect(
+    disabled.ok(),
+    `disable auto-allocation (${disabled.status()})`,
+  ).toBeTruthy();
   await adminPage.close();
 });
 
 test.afterAll(async () => {
-  await memberContext?.close();
-  await adminContext?.close();
+  try {
+    if (adminContext) {
+      // Restore the default (schema default is true).
+      await adminContext.request.put("/api/admin/bed-allocation/settings", {
+        data: { autoAllocationEnabled: true },
+      });
+    }
+  } finally {
+    await memberContext?.close();
+    await adminContext?.close();
+  }
 });
 
 test("member books a future stay for the admin to override", async () => {

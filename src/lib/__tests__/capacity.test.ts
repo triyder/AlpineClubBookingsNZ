@@ -30,9 +30,11 @@ import {
   checkCapacity,
   checkCapacityForGuestRanges,
   getMonthAvailability,
+} from "@/lib/capacity";
+import {
   overCapacityNights,
   OverCapacityConfirmationRequiredError,
-} from "@/lib/capacity";
+} from "@/lib/over-capacity-confirmation";
 import {
   FALLBACK_LODGE_CAPACITY,
   getLodgeCapacityStatus,
