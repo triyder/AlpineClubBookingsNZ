@@ -296,6 +296,43 @@ describe("admin PUT partition writes", () => {
     );
   });
 
+  it("recovers a lost club-wide create race as a last-writer-wins update", async () => {
+    // Pre-write findFirst misses, but a concurrent save wins the create race,
+    // so the create trips LodgeInstruction_clubwide_key_unique (P2002) and
+    // the retry findFirst sees the winner's row.
+    mocks.lodgeInstructionFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "winner-row", contentHtml: "<p>Winner</p>" });
+    mocks.lodgeInstructionCreate.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    const response = await adminPUT(
+      putRequest({ key: "CLOSE", contentHtml: "<p>Second writer</p>" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.lodgeInstructionFindFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { key: "CLOSE", lodgeId: null } }),
+    );
+    expect(mocks.lodgeInstructionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "winner-row" },
+        data: expect.objectContaining({ contentHtml: "<p>Second writer</p>" }),
+      }),
+    );
+  });
+
+  it("rethrows a create failure that is not a unique violation", async () => {
+    mocks.lodgeInstructionFindFirst.mockResolvedValue(null);
+    mocks.lodgeInstructionCreate.mockRejectedValue(new Error("db down"));
+
+    await expect(
+      adminPUT(putRequest({ key: "CLOSE", contentHtml: "<p>x</p>" })),
+    ).rejects.toThrow("db down");
+    expect(mocks.lodgeInstructionUpdate).not.toHaveBeenCalled();
+  });
+
   it("rejects an inactive or unknown lodge", async () => {
     mocks.lodgeFindUnique.mockResolvedValue({ id: "lodge-2", active: false });
 

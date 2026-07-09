@@ -126,9 +126,10 @@ export async function PUT(req: NextRequest) {
   // Replace the partition's rules atomically and update defaults. Scoping
   // the delete to one partition means editing the club-wide rules never
   // touches a lodge's override set and vice versa. Serializable isolation
-  // stands in for the club-wide partition's unique guarantee until the
-  // phase-2 contract release adds the null-partition partial unique index
-  // (PostgreSQL treats nulls as distinct under [lodgeId, daysBeforeStay]).
+  // keeps the replace race-free; the club-wide partition's uniqueness is
+  // also DB-enforced by the CancellationPolicy_clubwide_daysBeforeStay_unique
+  // partial index (WHERE "lodgeId" IS NULL, migration 20260709000100 —
+  // PostgreSQL treats nulls as distinct under [lodgeId, daysBeforeStay]).
   const result = await prisma.$transaction(async (tx) => {
     await tx.cancellationPolicy.deleteMany({
       where: { lodgeId: lodgeId ?? null },

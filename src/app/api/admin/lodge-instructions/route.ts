@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -163,30 +164,51 @@ export async function PUT(request: NextRequest) {
 
   // The composite unique is [lodgeId, key], but nulls are distinct under it,
   // so the club-wide partition cannot be addressed by upsert. findFirst +
-  // create/update instead; requireAdmin traffic is low enough that the race
-  // window is acceptable until the contract release adds the null-partition
-  // partial unique index.
+  // create/update instead. A lost create race is DB-rejected on both
+  // partitions ([lodgeId, key] composite unique; club-wide via the
+  // LodgeInstruction_clubwide_key_unique partial index, migration
+  // 20260709000100) and recovered below as the intended last-writer-wins
+  // update.
   const existing = await prisma.lodgeInstruction.findFirst({
     where: { key, lodgeId: lodgeId ?? null },
     select: { id: true, contentHtml: true },
   });
 
-  const updated = existing
-    ? await prisma.lodgeInstruction.update({
-        where: { id: existing.id },
-        data: {
-          contentHtml: safeContentHtml,
-          updatedByMemberId: guard.session.user.id,
-        },
-      })
-    : await prisma.lodgeInstruction.create({
+  const writeData = {
+    contentHtml: safeContentHtml,
+    updatedByMemberId: guard.session.user.id,
+  };
+
+  let updated;
+  if (existing) {
+    updated = await prisma.lodgeInstruction.update({
+      where: { id: existing.id },
+      data: writeData,
+    });
+  } else {
+    try {
+      updated = await prisma.lodgeInstruction.create({
         data: {
           key,
           lodgeId: lodgeId ?? null,
-          contentHtml: safeContentHtml,
-          updatedByMemberId: guard.session.user.id,
+          ...writeData,
         },
       });
+    } catch (err) {
+      if (!isPrismaUniqueConstraintError(err)) throw err;
+      // A concurrent save won the create race; its row exists now, so apply
+      // this request as the update it would have been a moment later.
+      const winner = await prisma.lodgeInstruction.findFirst({
+        where: { key, lodgeId: lodgeId ?? null },
+        select: { id: true },
+      });
+      if (!winner) throw err;
+      updated = await prisma.lodgeInstruction.update({
+        where: { id: winner.id },
+        data: writeData,
+      });
+    }
+  }
 
   await prisma.auditLog.create(
     buildStructuredAuditLogCreateArgs({
