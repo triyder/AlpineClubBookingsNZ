@@ -45,7 +45,11 @@ if [ ! -f "$MANIFEST" ]; then
   exit 1
 fi
 
-expected="$(grep -Ev '^[[:space:]]*(#|$)' "$MANIFEST" | sort)"
+# awk (not grep) so a manifest holding only comments/blanks yields an empty
+# result instead of dying on grep's exit 1 under `set -e` — the friendly
+# "no data rows" error below must stay reachable. Same pattern as
+# check-migration-safety-coverage.sh.
+expected="$(awk '/^[[:space:]]*#/ { next } NF == 0 { next } { print }' "$MANIFEST" | sort)"
 
 actual="$(
   psql "$DATABASE_URL" -tA -F"$(printf '\t')" -c \
