@@ -2632,6 +2632,15 @@ model Lodge {
   name       String
   slug       String   @unique
   active     Boolean  @default(true)
+  // Durable default-lodge marker (#1656/#1627 option b): getDefaultLodgeId()
+  // and the default_lodge_id() SQL function resolve the club default from this
+  // flag instead of earliest-createdAt ordering (which inverts on TZ-skewed
+  // seeds). At most one lodge is default, enforced by the partial unique index
+  // "Lodge_isDefault_key" (WHERE "isDefault") created in migration
+  // 20260709120000 — a raw partial index Prisma cannot express in-schema (same
+  // pattern as XeroSyncOperation_active_correlationKey_unique). To change the
+  // default, unset the current one and set the new one in a single transaction.
+  isDefault  Boolean  @default(false)
   doorCode   String?  @db.VarChar(80)
   travelNote String?
   createdAt  DateTime @default(now())

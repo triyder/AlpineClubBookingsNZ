@@ -125,16 +125,29 @@ export function resolvePolicyRowsForLodge<
 // Phases 3+ replace call sites with real lodge context threaded from the
 // request; do not add new callers once a surface carries its own lodgeId.
 //
-// MIRROR CONTRACT: this resolution (oldest active lodge, else oldest lodge of
-// any state) must stay byte-identical to the default_lodge_id() SQL function
-// created in migration 20260708001100 — that function backs the column DEFAULT
-// that keeps the lodgeId NOT NULLs old-code-compatible. The fallback to an
-// inactive lodge is deliberate so both sides always resolve the same row. Any
-// change to the ordering/fallback here must be mirrored by a new migration that
-// replaces the SQL function (and vice versa), or a blue/green cutover could
-// stamp different lodges from the two code paths.
+// Durable default-lodge resolution (#1656 / #1627 option b): the club default
+// is the lodge flagged Lodge.isDefault, not the earliest-createdAt row. The old
+// createdAt ordering silently inverted on non-UTC databases (a lodge created in
+// the seed's TZ-skew window sorted before the seeded lodge and became the
+// default); the isDefault flag removes that class entirely. The old ordering
+// survives only as a fallback for the pathological case of no flagged row.
+//
+// MIRROR CONTRACT: this resolution (flagged isDefault first, else oldest active
+// lodge, else oldest lodge of any state) must stay byte-identical to the
+// default_lodge_id() SQL function replaced in migration 20260709120000 — that
+// function backs the column DEFAULT that keeps the entity tables' lodgeId NOT
+// NULLs old-code-compatible during a blue/green cutover. Any change to the
+// order/fallback here must be mirrored by a new migration that replaces the SQL
+// function (and vice versa), or a cutover could stamp different lodges from the
+// two code paths. The default lodge should be reassigned before it is
+// deactivated: while an inactive lodge stays flagged it deliberately remains the
+// default (both sides agree), rather than silently falling through to createdAt.
 export async function getDefaultLodgeId(db: LodgeDb): Promise<string> {
   const lodge =
+    (await db.lodge.findFirst({
+      where: { isDefault: true },
+      select: { id: true },
+    })) ??
     (await db.lodge.findFirst({
       where: { active: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],

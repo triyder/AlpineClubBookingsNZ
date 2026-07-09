@@ -309,6 +309,13 @@ async function main() {
         name: CLUB_LODGE_NAME,
         slug: slugifyLodgeName(CLUB_LODGE_NAME),
         active: true,
+        // Flag the sole lodge as the club default (#1656). The migration
+        // backfill already sets this on the migration-seeded lodge; this
+        // branch only fires where no lodge exists yet (e.g. a db-push test
+        // setup that skipped the migration INSERT), so the flag would
+        // otherwise be missing and getDefaultLodgeId would fall back to
+        // createdAt ordering.
+        isDefault: true,
       },
     });
     seedLodgeId = createdLodge.id;
