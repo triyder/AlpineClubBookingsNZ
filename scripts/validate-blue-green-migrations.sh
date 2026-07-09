@@ -10,6 +10,16 @@ ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
 
+# Baseline for the session-clock DML gate below (#1656 / #1627): migrations whose
+# timestamp-prefixed name sorts at or after this value are checked for
+# CURRENT_TIMESTAMP/now() inside INSERT/UPDATE payloads; older migrations predate
+# the gate and are exempt so committed history never retro-fails. The value sits
+# above every migration on main at introduction time (latest was
+# 20260708240000, and 20260708220000 legitimately used now() in an UPDATE). This
+# is a hard, non-overridable block, mirroring the ledger-coverage baseline in
+# check-migration-safety-coverage.sh (skip anything sorting before the baseline).
+SESSION_CLOCK_DML_BASELINE="${SESSION_CLOCK_DML_BASELINE:-20260709000000}"
+
 HOT_TABLE_SQL_REGEX='(ALTER TABLE|UPDATE|DELETE FROM|TRUNCATE|CREATE[[:space:]]+(UNIQUE[[:space:]]+)?INDEX|DROP INDEX|CREATE[[:space:]]+(CONSTRAINT[[:space:]]+)?TRIGGER|DROP TRIGGER|ADD CONSTRAINT|DROP CONSTRAINT|REFERENCES)[^;]*"(Member|MemberSubscription|MemberApplication|MemberCredit|FamilyGroup|FamilyGroupMember|FamilyGroupJoinRequest|Booking|BookingGuest|BookingModification|Payment|PaymentTransaction|PaymentRefund|RefundRequest|PasswordResetToken|EmailVerificationToken|EmailChangeToken|GuestChoreToken|NominationToken|XeroToken|FinanceXeroToken)"'
 BREAKING_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|DROP CONSTRAINT|ALTER TABLE .* RENAME|RENAME COLUMN|ALTER COLUMN .* TYPE|ALTER COLUMN .* SET NOT NULL)'
 DESTRUCTIVE_REMOVAL_SQL_REGEX='(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|ALTER TABLE .* RENAME|RENAME COLUMN)'
@@ -82,6 +92,79 @@ sql_lines() {
     /^[[:space:]]*$/ { next }
     { printf "%d:%s\n", NR, $0 }
   ' "$file"
+}
+
+# Reconstruct whole SQL statements from a migration file and emit any INSERT or
+# UPDATE statement whose payload references the database session clock
+# (CURRENT_TIMESTAMP or now()). Session time written into a naive timestamp
+# column renders local wall-clock on a non-UTC database, skewing ordering (the
+# #1627 default-lodge inversion); DML must write an explicit UTC value instead.
+# A DDL "DEFAULT CURRENT_TIMESTAMP" lives in a CREATE/ALTER statement, never in
+# an INSERT/UPDATE, so it is deliberately NOT matched.
+#
+# Statement-level detection is required: an INSERT's CURRENT_TIMESTAMP commonly
+# sits many lines below its INSERT keyword, so a per-line scan cannot tell the
+# two apart. The awk splitter tracks single-, double-, and dollar-quote state
+# and strips "--" line comments (same quote-parity approach as
+# strip_sql_comment), splitting only on a ";" seen outside every quote.
+#
+# Limitations (documented, consistent with strip_sql_comment): C-style /* */
+# comments and a literal 'CURRENT_TIMESTAMP'/'now()' inside a quoted string are
+# not modelled; a WITH ... INSERT/UPDATE CTE is not anchored (its leading
+# keyword is WITH). Dollar-quoted bodies ($$...$$) are treated as opaque so a
+# ";" inside them is not a split point — this deliberately avoids false
+# positives from CREATE FUNCTION bodies, but it ALSO means an INSERT/UPDATE
+# nested inside a DO-block or function body is NOT surfaced (the enclosing
+# statement starts with DO/CREATE, not INSERT/UPDATE). This repo does write some
+# data migrations as DO-blocks, so a future DO-block using now()/CURRENT_TIMESTAMP
+# in a payload is an uncaught vector; the primary #1627 vector — a top-level
+# INSERT ... VALUES (..., CURRENT_TIMESTAMP), like the lodge seed — is caught.
+# Full PL/pgSQL body coverage would need a parser and is out of scope for this
+# line-oriented gate.
+session_clock_dml_violations() {
+  local file="$1"
+
+  awk -v sq="'" -v dq='"' '
+    function flush() {
+      if (stmt ~ /[^[:space:]]/) print stmt
+      stmt = ""
+    }
+    {
+      line = $0
+      n = length(line)
+      i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        two = substr(line, i, 2)
+        if (in_dollar) {
+          if (two == "$$") { in_dollar = 0; stmt = stmt two; i += 2; continue }
+          stmt = stmt c; i++; continue
+        }
+        if (in_s) {
+          stmt = stmt c
+          if (c == sq) in_s = 0
+          i++; continue
+        }
+        if (in_d) {
+          stmt = stmt c
+          if (c == dq) in_d = 0
+          i++; continue
+        }
+        if (two == "$$") { in_dollar = 1; stmt = stmt two; i += 2; continue }
+        if (c == sq) { in_s = 1; stmt = stmt c; i++; continue }
+        if (c == dq) { in_d = 1; stmt = stmt c; i++; continue }
+        if (c == "-" && substr(line, i + 1, 1) == "-") { break }
+        if (c == ";") { flush(); i++; continue }
+        stmt = stmt c
+        i++
+      }
+      stmt = stmt " "
+    }
+    END { flush() }
+  ' "$file" |
+    grep -Ei '^[[:space:]]*(INSERT|UPDATE)([[:space:]]|$)' |
+    grep -Ei 'CURRENT_TIMESTAMP|(^|[^A-Za-z_])now[[:space:]]*\(' ||
+    true
 }
 
 migration_name_for_file() {
@@ -250,6 +333,24 @@ for migration_sql in "$@"; do
   fi
 
   migration_name="$(migration_name_for_file "$migration_sql")"
+
+  # Session-clock DML gate (#1656 / #1627): CURRENT_TIMESTAMP/now() inside an
+  # INSERT/UPDATE payload is a hard, non-overridable block for migrations at or
+  # after the baseline (older ones predate the gate and are exempt so committed
+  # history never retro-fails). Runs before the hot/breaking skip below because
+  # a plain INSERT matches neither of those regexes. Non-overridable on purpose:
+  # it flows through found_failure (not found_breaking), so the PR-time
+  # ledger-coverage gate — which sets ALLOW_BREAKING=1 — still enforces it.
+  migration_prefix="${migration_name%%_*}"
+  if [[ ! "$migration_prefix" < "$SESSION_CLOCK_DML_BASELINE" ]]; then
+    session_clock_matches="$(session_clock_dml_violations "$migration_sql")"
+    if [ -n "$session_clock_matches" ]; then
+      printf 'Session-clock CURRENT_TIMESTAMP/now() in an INSERT/UPDATE payload (write an explicit UTC value instead): %s\n' "$migration_sql" >&2
+      printf '%s\n\n' "$session_clock_matches" >&2
+      found_failure=1
+    fi
+  fi
+
   hot_table_matches="$(sql_lines "$migration_sql" | grep -Ei "$HOT_TABLE_SQL_REGEX" || true)"
   breaking_matches="$(sql_lines "$migration_sql" | grep -Ei "$BREAKING_SQL_REGEX" || true)"
   destructive_removal_matches="$(sql_lines "$migration_sql" | grep -Ei "$DESTRUCTIVE_REMOVAL_SQL_REGEX" || true)"

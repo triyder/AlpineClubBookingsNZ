@@ -6,6 +6,7 @@ import {
   serializeBookingRequestForAdmin,
 } from "@/lib/booking-request";
 import { parseBookingRequestQuoteOptions } from "@/lib/booking-request-quotes";
+import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -79,8 +80,28 @@ export async function GET(req: NextRequest) {
     latestQuotes.map((quote) => [quote.bookingRequestId, quote])
   );
 
+  // Resolve the school-group soft cap per request lodge through the same
+  // settings path enforcement uses (loadSchoolGroupSoftCap), so the queue's
+  // "Over N" hint can't diverge from the actual per-lodge threshold. A null
+  // lodgeId means the club's default lodge, which resolves to the legacy row —
+  // byte-identical to the previous DEFAULT_SCHOOL_GROUP_SOFT_CAP for a
+  // single-lodge club with no override. Resolved once per distinct lodge (not
+  // per request) to keep the query count flat as the queue grows.
+  const distinctLodgeIds = Array.from(
+    new Set(requests.map((request) => request.lodgeId))
+  );
+  const softCapByLodgeId = new Map(
+    await Promise.all(
+      distinctLodgeIds.map(
+        async (lodgeId) =>
+          [lodgeId, await loadSchoolGroupSoftCap(prisma, lodgeId)] as const
+      )
+    )
+  );
+
   const data = requests.map((request) => ({
     ...serializeBookingRequestForAdmin(request),
+    schoolGroupSoftCap: softCapByLodgeId.get(request.lodgeId)!,
     pricedByMemberName: request.pricedByMemberId
       ? reviewerNames.get(request.pricedByMemberId) ?? null
       : null,
