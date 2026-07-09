@@ -23,11 +23,13 @@ export function LoginForm({
   verifyError,
   emailChanged,
   redirectTo,
+  authBounceRef,
 }: {
   verified: boolean;
   verifyError?: string;
   emailChanged: boolean;
   redirectTo: string;
+  authBounceRef?: string;
 }) {
   const club = useClubIdentity();
   const router = useRouter();
@@ -180,6 +182,15 @@ export function LoginForm({
                 </Button>
               )}
             </div>
+          )}
+
+          {authBounceRef && (
+            <p className="text-sm text-muted-foreground">
+              Trouble signing in? Reference:{" "}
+              <code data-testid="auth-bounce-ref" className="font-mono">
+                {authBounceRef}
+              </code>
+            </p>
           )}
 
           <div className="space-y-2">

@@ -28,6 +28,8 @@ import {
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
+import { recordAuthBounce } from "@/lib/auth-diagnostics";
+import { buildLoginPath } from "@/lib/auth-redirect";
 import {
   buildTwoFactorGatePath,
   isTwoFactorSessionBlocked,
@@ -42,7 +44,16 @@ export default async function AdminLayout({
   const requestHeaders = await headers();
 
   if (!session?.user) {
-    redirect("/login");
+    // recordAuthBounce (#1669) classifies WHY auth() nulled and returns a
+    // reference code for durable bounces; it never throws, and the extra
+    // .catch guarantees the redirect even if that contract ever regresses.
+    // Anonymous visits keep the historical bare /login target.
+    const bounceRequestedPath = requestHeaders.get(REQUEST_PATH_HEADER);
+    const authBounceRef = await recordAuthBounce({
+      layout: "admin",
+      requestedPath: bounceRequestedPath,
+    }).catch(() => null);
+    redirect(authBounceRef ? buildLoginPath(null, authBounceRef) : "/login");
   }
 
   // Check DB directly for force password change and active status (JWT may be stale)
