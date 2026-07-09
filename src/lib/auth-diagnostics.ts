@@ -87,6 +87,54 @@ export function resetAuthBounceSentryDedupForTests(): void {
   lastSentryByFingerprint.clear();
 }
 
+// Durable-write throttle: page routes carry no rate limiting, so any junk
+// cookie named like a session token would otherwise buy an unauthenticated
+// AuditLog INSERT (16 indexes) per request. Cap rows per process-minute;
+// the pino warn stays unthrottled so raw bounce volume remains observable
+// in logs, and every suppressed row is tallied onto the next written one.
+const AUDIT_THROTTLE_WINDOW_MS = 60 * 1000;
+const DEFAULT_AUDIT_WRITES_PER_MINUTE = 10;
+
+function resolveAuditWritesPerMinute(): number {
+  const raw = process.env.AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE;
+  if (!raw) {
+    return DEFAULT_AUDIT_WRITES_PER_MINUTE;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_AUDIT_WRITES_PER_MINUTE;
+}
+
+let auditWindowStartMs = 0;
+let auditWindowCount = 0;
+let auditSuppressedCount = 0;
+
+/** Reset the in-process durable-write throttle. Test-only. */
+export function resetAuthBounceAuditThrottleForTests(): void {
+  auditWindowStartMs = 0;
+  auditWindowCount = 0;
+  auditSuppressedCount = 0;
+}
+
+function takeAuditWriteBudget(nowMs: number): {
+  allowed: boolean;
+  suppressedSinceLastWrite: number;
+} {
+  if (nowMs - auditWindowStartMs >= AUDIT_THROTTLE_WINDOW_MS) {
+    auditWindowStartMs = nowMs;
+    auditWindowCount = 0;
+  }
+  if (auditWindowCount >= resolveAuditWritesPerMinute()) {
+    auditSuppressedCount += 1;
+    return { allowed: false, suppressedSinceLastWrite: 0 };
+  }
+  auditWindowCount += 1;
+  const suppressedSinceLastWrite = auditSuppressedCount;
+  auditSuppressedCount = 0;
+  return { allowed: true, suppressedSinceLastWrite };
+}
+
 export function generateAuthBounceRef(): string {
   return randomBytes(4).toString("hex").toUpperCase();
 }
@@ -105,15 +153,18 @@ interface AuthBounceRecord {
   probeMismatch: boolean;
   /** Trimmed name+message when the raw probe itself threw. */
   probeError: string | null;
+  /** Durable rows dropped by the write throttle since the previous row. */
+  suppressedSinceLastWrite: number;
   ipAddress: string | null;
   userAgent: string | null;
 }
 
 // Defence in depth: authjs/jose decode errors do not embed token material in
 // practice, but this string flows into pino/Sentry/AuditLog, so scrub
-// anything JWT-shaped before it can.
+// anything JWT-shaped before it can. 2–4 dot-segments after the header
+// covers both 3-segment JWS and the 5-segment JWE session cookies.
 const JWT_LIKE_PATTERN =
-  /\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*/g;
+  /\beyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){2,4}/g;
 
 function describeProbeError(error: unknown): string {
   const text =
@@ -203,6 +254,9 @@ async function persistAuthBounceAuditRow(
         deltaMs,
         probeMismatch: record.probeMismatch,
         probeError: record.probeError,
+        ...(record.suppressedSinceLastWrite > 0
+          ? { suppressedSinceLastWrite: record.suppressedSinceLastWrite }
+          : {}),
       },
     });
   } catch (error) {
@@ -218,6 +272,14 @@ async function persistAuthBounceAuditRow(
 }
 
 function scheduleAuthBounceAuditWrite(record: AuthBounceRecord): void {
+  const budget = takeAuditWriteBudget(Date.now());
+  if (!budget.allowed) {
+    // Row dropped by the throttle; the bounce's pino line (unthrottled, with
+    // ref and reason) remains the record of this occurrence, and the drop is
+    // tallied onto the next written row's suppressedSinceLastWrite.
+    return;
+  }
+  record.suppressedSinceLastWrite = budget.suppressedSinceLastWrite;
   try {
     // Post-response so the durable write never delays the login redirect.
     // persistAuthBounceAuditRow never rejects (fully guarded above).
@@ -281,8 +343,12 @@ export async function recordAuthBounce(input: {
       headers(),
     ]);
     const allCookies = cookieStore.getAll();
-    const sessionCookies = allCookies.filter((cookie) =>
-      SESSION_COOKIE_NAME_PATTERN.test(cookie.name)
+    // A zero-length value (botched logout, proxy quirk) can never decode, so
+    // it counts as no-cookie rather than paging as an anomaly on every hit.
+    const sessionCookies = allCookies.filter(
+      (cookie) =>
+        SESSION_COOKIE_NAME_PATTERN.test(cookie.name) &&
+        cookie.value.length > 0
     );
     const path = input.requestedPath;
 
@@ -347,6 +413,7 @@ export async function recordAuthBounce(input: {
       cookieHeaderApproxBytes,
       probeMismatch,
       probeError,
+      suppressedSinceLastWrite: 0,
       ipAddress: resolveClientIp(requestHeaders),
       userAgent: requestHeaders.get("user-agent"),
     };

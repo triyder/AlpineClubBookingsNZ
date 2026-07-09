@@ -800,7 +800,16 @@ by it via `requestId`. Token values and raw cookie contents are never read
 into any sink (only cookie-name matches, chunk counts, and byte lengths),
 the durable record carries `memberId` rather than an email address, and the
 whole path is exception-guarded so a logging/DB failure can never turn the
-307 redirect into a 500. The audit write runs post-response via `after()`.
+307 redirect into a 500. The audit write runs post-response via `after()`
+and is capped per process-minute (`AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE`,
+default 10) so an unauthenticated junk cookie cannot be spammed into
+unbounded `AuditLog` inserts — suppressed rows are tallied onto the next
+written row's `suppressedSinceLastWrite`, and the pino line stays
+unthrottled so raw bounce volume remains visible in logs. Note for
+operators: rotating `AUTH_SECRET` turns every live session cookie into a
+`cookie-present-no-session` bounce until those cookies expire (≤8h) — a
+row-per-bounce burst in the audit trail and at most one Sentry event per
+cooldown per container is expected then, not a regression.
 
 ## Security and Privacy Boundaries
 

@@ -57,6 +57,7 @@ vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 import {
   generateAuthBounceRef,
   recordAuthBounce,
+  resetAuthBounceAuditThrottleForTests,
   resetAuthBounceSentryDedupForTests,
 } from "@/lib/auth-diagnostics";
 import { prisma } from "@/lib/prisma";
@@ -98,6 +99,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   afterQueue.length = 0;
   resetAuthBounceSentryDedupForTests();
+  resetAuthBounceAuditThrottleForTests();
   mockHeaders.mockResolvedValue(
     new Headers({
       "user-agent": "vitest-agent",
@@ -138,6 +140,23 @@ describe("recordAuthBounce noise gate", () => {
     expect(mockCaptureMessage).not.toHaveBeenCalled();
     expect(mockCaptureException).not.toHaveBeenCalled();
     // The deeper (DB-touching) probe must not even run for anonymous hits.
+    expect(mockProbe).not.toHaveBeenCalled();
+  });
+
+  it("treats a zero-length session cookie value as no-cookie", async () => {
+    mockCookies.mockResolvedValue(
+      cookieStore([{ name: "__Secure-authjs.session-token", value: "" }])
+    );
+
+    const ref = await recordAuthBounce({
+      layout: "authenticated",
+      requestedPath: "/dashboard",
+    });
+
+    expect(ref).toBeNull();
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+    expect(auditCreate()).not.toHaveBeenCalled();
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
     expect(mockProbe).not.toHaveBeenCalled();
   });
 
@@ -310,6 +329,51 @@ describe("recordAuthBounce Sentry dedup", () => {
   });
 });
 
+describe("recordAuthBounce durable-write throttle", () => {
+  it("caps AuditLog rows per process-minute and tallies suppressed rows onto the next write", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-07-10T00:00:00Z"));
+      for (let i = 0; i < 12; i += 1) {
+        await recordAuthBounce({
+          layout: "authenticated",
+          requestedPath: `/page-${i}`,
+        });
+      }
+      await flushAfterQueue();
+
+      // Default budget is 10 rows per process-minute; the pino warn stays
+      // unthrottled for every bounce.
+      expect(auditCreate()).toHaveBeenCalledTimes(10);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(12);
+
+      vi.setSystemTime(new Date("2026-07-10T00:01:01Z"));
+      await recordAuthBounce({
+        layout: "authenticated",
+        requestedPath: "/after-window",
+      });
+      await flushAfterQueue();
+
+      expect(auditCreate()).toHaveBeenCalledTimes(11);
+      const metadata = lastAuditData().metadata as Record<string, unknown>;
+      expect(metadata.suppressedSinceLastWrite).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("omits the suppression tally when nothing was suppressed", async () => {
+    await recordAuthBounce({
+      layout: "authenticated",
+      requestedPath: "/dashboard",
+    });
+    await flushAfterQueue();
+
+    const metadata = lastAuditData().metadata as Record<string, unknown>;
+    expect(metadata).not.toHaveProperty("suppressedSinceLastWrite");
+  });
+});
+
 describe("recordAuthBounce exception safety", () => {
   it("still returns the ref when the audit write fails", async () => {
     auditCreate().mockRejectedValue(new Error("db down"));
@@ -388,10 +452,11 @@ describe("recordAuthBounce exception safety", () => {
 });
 
 describe("recordAuthBounce privacy", () => {
-  it("scrubs JWT-shaped strings out of probe error text", async () => {
+  it("scrubs JWT- and JWE-shaped strings out of probe error text", async () => {
+    // 5-segment JWE — the shape of a real authjs session cookie value.
     mockProbe.mockRejectedValue(
       new Error(
-        "decode failed for token eyJhbGciOiJkaXIifQ.payload-part.signature-part in request"
+        "decode failed for token eyJhbGciOiJkaXIifQ.key-part.iv-part.ciphertext-part.tag-part in request"
       )
     );
 
@@ -411,7 +476,8 @@ describe("recordAuthBounce privacy", () => {
       mockCaptureMessage.mock.calls,
       auditCreate().mock.calls,
     ]);
-    expect(allSinkArgs).not.toContain("payload-part");
+    expect(allSinkArgs).not.toContain("ciphertext-part");
+    expect(allSinkArgs).not.toContain("tag-part");
   });
 
 
