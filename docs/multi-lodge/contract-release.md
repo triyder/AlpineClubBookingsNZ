@@ -56,8 +56,11 @@ express in PSL, so the drift gate stays green — the same precedent as the
 long-standing `Member_email_primary_unique` / `Member_email_login_unique`
 indexes and the `XeroSyncOperation` ACTIVE-per-correlation index (#1354). The
 trade-off is that these indexes are **invisible to Prisma tooling**: they exist
-only in the migration SQL and in schema comments on the two models, so keep
-those in sync by hand.
+only in the migration SQL and in schema comments on the two models. CI guards
+them (issue #1664): the migration-drift job applies the migrations and asserts
+every partial index against the committed manifest
+`prisma/partial-unique-indexes.tsv` — update the manifest in the same PR as any
+intentional change.
 
 The migration dedupes each null partition first (keeping the most recently
 updated row) so the index build cannot abort a deploy, though app-side

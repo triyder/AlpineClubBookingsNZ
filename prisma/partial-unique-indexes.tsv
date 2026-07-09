@@ -1,0 +1,19 @@
+# Committed manifest of the raw-SQL partial (predicated) indexes that must exist
+# in the database after all migrations apply. Prisma cannot express partial
+# indexes, and db:check-drift (prisma migrate diff) does not surface them, so
+# this file is the only tooling-visible record — scripts/check-partial-indexes.sh
+# enforces SET EQUALITY against pg_indexes in CI (migration-drift job):
+# a dropped or renamed index fails, and a new partial index added by a migration
+# also fails until it is documented here.
+#
+# Columns (tab-separated): tablename, indexname, indexdef.
+# indexdef is pg_get_indexdef() output on PostgreSQL 16 (the CI service image).
+# To regenerate after an intentional change:
+#   psql "$DATABASE_URL" -tA -F"$(printf '\t')" -c "SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname='public' AND indexdef LIKE '% WHERE %' ORDER BY tablename, indexname"
+CancellationPolicy	CancellationPolicy_clubwide_daysBeforeStay_unique	CREATE UNIQUE INDEX "CancellationPolicy_clubwide_daysBeforeStay_unique" ON public."CancellationPolicy" USING btree ("daysBeforeStay") WHERE ("lodgeId" IS NULL)
+InductionChecklistTemplate	InductionChecklistTemplate_kind_active_unique	CREATE UNIQUE INDEX "InductionChecklistTemplate_kind_active_unique" ON public."InductionChecklistTemplate" USING btree (kind) WHERE ("isActive" = true)
+Lodge	Lodge_isDefault_key	CREATE UNIQUE INDEX "Lodge_isDefault_key" ON public."Lodge" USING btree ("isDefault") WHERE "isDefault"
+LodgeInstruction	LodgeInstruction_clubwide_key_unique	CREATE UNIQUE INDEX "LodgeInstruction_clubwide_key_unique" ON public."LodgeInstruction" USING btree (key) WHERE ("lodgeId" IS NULL)
+Member	Member_email_login_unique	CREATE UNIQUE INDEX "Member_email_login_unique" ON public."Member" USING btree (email) WHERE ("canLogin" = true)
+MemberApplication	MemberApplication_pending_applicantEmail_unique	CREATE UNIQUE INDEX "MemberApplication_pending_applicantEmail_unique" ON public."MemberApplication" USING btree ("applicantEmail") WHERE (status = ANY (ARRAY['PENDING_NOMINATORS'::"ApplicationStatus", 'PENDING_ADMIN'::"ApplicationStatus"]))
+XeroSyncOperation	XeroSyncOperation_active_correlationKey_unique	CREATE UNIQUE INDEX "XeroSyncOperation_active_correlationKey_unique" ON public."XeroSyncOperation" USING btree ("correlationKey") WHERE (("correlationKey" IS NOT NULL) AND (status = ANY (ARRAY['PENDING'::text, 'RUNNING'::text, 'WAITING_PAYMENT'::text])))
