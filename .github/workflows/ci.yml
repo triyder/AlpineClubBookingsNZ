@@ -233,6 +233,16 @@ jobs:
       - name: Check migrations reproduce schema.prisma
         run: npm run db:check-drift
 
+      # The drift check above cannot see raw-SQL partial indexes (Prisma cannot
+      # express them), so apply the migrations for real and assert the partial
+      # indexes match the committed manifest — a dropped/renamed index or an
+      # undocumented new one fails here. See issue #1664.
+      - name: Apply migrations to the drift database
+        run: npx prisma migrate deploy
+
+      - name: Check partial indexes match the manifest
+        run: bash scripts/check-partial-indexes.sh
+
   docker-image-security:
     runs-on: ubuntu-latest
     timeout-minutes: 45
