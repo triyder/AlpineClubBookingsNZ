@@ -66,6 +66,12 @@ Per ADR-001 sequencing, across several PRs:
   `BookingPeriod` (permanently nullable — the club-wide-with-override
   pattern), with a partial unique index preserving today's uniqueness on
   the club-wide (null) partition.
+  *Progress note (2026-07-09):* the club-wide null-partition partial unique
+  indexes shipped in `20260709000100_add_clubwide_policy_partial_unique_indexes`
+  for `CancellationPolicy` (`daysBeforeStay`) and `LodgeInstruction` (`key`) —
+  raw SQL, invisible to Prisma/`migrate diff`; see `contract-release.md`.
+  `MinimumStayPolicy` and `BookingPeriod` carry no unique key in either
+  partition, so there is nothing to enforce for them.
 - Convert singleton settings tables (`LodgeSettings`,
   `BedAllocationSettings`, `BookingDefaults`, `BookingRequestSettings`)
   to per-lodge rows.
