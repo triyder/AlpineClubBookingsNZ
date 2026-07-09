@@ -200,10 +200,20 @@ Future reviews and issues should cite this file when proposing changes.
   `PENDING` / no-payment branches restore at **100%** (nothing was captured, so
   no cancellation-policy tiering — the same capacity-failure system-void
   precedent); the paid path restores the applied slice at the cancellation tier
-  (#1164 / D7). Because `restoreCreditFromBooking` has no internal replay guard,
-  restore runs ONLY inside each branch's claim/lock, whose atomic status flip is
-  the exactly-once guarantee — so the never-captured and `PENDING` branches are
-  now status-guarded claim-first under the booking advisory lock too. A CANCELLED
+  (#1164 / D7). Restore idempotency is now STRUCTURAL, not lock-dependent
+  (#1636): the restore row carries a nullable-unique `restoredFromBookingId`, so
+  at most one restore row per booking can exist REGARDLESS of caller lock
+  granularity — a duplicate insert is a `skipDuplicates` no-op returning 0, never
+  a second credit. This is a restore-specific key, NOT a unique over
+  `(sourceBookingId, type=CANCELLATION_REFUND)`, because three legitimate paths
+  (`restoreCreditFromBooking`, `createCancellationCredit`'s held-as-credit refund,
+  and the Xero inbound invoice-paid-effects late-cash credit) all write that
+  shape for one booking. Each branch's atomic status flip remains the primary
+  single-flight — the never-captured and `PENDING` branches are status-guarded
+  claim-first under the booking advisory lock too — but the unique key removes the
+  cross-path lock-granularity dependence, so moving a credit-restoring path off
+  the shared `lock(1)` (e.g. a per-lodge release lock) can no longer double a
+  restore. A CANCELLED
   booking may legitimately hold consumed credit with NO restore row only when its
   payment captured money (0%-tier paid cancels write no restore row;
   held-as-credit refunds keep the applied rows) or settled without cash (the
