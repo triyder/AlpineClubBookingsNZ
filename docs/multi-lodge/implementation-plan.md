@@ -64,8 +64,8 @@ Per ADR-001 sequencing, across several PRs:
   NOT NULL per the ADR-001 sequencing.
 - Nullable `lodgeId` on `CancellationPolicy`, `MinimumStayPolicy`, and
   `BookingPeriod` (permanently nullable — the club-wide-with-override
-  pattern), with a partial unique index preserving today's uniqueness on
-  the club-wide (null) partition.
+  pattern); where a table carries a uniqueness key, a partial unique index
+  preserves today's uniqueness on the club-wide (null) partition.
   *Progress note (2026-07-09):* the club-wide null-partition partial unique
   indexes shipped in `20260709000100_add_clubwide_policy_partial_unique_indexes`
   for `CancellationPolicy` (`daysBeforeStay`) and `LodgeInstruction` (`key`) —
