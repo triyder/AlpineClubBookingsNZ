@@ -2,14 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 
-const { mockAuth, mockRedirect, mockHeaders } = vi.hoisted(() => ({
-  mockAuth: vi.fn(),
-  mockRedirect: vi.fn(),
-  mockHeaders: vi.fn(),
-}));
+const { mockAuth, mockRedirect, mockHeaders, mockRecordAuthBounce } =
+  vi.hoisted(() => ({
+    mockAuth: vi.fn(),
+    mockRedirect: vi.fn(),
+    mockHeaders: vi.fn(),
+    mockRecordAuthBounce: vi.fn(),
+  }));
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
+}));
+
+vi.mock("@/lib/auth-diagnostics", () => ({
+  recordAuthBounce: (input: unknown) => mockRecordAuthBounce(input),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -52,6 +58,7 @@ describe("authenticated layout return path", () => {
     mockRedirect.mockImplementation((path: string) => {
       throw new Error(`redirect:${path}`);
     });
+    mockRecordAuthBounce.mockResolvedValue(null);
   });
 
   it("redirects anonymous visitors to login, preserving the requested path", async () => {
@@ -80,5 +87,41 @@ describe("authenticated layout return path", () => {
     await expect(
       AuthenticatedLayout({ children: "secure" })
     ).rejects.toThrow("redirect:/login?callbackUrl=%2Fdashboard");
+  });
+
+  it("threads the auth-bounce reference code into the login URL (#1669)", async () => {
+    mockAuth.mockResolvedValue(null);
+    mockHeaders.mockResolvedValue(
+      new Headers({ [REQUEST_PATH_HEADER]: "/dashboard" })
+    );
+    mockRecordAuthBounce.mockResolvedValue("ABCD1234");
+
+    const { default: AuthenticatedLayout } = await import(
+      "@/app/(authenticated)/layout"
+    );
+
+    await expect(AuthenticatedLayout({ children: "secure" })).rejects.toThrow(
+      "redirect:/login?callbackUrl=%2Fdashboard&ref=ABCD1234"
+    );
+    expect(mockRecordAuthBounce).toHaveBeenCalledWith({
+      layout: "authenticated",
+      requestedPath: "/dashboard",
+    });
+  });
+
+  it("still redirects cleanly when the bounce diagnostic rejects (#1669)", async () => {
+    mockAuth.mockResolvedValue(null);
+    mockHeaders.mockResolvedValue(
+      new Headers({ [REQUEST_PATH_HEADER]: "/dashboard" })
+    );
+    mockRecordAuthBounce.mockRejectedValue(new Error("diagnostics exploded"));
+
+    const { default: AuthenticatedLayout } = await import(
+      "@/app/(authenticated)/layout"
+    );
+
+    await expect(AuthenticatedLayout({ children: "secure" })).rejects.toThrow(
+      "redirect:/login?callbackUrl=%2Fdashboard"
+    );
   });
 });

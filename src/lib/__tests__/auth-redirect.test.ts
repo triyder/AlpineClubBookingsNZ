@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTH_BOUNCE_REF_PATTERN,
   buildBookingLoginPath,
   buildLoginPath,
+  isValidAuthBounceRef,
   resolvePostLoginPath,
 } from "@/lib/auth-redirect";
 
@@ -36,5 +38,63 @@ describe("auth redirect helpers", () => {
 
   it("builds the booking login URL with the booking callback path", () => {
     expect(buildBookingLoginPath()).toBe("/login?callbackUrl=%2Fbook");
+  });
+
+  it("appends a valid auth-bounce ref after the callbackUrl", () => {
+    expect(buildLoginPath("/nominations/token-1", "ABCD1234")).toBe(
+      "/login?callbackUrl=%2Fnominations%2Ftoken-1&ref=ABCD1234"
+    );
+  });
+
+  it("keeps callbackUrl first and escaped when a ref is appended", () => {
+    expect(buildLoginPath("/dashboard?tab=bookings", "0A1B2C3D")).toBe(
+      "/login?callbackUrl=%2Fdashboard%3Ftab%3Dbookings&ref=0A1B2C3D"
+    );
+  });
+
+  it("omits the ref param when it is undefined or null", () => {
+    const noRef = "/login?callbackUrl=%2Fnominations%2Ftoken-1";
+    expect(buildLoginPath("/nominations/token-1")).toBe(noRef);
+    expect(buildLoginPath("/nominations/token-1", undefined)).toBe(noRef);
+    expect(buildLoginPath("/nominations/token-1", null)).toBe(noRef);
+  });
+
+  it("drops malformed refs and leaves the URL byte-identical to the no-ref case", () => {
+    const noRef = "/login?callbackUrl=%2Fnominations%2Ftoken-1";
+    // lowercase hex is not accepted
+    expect(buildLoginPath("/nominations/token-1", "abcd1234")).toBe(noRef);
+    // wrong length (7 and 9 chars)
+    expect(buildLoginPath("/nominations/token-1", "ABCD123")).toBe(noRef);
+    expect(buildLoginPath("/nominations/token-1", "ABCD12345")).toBe(noRef);
+    // non-hex characters
+    expect(buildLoginPath("/nominations/token-1", "GGGGGGGG")).toBe(noRef);
+    // empty string
+    expect(buildLoginPath("/nominations/token-1", "")).toBe(noRef);
+    // query-injection attempt is rejected wholesale, not partially escaped in
+    expect(buildLoginPath("/nominations/token-1", "AAAA&admin=1")).toBe(noRef);
+    expect(buildLoginPath("/nominations/token-1", "AAAA&admin=1")).not.toContain(
+      "admin"
+    );
+  });
+});
+
+describe("isValidAuthBounceRef", () => {
+  it("accepts exactly 8 uppercase hex characters", () => {
+    expect(isValidAuthBounceRef("ABCD1234")).toBe(true);
+    expect(isValidAuthBounceRef("00000000")).toBe(true);
+    expect(isValidAuthBounceRef("FFFFFFFF")).toBe(true);
+    expect(AUTH_BOUNCE_REF_PATTERN.test("0A1B2C3D")).toBe(true);
+  });
+
+  it("rejects malformed, missing, or unsafe values", () => {
+    expect(isValidAuthBounceRef(undefined)).toBe(false);
+    expect(isValidAuthBounceRef(null)).toBe(false);
+    expect(isValidAuthBounceRef("")).toBe(false);
+    expect(isValidAuthBounceRef("abcd1234")).toBe(false); // lowercase
+    expect(isValidAuthBounceRef("ABCD123")).toBe(false); // too short
+    expect(isValidAuthBounceRef("ABCD12345")).toBe(false); // too long
+    expect(isValidAuthBounceRef("GGGGGGGG")).toBe(false); // non-hex
+    expect(isValidAuthBounceRef("AAAA&admin=1")).toBe(false); // injection
+    expect(isValidAuthBounceRef(" ABCD123")).toBe(false); // leading space
   });
 });

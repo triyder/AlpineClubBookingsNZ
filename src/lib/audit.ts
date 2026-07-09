@@ -18,7 +18,15 @@ export type AuditCategory =
   | (string & {});
 
 export type AuditSeverity = "info" | "important" | "critical";
-type AuditOutcome = "success" | "failure" | "blocked";
+// The auth-bounce diagnostics (#1669) store their classification reason in
+// the outcome column so bounce records stay queryable via the existing
+// (outcome, createdAt) index.
+type AuditOutcome =
+  | "success"
+  | "failure"
+  | "blocked"
+  | "cookie-present-no-session"
+  | "session-invalidated";
 export type AuditRetentionClass =
   | "critical"
   | "sensitive_access"

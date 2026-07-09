@@ -396,6 +396,34 @@ describe("auth session refresh", () => {
     });
   });
 
+  it("projects sessionIssuedAt into the session for auth-bounce diagnostics (#1669)", async () => {
+    const session = await authConfig.callbacks.session?.({
+      session: {
+        user: {
+          id: "member-1",
+          email: "member@example.com",
+          name: "Member User",
+          role: "MEMBER",
+          accessRoles: ["USER"],
+          forcePasswordChange: false,
+          isEmailVerified: true,
+          sessionInvalidated: false,
+        },
+      },
+      token: {
+        id: "member-1",
+        role: "MEMBER",
+        accessRoles: ["USER"],
+        forcePasswordChange: false,
+        isEmailVerified: true,
+        sessionInvalidated: false,
+        sessionIssuedAt: 1_723_456_789_000,
+      },
+    } as never);
+
+    expect(session?.user.sessionIssuedAt).toBe(1_723_456_789_000);
+  });
+
   // ---------------------------------------------------------------------------
   // #1367 (F14): definition-backed custom access roles must reach every
   // session.user-based admin check. The enum-only accessRoles claim drops them

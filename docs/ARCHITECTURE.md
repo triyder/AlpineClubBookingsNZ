@@ -772,6 +772,36 @@ the Sentry fingerprint dedups grouping across processes. Cross-instance
 exact-once alerting remains future work (#1211), and which fingerprints page
 whom is operator-side Sentry alert-rule configuration.
 
+### Auth-bounce diagnostics (#1669)
+
+When the `(authenticated)` or `(admin)` layout guard is about to redirect to
+`/login` because the wrapped `auth()` returned null, `recordAuthBounce()` in
+`src/lib/auth-diagnostics.ts` classifies why before the redirect:
+
+- **`no-cookie`** — normal anonymous visit: a `debug`-level pino line only.
+  No `AuditLog` row, no Sentry event, no reference code.
+- **`session-invalidated`** — the session decoded but the password-change
+  revocation gate nulled it: pino `info` plus a durable `AuditLog` row
+  (`action=auth.bounce`, `category=auth`, retention
+  `diagnostic_high_volume`) capturing `memberId`, session issuance, the
+  revoking change time, and their delta. No Sentry.
+- **`cookie-present-no-session`** — a session cookie was sent but no server
+  session emerged (the real anomaly): pino `warn`, the `AuditLog` row, and
+  **one** Sentry event deduped by an in-process cooldown (same
+  `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` knob) under the stable
+  fingerprint `["auth-bounce", "cookie-present-no-session"]`.
+
+The Sentry path is deliberately **not** part of `observability-bridge.ts` —
+that bridge's contract stays cron/webhook-only; this is a second provably
+scoped emitter with exactly one fingerprint. Durable bounces mint a random
+8-hex reference code, appended to the login URL as `ref` and shown on the
+login page ("Trouble signing in? Reference: …"); the `AuditLog` row is keyed
+by it via `requestId`. Token values and raw cookie contents are never read
+into any sink (only cookie-name matches, chunk counts, and byte lengths),
+the durable record carries `memberId` rather than an email address, and the
+whole path is exception-guarded so a logging/DB failure can never turn the
+307 redirect into a 500. The audit write runs post-response via `after()`.
+
 ## Security and Privacy Boundaries
 
 - Auth uses credentials sessions with explicit admin, admin-area, and finance

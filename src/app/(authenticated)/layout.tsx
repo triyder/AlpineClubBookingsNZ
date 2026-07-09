@@ -15,6 +15,7 @@ import {
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { hasAccessRole } from "@/lib/access-roles";
+import { recordAuthBounce } from "@/lib/auth-diagnostics";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
@@ -40,9 +41,16 @@ export default async function AuthenticatedLayout({
 
   if (!session?.user) {
     // Send the visitor to login, preserving where they were headed so they
-    // return there after signing in.
+    // return there after signing in. recordAuthBounce (#1669) classifies WHY
+    // auth() nulled and returns a reference code for durable bounces; it
+    // never throws, and the extra .catch guarantees the redirect even if
+    // that contract ever regresses.
     const requestedPath = requestHeaders.get(REQUEST_PATH_HEADER);
-    redirect(buildLoginPath(requestedPath));
+    const authBounceRef = await recordAuthBounce({
+      layout: "authenticated",
+      requestedPath,
+    }).catch(() => null);
+    redirect(buildLoginPath(requestedPath, authBounceRef));
   }
 
   // Check DB directly for force password change and active status (JWT may be stale)
