@@ -5,12 +5,14 @@ import { serialiseCsv, parseCsv } from "../csv";
 import { registerEntity } from "../registry";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
+  changedFields,
   hashRow,
+  planActionFor,
+  updateDataForMode,
   type ApplyContext,
   type CategoryApplyResult,
   type CategoryImporter,
   type CategoryPlanResult,
-  updateDataForMode,
   type PlanContext,
   type PlanItem,
 } from "../import-types";
@@ -182,6 +184,30 @@ function readLodgeJson(
   }
 }
 
+// Write-data builders shared by plan (for the change diff) and apply (for the
+// write), so the dry-run cannot drift from what apply actually does.
+function buildLodgeData(descriptor: Record<string, unknown>, slug: string): Record<string, unknown> {
+  const data: Record<string, unknown> = {
+    name: asStr(descriptor.name) || slug,
+    active: coerceBool(descriptor.active),
+    travelNote: asNullableStr(descriptor.travelNote),
+  };
+  if ("doorCode" in descriptor) data.doorCode = asNullableStr(descriptor.doorCode);
+  return data;
+}
+function buildRoomData(raw: Record<string, unknown>) {
+  return { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active), notes: asNullableStr(raw.notes) };
+}
+function buildBedData(raw: Record<string, unknown>) {
+  return { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active) };
+}
+function buildSeasonData(raw: Record<string, unknown>) {
+  return { type: raw.type as never, startDate: fromDateStr(raw.startDate), endDate: fromDateStr(raw.endDate), active: coerceBool(raw.active) };
+}
+function buildRateData(raw: Record<string, unknown>) {
+  return { pricePerNightCents: coerceInt(raw.pricePerNightCents, 0) };
+}
+
 // ---- Export ----------------------------------------------------------------
 
 export const lodgeConfigExporter: CategoryExporter = {
@@ -276,21 +302,26 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
     // Lodge.
     const currentLodge = await ctx.db.lodge.findUnique({
       where: { slug },
-      select: { slug: true, name: true, active: true, travelNote: true, doorCode: true },
+      select: { id: true, slug: true, name: true, active: true, travelNote: true, doorCode: true },
     });
     fingerprintParts.push(`lodge:${slug}:${currentLodge ? hashRow([...LODGE_FIELDS], currentLodge) : "absent"}`);
-    items.push({ entity: "lodge", key: slug, action: currentLodge ? "update" : "create" });
-
-    const lodgeId = currentLodge ? (await ctx.db.lodge.findUnique({ where: { slug }, select: { id: true } }))?.id ?? null : null;
+    {
+      const write = updateDataForMode(ctx.mode, descriptor, buildLodgeData(descriptor, slug));
+      const changed = changedFields(write, currentLodge);
+      items.push({ entity: "lodge", key: slug, action: planActionFor(currentLodge, changed), changedFields: changed.length ? changed : undefined });
+    }
+    const lodgeId = currentLodge?.id ?? null;
 
     // Rooms.
     for (const raw of readCsv(ctx.files, paths.rooms)) {
       const key = `${slug}/${raw.name}`;
       const current = lodgeId
-        ? await ctx.db.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name: raw.name ?? "" } }, select: { name: true, sortOrder: true, active: true, notes: true } })
+        ? await ctx.db.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name: raw.name ?? "" } }, select: { sortOrder: true, active: true, notes: true } })
         : null;
-      fingerprintParts.push(`lodge-room:${key}:${current ? hashRow(["name", "sortOrder", "active", "notes"], current) : "absent"}`);
-      items.push({ entity: "lodge-room", key, action: current ? "update" : "create" });
+      fingerprintParts.push(`lodge-room:${key}:${current ? hashRow(["sortOrder", "active", "notes"], current) : "absent"}`);
+      const write = updateDataForMode(ctx.mode, raw, buildRoomData(raw));
+      const changed = changedFields(write, current);
+      items.push({ entity: "lodge-room", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
 
     // Beds.
@@ -300,20 +331,24 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
         ? await ctx.db.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name: raw.roomName ?? "" } }, select: { id: true } })
         : null;
       const current = room
-        ? await ctx.db.lodgeBed.findUnique({ where: { roomId_name: { roomId: room.id, name: raw.name ?? "" } }, select: { name: true, sortOrder: true, active: true } })
+        ? await ctx.db.lodgeBed.findUnique({ where: { roomId_name: { roomId: room.id, name: raw.name ?? "" } }, select: { sortOrder: true, active: true } })
         : null;
-      fingerprintParts.push(`lodge-bed:${key}:${current ? hashRow(["name", "sortOrder", "active"], current) : "absent"}`);
-      items.push({ entity: "lodge-bed", key, action: current ? "update" : "create" });
+      fingerprintParts.push(`lodge-bed:${key}:${current ? hashRow(["sortOrder", "active"], current) : "absent"}`);
+      const write = updateDataForMode(ctx.mode, raw, buildBedData(raw));
+      const changed = changedFields(write, current);
+      items.push({ entity: "lodge-bed", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
 
     // Seasons (key-weak: match by lodge + name).
     for (const raw of readCsv(ctx.files, paths.seasons)) {
       const key = `${slug}/${raw.name}`;
       const current = lodgeId
-        ? await ctx.db.season.findFirst({ where: { lodgeId, name: raw.name ?? "" }, select: { name: true, type: true, active: true } })
+        ? await ctx.db.season.findFirst({ where: { lodgeId, name: raw.name ?? "" }, select: { type: true, startDate: true, endDate: true, active: true } })
         : null;
-      fingerprintParts.push(`season:${key}:${current ? hashRow(["name", "type", "active"], current) : "absent"}`);
-      items.push({ entity: "season", key, action: current ? "update" : "create" });
+      fingerprintParts.push(`season:${key}:${current ? hashRow(["type", "active"], current) : "absent"}`);
+      const write = updateDataForMode(ctx.mode, raw, buildSeasonData(raw));
+      const changed = changedFields(write, current);
+      items.push({ entity: "season", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
 
     // Season rates.
@@ -322,8 +357,13 @@ async function planLodgeConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
       const season = lodgeId
         ? await ctx.db.season.findFirst({ where: { lodgeId, name: raw.seasonName ?? "" }, select: { id: true } })
         : null;
-      fingerprintParts.push(`season-rate:${key}:${season ? "present" : "absent"}`);
-      items.push({ entity: "season-rate", key, action: season ? "update" : "create" });
+      const current = season
+        ? await ctx.db.seasonRate.findUnique({ where: { seasonId_ageTier_isMember: { seasonId: season.id, ageTier: raw.ageTier as never, isMember: coerceBool(raw.isMember) } }, select: { pricePerNightCents: true } })
+        : null;
+      fingerprintParts.push(`season-rate:${key}:${current ? String(current.pricePerNightCents) : "absent"}`);
+      const write = updateDataForMode(ctx.mode, raw, buildRateData(raw));
+      const changed = changedFields(write, current);
+      items.push({ entity: "season-rate", key, action: planActionFor(current, changed), changedFields: changed.length ? changed : undefined });
     }
   }
 
@@ -352,12 +392,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
     }
 
     // 1) Lodge (by slug).
-    const lodgeData: Record<string, unknown> = {
-      name: asStr(descriptor.name) || slug,
-      active: coerceBool(descriptor.active),
-      travelNote: asNullableStr(descriptor.travelNote),
-    };
-    if ("doorCode" in descriptor) lodgeData.doorCode = asNullableStr(descriptor.doorCode);
+    const lodgeData = buildLodgeData(descriptor, slug);
     const existingLodge = await ctx.tx.lodge.findUnique({ where: { slug }, select: { id: true } });
     const lodge = await ctx.tx.lodge.upsert({
       where: { slug },
@@ -373,7 +408,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
     for (const raw of readCsv(ctx.files, paths.rooms)) {
       const name = raw.name ?? "";
       if (!name) { result.skipped += 1; continue; }
-      const data = { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active), notes: raw.notes || null };
+      const data = buildRoomData(raw);
       const existing = await ctx.tx.lodgeRoom.findUnique({ where: { lodgeId_name: { lodgeId, name } }, select: { id: true } });
       await ctx.tx.lodgeRoom.upsert({ where: { lodgeId_name: { lodgeId, name } }, create: { lodgeId, name, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
       if (existing) result.updated += 1;
@@ -386,7 +421,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       if (!room) { result.skipped += 1; continue; }
       const name = raw.name ?? "";
       if (!name) { result.skipped += 1; continue; }
-      const data = { sortOrder: coerceInt(raw.sortOrder, 0), active: coerceBool(raw.active) };
+      const data = buildBedData(raw);
       const existing = await ctx.tx.lodgeBed.findUnique({ where: { roomId_name: { roomId: room.id, name } }, select: { id: true } });
       await ctx.tx.lodgeBed.upsert({ where: { roomId_name: { roomId: room.id, name } }, create: { roomId: room.id, name, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
       if (existing) result.updated += 1;
@@ -398,7 +433,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
     for (const raw of readCsv(ctx.files, paths.seasons)) {
       const name = raw.name ?? "";
       if (!name) { result.skipped += 1; continue; }
-      const data = { type: raw.type as never, startDate: fromDateStr(raw.startDate), endDate: fromDateStr(raw.endDate), active: coerceBool(raw.active) };
+      const data = buildSeasonData(raw);
       const existing = await ctx.tx.season.findFirst({ where: { lodgeId, name }, select: { id: true } });
       if (existing) {
         await ctx.tx.season.update({ where: { id: existing.id }, data: updateDataForMode(ctx.mode, raw, data) });
@@ -421,7 +456,7 @@ async function applyLodgeConfig(ctx: ApplyContext): Promise<CategoryApplyResult>
       if (!seasonId) { result.skipped += 1; continue; }
       const ageTier = raw.ageTier as never;
       const isMember = coerceBool(raw.isMember);
-      const data = { pricePerNightCents: coerceInt(raw.pricePerNightCents, 0) };
+      const data = buildRateData(raw);
       const existing = await ctx.tx.seasonRate.findUnique({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, select: { id: true } });
       await ctx.tx.seasonRate.upsert({ where: { seasonId_ageTier_isMember: { seasonId, ageTier, isMember } }, create: { seasonId, ageTier, isMember, ...data }, update: updateDataForMode(ctx.mode, raw, data) });
       if (existing) result.updated += 1;

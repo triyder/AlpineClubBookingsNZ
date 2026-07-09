@@ -25,9 +25,11 @@ export async function POST(request: Request) {
   }
 
   let bytes: Uint8Array;
+  let mode: "merge" | "overwrite" = "merge";
   try {
     const form = await request.formData();
     const file = form.get("bundle");
+    if (form.get("mode") === "overwrite") mode = "overwrite";
     if (!(file instanceof File)) {
       return NextResponse.json(
         { error: "Missing 'bundle' file." },
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const plan = await buildImportPlan(prisma, bytes);
+    const plan = await buildImportPlan(prisma, bytes, mode);
     return NextResponse.json({ plan });
   } catch (error) {
     if (error instanceof ConfigTransferBundleError) {

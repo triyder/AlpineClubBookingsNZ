@@ -48,6 +48,52 @@ export function updateDataForMode<T extends Record<string, unknown>>(
   return out;
 }
 
+/**
+ * Canonical string form of a field value for change detection. Compares the
+ * value the apply WOULD write (already coerced to its DB type) against the
+ * current DB value — both are the same type, so this canonical form (date-only
+ * for Date, "" for null/undefined, String() otherwise) compares them accurately
+ * without false positives from formatting.
+ */
+export function canonicalValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+  }
+  return String(value);
+}
+
+/**
+ * The allowlisted fields that differ between the write-data (what apply would
+ * write for the chosen mode) and the current row. Empty when nothing changes,
+ * so the planner can reclassify a no-op update as "unchanged".
+ */
+export function changedFields(
+  writeData: Record<string, unknown>,
+  current: Record<string, unknown> | null,
+): string[] {
+  if (!current) return [];
+  const changed: string[] = [];
+  for (const field of Object.keys(writeData)) {
+    if (canonicalValue(writeData[field]) !== canonicalValue(current[field])) {
+      changed.push(field);
+    }
+  }
+  return changed;
+}
+
+/**
+ * Classify an existing/absent row into a plan action for the chosen mode. A row
+ * that exists but whose write-data matches the current values is "unchanged".
+ */
+export function planActionFor(
+  current: Record<string, unknown> | null,
+  changed: string[],
+): PlanAction {
+  if (!current) return "create";
+  return changed.length > 0 ? "update" : "unchanged";
+}
+
 export type PlanAction = "create" | "update" | "unchanged";
 
 export interface PlanItem {
@@ -105,6 +151,8 @@ export interface PlanContext {
   db: ReadDb;
   files: Map<string, Uint8Array>;
   manifest: ConfigTransferManifest;
+  /** Drives the per-field change preview: merge ignores blank fields. */
+  mode: ImportMode;
 }
 
 export interface ApplyContext {

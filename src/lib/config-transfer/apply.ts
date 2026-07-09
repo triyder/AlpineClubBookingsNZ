@@ -61,8 +61,10 @@ export async function applyConfigImport(
   // Validate the bundle up front (throws on any integrity problem).
   const { manifest, files } = readBundle(bundleBytes);
 
-  // Re-plan and refuse if the DB drifted since the preview.
-  const replan = await buildImportPlan(prisma, bundleBytes);
+  // Re-plan and refuse if the DB drifted since the preview. Mode does not affect
+  // the fingerprint (it hashes current state, not the mode-filtered writes), but
+  // we pass it for consistency.
+  const replan = await buildImportPlan(prisma, bundleBytes, mode);
   if (replan.fingerprint !== expectedFingerprint) {
     throw new ConfigImportDriftError();
   }

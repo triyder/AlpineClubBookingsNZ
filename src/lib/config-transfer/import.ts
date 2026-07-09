@@ -5,6 +5,7 @@ import {
   computeFingerprint,
   type CategoryImporter,
   type CategoryPlan,
+  type ImportMode,
   type ImportPlan,
   type ReadDb,
 } from "./import-types";
@@ -34,6 +35,7 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
 export async function buildImportPlan(
   db: ReadDb,
   bundleBytes: Uint8Array,
+  mode: ImportMode = "merge",
 ): Promise<ImportPlan> {
   const { manifest, files, warnings: integrityWarnings } = readBundle(bundleBytes);
 
@@ -45,7 +47,7 @@ export async function buildImportPlan(
 
   for (const importer of CATEGORY_IMPORTERS) {
     if (!manifest.includedCategories.includes(importer.category)) continue;
-    const result = await importer.plan({ db, files, manifest });
+    const result = await importer.plan({ db, files, manifest, mode });
     const merged = byCategory.get(importer.category) ?? {
       category: importer.category,
       items: [],
