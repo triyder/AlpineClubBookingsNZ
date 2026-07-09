@@ -1,4 +1,4 @@
-import { resolvePostLoginPath } from "@/lib/auth-redirect";
+import { isValidAuthBounceRef, resolvePostLoginPath } from "@/lib/auth-redirect";
 import { LoginForm } from "./login-form";
 
 function singleSearchParam(value?: string | string[]) {
@@ -17,6 +17,7 @@ export default async function LoginPage({
     verifyError?: string | string[];
     emailChanged?: string | string[];
     callbackUrl?: string | string[];
+    ref?: string | string[];
   }>;
 }) {
   const params = await searchParams;
@@ -24,6 +25,8 @@ export default async function LoginPage({
   const emailChanged = singleSearchParam(params.emailChanged) === "true";
   const verifyError = singleSearchParam(params.verifyError);
   const redirectTo = resolvePostLoginPath(singleSearchParam(params.callbackUrl));
+  const refCandidate = singleSearchParam(params.ref);
+  const authBounceRef = isValidAuthBounceRef(refCandidate) ? refCandidate : undefined;
 
   return (
     <LoginForm
@@ -31,6 +34,7 @@ export default async function LoginPage({
       verifyError={verifyError}
       emailChanged={emailChanged}
       redirectTo={redirectTo}
+      authBounceRef={authBounceRef}
     />
   );
 }
