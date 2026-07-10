@@ -114,6 +114,8 @@ function mockGroupCreateTransaction() {
   const txRequestCreate = vi.fn().mockResolvedValue({ id: "inv-1" });
   const txRequestFindMany = vi.fn().mockResolvedValue([]);
   const txRequestUpdateMany = vi.fn();
+  const txTokenFindMany = vi.fn().mockResolvedValue([]);
+  const txTokenDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
   mockedPrisma.$transaction.mockImplementation(async (fn: any) =>
     fn({
       familyGroupMember: { create: txMembershipCreate },
@@ -123,6 +125,10 @@ function mockGroupCreateTransaction() {
         findMany: txRequestFindMany,
         updateMany: txRequestUpdateMany,
       },
+      partnerInviteToken: {
+        findMany: txTokenFindMany,
+        deleteMany: txTokenDeleteMany,
+      },
     })
   );
   return {
@@ -131,6 +137,8 @@ function mockGroupCreateTransaction() {
     txRequestCreate,
     txRequestFindMany,
     txRequestUpdateMany,
+    txTokenFindMany,
+    txTokenDeleteMany,
   };
 }
 
@@ -444,6 +452,58 @@ describe("reviewAdminFamilyGroupRequest — GROUP_CREATE", () => {
       "Alice",
       "Smith Family",
       "Duplicate of an existing family"
+    );
+  });
+
+  it("reject revokes any outstanding partner-invite token for the group (#1682)", async () => {
+    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+      groupCreateRequest() as any
+    );
+    const { txTokenFindMany, txTokenDeleteMany } = mockGroupCreateTransaction();
+    txTokenFindMany.mockResolvedValue([
+      { id: "pit-1", invitedEmail: "ghost@test.com" },
+    ]);
+
+    const result = await reviewAdminFamilyGroupRequest({
+      adminMemberId: ADMIN_ID,
+      data: { requestId: "req-gc", action: "reject" },
+    });
+
+    expect(result.body).toEqual({ success: true, action: "reject" });
+    expect(txTokenFindMany).toHaveBeenCalledWith({
+      where: { familyGroupId: "fg-new", confirmedAt: null },
+      select: { id: true, invitedEmail: true },
+    });
+    expect(txTokenDeleteMany).toHaveBeenCalledWith({
+      where: { familyGroupId: "fg-new", confirmedAt: null },
+    });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "FAMILY_GROUP_PARTNER_INVITE_REVOKED",
+        entityId: "pit-1",
+        metadata: expect.objectContaining({ cause: "group_create_rejected" }),
+      })
+    );
+  });
+
+  it("reject leaves a claimed token untouched (none outstanding to revoke)", async () => {
+    mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(
+      groupCreateRequest() as any
+    );
+    const { txTokenFindMany, txTokenDeleteMany } = mockGroupCreateTransaction();
+    // A claimed token has confirmedAt set, so the confirmedAt:null query returns
+    // nothing and no delete/revoke-audit happens.
+    txTokenFindMany.mockResolvedValue([]);
+
+    const result = await reviewAdminFamilyGroupRequest({
+      adminMemberId: ADMIN_ID,
+      data: { requestId: "req-gc", action: "reject" },
+    });
+
+    expect(result.body).toEqual({ success: true, action: "reject" });
+    expect(txTokenDeleteMany).not.toHaveBeenCalled();
+    expect(logAudit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "FAMILY_GROUP_PARTNER_INVITE_REVOKED" })
     );
   });
 });

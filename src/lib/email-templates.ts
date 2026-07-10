@@ -1694,6 +1694,42 @@ export function groupCreateRejectedTemplate(
   `);
 }
 
+/**
+ * Sent to a partner who has no account yet, inviting them to join a family
+ * group (#1682). The claim link carries a single-use bearer token; the claim
+ * page routes an unregistered recipient through the membership application
+ * first, then lets them accept once their login is active.
+ */
+export function partnerInviteTemplate(params: {
+  inviterName: string;
+  groupName: string;
+  claimUrl: string;
+  expiresAt: Date;
+}): string {
+  return layout(`
+    ${heading("Family Group Invitation")}
+    ${paragraph("<strong>" + escapeHtml(params.inviterName) + "</strong> has invited you to join the family group <strong>" + escapeHtml(params.groupName) + "</strong>.")}
+    ${paragraph("Use the button below to get started. If you don't have a member account yet, you'll be guided through joining first, then you can accept this invitation once your login is active.")}
+    ${button("Accept Invitation", params.claimUrl, { sameOrigin: true })}
+    ${paragraph("This link expires on <strong>" + escapeHtml(formatNZDateTime(params.expiresAt)) + "</strong>.")}
+    ${muted("If you weren't expecting this invitation, you can safely ignore it.")}
+  `);
+}
+
+/** Sent to the newly-registered partner once they claim their invitation. */
+export function partnerInviteClaimedTemplate(
+  firstName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Family Group Joined")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ",")}
+    ${paragraph("You've joined the family group <strong>" + escapeHtml(groupName) + "</strong>.")}
+    ${alertBox("You can now be included when your family makes bookings. Manage your family group from your profile page.", "success")}
+    ${supportContactMuted()}
+  `);
+}
+
 export function membershipCancellationSubmittedTemplate(params: {
   firstName: string;
   participantSummary: string;

@@ -8,8 +8,11 @@ import {
   groupCreateRequestConfirmationTemplate,
   groupCreateApprovedTemplate,
   groupCreateRejectedTemplate,
+  partnerInviteTemplate,
+  partnerInviteClaimedTemplate,
 } from "../email-templates";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
+import { formatNZDateTime } from "../nzst-date";
 import { sendEmail } from "./core";
 
 // ---- Family group emails ----
@@ -147,5 +150,51 @@ export async function sendGroupCreateRejectedEmail(
     html: groupCreateRejectedTemplate(requesterName, groupName, reason),
     templateName: "family-group-create-rejected",
     templateData: { requesterName, groupName, reason: reason ?? "" },
+  });
+}
+
+// ---- Partner-invite token flow for unregistered partners (#1682) ----
+
+export async function sendPartnerInviteEmail(params: {
+  email: string;
+  inviterName: string;
+  groupName: string;
+  token: string;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const claimUrl = `${baseUrl}/family-invite/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `${params.inviterName} invited you to join ${params.groupName} — ${CLUB_BOOKINGS_NAME}`,
+    html: partnerInviteTemplate({
+      inviterName: params.inviterName,
+      groupName: params.groupName,
+      claimUrl,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "partner-invite",
+    templateData: {
+      inviterName: params.inviterName,
+      groupName: params.groupName,
+      token: params.token,
+      claimUrl,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendPartnerInviteClaimedEmail(
+  email: string,
+  firstName: string,
+  groupName: string,
+) {
+  await sendEmail({
+    to: email,
+    subject: `You've joined ${groupName} — ${CLUB_BOOKINGS_NAME}`,
+    html: partnerInviteClaimedTemplate(firstName, groupName),
+    templateName: "partner-invite-claimed",
+    templateData: { firstName, groupName },
   });
 }

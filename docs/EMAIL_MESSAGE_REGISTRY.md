@@ -1247,6 +1247,72 @@ Triggers and frequency:
   separate child-rejection emails.
 - Sent to the requester once per rejection.
 
+### partner-invite
+
+Subject:
+
+```text
+{{inviterName}} invited you to join {{groupName}} — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Family Group Invitation
+
+{{inviterName}} has invited you to join the family group {{groupName}}.
+
+Use the button below to get started. If you don't have a member account yet, you'll be guided through joining first, then you can accept this invitation once your login is active.
+
+Accept Invitation: {{BASE_URL}}/family-invite/{{token}}
+
+This link expires on {{expiresAt}}.
+
+If you weren't expecting this invitation, you can safely ignore it.
+```
+
+Triggers and frequency:
+
+- A group-less member's "create family group" request (#1681) names a partner by
+  email who is **not** a registered member (#1682). A single-use, hash-at-rest
+  bearer token is minted carrying the family group id, invited email, and
+  creator, and this invitation is emailed to that address.
+- Sent once to the invited address when the token is minted. Admins can revoke
+  an outstanding token from the family groups admin page.
+- The claim link routes an unregistered recipient through the normal membership
+  application first; once their login is active they return to the same link to
+  accept. TTL is 30 days (vs the 7-day nomination link) to span the membership
+  process.
+
+### partner-invite-claimed
+
+Subject:
+
+```text
+You've joined {{groupName}} — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Family Group Joined
+
+Hi {{firstName}},
+
+You've joined the family group {{groupName}}.
+
+You can now be included when your family makes bookings. Manage your family group from your profile page.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- The invited partner registers and claims their partner-invite token, which
+  auto-files an already-accepted `ADULT_INVITE` into the (approved) family group.
+- Sent once to the newly-registered partner per successful claim. The inviter is
+  notified separately via the existing `family-group-invite-accepted` template.
+
 ### membership-cancellation-submitted
 
 Subject:

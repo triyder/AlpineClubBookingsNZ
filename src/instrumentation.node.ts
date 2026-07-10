@@ -557,6 +557,9 @@ export async function register() {
         const { pruneCronRuns } = await import("./lib/cron-job-run");
         const { pruneWebhookLogs } = await import("./lib/webhook-log");
         const { runAuditLogRetentionJob } = await import("./lib/audit-retention");
+        const { expireStalePartnerInviteTokens } = await import(
+          "./lib/partner-invite-token"
+        );
         await pruneCronRuns();
         await pruneWebhookLogs();
         const auditRetention = await runAuditLogRetentionJob();
@@ -573,6 +576,8 @@ export async function register() {
         await prisma.passwordResetToken.deleteMany({
           where: { expiresAt: { lt: new Date() } },
         });
+        // Expired partner-invite tokens (#1682): idempotent hard-delete sweep.
+        await expireStalePartnerInviteTokens();
         logger.info({ job: "data-pruning" }, "Data pruning complete");
         await recordCronRun("data-pruning", startedAt, "SUCCESS", {
           auditRetention: {

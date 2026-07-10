@@ -38,6 +38,7 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "two-factor-code",
   "age-up-invitation",
   "nomination-request",
+  "partner-invite",
   "membership-application-approved",
   "membership-cancellation-confirmation",
   "hut-leader-assignment",

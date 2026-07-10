@@ -1161,6 +1161,23 @@ auto-files any partner `ADULT_INVITE`) or the legacy target-anchored join flow.
 A `CHILD_REQUEST` targeting a group with zero memberships must not be
 approvable (422) until that group's creation request is approved.
 
+When a `GROUP_CREATE` request names a partner by an email that matches no
+registered member, that partner is invited with a single-use, hash-at-rest
+`PartnerInviteToken` (#1682) instead of an `invitedMemberId`, modelled on
+`NominationToken` (sha256 hash at rest, single use via `confirmedAt`, expiry,
+reminder fields). The token carries `familyGroupId`, `invitedEmail`, and
+`createdById`. The invitee registers through the normal membership process and
+then claims the token, which files an already-accepted `ADULT_INVITE` into the
+group — but only once the group is membered (approved); a claim against a
+still-memberless group is refused. The claim is only honoured for a signed-in
+member whose own email matches `invitedEmail`, so a forwarded link cannot join
+a stranger's group. The create-group route returns the same success response
+whether the partner email is a registered member or not, so it cannot be used
+to probe membership. Outstanding tokens are visible and revocable to admins,
+and an idempotent daily cron sweep hard-deletes expired tokens (TTL 30 days,
+longer than the 7-day nomination TTL because the invitee must complete the
+membership process first).
+
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do
 not remain permanently blocked by stale action links.

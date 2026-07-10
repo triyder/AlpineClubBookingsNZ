@@ -144,6 +144,8 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "email-change-verification": ["newEmail", "token"],
   "email-change-notification": ["newEmail"],
   "nomination-request": ["applicantName", "token"],
+  "partner-invite": ["inviterName", "token"],
+  "partner-invite-claimed": ["firstName", "groupName"],
   "membership-application-approved": ["token"],
   "membership-cancellation-confirmation": [
     "participantName",
@@ -240,6 +242,14 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "family-group-create-rejected": {
     triggerSummary: "Family group creation request rejected by admin",
     frequency: "Per group creation rejection",
+  },
+  "partner-invite": {
+    triggerSummary: "Partner without an account invited to a family group",
+    frequency: "Per partner invitation minted",
+  },
+  "partner-invite-claimed": {
+    triggerSummary: "Invited partner registered and claimed their invitation",
+    frequency: "Per partner invitation claimed",
   },
   "membership-cancellation-submitted": {
     triggerSummary: "Membership cancellation request submitted",

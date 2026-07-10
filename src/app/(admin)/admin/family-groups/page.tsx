@@ -17,11 +17,23 @@ import {
   type MemberOption,
 } from "@/lib/admin-family-group-ui-helpers";
 
+type PartnerInvite = {
+  id: string;
+  invitedEmail: string;
+  expiresAt: string;
+  createdAt: string;
+  familyGroupId: string;
+  familyGroupName: string | null;
+  createdBy: { id: string; name: string } | null;
+};
+
 export default function FamilyGroupsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [groups, setGroups] = useState<FamilyGroupSummary[]>([]);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
+  const [partnerInvites, setPartnerInvites] = useState<PartnerInvite[]>([]);
+  const [partnerInviteError, setPartnerInviteError] = useState("");
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<FamilyGroupSummary | null>(null);
@@ -41,9 +53,10 @@ export default function FamilyGroupsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [groupsRes, requestsRes] = await Promise.all([
+      const [groupsRes, requestsRes, partnerInvitesRes] = await Promise.all([
         fetch("/api/admin/family-groups"),
         fetch("/api/admin/family-groups/requests"),
+        fetch("/api/admin/family-groups/partner-invites"),
       ]);
       let fetchedGroups: FamilyGroupSummary[] = [];
 
@@ -56,6 +69,10 @@ export default function FamilyGroupsPage() {
         const data = await requestsRes.json();
         const fetchedRequests = data.requests as FamilyGroupRequest[];
         setRequests(fetchedRequests);
+      }
+      if (partnerInvitesRes.ok) {
+        const data = await partnerInvitesRes.json();
+        setPartnerInvites((data.invites ?? []) as PartnerInvite[]);
       }
       return fetchedGroups;
     } finally {
@@ -257,6 +274,35 @@ export default function FamilyGroupsPage() {
     }
   }
 
+  async function handleRevokePartnerInvite(invite: PartnerInvite) {
+    if (
+      !confirm(
+        `Revoke the outstanding invitation to ${invite.invitedEmail}? The link they were sent will stop working.`
+      )
+    )
+      return;
+    setPartnerInviteError("");
+    try {
+      const res = await fetch(
+        `/api/admin/family-groups/partner-invites?id=${encodeURIComponent(invite.id)}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        fetchData();
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setPartnerInviteError(
+        data.error ||
+          `Could not revoke the invitation to ${invite.invitedEmail}. It may have just been claimed or already revoked.`
+      );
+    } catch {
+      setPartnerInviteError(
+        `Could not revoke the invitation to ${invite.invitedEmail}. Please try again.`
+      );
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -363,6 +409,79 @@ export default function FamilyGroupsPage() {
               showSearchGuidance
               createMemberNoun="member"
             />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Badge className="bg-amber-100 text-amber-800 border-amber-200">
+              {partnerInvites.length}
+            </Badge>
+            Outstanding Partner Invitations
+          </CardTitle>
+          <p className="text-sm text-slate-500">
+            Email invitations to partners who do not have an account yet. They
+            join through the membership process, then accept the invite. Revoke
+            one to disable its link.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {partnerInviteError && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {partnerInviteError}
+            </div>
+          )}
+          {loading ? (
+            <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+              Loading outstanding partner invitations...
+            </div>
+          ) : partnerInvites.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+              No outstanding partner invitations.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50">
+                    <th className="text-left px-4 py-2 font-medium text-slate-600">Invited email</th>
+                    <th className="text-left px-4 py-2 font-medium text-slate-600">Group</th>
+                    <th className="text-left px-4 py-2 font-medium text-slate-600">Invited by</th>
+                    <th className="text-left px-4 py-2 font-medium text-slate-600">Expires</th>
+                    <th className="text-right px-4 py-2 font-medium text-slate-600">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {partnerInvites.map((invite) => (
+                    <tr key={invite.id} className="border-b hover:bg-slate-50">
+                      <td className="px-4 py-2 font-medium">{invite.invitedEmail}</td>
+                      <td className="px-4 py-2">
+                        {invite.familyGroupName || "Unnamed Group"}
+                      </td>
+                      <td className="px-4 py-2 text-slate-500">
+                        {invite.createdBy?.name || "Unknown"}
+                      </td>
+                      <td className="px-4 py-2 text-slate-500">
+                        {new Date(invite.expiresAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRevokePartnerInvite(invite)}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Revoke
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>

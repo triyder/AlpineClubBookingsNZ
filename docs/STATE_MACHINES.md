@@ -666,6 +666,21 @@ token expired/invalid/wrong user/replaced -> safe error and retry/admin path
 To verify: token fields, expiry, reminder counters, ownership checks, replaced
 token rejection, and duplicate nomination prevention.
 
+## Partner Invite Token Lifecycle (unregistered partner)
+
+```text
+create-group names an unregistered partner email -> single-use PartnerInviteToken minted (hashed at rest) + invite email
+invitee opens claim link, not signed in -> routed to /join/apply (normal membership process), then back to the link
+invitee signed in with a different email -> refused (invitation was sent to invitedEmail)
+GROUP_CREATE not yet approved (group memberless) -> claim refused (group not available yet)
+invitee signed in with the invited email, group approved -> ADULT_INVITE filed + accepted, token confirmedAt set (single use)
+token expired -> claim refused; daily cron sweep hard-deletes expired rows
+admin revokes -> token hard-deleted, claim link stops working
+```
+
+To verify: hash-at-rest, single-use `confirmedAt` guard, email-match ownership
+check, memberless-group refusal, expiry sweep idempotency, and admin revocation.
+
 ## Lodge Induction Lifecycle
 
 Known induction statuses: `DRAFT`, `IN_PROGRESS`, `COMPLETED`, `VOIDED`.
@@ -711,6 +726,7 @@ group/archive behavior, and email visibility.
 family group created -> dependents/adults linked
 adult invitation/request -> pending -> accepted/rejected
 member creates group -> memberless FamilyGroup + PENDING GROUP_CREATE (+ bundled child requests) -> admin approve (ADMIN membership created, partner ADULT_INVITE auto-filed) | reject (bundle cascade-rejected, group stays inert)
+create-group names an unregistered partner email -> single-use PartnerInviteToken minted + emailed (see Partner Invite Token Lifecycle) instead of an invitedMemberId
 dependent inherits email or has explicit email inheritance source
 family removal/cancellation/delete -> relationship cleanup while preserving history
 ```

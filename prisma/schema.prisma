@@ -511,6 +511,7 @@ model Member {
   familyGroupInvitations                     FamilyGroupJoinRequest[]                   @relation("FamilyGroupInvitedMember")
   familyGroupLinkedRequests                  FamilyGroupJoinRequest[]                   @relation("FamilyGroupLinkedMember")
   familyGroupSubjectRequests                 FamilyGroupJoinRequest[]                   @relation("FamilyGroupSubjectMember")
+  partnerInviteTokensCreated                 PartnerInviteToken[]                       @relation("PartnerInviteTokenCreatedBy")
   deletionRequests                           DeletionRequest[]
   credits                                    MemberCredit[]
   requestedCreditAdjustments                 MemberCredit[]                             @relation("RequestedAdminCredits")
@@ -743,6 +744,34 @@ model NominationToken {
   @@index([tokenHash])
   @@index([expiresAt])
   @@index([confirmedAt, expiresAt])
+}
+
+// Single-use, hash-at-rest bearer token that invites a partner who has no
+// account yet to join a family group by email (#1682). Modelled on
+// NominationToken: only the sha256 hash of the raw token is stored, the raw
+// token travels once in the invite email, and the row is single-use via
+// confirmedAt. The invitee registers through the normal membership process and
+// then claims this token to be auto-filed/accepted as an ADULT_INVITE into the
+// (approved) family group.
+model PartnerInviteToken {
+  id            String    @id @default(cuid())
+  tokenHash     String    @unique
+  familyGroupId String
+  invitedEmail  String
+  createdById   String
+  expiresAt     DateTime
+  confirmedAt   DateTime?
+  reminderCount Int       @default(0)
+  lastSentAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  createdBy   Member      @relation("PartnerInviteTokenCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([familyGroupId])
+  @@index([createdById])
+  @@index([expiresAt])
+  @@index([invitedEmail])
 }
 
 // ---------------------------------------------------------------------------
@@ -3190,6 +3219,7 @@ model FamilyGroup {
   legacyMembers Member[]                 @relation("FamilyGroupLegacy")
   memberships   FamilyGroupMember[]
   joinRequests  FamilyGroupJoinRequest[]
+  partnerInviteTokens PartnerInviteToken[]
 }
 
 model FamilyGroupMember {

@@ -107,6 +107,56 @@ describe("Family group email templates", () => {
     expect(html).toContain("not approved");
     expect(html).not.toContain("Admin note:");
   });
+
+  it("partnerInviteTemplate includes inviter, group, claim URL, and expiry", async () => {
+    const { partnerInviteTemplate } = await import("../email-templates");
+    const expiresAt = new Date("2026-08-10T00:00:00.000Z");
+    // Same-origin claim link (the sameOrigin button sanitiser drops foreign
+    // origins, matching the membership-cancellation token template).
+    const html = partnerInviteTemplate({
+      inviterName: "Jane Doe",
+      groupName: "Doe Family",
+      claimUrl: "http://localhost:3000/family-invite/abc123",
+      expiresAt,
+    });
+
+    expect(html).toContain("Jane Doe");
+    expect(html).toContain("Doe Family");
+    expect(html).toContain("family-invite/abc123");
+    expect(html).toContain("Accept Invitation");
+    expect(html).toContain("expires on");
+  });
+
+  it("partnerInviteTemplate escapes HTML in user-controlled inviter and group names", async () => {
+    const { partnerInviteTemplate } = await import("../email-templates");
+    const html = partnerInviteTemplate({
+      inviterName: "<b>Evil</b>",
+      groupName: "<script>alert(1)</script>",
+      claimUrl: "http://localhost:3000/family-invite/abc123",
+      expiresAt: new Date("2026-08-10T00:00:00.000Z"),
+    });
+
+    expect(html).not.toContain("<b>Evil</b>");
+    expect(html).toContain("&lt;b&gt;Evil&lt;/b&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+  });
+
+  it("partnerInviteClaimedTemplate includes first name and group name", async () => {
+    const { partnerInviteClaimedTemplate } = await import("../email-templates");
+    const html = partnerInviteClaimedTemplate("Bob", "Smith Family");
+
+    expect(html).toContain("Bob");
+    expect(html).toContain("Smith Family");
+    expect(html).toContain("Family Group Joined");
+  });
+
+  it("partnerInviteClaimedTemplate escapes HTML in group name", async () => {
+    const { partnerInviteClaimedTemplate } = await import("../email-templates");
+    const html = partnerInviteClaimedTemplate("Bob", "<script>alert(1)</script>");
+
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
 });
 
 // ── Route integration tests ──────────────────────────────────────────────

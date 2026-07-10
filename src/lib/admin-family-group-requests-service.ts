@@ -1194,8 +1194,12 @@ async function reviewGroupCreateRequest(params: {
   // Reject: cascade-reject the bundled pending child requests and keep the
   // memberless FamilyGroup row (deleting it would cascade-delete the request
   // history; a memberless group is inert, matching the request-join leftover
-  // precedent).
+  // precedent). Any outstanding partner-invite token for this group (an
+  // unregistered-partner invite, #1682) is revoked in the same transaction so a
+  // rejected group cannot still be joined for the token's 30-day lifetime; a
+  // claimed token (confirmedAt set) is left untouched.
   let cascadeRejectedChildRequestIds: string[] = [];
+  let revokedPartnerInviteTokens: Array<{ id: string; invitedEmail: string }> = [];
   await prisma.$transaction(async (tx) => {
     await tx.familyGroupJoinRequest.update({
       where: { id: requestId },
@@ -1228,7 +1232,41 @@ async function reviewGroupCreateRequest(params: {
         },
       });
     }
+
+    const outstandingTokens = await tx.partnerInviteToken.findMany({
+      where: { familyGroupId: request.familyGroupId, confirmedAt: null },
+      select: { id: true, invitedEmail: true },
+    });
+    revokedPartnerInviteTokens = outstandingTokens;
+    if (outstandingTokens.length > 0) {
+      await tx.partnerInviteToken.deleteMany({
+        where: { familyGroupId: request.familyGroupId, confirmedAt: null },
+      });
+    }
   });
+
+  for (const revoked of revokedPartnerInviteTokens) {
+    logAudit({
+      action: "FAMILY_GROUP_PARTNER_INVITE_REVOKED",
+      memberId: adminMemberId,
+      targetId: request.familyGroupId,
+      entityType: "PartnerInviteToken",
+      entityId: revoked.id,
+      category: "family",
+      outcome: "success",
+      summary: "Partner invitation revoked",
+      details: JSON.stringify({
+        familyGroupId: request.familyGroupId,
+        invitedEmail: revoked.invitedEmail,
+        cause: "group_create_rejected",
+      }),
+      metadata: {
+        familyGroupId: request.familyGroupId,
+        invitedEmail: revoked.invitedEmail,
+        cause: "group_create_rejected",
+      },
+    });
+  }
 
   logAudit({
     action: "FAMILY_GROUP_CREATE_REJECTED",
@@ -1246,12 +1284,14 @@ async function reviewGroupCreateRequest(params: {
       requestType: "GROUP_CREATE",
       rejectionReason: rejectionReason || undefined,
       cascadeRejectedChildRequestIds,
+      revokedPartnerInviteTokenIds: revokedPartnerInviteTokens.map((t) => t.id),
     }),
     metadata: {
       familyGroupId: request.familyGroupId,
       requestType: "GROUP_CREATE",
       rejectionReason: rejectionReason || null,
       cascadeRejectedChildRequestIds,
+      revokedPartnerInviteTokenIds: revokedPartnerInviteTokens.map((t) => t.id),
     },
   });
 

@@ -980,7 +980,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   placeholder="member@example.com"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  They must already be a registered member — unregistered partners will be supported later. They will be invited once your group is approved.
+                  A registered member is invited once your group is approved. If they are not a member yet, we&apos;ll email them a link to join and be added to your group.
                 </p>
               </div>
               <div className="space-y-2">

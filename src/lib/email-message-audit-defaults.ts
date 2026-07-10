@@ -142,6 +142,14 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Family group request update — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Family Group Request Update\n\nHi {{requesterName}},\n\nYour request to create the family group {{groupName}} was not approved.\n\nAdmin note: {{reason}} [only when reason exists]\n\nIf you have questions, please contact the club.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "partner-invite": {
+    "defaultSubject": "{{inviterName}} invited you to join {{groupName}} — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Family Group Invitation\n\n{{inviterName}} has invited you to join the family group {{groupName}}.\n\nUse the button below to get started. If you don't have a member account yet, you'll be guided through joining first, then you can accept this invitation once your login is active.\n\nAccept Invitation: {{BASE_URL}}/family-invite/{{token}}\n\nThis link expires on {{expiresAt}}.\n\nIf you weren't expecting this invitation, you can safely ignore it."
+  },
+  "partner-invite-claimed": {
+    "defaultSubject": "You've joined {{groupName}} — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Family Group Joined\n\nHi {{firstName}},\n\nYou've joined the family group {{groupName}}.\n\nYou can now be included when your family makes bookings. Manage your family group from your profile page.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
   "membership-cancellation-submitted": {
     "defaultSubject": "Membership cancellation request submitted — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Membership Cancellation Request Submitted\n\nHi {{firstName}},\n\nYour membership cancellation request has been submitted for admin review.\n\nIncluded memberships: {{participantSummary}}\n\nReason: {{reason}} [only when reason exists]\n\nMemberships remain active until an administrator approves the request. Any included login-capable adult must confirm before an administrator can process their cancellation.\n\nView Request: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
