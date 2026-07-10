@@ -40,6 +40,10 @@ import {
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
+import {
+  buildUnpaidFinishedStaysHref,
+  buildUnpaidFinishedStaysWhere,
+} from "@/lib/unpaid-finished-stays";
 
 async function getStats() {
   const today = getTodayDateOnly();
@@ -95,15 +99,11 @@ async function getStats() {
       },
     }),
     // Unpaid finished stays (#1709): PAYMENT_PENDING with check-out on or
-    // before NZ today — the stay is over but payment is still owing.
-    // Retroactive card creates (#1704) match from the moment of creation;
-    // organic bookings that cross check-out unpaid surface here too.
+    // before NZ today — the stay is over but payment is still owing. The
+    // predicate is shared with the sidebar Needs Attention badge (#1731) via
+    // src/lib/unpaid-finished-stays.ts so the two surfaces can never drift.
     prisma.booking.count({
-      where: {
-        deletedAt: null,
-        status: "PAYMENT_PENDING",
-        checkOut: { lte: today },
-      },
+      where: buildUnpaidFinishedStaysWhere(today),
     }),
     prisma.booking.findMany({
       where: { deletedAt: null },
@@ -267,9 +267,7 @@ export default async function AdminDashboardPage() {
       {/* Unpaid finished stays (#1709): a stay that already ended but is
           still PAYMENT_PENDING — flagged so it cannot silently linger. */}
       {stats.unpaidFinishedStays > 0 && (
-        <Link
-          href={`/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${stats.todayKey}`}
-        >
+        <Link href={buildUnpaidFinishedStaysHref(stats.todayKey)}>
           <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
             <CardContent className="flex items-start gap-3 pt-5">
               <DollarSign className="h-5 w-5 text-amber-700 flex-shrink-0 mt-0.5" />

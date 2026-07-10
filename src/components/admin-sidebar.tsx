@@ -46,6 +46,7 @@ import {
   Landmark,
   BadgeCheck,
   Building2,
+  DollarSign,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,8 @@ import {
   canViewAdminHrefWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
+import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { buildUnpaidFinishedStaysHref } from "@/lib/unpaid-finished-stays";
 
 interface NavSection {
   label?: string;
@@ -88,6 +91,16 @@ const NEEDS_ATTENTION_LABEL = "Needs Attention";
  */
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
+/**
+ * Deep link for the unpaid-finished-stays queue (#1731), shared with the
+ * dashboard attention card via src/lib/unpaid-finished-stays.ts. Evaluated at
+ * page load — the same moment the badge counts are fetched — so the link's
+ * check-out cutoff and the fetched count describe the same NZ day.
+ */
+const UNPAID_FINISHED_STAYS_HREF = buildUnpaidFinishedStaysHref(
+  formatDateOnly(getTodayDateOnly()),
+);
+
 const navSections: NavSection[] = [
   {
     items: [
@@ -100,14 +113,20 @@ const navSections: NavSection[] = [
   },
   {
     // Queue-driven alerts. Every item here is also reachable from its natural
-    // section below; these are duplicate links that surface only while their
-    // queue has something pending (see the filtering in SidebarLinks).
+    // section below (Unpaid Finished Stays as a pre-filtered Bookings view);
+    // these are duplicate links that surface only while their queue has
+    // something pending (see the filtering in SidebarLinks).
     label: NEEDS_ATTENTION_LABEL,
     items: [
       {
         href: "/admin/booking-requests",
         label: "Booking Requests",
         icon: ClipboardList,
+      },
+      {
+        href: UNPAID_FINISHED_STAYS_HREF,
+        label: "Unpaid Finished Stays",
+        icon: DollarSign,
       },
       {
         href: "/admin/member-applications",
@@ -364,6 +383,7 @@ const ZERO_PENDING_COUNTS: AdminPendingCounts = {
   bookingReviews: 0,
   bookingChangeRequests: 0,
   publicBookingRequests: 0,
+  unpaidFinishedStays: 0,
   membershipCancellations: 0,
   archiveRequests: 0,
   deletionRequests: 0,
@@ -462,6 +482,9 @@ function SidebarLinks({
     counts.publicBookingRequests;
   if (bookingRequestCount > 0) {
     badges["/admin/booking-requests"] = bookingRequestCount;
+  }
+  if (counts.unpaidFinishedStays > 0) {
+    badges[UNPAID_FINISHED_STAYS_HREF] = counts.unpaidFinishedStays;
   }
   if (counts.refundAppeals + counts.creditApprovals > 0) {
     badges["/admin/refund-requests"] =
