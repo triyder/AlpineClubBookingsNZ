@@ -66,6 +66,10 @@ interface AccessInfo {
   // data routes 403, so render a fix-the-assignment message instead.
   misconfigured?: boolean;
   error?: string;
+  // Set when a full admin is previewing this kiosk as a specific account
+  // (issue #23): the client shows a PREVIEW banner and forces read-only.
+  preview?: boolean;
+  previewAccountEmail?: string;
 }
 
 type KioskView = "week" | "day";
@@ -102,6 +106,25 @@ export default function KioskPage() {
   const hutLeaderLower = hutLeaderLabel.toLowerCase();
   const hutLeaderSentence =
     hutLeaderLower.charAt(0).toUpperCase() + hutLeaderLower.slice(1);
+  // Per-account preview (issue #23): a full admin opens this page with
+  // ?previewAccount=<memberId> to see the kiosk exactly as that account would.
+  // Read once from the URL and thread it through every kiosk fetch so the
+  // server resolves tier/lodge as the target account. Read-only end to end.
+  const [previewAccount] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const value = new URLSearchParams(window.location.search).get(
+      "previewAccount"
+    );
+    return value && value.trim().length > 0 ? value : null;
+  });
+  const withPreview = useCallback(
+    (url: string) => {
+      if (!previewAccount) return url;
+      const sep = url.includes("?") ? "&" : "?";
+      return `${url}${sep}previewAccount=${encodeURIComponent(previewAccount)}`;
+    },
+    [previewAccount]
+  );
   const [date, setDate] = useState(() => formatDate(new Date()));
   const [view, setView] = useState<KioskView>("week");
   const [weekStart, setWeekStart] = useState(() =>
@@ -125,13 +148,20 @@ export default function KioskPage() {
 
   // Effective tier (admin can preview other tiers)
   const effectiveTier = viewAs ?? access?.tier ?? "none";
-  const canMarkAttendance = effectiveTier === "admin" || effectiveTier === "hut-leader" || effectiveTier === "lodge";
+  // A per-account preview (issue #23) is read-only: the server rejects every
+  // kiosk write for a preview session, so mirror that in the UI by never
+  // offering write controls, whatever tier is being previewed.
+  const isPreview = access?.preview === true;
+  const canMarkAttendance =
+    !isPreview &&
+    (effectiveTier === "admin" || effectiveTier === "hut-leader" || effectiveTier === "lodge");
   const canCompleteChores = canMarkAttendance;
-  const canManageRoster = effectiveTier === "admin" || effectiveTier === "hut-leader";
+  const canManageRoster =
+    !isPreview && (effectiveTier === "admin" || effectiveTier === "hut-leader");
 
   const fetchData = useCallback(async () => {
     try {
-      const accessRes = await fetch(`/api/lodge/access?date=${date}`);
+      const accessRes = await fetch(withPreview(`/api/lodge/access?date=${date}`));
       if (!accessRes.ok) {
         setAccess(null);
         setWeekDays([]);
@@ -164,7 +194,7 @@ export default function KioskPage() {
       }
 
       if (view === "week") {
-        const weekRes = await fetch(`/api/lodge/week?start=${weekStart}`);
+        const weekRes = await fetch(withPreview(`/api/lodge/week?start=${weekStart}`));
 
         if (!weekRes.ok) {
           setWeekDays([]);
@@ -185,8 +215,8 @@ export default function KioskPage() {
       }
 
       const [guestsRes, rosterRes] = await Promise.all([
-        fetch(`/api/lodge/guests/${date}?scope=lodge-list`),
-        fetch(`/api/lodge/roster/${date}`),
+        fetch(withPreview(`/api/lodge/guests/${date}?scope=lodge-list`)),
+        fetch(withPreview(`/api/lodge/roster/${date}`)),
       ]);
 
       if (!guestsRes.ok || !rosterRes.ok) {
@@ -212,7 +242,7 @@ export default function KioskPage() {
     } finally {
       setLoading(false);
     }
-  }, [date, view, weekStart]);
+  }, [date, view, weekStart, withPreview]);
 
   useEffect(() => {
     setLoading(true);
@@ -488,6 +518,13 @@ export default function KioskPage() {
           : undefined
       }
     >
+      {isPreview && (
+        <div className="mb-4 rounded-xl border border-amber-400 bg-amber-500/90 px-4 py-2 text-center text-sm font-semibold text-black">
+          PREVIEW — {access?.lodgeName ?? "Default lodge"} kiosk
+          {access?.previewAccountEmail ? ` (account ${access.previewAccountEmail})` : ""}
+          {" · read-only, no changes are saved"}
+        </div>
+      )}
       <div className="mb-4 flex justify-end">
         <ThemeSwitcher className="w-full max-w-sm" />
       </div>

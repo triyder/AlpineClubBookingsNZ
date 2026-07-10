@@ -33,6 +33,7 @@ export async function GET(
 
   const authResult = await checkLodgeAuth(dateStr, {
     request: req,
+    allowPreview: true,
   });
   const { error, status } = authResult;
   if (error) {

@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
 
   const authResult = await checkLodgeAuth(dateStr, {
     request: req,
+    allowPreview: true,
   });
   if (authResult.error) {
     return NextResponse.json({ error: authResult.error }, { status: authResult.status! });
@@ -66,6 +67,13 @@ export async function GET(req: NextRequest) {
 
   if ("member" in authResult && authResult.member) {
     const access = await getKioskAccessInfo(authResult.member, date);
+
+    // When a full admin is previewing a specific kiosk account (issue #23),
+    // tell the client so it renders the PREVIEW banner and forces read-only.
+    const preview = "preview" in authResult ? authResult.preview : undefined;
+    const previewFields = preview
+      ? { preview: true as const, previewAccountEmail: preview.targetEmail }
+      : {};
 
     // A kiosk (STAFF) account granted at more than one lodge cannot be scoped
     // to a single property, so every kiosk data route denies it with a 403
@@ -87,6 +95,7 @@ export async function GET(req: NextRequest) {
           canMarkAttendance: false,
           canCompleteChores: false,
           lodgeName: null,
+          ...previewFields,
         });
       }
     }
@@ -94,6 +103,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ...access,
       lodgeName: await kioskLodgeName(authResult),
+      ...previewFields,
     });
   }
 

@@ -11,11 +11,45 @@ import { getActiveLodgePinSessionForRequest } from "./lodge-pin-session";
 import { getDefaultLodgeId } from "./lodges";
 import { AmbiguousKioskLodgeError, getStaffLodgeBinding } from "./lodge-access";
 import { requireActiveSessionUser } from "./session-guards";
-import { hasLodgeAccess } from "@/lib/access-roles";
+import { hasAdminAccess, hasLodgeAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 
 interface CheckLodgeAuthOptions {
   request?: Request;
+  /**
+   * Whether this route may serve an admin's per-account kiosk preview
+   * (`?previewAccount=<memberId>`). Preview is READ-ONLY: only GET routes opt
+   * in. Any route that leaves this false rejects a preview request with a 403
+   * — so every mutation route (and any read route not yet considered) is
+   * default-denied, and the preview flag can never authorise a write (issue #23).
+   */
+  allowPreview?: boolean;
+}
+
+/**
+ * Details of an active kiosk preview: a full admin is viewing the kiosk exactly
+ * as a specific kiosk (LODGE) account would see it. `actorMemberId` is the admin
+ * driving the preview (for any incidental audit); `targetMemberId`/`targetEmail`
+ * identify the previewed kiosk account.
+ */
+export interface KioskPreviewContext {
+  actorMemberId: string;
+  targetMemberId: string;
+  targetEmail: string;
+}
+
+/**
+ * Reads the `previewAccount` query parameter from a kiosk request, if any.
+ * Returns null when there is no request or no parameter.
+ */
+function readPreviewAccountId(request: Request | undefined): string | null {
+  if (!request) return null;
+  try {
+    const value = new URL(request.url).searchParams.get("previewAccount");
+    return value && value.trim().length > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function getLodgeAuthActorMemberId(authResult: {
@@ -85,6 +119,58 @@ export async function checkLodgeAuth(
       tier: "none" as KioskTier,
       error: "Forbidden" as const,
       status: 403 as const,
+    };
+  }
+
+  // Per-account kiosk preview (issue #23): a full admin can view the kiosk
+  // exactly as a specific kiosk account would, so a kiosk can be verified per
+  // lodge before its device is deployed. The parameter is honoured ONLY for a
+  // full admin; a non-admin carrying it falls through to normal kiosk auth.
+  const previewAccountId = readPreviewAccountId(options.request);
+  if (previewAccountId && hasAdminAccess(member)) {
+    // Read-only by construction: only GET routes pass allowPreview, so any
+    // mutation route (or a read route not yet wired) denies preview here.
+    if (!options.allowPreview) {
+      return {
+        session: null,
+        tier: "none" as KioskTier,
+        error: "Kiosk preview is read-only" as const,
+        status: 403 as const,
+      };
+    }
+
+    const target = await prisma.member.findUnique({
+      where: { id: previewAccountId },
+      select: { id: true, email: true, accessRoles: { select: { role: true } } },
+    });
+
+    // Only a genuine kiosk (LODGE) account can be previewed — never an
+    // arbitrary member, which would leak a non-kiosk view.
+    if (!target || !hasLodgeAccess(target)) {
+      return {
+        session: null,
+        tier: "none" as KioskTier,
+        error: "Kiosk account not found" as const,
+        status: 404 as const,
+      };
+    }
+
+    // Resolve tier/lodge as the target account would — getKioskAccessTier gives
+    // "lodge" for a kiosk account, and downstream resolveKioskLodgeId reads
+    // authResult.member (now the target), so its bound/unbound/ambiguous lodge
+    // resolution is exactly the physical kiosk's.
+    const previewTier = await getKioskAccessTier(target, date);
+    return {
+      session,
+      tier: previewTier,
+      error: null,
+      status: null,
+      member: target,
+      preview: {
+        actorMemberId: member.id,
+        targetMemberId: target.id,
+        targetEmail: target.email,
+      } satisfies KioskPreviewContext,
     };
   }
 

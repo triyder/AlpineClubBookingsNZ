@@ -22,7 +22,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const authResult = await checkLodgeAuth(dateStr, { request: req });
+  const authResult = await checkLodgeAuth(dateStr, {
+    request: req,
+    allowPreview: true,
+  });
   if (authResult.error) {
     return NextResponse.json(
       { error: authResult.error },

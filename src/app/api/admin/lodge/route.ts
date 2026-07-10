@@ -10,6 +10,7 @@ import { clubDomainEmail } from "@/config/club-identity";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
 import { isFullAdmin } from "@/lib/access-roles";
+import { getDefaultLodgeId } from "@/lib/lodges";
 
 // Multi-lodge kiosks: each kiosk login binds to its lodge via a single
 // MemberLodgeAccess STAFF grant (getStaffLodgeBinding in lodge-auth.ts);
@@ -183,10 +184,19 @@ export async function GET() {
     canLogin: lodge.canLogin,
   });
 
+  // Name of the lodge an unbound kiosk account falls back to, so the admin UI
+  // can warn which lodge an unbound account would actually serve (issue #23).
+  const defaultLodgeId = await getDefaultLodgeId(prisma);
+  const defaultLodge = await prisma.lodge.findUnique({
+    where: { id: defaultLodgeId },
+    select: { name: true },
+  });
+
   return NextResponse.json({
     // Legacy single-account shape, kept for existing clients.
     lodge: serializeLodge(lodge),
     accounts: accounts.map((account) => serializeKioskAccount(account)),
+    defaultLodgeName: defaultLodge?.name ?? null,
   });
 }
 

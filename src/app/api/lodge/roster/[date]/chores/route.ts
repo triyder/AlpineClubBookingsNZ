@@ -16,7 +16,10 @@ export async function GET(
 ) {
   const { date: dateStr } = await params;
 
-  const authResult = await checkLodgeAuth(dateStr, { request: req });
+  const authResult = await checkLodgeAuth(dateStr, {
+    request: req,
+    allowPreview: true,
+  });
   const { error, status, tier } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });

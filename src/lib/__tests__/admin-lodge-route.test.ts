@@ -20,6 +20,7 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
     },
     lodge: {
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
     },
     $transaction: vi.fn(),
@@ -79,6 +80,9 @@ function stubGetWithGrants(
   ] as never);
   vi.mocked(prisma.memberAccessRole.createMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.memberSubscription.upsert).mockResolvedValue({} as never);
+  // GET resolves the default lodge name for the unbound-account warning (#23).
+  vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "default-lodge" } as never);
+  vi.mocked(prisma.lodge.findUnique).mockResolvedValue({ name: "Default Lodge" } as never);
 }
 
 describe("admin lodge route", () => {
@@ -109,6 +113,8 @@ describe("admin lodge route", () => {
     vi.mocked(prisma.member.create).mockResolvedValue(createdRow as never);
     vi.mocked(prisma.memberAccessRole.createMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.memberSubscription.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.lodge.findFirst).mockResolvedValue({ id: "default-lodge" } as never);
+    vi.mocked(prisma.lodge.findUnique).mockResolvedValue({ name: "Default Lodge" } as never);
 
     const res = await GET();
 
