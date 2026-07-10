@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from "react";
 const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 300;
 
+// Stable identity so the inactive state doesn't churn consumers' memos.
+const NO_RESULTS: never[] = [];
+
 /**
  * Debounced admin member search against GET /api/admin/members — the one
  * implementation of the type-2-chars-wait-300ms-then-fetch pattern the admin
@@ -90,5 +93,12 @@ export function useDebouncedMemberSearch<TMember>(options: {
     };
   }, [active, paramsKey]);
 
-  return { results, searching, error };
+  // Derive the inactive state at render time (the effect's own clear only
+  // lands after paint): clearing the query — e.g. a picker resetting itself
+  // after a selection — must not flash the previous results for a frame.
+  return {
+    results: active ? results : NO_RESULTS,
+    searching: active ? searching : false,
+    error: active ? error : "",
+  };
 }
