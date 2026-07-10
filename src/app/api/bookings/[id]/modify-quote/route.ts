@@ -373,11 +373,12 @@ export async function POST(
     });
   }
   // Xero lock-date guard (#1697): only the recalculate override reaches here
-  // (shift returned above), and its apply path re-dates the booking's Xero
-  // documents at the (possibly unchanged) check-in — so the preview rejects a
-  // locked-period check-in with the same 409 the apply services throw, instead
-  // of showing a quote that apply cannot deliver. Shift previews stay
-  // unguarded: a shift writes no Xero documents.
+  // (shift returned above), and its apply path can queue a check-in-dated
+  // primary-invoice write — so the preview rejects a locked-period check-in
+  // with the same 409 the apply services throw, instead of showing a quote
+  // that apply cannot deliver (and mirrors apply's deliberately conservative
+  // scope; see xero-period-lock-guard). Shift previews stay unguarded: a
+  // shift writes no Xero documents.
   if (adminOverride) {
     try {
       await assertCheckInClearsXeroLockDate(

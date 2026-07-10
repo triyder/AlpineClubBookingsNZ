@@ -1,12 +1,16 @@
 /**
  * Xero period lock-date guard (#1695 create, #1697 admin override modify).
  *
- * A booking's Xero documents (invoice, supplementary invoice, modification
- * credit note) are issue-dated at the booking's check-in
- * (getBookingInvoiceIssueDate), so a write that leaves a booking's check-in on
- * or before the organisation's effective lock date would strand the outbox
- * operation until the period is unlocked. This module rejects such writes up
- * front with an actionable message instead.
+ * A booking's PRIMARY Xero invoice is issue-dated at the booking's check-in
+ * (getBookingInvoiceIssueDate) — on create, and again when a date edit queues
+ * the invoice date/narration update (unpaid bookings) or a zero-dollar
+ * recalculate creates the missing invoice. Such a write into a period locked
+ * in Xero strands the outbox operation until the period is unlocked, so this
+ * module rejects the triggering edit up front with an actionable message.
+ * (Supplementary invoices and modification credit notes are dated at the day
+ * they are raised, not at check-in, so on already-paid bookings a recalculate
+ * writes no check-in-dated document — the guard still fires there, a
+ * deliberately conservative choice recorded on #1697.)
  *
  * Semantics (shared by create and modify):
  * - Only PAST check-ins are guarded — the retroactive paths are the ones that

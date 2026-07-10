@@ -226,12 +226,14 @@ export async function modifyBookingDates({
 
   // Xero lock-date guard (#1697): the override on this route is always the
   // recalculate mode (shift is dispatched to adminShiftBookingDates at the
-  // route), and a recalculate re-dates the booking's Xero documents at the
-  // (possibly unchanged) check-in — so the proposed check-in must clear the
-  // effective lock date, same semantics as the retroactive create (#1695).
-  // Runs before the transaction: the Xero call must stay outside it, and the
-  // pre-read is only advisory (the outbox still fails safely if the lock
-  // dates change mid-flight).
+  // route), and a recalculate can queue a check-in-dated primary-invoice
+  // write (date/narration update on unpaid bookings; create on zero-dollar
+  // ones) — so the proposed check-in must clear the effective lock date, same
+  // semantics as the retroactive create (#1695). Deliberately conservative:
+  // fires even when the settlement would only write today-dated documents
+  // (decision on #1697). Runs before the transaction: the Xero call must stay
+  // outside it, and the pre-read is only advisory (the outbox still fails
+  // safely if the lock dates change mid-flight).
   if (adminOverride) {
     await assertProposedCheckInClearsXeroLockDate(
       prisma,
