@@ -3,8 +3,10 @@ import {
   applyOptimisticAllocationBedMove,
   planAllocationMove,
 } from "@/app/(admin)/admin/bed-allocation/_components/allocation-move";
+import { deriveActiveDragDates } from "@/app/(admin)/admin/bed-allocation/_components/active-drag-dates";
 import type {
   BedOption,
+  BucketGuestGroup,
   DashboardAllocation,
   DashboardPayload,
 } from "@/app/(admin)/admin/bed-allocation/_components/types";
@@ -114,6 +116,76 @@ describe("planAllocationMove", () => {
       firstStayDate: "2026-07-01",
       targetStayDate: "2026-07-02",
     });
+  });
+});
+
+describe("deriveActiveDragDates", () => {
+  it("highlights every visible guest night for a first visible allocation drag", () => {
+    const allocations = [
+      buildAllocation({
+        id: "allocation-2",
+        stayDate: "2026-07-02",
+      }),
+      buildAllocation({
+        id: "allocation-1",
+        stayDate: "2026-07-01",
+      }),
+      buildAllocation({
+        id: "allocation-other",
+        bookingGuestId: "guest-2",
+        stayDate: "2026-07-01",
+      }),
+    ];
+
+    expect(
+      deriveActiveDragDates({
+        activeDrag: { type: "allocation", allocationId: "allocation-1" },
+        visibleAllocations: allocations,
+        bucketGroups: [],
+      }),
+    ).toEqual(["2026-07-01", "2026-07-02"]);
+  });
+
+  it("highlights only the dragged night for a later allocation drag", () => {
+    const allocations = [
+      buildAllocation({
+        id: "allocation-1",
+        stayDate: "2026-07-01",
+      }),
+      buildAllocation({
+        id: "allocation-2",
+        stayDate: "2026-07-02",
+      }),
+    ];
+
+    expect(
+      deriveActiveDragDates({
+        activeDrag: { type: "allocation", allocationId: "allocation-2" },
+        visibleAllocations: allocations,
+        bucketGroups: [],
+      }),
+    ).toEqual(["2026-07-02"]);
+  });
+
+  it("highlights the bucket guest's relevant nights", () => {
+    const bucketGroups: BucketGuestGroup[] = [
+      {
+        bookingGuestId: "guest-1",
+        bookingId: "booking-1",
+        guestName: "Example Guest",
+        guestAgeTier: "ADULT",
+        memberName: "Example Member",
+        stayDates: ["2026-07-03", "2026-07-01", "2026-07-02"],
+      },
+    ];
+
+    expect(
+      deriveActiveDragDates({
+        activeDrag: { type: "bucket-guest", bookingGuestId: "guest-1" },
+        visibleAllocations: [],
+        bucketGroups,
+      }),
+    ).toEqual(["2026-07-01", "2026-07-02", "2026-07-03"]);
   });
 });
 
