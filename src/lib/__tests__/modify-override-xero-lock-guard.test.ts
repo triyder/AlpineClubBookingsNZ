@@ -4,10 +4,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // lock-date guard BEFORE opening their modification transaction (the guard
 // performs a Xero API call, which must never run inside a DB transaction),
 // and only when the admin override is active.
+//
+// #1729 wiring: ordinary (non-override) date edits get the NARROW guard on
+// the same pre-transaction footing — it consults the lock dates only when
+// the edit would actually queue the check-in-dated invoice update (issued
+// Xero invoice + dates changing + payment not settled), with member wording
+// for non-admin actors. The override variant stays mocked (h.assertProposed);
+// the ordinary variant runs for real over mocked module-settings /
+// xero-token-store / xero-organisation so these tests prove the narrow
+// predicate itself, not just a call-through.
 
 const h = vi.hoisted(() => ({
   assertProposed: vi.fn(),
   transaction: vi.fn(),
+  bookingFindUnique: vi.fn(),
+  loadEffectiveModuleFlags: vi.fn(),
+  isXeroConnected: vi.fn(),
+  getXeroLockDates: vi.fn(),
 }));
 
 const TRANSACTION_SENTINEL = new Error("reached-the-transaction");
@@ -15,13 +28,29 @@ const TRANSACTION_SENTINEL = new Error("reached-the-transaction");
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: h.transaction,
-    booking: { findUnique: vi.fn() },
+    booking: { findUnique: h.bookingFindUnique },
   },
 }));
 vi.mock("@/lib/xero-period-lock-guard", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/xero-period-lock-guard")>();
   return { ...actual, assertProposedCheckInClearsXeroLockDate: h.assertProposed };
+});
+// The ordinary-edit guard's lock-date chain (#1729). getEffectiveXeroLockDate
+// stays real, as do the module-settings helpers the services pull in at
+// import time (only the flag loader is stubbed).
+vi.mock("@/lib/module-settings", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/module-settings")>();
+  return { ...actual, loadEffectiveModuleFlags: h.loadEffectiveModuleFlags };
+});
+vi.mock("@/lib/xero-token-store", () => ({
+  isXeroConnected: h.isXeroConnected,
+}));
+vi.mock("@/lib/xero-organisation", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/xero-organisation")>();
+  return { ...actual, getXeroLockDates: h.getXeroLockDates };
 });
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
@@ -30,8 +59,34 @@ vi.mock("@/lib/logger", () => ({
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { modifyBookingDates } from "@/lib/booking-date-modification-service";
 import { XeroPeriodLockedError } from "@/lib/xero-period-lock-guard";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  getTodayDateOnly,
+} from "@/lib/date-only";
 
 const actor = { id: "admin1", role: "ADMIN" as const };
+const memberActor = { id: "m1", role: "USER" as const };
+
+// Relative dates only: the guard compares against the real NZ today.
+const daysAgo = (n: number) => addDaysDateOnly(getTodayDateOnly(), -n);
+
+// Light pre-transaction row (#1729): an unpaid invoiced booking whose past
+// stay sits inside the locked period (lock = daysAgo(10), armed below).
+const guardedLightBooking = (
+  overrides: Partial<{
+    checkIn: Date;
+    checkOut: Date;
+    status: string;
+    payment: { status: string; xeroInvoiceId: string | null } | null;
+  }> = {},
+) => ({
+  checkIn: daysAgo(15),
+  checkOut: daysAgo(12),
+  status: "CONFIRMED",
+  payment: { status: "PENDING", xeroInvoiceId: "inv-1" },
+  ...overrides,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -39,6 +94,15 @@ beforeEach(() => {
   // The transaction body needs a real database; every case here must resolve
   // BEFORE it. Rejecting with a sentinel proves exactly how far a call got.
   h.transaction.mockRejectedValue(TRANSACTION_SENTINEL);
+  h.bookingFindUnique.mockResolvedValue(null);
+  // Lock armed by default for the #1729 cases; the override cases never reach
+  // this chain (their guard is the h.assertProposed mock).
+  h.loadEffectiveModuleFlags.mockResolvedValue({ xeroIntegration: true });
+  h.isXeroConnected.mockResolvedValue(true);
+  h.getXeroLockDates.mockResolvedValue({
+    periodLockDate: daysAgo(10),
+    endOfYearLockDate: null,
+  });
 });
 
 describe("modifyBookingDates (issue #1697)", () => {
@@ -87,7 +151,7 @@ describe("modifyBookingDates (issue #1697)", () => {
     );
   });
 
-  it("never consults the guard for a standard (non-override) date change", async () => {
+  it("never consults the OVERRIDE guard for a standard (non-override) date change", async () => {
     await expect(
       modifyBookingDates({
         bookingId: "b1",
@@ -98,6 +162,123 @@ describe("modifyBookingDates (issue #1697)", () => {
     ).rejects.toThrow(TRANSACTION_SENTINEL);
 
     expect(h.assertProposed).not.toHaveBeenCalled();
+  });
+});
+
+describe("modifyBookingDates ordinary-edit narrow guard (issue #1729)", () => {
+  it("rejects a member date change pre-transaction with the member wording when the narrow predicate holds", async () => {
+    h.bookingFindUnique.mockResolvedValue(guardedLightBooking());
+
+    const error = await modifyBookingDates({
+      bookingId: "b1",
+      actor: memberActor,
+      input: { checkIn: formatDateOnly(daysAgo(20)) },
+      ipAddress: "test",
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(XeroPeriodLockedError);
+    expect((error as XeroPeriodLockedError).message).toBe(
+      "These dates fall in an accounting period that has been locked in Xero. Please contact an administrator to make this change.",
+    );
+    expect(h.transaction).not.toHaveBeenCalled();
+    expect(h.assertProposed).not.toHaveBeenCalled();
+    // The pre-read happened outside the transaction, with the light select.
+    expect(h.bookingFindUnique).toHaveBeenCalledWith({
+      where: { id: "b1" },
+      select: {
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        payment: { select: { status: true, xeroInvoiceId: true } },
+      },
+    });
+  });
+
+  it("gives an admin's ordinary edit the unlock-instructions wording on the same rejection", async () => {
+    h.bookingFindUnique.mockResolvedValue(guardedLightBooking());
+
+    const error = await modifyBookingDates({
+      bookingId: "b1",
+      actor,
+      input: { checkIn: formatDateOnly(daysAgo(20)) },
+      ipAddress: "test",
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(XeroPeriodLockedError);
+    expect((error as XeroPeriodLockedError).message).toContain(
+      "Unlock the period in Xero",
+    );
+  });
+
+  it("guards a member's check-out-only change via the unchanged past check-in", async () => {
+    h.bookingFindUnique.mockResolvedValue(guardedLightBooking());
+
+    await expect(
+      modifyBookingDates({
+        bookingId: "b1",
+        actor: memberActor,
+        input: { checkOut: formatDateOnly(daysAgo(11)) },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(XeroPeriodLockedError);
+    expect(h.transaction).not.toHaveBeenCalled();
+  });
+
+  it("never consults the lock dates on a paid booking (no check-in-dated write would be queued)", async () => {
+    h.bookingFindUnique.mockResolvedValue(
+      guardedLightBooking({
+        payment: { status: "SUCCEEDED", xeroInvoiceId: "inv-1" },
+      }),
+    );
+
+    await expect(
+      modifyBookingDates({
+        bookingId: "b1",
+        actor: memberActor,
+        input: { checkIn: formatDateOnly(daysAgo(20)) },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(TRANSACTION_SENTINEL);
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("never consults the lock dates without an issued Xero invoice", async () => {
+    h.bookingFindUnique.mockResolvedValue(
+      guardedLightBooking({ payment: null }),
+    );
+
+    await expect(
+      modifyBookingDates({
+        bookingId: "b1",
+        actor: memberActor,
+        input: { checkIn: formatDateOnly(daysAgo(20)) },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(TRANSACTION_SENTINEL);
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("never consults the lock dates when the requested dates equal the stored ones", async () => {
+    h.bookingFindUnique.mockResolvedValue(guardedLightBooking());
+
+    await expect(
+      modifyBookingDates({
+        bookingId: "b1",
+        actor: memberActor,
+        input: {
+          checkIn: formatDateOnly(daysAgo(15)),
+          checkOut: formatDateOnly(daysAgo(12)),
+        },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(TRANSACTION_SENTINEL);
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
   });
 });
 
@@ -146,7 +327,7 @@ describe("modifyBookingBatch (issue #1697)", () => {
     expect(h.transaction).not.toHaveBeenCalled();
   });
 
-  it("never consults the guard for a standard (non-override) edit", async () => {
+  it("never consults the OVERRIDE guard for a standard (non-override) edit", async () => {
     await expect(
       modifyBookingBatch({
         bookingId: "b1",
@@ -157,5 +338,61 @@ describe("modifyBookingBatch (issue #1697)", () => {
     ).rejects.toThrow(TRANSACTION_SENTINEL);
 
     expect(h.assertProposed).not.toHaveBeenCalled();
+  });
+});
+
+describe("modifyBookingBatch ordinary-edit narrow guard (issue #1729)", () => {
+  it("rejects a member date-changing edit pre-transaction when the narrow predicate holds", async () => {
+    h.bookingFindUnique.mockResolvedValue(guardedLightBooking());
+
+    const error = await modifyBookingBatch({
+      bookingId: "b1",
+      actor: memberActor,
+      input: { checkOut: formatDateOnly(daysAgo(11)) },
+      ipAddress: "test",
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(XeroPeriodLockedError);
+    expect((error as XeroPeriodLockedError).message).toContain(
+      "contact an administrator",
+    );
+    expect(h.transaction).not.toHaveBeenCalled();
+  });
+
+  it("never reads the booking for an identity-only edit (guest name fixes stay unguarded)", async () => {
+    await expect(
+      modifyBookingBatch({
+        bookingId: "b1",
+        actor: memberActor,
+        input: {
+          guestUpdates: [{ guestId: "g1", firstName: "Ann", lastName: "Doe" }],
+        },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(TRANSACTION_SENTINEL);
+
+    expect(h.bookingFindUnique).not.toHaveBeenCalled();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("never consults the lock dates on a paid booking", async () => {
+    h.bookingFindUnique.mockResolvedValue(
+      guardedLightBooking({
+        payment: { status: "SUCCEEDED", xeroInvoiceId: "inv-1" },
+      }),
+    );
+
+    await expect(
+      modifyBookingBatch({
+        bookingId: "b1",
+        actor: memberActor,
+        input: { checkIn: formatDateOnly(daysAgo(20)) },
+        ipAddress: "test",
+      }),
+    ).rejects.toThrow(TRANSACTION_SENTINEL);
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
   });
 });

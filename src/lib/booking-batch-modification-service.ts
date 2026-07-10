@@ -54,7 +54,10 @@ import logger from "@/lib/logger";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { prisma } from "@/lib/prisma";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { assertProposedCheckInClearsXeroLockDate } from "@/lib/xero-period-lock-guard";
+import {
+  assertProposedCheckInClearsXeroLockDate,
+  assertProposedDateEditClearsXeroLockDate,
+} from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 type ModifiedBooking = Booking & {
@@ -197,14 +200,29 @@ export async function modifyBookingBatch({
     // clear the effective lock date — same semantics as the retroactive
     // create (#1695). Deliberately conservative: it fires on every recalculate
     // override even when the settlement would only write today-dated documents
-    // (decision on #1697). Shift mode writes no Xero documents and is never
-    // guarded. Runs before the transaction: the Xero call must stay outside
-    // it, and the pre-read is only advisory (the outbox still fails safely if
-    // the lock dates change mid-flight).
+    // (decision on #1697, re-affirmed on #1718). Shift mode writes no Xero
+    // documents and is never guarded. Runs before the transaction: the Xero
+    // call must stay outside it, and the pre-read is only advisory (the outbox
+    // still fails safely if the lock dates change mid-flight).
     await assertProposedCheckInClearsXeroLockDate(
       prisma,
       bookingId,
       input.checkIn,
+    );
+  } else {
+    // Ordinary edits (#1729) get the NARROW guard instead, also before the
+    // transaction: it consults the lock dates only when this edit would
+    // actually queue the check-in-dated invoice update (issued Xero invoice +
+    // dates changing + payment not settled — the settlement classifier's own
+    // predicate), with member-appropriate error text for non-admin actors.
+    // Identity-only edits (guest name fixes, no date fields) never trigger
+    // it — the outbox backstop covers that rare strand instead of blocking a
+    // typo fix.
+    await assertProposedDateEditClearsXeroLockDate(
+      prisma,
+      bookingId,
+      { checkIn: input.checkIn, checkOut: input.checkOut },
+      { audience: actor.role === "ADMIN" ? "admin" : "member" },
     );
   }
 

@@ -90,7 +90,8 @@ vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(5),
 }));
 vi.mock("@/lib/change-fee", () => ({ calculateChangeFee: h.calculateChangeFee }));
-// Xero lock-date guard chain (#1697). getEffectiveXeroLockDate stays real.
+// Xero lock-date guard chain (#1697 override, #1729 ordinary edits).
+// getEffectiveXeroLockDate stays real.
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: h.loadModuleFlags,
 }));
@@ -328,5 +329,138 @@ describe("POST /api/bookings/[id]/modify-quote Xero lock-date guard (issue #1697
     expect(res.status).toBe(200);
     expect(h.getXeroLockDates).not.toHaveBeenCalled();
     expect(h.loadModuleFlags).not.toHaveBeenCalled();
+  });
+});
+
+// #1729: the ordinary (non-override) preview applies the NARROW guard — it
+// fires only when apply would queue the check-in-dated invoice update (issued
+// Xero invoice + dates changing + payment not settled), with member wording
+// for non-admin actors — so a member never sees a quote whose apply will
+// reject.
+describe("POST /api/bookings/[id]/modify-quote ordinary-edit Xero lock guard (issue #1729)", () => {
+  const armLock = (lockDate: string) => {
+    h.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
+    h.getXeroLockDates.mockResolvedValue({
+      periodLockDate: D(lockDate),
+      endOfYearLockDate: null,
+    });
+  };
+  // The in-progress PAID booking with an issued, not-yet-settled Xero invoice
+  // — the narrow predicate's target. The booking's own past check-in
+  // (2026-08-14) sits on the armed lock date.
+  const invoicedBooking = (paymentStatus = "PENDING") => ({
+    ...booking(),
+    payment: {
+      status: paymentStatus,
+      xeroInvoiceId: "inv-1",
+      amountCents: 30000,
+      refundedAmountCents: 0,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+    },
+  });
+  const asMember = () => {
+    h.auth.mockResolvedValue({ user: { id: "m1" } });
+    h.authorizationRole.mockReturnValue("USER");
+  };
+  // The in-progress plan prices the extension nights per-night from the
+  // seeded seasons (not the h.priceGuests mock), so the 200-path cases need a
+  // covering rate.
+  const seedAugustRates = () => {
+    h.seasonFindMany.mockResolvedValue([
+      {
+        id: "season-1",
+        startDate: D("2026-06-01"),
+        endDate: D("2026-10-31"),
+        rates: [{ ageTier: "ADULT", isMember: true, pricePerNightCents: 7500 }],
+      },
+    ]);
+  };
+
+  it("rejects a member's check-out extension with the member wording when the stored past check-in is locked", async () => {
+    asMember();
+    armLock("2026-08-14");
+    h.bookingFindUnique.mockResolvedValue(invoicedBooking());
+
+    const res = await POST(req({ checkOut: "2026-08-20" }), { params });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error:
+        "These dates fall in an accounting period that has been locked in Xero. Please contact an administrator to make this change.",
+      code: "XERO_PERIOD_LOCKED",
+      lockDate: "2026-08-14",
+    });
+    // Rejected before pricing: the preview never shows a quote apply cannot deliver.
+    expect(h.priceGuests).not.toHaveBeenCalled();
+  });
+
+  it("gives an admin's plain (non-override) edit the unlock-instructions wording", async () => {
+    armLock("2026-08-14");
+    h.bookingFindUnique.mockResolvedValue(invoicedBooking());
+
+    const res = await POST(req({ checkOut: "2026-08-20" }), { params });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("XERO_PERIOD_LOCKED");
+    expect(body.error).toContain("Unlock the period in Xero");
+  });
+
+  it("fails closed with the member 503 wording when the lock dates cannot be read", async () => {
+    asMember();
+    h.loadModuleFlags.mockResolvedValue({ xeroIntegration: true });
+    h.getXeroLockDates.mockRejectedValue(new Error("xero down"));
+    h.bookingFindUnique.mockResolvedValue(invoicedBooking());
+
+    const res = await POST(req({ checkOut: "2026-08-20" }), { params });
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toMatchObject({
+      error:
+        "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator.",
+      code: "XERO_LOCK_DATE_CHECK_FAILED",
+    });
+  });
+
+  it("never consults the lock dates when the payment is settled (paid bookings quote normally)", async () => {
+    asMember();
+    armLock("2026-08-14");
+    seedAugustRates();
+    h.bookingFindUnique.mockResolvedValue(invoicedBooking("SUCCEEDED"));
+
+    const res = await POST(req({ checkOut: "2026-08-20" }), { params });
+
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+  });
+
+  it("never consults the lock dates without an issued Xero invoice", async () => {
+    asMember();
+    armLock("2026-08-14");
+    seedAugustRates();
+    // The base fixture has payment: null.
+    h.bookingFindUnique.mockResolvedValue(booking());
+
+    const res = await POST(req({ checkOut: "2026-08-20" }), { params });
+
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+  });
+
+  it("never consults the lock dates for an identity-only preview (no date fields)", async () => {
+    asMember();
+    armLock("2026-08-14");
+    h.bookingFindUnique.mockResolvedValue(invoicedBooking());
+
+    const res = await POST(
+      req({
+        guestUpdates: [{ guestId: "g1", firstName: "Ann", lastName: "Doe" }],
+      }),
+      { params },
+    );
+
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
   });
 });

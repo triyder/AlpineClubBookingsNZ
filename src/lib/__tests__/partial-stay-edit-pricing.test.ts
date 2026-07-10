@@ -27,6 +27,12 @@ vi.mock("@/lib/prisma", () => ({
       return Promise.resolve();
     },
     member: { count: mockMemberCount, findUnique: mockMemberFindUnique },
+    booking: {
+      // The ordinary-edit Xero lock-date guard's advisory pre-transaction
+      // read (#1729); null skips the guard (the in-transaction re-read owns
+      // the 404).
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   },

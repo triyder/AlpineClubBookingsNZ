@@ -39,7 +39,11 @@ vi.mock("@/lib/prisma", () => ({
       return Promise.resolve();
     },
     booking: {
-      findUnique: mockFindUnique,
+      // Route-level (outside-transaction) booking read: today only the Xero
+      // lock-date guard's advisory pre-read (#1729). Null skips the guard —
+      // the in-transaction re-read still owns the 404. mockFindUnique stays
+      // the member read these suites program per-test.
+      findUnique: vi.fn().mockResolvedValue(null),
       findMany: mockFindMany,
       update: mockUpdate,
     },

@@ -1,5 +1,6 @@
 /**
- * Xero period lock-date guard (#1695 create, #1697 admin override modify).
+ * Xero period lock-date guard (#1695 create, #1697 admin override modify,
+ * #1729 ordinary date edits).
  *
  * A booking's PRIMARY Xero invoice is issue-dated at the booking's check-in
  * (getBookingInvoiceIssueDate) — on create, and again when a date edit queues
@@ -7,23 +8,42 @@
  * recalculate creates the missing invoice. Such a write into a period locked
  * in Xero strands the outbox operation until the period is unlocked, so this
  * module rejects the triggering edit up front with an actionable message.
- * (Supplementary invoices and modification credit notes are dated at the day
- * they are raised, not at check-in, so on already-paid bookings a recalculate
- * writes no check-in-dated document — the guard still fires there, a
- * deliberately conservative choice recorded on #1697.)
  *
- * Semantics (shared by create and modify):
+ * Two guard scopes, deliberately asymmetric (owner decisions on #1718/#1729):
+ * - The ADMIN OVERRIDE modify paths keep the CONSERVATIVE guard: every
+ *   recalculate override is checked, even when the settlement would only
+ *   write today-dated documents (supplementary invoices and modification
+ *   credit notes are dated at the day they are raised, not at check-in) —
+ *   original decision on #1697, re-affirmed and settled on #1718.
+ * - ORDINARY (non-override) date edits get the NARROW guard (#1729): it fires
+ *   only when the edit would actually queue the check-in-dated invoice
+ *   update — issued Xero invoice, dates changing, payment not settled — via
+ *   the same predicate queueXeroBookingEditSettlement classifies with
+ *   (wouldQueueCheckInDatedInvoiceUpdate). Most member edits are on paid
+ *   bookings; blocking those would be pure false alarm. Identity-only edits
+ *   (guest name fixes) are never guarded — the outbox backstop covers that
+ *   rare strand rather than blocking a typo fix.
+ *
+ * Semantics (shared by create and both modify scopes):
  * - Only PAST check-ins are guarded — the retroactive paths are the ones that
  *   can land documents in a closed period.
  * - Skipped when the Xero module is disabled or Xero is not connected.
  * - Fails closed when the lock dates cannot be read: the caller returns a
  *   retryable 503 rather than silently skipping the guard.
  * - Must be called OUTSIDE any DB transaction (it performs a Xero API call).
+ * - Error text is actor-appropriate (#1729): admins get Xero unlock
+ *   instructions, members get a "contact an administrator" message — same
+ *   codes and statuses for both audiences.
  */
 
 import { ApiError } from "@/lib/api-error";
+// hasIssuedPrimaryXeroInvoice is the same derivation applyPaymentAdjustments
+// feeds queueXeroBookingEditSettlement (#1729): settled-lifecycle status plus
+// a payment row carrying the Xero invoice id.
+import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 // The source domain module, not the @/lib/xero facade (#1208 lint rule).
 import { isXeroConnected } from "@/lib/xero-token-store";
 import {
@@ -31,11 +51,24 @@ import {
   getXeroLockDates,
 } from "@/lib/xero-organisation";
 
+/**
+ * Which actor sees the guard's error text (#1729). "admin" (the default)
+ * keeps the original unlock-instructions messages; "member" swaps in
+ * contact-an-administrator wording a member can act on. Codes and statuses
+ * are identical for both audiences.
+ */
+export type XeroLockGuardAudience = "admin" | "member";
+
 export class XeroPeriodLockedError extends ApiError {
   readonly code = "XERO_PERIOD_LOCKED";
-  constructor(readonly lockDate: string) {
+  constructor(
+    readonly lockDate: string,
+    audience: XeroLockGuardAudience = "admin",
+  ) {
     super(
-      `The check-in date falls on or before the Xero lock date (${lockDate}). Unlock the period in Xero (Settings → Advanced → Financial settings → Lock dates) or choose a later check-in.`,
+      audience === "member"
+        ? "These dates fall in an accounting period that has been locked in Xero. Please contact an administrator to make this change."
+        : `The check-in date falls on or before the Xero lock date (${lockDate}). Unlock the period in Xero (Settings → Advanced → Financial settings → Lock dates) or choose a later check-in.`,
       409,
     );
     this.name = "XeroPeriodLockedError";
@@ -44,8 +77,13 @@ export class XeroPeriodLockedError extends ApiError {
 
 export class XeroLockDateCheckFailedError extends ApiError {
   readonly code = "XERO_LOCK_DATE_CHECK_FAILED";
-  constructor() {
-    super("Could not verify the Xero lock dates. Please try again.", 503);
+  constructor(audience: XeroLockGuardAudience = "admin") {
+    super(
+      audience === "member"
+        ? "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator."
+        : "Could not verify the Xero lock dates. Please try again.",
+      503,
+    );
     this.name = "XeroLockDateCheckFailedError";
   }
 }
@@ -79,11 +117,15 @@ export function getXeroLockGuardErrorResponse(error: unknown): {
  * invalid check-in, module off, not connected, no lock date set).
  *
  * Pass options.xeroIntegrationEnabled when the caller has already loaded the
- * module flags, to avoid a second settings read.
+ * module flags, to avoid a second settings read. options.audience selects the
+ * error wording (#1729); it defaults to the admin unlock-instructions text.
  */
 export async function assertCheckInClearsXeroLockDate(
   checkIn: Date,
-  options?: { xeroIntegrationEnabled?: boolean },
+  options?: {
+    xeroIntegrationEnabled?: boolean;
+    audience?: XeroLockGuardAudience;
+  },
 ): Promise<void> {
   // An unparseable date is the normal validation path's rejection to make.
   if (Number.isNaN(checkIn.getTime())) return;
@@ -98,11 +140,14 @@ export async function assertCheckInClearsXeroLockDate(
   try {
     lockDates = await getXeroLockDates();
   } catch {
-    throw new XeroLockDateCheckFailedError();
+    throw new XeroLockDateCheckFailedError(options?.audience);
   }
   const effectiveLock = getEffectiveXeroLockDate(lockDates);
   if (effectiveLock && checkIn <= effectiveLock) {
-    throw new XeroPeriodLockedError(formatDateOnly(effectiveLock));
+    throw new XeroPeriodLockedError(
+      formatDateOnly(effectiveLock),
+      options?.audience,
+    );
   }
 }
 
@@ -138,4 +183,101 @@ export async function assertProposedCheckInClearsXeroLockDate(
     proposedCheckIn = booking.checkIn;
   }
   await assertCheckInClearsXeroLockDate(proposedCheckIn);
+}
+
+/** The light booking row the ordinary-edit guard (#1729) evaluates. */
+export type XeroLockGuardDateEditBooking = {
+  checkIn: Date;
+  checkOut: Date;
+  status: string;
+  payment: { status: string; xeroInvoiceId: string | null } | null;
+};
+
+/**
+ * Ordinary (non-override) date-edit variant (#1729), for callers that already
+ * hold the booking with its payment. NARROW, unlike the override guard: it
+ * consults the lock dates only when this edit would actually queue the
+ * check-in-dated invoice date/narration update — the booking has an issued
+ * Xero invoice, a requested date differs from the stored one, and the payment
+ * is not settled — via the same wouldQueueCheckInDatedInvoiceUpdate predicate
+ * queueXeroBookingEditSettlement classifies with, so guard and settlement can
+ * never drift. Requests without date fields (identity-only edits) never reach
+ * the lock-date check by construction (no date field ⇒ no date change).
+ *
+ * The check-in asserted is the one the booking would END UP with
+ * (requested ?? stored): a check-out-only edit still re-dates the invoice at
+ * the unchanged past check-in. An unparseable requested date counts as a
+ * change here, but the check-in assertion's NaN skip then leaves the
+ * rejection to the caller's own date validation.
+ */
+export async function assertDateEditClearsXeroLockDate(
+  booking: XeroLockGuardDateEditBooking,
+  requested: { checkIn?: string; checkOut?: string },
+  options?: { audience?: XeroLockGuardAudience },
+): Promise<void> {
+  const requestedCheckIn = requested.checkIn
+    ? parseDateOnly(requested.checkIn)
+    : null;
+  const requestedCheckOut = requested.checkOut
+    ? parseDateOnly(requested.checkOut)
+    : null;
+  const datesChanged =
+    (requestedCheckIn !== null &&
+      requestedCheckIn.getTime() !== booking.checkIn.getTime()) ||
+    (requestedCheckOut !== null &&
+      requestedCheckOut.getTime() !== booking.checkOut.getTime());
+  const wouldQueueCheckInDatedWrite = wouldQueueCheckInDatedInvoiceUpdate({
+    hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(booking),
+    originalPaymentStatus: booking.payment?.status ?? null,
+    datesChanged,
+    // Identity-only edits stay unguarded by owner decision (#1729): the
+    // outbox backstop covers that rare strand rather than blocking a typo fix.
+    guestIdentityChanged: false,
+  });
+  if (!wouldQueueCheckInDatedWrite) return;
+
+  await assertCheckInClearsXeroLockDate(requestedCheckIn ?? booking.checkIn, {
+    audience: options?.audience,
+  });
+}
+
+/**
+ * Ordinary-edit variant of the pre-transaction read (#1729): loads the light
+ * booking row OUTSIDE the modification transaction and delegates to
+ * assertDateEditClearsXeroLockDate. Returns immediately — without even the
+ * read — when the request carries no date fields (identity-only edits are
+ * never guarded), and resolves silently for a missing booking (the
+ * transaction path 404s). As with the override variant, the pre-read is only
+ * advisory: the outbox still fails safely if the lock dates change mid-flight.
+ */
+export async function assertProposedDateEditClearsXeroLockDate(
+  db: {
+    booking: {
+      findUnique(args: {
+        where: { id: string };
+        select: {
+          checkIn: true;
+          checkOut: true;
+          status: true;
+          payment: { select: { status: true; xeroInvoiceId: true } };
+        };
+      }): Promise<XeroLockGuardDateEditBooking | null>;
+    };
+  },
+  bookingId: string,
+  requested: { checkIn?: string; checkOut?: string },
+  options?: { audience?: XeroLockGuardAudience },
+): Promise<void> {
+  if (!requested.checkIn && !requested.checkOut) return;
+  const booking = await db.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      checkIn: true,
+      checkOut: true,
+      status: true,
+      payment: { select: { status: true, xeroInvoiceId: true } },
+    },
+  });
+  if (!booking) return;
+  await assertDateEditClearsXeroLockDate(booking, requested, options);
 }

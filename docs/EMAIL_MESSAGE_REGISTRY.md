@@ -470,6 +470,12 @@ Triggers and frequency:
   `notifyMember: false` in the audit metadata. Member self-cancels always send.
   The Xero invoice email on the Internet Banking path is a payment instruction
   and is always sent regardless of the choice.
+- Three cancellation flows are **deliberately always-notify** — outside the
+  #1705 choice (owner decision 2026-07-10, #1730): joiner emails on a group
+  organiser's group cancel, the admin review-rejection cancel, and
+  deletion-request cleanup cancellations. The recipients are losing bookings
+  they own; a missed email risks a member arriving for a stay that no longer
+  exists.
 
 ### booking-modified
 

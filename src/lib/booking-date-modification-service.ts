@@ -84,7 +84,10 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { assertProposedCheckInClearsXeroLockDate } from "@/lib/xero-period-lock-guard";
+import {
+  assertProposedCheckInClearsXeroLockDate,
+  assertProposedDateEditClearsXeroLockDate,
+} from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getSeasonYear } from "@/lib/utils";
 
@@ -224,21 +227,35 @@ export async function modifyBookingDates({
   const notifyMember =
     actor.role !== "ADMIN" ? true : input.notifyMember !== false;
 
-  // Xero lock-date guard (#1697): the override on this route is always the
-  // recalculate mode (shift is dispatched to adminShiftBookingDates at the
-  // route), and a recalculate can queue a check-in-dated primary-invoice
-  // write (date/narration update on unpaid bookings; create on zero-dollar
-  // ones) — so the proposed check-in must clear the effective lock date, same
-  // semantics as the retroactive create (#1695). Deliberately conservative:
-  // fires even when the settlement would only write today-dated documents
-  // (decision on #1697). Runs before the transaction: the Xero call must stay
-  // outside it, and the pre-read is only advisory (the outbox still fails
+  // Xero lock-date guard: both branches run BEFORE the transaction — the
+  // guard performs a Xero API call, which must stay outside any DB
+  // transaction, and the pre-read is only advisory (the outbox still fails
   // safely if the lock dates change mid-flight).
   if (adminOverride) {
+    // Override path (#1697): the override on this route is always the
+    // recalculate mode (shift is dispatched to adminShiftBookingDates at the
+    // route), and a recalculate can queue a check-in-dated primary-invoice
+    // write (date/narration update on unpaid bookings; create on zero-dollar
+    // ones) — so the proposed check-in must clear the effective lock date,
+    // same semantics as the retroactive create (#1695). Deliberately
+    // conservative: fires even when the settlement would only write
+    // today-dated documents (decision on #1697, re-affirmed on #1718).
     await assertProposedCheckInClearsXeroLockDate(
       prisma,
       bookingId,
       newCheckInStr,
+    );
+  } else {
+    // Ordinary edits (#1729) get the NARROW guard instead: it consults the
+    // lock dates only when this edit would actually queue the check-in-dated
+    // invoice update (issued Xero invoice + dates changing + payment not
+    // settled — the settlement classifier's own predicate), with member-
+    // appropriate error text for non-admin actors.
+    await assertProposedDateEditClearsXeroLockDate(
+      prisma,
+      bookingId,
+      { checkIn: newCheckInStr, checkOut: newCheckOutStr },
+      { audience: actor.role === "ADMIN" ? "admin" : "member" },
     );
   }
 

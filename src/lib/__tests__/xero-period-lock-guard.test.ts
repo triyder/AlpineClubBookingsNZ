@@ -22,7 +22,9 @@ vi.mock("@/lib/xero-organisation", async (importOriginal) => {
 
 import {
   assertCheckInClearsXeroLockDate,
+  assertDateEditClearsXeroLockDate,
   assertProposedCheckInClearsXeroLockDate,
+  assertProposedDateEditClearsXeroLockDate,
   getXeroLockGuardErrorResponse,
   XeroLockDateCheckFailedError,
   XeroPeriodLockedError,
@@ -217,6 +219,215 @@ describe("assertProposedCheckInClearsXeroLockDate", () => {
   });
 });
 
+// #1729: ordinary (non-override) date edits get a NARROW guard that fires
+// only when the edit would actually queue the check-in-dated invoice
+// date/narration update (issued Xero invoice + dates changing + payment not
+// settled — the settlement classifier's shared predicate), with actor-
+// appropriate error text.
+describe("assertDateEditClearsXeroLockDate (issue #1729)", () => {
+  // Unpaid invoiced booking whose past stay sits inside the locked period
+  // (lock = daysAgo(10) from the beforeEach default).
+  const guardedBooking = (
+    overrides: Partial<{
+      checkIn: Date;
+      checkOut: Date;
+      status: string;
+      payment: { status: string; xeroInvoiceId: string | null } | null;
+    }> = {},
+  ) => ({
+    checkIn: daysAgo(15),
+    checkOut: daysAgo(12),
+    status: "CONFIRMED",
+    payment: { status: "PENDING", xeroInvoiceId: "inv-1" },
+    ...overrides,
+  });
+
+  it("rejects a check-in change into the locked period with the member message by default audience 'admin'", async () => {
+    const error = await assertDateEditClearsXeroLockDate(
+      guardedBooking(),
+      { checkIn: formatDateOnly(daysAgo(20)) },
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(XeroPeriodLockedError);
+    // Default audience is admin: unlock instructions.
+    expect((error as XeroPeriodLockedError).message).toContain(
+      "Unlock the period in Xero",
+    );
+  });
+
+  it("uses the member wording for audience 'member' (same code and status)", async () => {
+    const error = await assertDateEditClearsXeroLockDate(
+      guardedBooking(),
+      { checkIn: formatDateOnly(daysAgo(20)) },
+      { audience: "member" },
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(XeroPeriodLockedError);
+    expect((error as XeroPeriodLockedError).message).toBe(
+      "These dates fall in an accounting period that has been locked in Xero. Please contact an administrator to make this change.",
+    );
+    expect((error as XeroPeriodLockedError).code).toBe("XERO_PERIOD_LOCKED");
+    expect((error as XeroPeriodLockedError).status).toBe(409);
+    expect((error as XeroPeriodLockedError).lockDate).toBe(
+      formatDateOnly(daysAgo(10)),
+    );
+  });
+
+  it("guards a check-out-only change via the unchanged past check-in", async () => {
+    await expect(
+      assertDateEditClearsXeroLockDate(
+        guardedBooking(),
+        { checkOut: formatDateOnly(daysAgo(11)) },
+        { audience: "member" },
+      ),
+    ).rejects.toThrow(XeroPeriodLockedError);
+  });
+
+  it("fails closed with the member 503 wording when the lock dates cannot be read", async () => {
+    h.getXeroLockDates.mockRejectedValue(new Error("xero down"));
+
+    const error = await assertDateEditClearsXeroLockDate(
+      guardedBooking(),
+      { checkIn: formatDateOnly(daysAgo(20)) },
+      { audience: "member" },
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(XeroLockDateCheckFailedError);
+    expect((error as XeroLockDateCheckFailedError).message).toBe(
+      "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator.",
+    );
+    expect((error as XeroLockDateCheckFailedError).status).toBe(503);
+  });
+
+  it("never consults the lock dates without a date change (identity-only requests carry no date fields)", async () => {
+    await expect(
+      assertDateEditClearsXeroLockDate(guardedBooking(), {}),
+    ).resolves.toBeUndefined();
+    // Date fields present but identical to the stored dates are no change.
+    await expect(
+      assertDateEditClearsXeroLockDate(guardedBooking(), {
+        checkIn: formatDateOnly(daysAgo(15)),
+        checkOut: formatDateOnly(daysAgo(12)),
+      }),
+    ).resolves.toBeUndefined();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+    expect(h.loadEffectiveModuleFlags).not.toHaveBeenCalled();
+  });
+
+  it("never consults the lock dates when the payment is settled (no check-in-dated write is queued)", async () => {
+    for (const status of ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"]) {
+      await expect(
+        assertDateEditClearsXeroLockDate(
+          guardedBooking({ payment: { status, xeroInvoiceId: "inv-1" } }),
+          { checkIn: formatDateOnly(daysAgo(20)) },
+        ),
+      ).resolves.toBeUndefined();
+    }
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("never consults the lock dates without an issued Xero invoice", async () => {
+    await expect(
+      assertDateEditClearsXeroLockDate(guardedBooking({ payment: null }), {
+        checkIn: formatDateOnly(daysAgo(20)),
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertDateEditClearsXeroLockDate(
+        guardedBooking({ payment: { status: "PENDING", xeroInvoiceId: null } }),
+        { checkIn: formatDateOnly(daysAgo(20)) },
+      ),
+    ).resolves.toBeUndefined();
+    // Settled-lifecycle statuses are part of the issued-invoice derivation.
+    await expect(
+      assertDateEditClearsXeroLockDate(guardedBooking({ status: "PENDING" }), {
+        checkIn: formatDateOnly(daysAgo(20)),
+      }),
+    ).resolves.toBeUndefined();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("passes a guarded edit whose new check-in is in the future (only past check-ins are guarded)", async () => {
+    await expect(
+      assertDateEditClearsXeroLockDate(guardedBooking(), {
+        checkIn: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 3)),
+      }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("assertProposedDateEditClearsXeroLockDate (issue #1729)", () => {
+  const dbWith = (
+    booking: {
+      checkIn: Date;
+      checkOut: Date;
+      status: string;
+      payment: { status: string; xeroInvoiceId: string | null } | null;
+    } | null,
+  ) => ({
+    booking: { findUnique: vi.fn().mockResolvedValue(booking) },
+  });
+  const storedBooking = () => ({
+    checkIn: daysAgo(15),
+    checkOut: daysAgo(12),
+    status: "CONFIRMED" as const,
+    payment: { status: "PENDING", xeroInvoiceId: "inv-1" },
+  });
+
+  it("returns without even the light read when the request has no date fields", async () => {
+    const db = dbWith(storedBooking());
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(db, "b1", {}),
+    ).resolves.toBeUndefined();
+    expect(db.booking.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("reads the light row outside the transaction and rejects a guarded edit", async () => {
+    const db = dbWith(storedBooking());
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(
+        db,
+        "b1",
+        { checkIn: formatDateOnly(daysAgo(20)) },
+        { audience: "member" },
+      ),
+    ).rejects.toThrow(XeroPeriodLockedError);
+    expect(db.booking.findUnique).toHaveBeenCalledWith({
+      where: { id: "b1" },
+      select: {
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        payment: { select: { status: true, xeroInvoiceId: true } },
+      },
+    });
+  });
+
+  it("resolves silently for a missing booking (the transaction path 404s)", async () => {
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(dbWith(null), "b1", {
+        checkIn: formatDateOnly(daysAgo(20)),
+      }),
+    ).resolves.toBeUndefined();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+
+  it("resolves silently for an unparseable requested check-in (validation owns it)", async () => {
+    await expect(
+      assertProposedDateEditClearsXeroLockDate(dbWith(storedBooking()), "b1", {
+        checkIn: "not-a-date",
+      }),
+    ).resolves.toBeUndefined();
+    expect(h.getXeroLockDates).not.toHaveBeenCalled();
+  });
+});
+
 describe("getXeroLockGuardErrorResponse", () => {
   it("maps XeroPeriodLockedError to a 409 body with code and lockDate", () => {
     const lockDate = formatDateOnly(daysAgo(10));
@@ -240,6 +451,33 @@ describe("getXeroLockGuardErrorResponse", () => {
     expect(mapped).toEqual({
       body: {
         error: "Could not verify the Xero lock dates. Please try again.",
+        code: "XERO_LOCK_DATE_CHECK_FAILED",
+      },
+      status: 503,
+    });
+  });
+
+  it("maps the member-audience variants (#1729) with the same codes and statuses", () => {
+    const lockDate = formatDateOnly(daysAgo(10));
+    expect(
+      getXeroLockGuardErrorResponse(
+        new XeroPeriodLockedError(lockDate, "member"),
+      ),
+    ).toEqual({
+      body: {
+        error:
+          "These dates fall in an accounting period that has been locked in Xero. Please contact an administrator to make this change.",
+        code: "XERO_PERIOD_LOCKED",
+        lockDate,
+      },
+      status: 409,
+    });
+    expect(
+      getXeroLockGuardErrorResponse(new XeroLockDateCheckFailedError("member")),
+    ).toEqual({
+      body: {
+        error:
+          "We couldn't confirm this change can be saved right now. Please try again, or contact an administrator.",
         code: "XERO_LOCK_DATE_CHECK_FAILED",
       },
       status: 503,

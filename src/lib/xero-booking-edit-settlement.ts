@@ -1,5 +1,12 @@
 import type { PaymentStatus } from "@prisma/client";
 import logger from "@/lib/logger";
+// The check-in-dated-update condition is shared with the Xero period
+// lock-date guard (#1729) via a dependency-free module so the guard can never
+// drift from this classification.
+import {
+  isPrimaryInvoiceUnsafe,
+  wouldQueueCheckInDatedInvoiceUpdate,
+} from "@/lib/xero-booking-edit-conditions";
 import {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
@@ -9,12 +16,6 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation,
 } from "@/lib/xero-operation-outbox";
-
-const UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES = new Set<string>([
-  "SUCCEEDED",
-  "PARTIALLY_REFUNDED",
-  "REFUNDED",
-]);
 
 type XeroBookingEditFinancialAction =
   | { type: "none"; reason: string }
@@ -72,10 +73,6 @@ export interface QueueXeroBookingEditSettlementInput
   bookingId: string;
   bookingModificationId: string;
   createdByMemberId?: string;
-}
-
-function isPrimaryInvoiceUnsafe(paymentStatus?: PaymentStatus | string | null) {
-  return paymentStatus ? UNSAFE_PRIMARY_INVOICE_PAYMENT_STATUSES.has(paymentStatus) : false;
 }
 
 // test seam
@@ -155,16 +152,18 @@ export function classifyXeroBookingEditSettlement(
       type: "none",
       reason: "No primary invoice date or narration update is required.",
     };
-  } else if (originalInvoiceUnsafe) {
+  } else if (wouldQueueCheckInDatedInvoiceUpdate(input)) {
+    // The shared predicate (#1729) IS this queue decision — the ordinary-edit
+    // lock-date guard consults the same function pre-transaction.
+    primaryInvoiceUpdateAction = {
+      type: "queue",
+      reason: "Queue a safe primary invoice date/narration update.",
+    };
+  } else {
     primaryInvoiceUpdateAction = {
       type: "skip",
       reason:
         "Skipped primary Xero invoice update because the original invoice has local paid, refunded, or partially refunded payment state.",
-    };
-  } else {
-    primaryInvoiceUpdateAction = {
-      type: "queue",
-      reason: "Queue a safe primary invoice date/narration update.",
     };
   }
 

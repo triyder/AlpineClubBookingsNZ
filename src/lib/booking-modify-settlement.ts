@@ -24,6 +24,8 @@ import {
 import {
   getRemainingRefundableCents,
   hasCapturedPayment,
+  hasIssuedPrimaryXeroInvoice,
+  isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import {
   type BookingModificationSettlementMethod,
@@ -55,16 +57,8 @@ export type PaymentAdjustmentResult = {
   policyRetainedAmountCents: number;
 };
 
-const SETTLED_BOOKING_STATUSES = [
-  "PAYMENT_PENDING",
-  "CONFIRMED",
-  "PAID",
-  "COMPLETED",
-] as const;
-
-function isSettledBookingStatus(status: BookingStatus | string) {
-  return (SETTLED_BOOKING_STATUSES as readonly string[]).includes(status);
-}
+// isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
+// period lock-date guard shares the hasIssuedPrimaryXeroInvoice derivation.
 
 export async function calculateModificationSettlementOptions({
   booking,
@@ -171,8 +165,7 @@ export async function applyPaymentAdjustments(
     inSettledStatus && hasCapturedPayment(booking.payment);
   const hasSucceededPayment =
     hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE;
-  const hasIssuedXeroInvoice =
-    inSettledStatus && !!booking.payment?.xeroInvoiceId;
+  const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking);
   const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
 
   const netAmountCents = priceDiffCents + changeFeeCents;

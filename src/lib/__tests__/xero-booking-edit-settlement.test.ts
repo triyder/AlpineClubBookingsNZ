@@ -16,10 +16,51 @@ vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 import {
   classifyXeroBookingEditSettlement,
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
+
+// #1729 drift contract: the ordinary-edit Xero lock-date guard consults
+// wouldQueueCheckInDatedInvoiceUpdate pre-transaction, so the predicate must
+// be true EXACTLY when the classifier queues the check-in-dated primary
+// invoice date/narration update. Sweep the full input space the decision
+// depends on.
+describe("wouldQueueCheckInDatedInvoiceUpdate (issue #1729)", () => {
+  it("agrees with classifyXeroBookingEditSettlement's queue decision across the whole condition space", () => {
+    for (const hasIssuedXeroInvoice of [true, false]) {
+      for (const originalPaymentStatus of [
+        "PENDING",
+        "SUCCEEDED",
+        "PARTIALLY_REFUNDED",
+        "REFUNDED",
+        null,
+        undefined,
+      ]) {
+        for (const datesChanged of [true, false, undefined]) {
+          for (const guestIdentityChanged of [true, false, undefined]) {
+            const input = {
+              hasIssuedXeroInvoice,
+              originalPaymentStatus,
+              datesChanged,
+              guestIdentityChanged,
+            };
+            const queues =
+              classifyXeroBookingEditSettlement({
+                ...input,
+                priceDiffCents: 0,
+              }).primaryInvoiceUpdateAction.type === "queue";
+            expect(
+              wouldQueueCheckInDatedInvoiceUpdate(input),
+              `predicate must match classify for ${JSON.stringify(input)}`,
+            ).toBe(queues);
+          }
+        }
+      }
+    }
+  });
+});
 
 describe("classifyXeroBookingEditSettlement", () => {
   it("waits for confirmed additional Stripe payment before supplementary invoice payment recording", () => {

@@ -64,6 +64,12 @@ vi.mock("@/lib/prisma", () => ({
       if (typeof fn === "function") return (mockTransaction as (cb: unknown) => unknown)(fn);
       return Promise.resolve();
     },
+    booking: {
+      // The ordinary-edit Xero lock-date guard's advisory pre-transaction
+      // read (#1729); null skips the guard (the in-transaction re-read owns
+      // the 404).
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
     payment: {
       update: mockPaymentUpdate,
     },
