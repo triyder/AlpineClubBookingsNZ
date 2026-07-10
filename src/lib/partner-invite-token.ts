@@ -6,8 +6,13 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { normalizeInvitedEmail } from "@/lib/partner-invite-token-policy";
 import {
+  formPartnerLinkOnClaim,
+  type ClaimPartnerLinkOutcome,
+} from "@/lib/member-partner-link";
+import {
   sendFamilyGroupInviteAcceptedEmail,
   sendPartnerInviteClaimedEmail,
+  sendPartnerLinkConfirmedEmail,
 } from "@/lib/email";
 
 type PartnerInviteClaimView =
@@ -17,6 +22,11 @@ type PartnerInviteClaimView =
       invitedEmail: string;
       groupName: string | null;
       familyGroupId: string;
+      // #1742: claiming will also record the partner relationship with the
+      // inviter — the claim page must disclose this before the claimer
+      // consents.
+      createPartnerLink: boolean;
+      inviterName: string | null;
     };
 
 /**
@@ -41,6 +51,7 @@ export async function getPartnerInviteTokenForClaim(
           _count: { select: { memberships: true } },
         },
       },
+      createdBy: { select: { firstName: true, lastName: true } },
     },
   });
 
@@ -48,10 +59,15 @@ export async function getPartnerInviteTokenForClaim(
     return { status: "invalid" };
   }
 
+  const inviterName = token.createdBy
+    ? `${token.createdBy.firstName} ${token.createdBy.lastName}`.trim() || null
+    : null;
   const base = {
     invitedEmail: token.invitedEmail,
     groupName: token.familyGroup.name,
     familyGroupId: token.familyGroupId,
+    createPartnerLink: token.createPartnerLink,
+    inviterName,
   };
 
   if (token.confirmedAt) {
@@ -76,6 +92,9 @@ export type PartnerInviteClaimResult =
       familyGroupId: string;
       groupName: string | null;
       alreadyMember: boolean;
+      // #1742: true when the token was minted with createPartnerLink and the
+      // CONFIRMED MemberPartnerLink between inviter and claimer was formed.
+      partnerLinkFormed: boolean;
     }
   | {
       ok: false;
@@ -104,7 +123,7 @@ export async function claimPartnerInviteToken(params: {
     where: { tokenHash: hashActionToken(params.rawToken) },
     include: {
       familyGroup: { select: { id: true, name: true } },
-      createdBy: { select: { id: true, email: true } },
+      createdBy: { select: { id: true, email: true, firstName: true, lastName: true } },
     },
   });
 
@@ -158,7 +177,11 @@ export async function claimPartnerInviteToken(params: {
   type ClaimOutcome =
     | { outcome: "group_unavailable" }
     | { outcome: "race_lost" }
-    | { outcome: "ok"; alreadyMember: boolean };
+    | {
+        outcome: "ok";
+        alreadyMember: boolean;
+        partnerLink: ClaimPartnerLinkOutcome | null;
+      };
 
   const result = await prisma.$transaction(async (tx): Promise<ClaimOutcome> => {
     // Liveness check inside the transaction so a group that was deleted or
@@ -223,7 +246,21 @@ export async function claimPartnerInviteToken(params: {
       });
     }
 
-    return { outcome: "ok", alreadyMember };
+    // #1742: an opted-in token also forms the CONFIRMED partner link — the
+    // claim itself is the partner's consent. A business conflict (inviter no
+    // longer eligible, either side already has a confirmed partner) skips the
+    // link without failing the family-group join; the outcome is audited below.
+    let partnerLink: ClaimPartnerLinkOutcome | null = null;
+    if (token.createPartnerLink) {
+      partnerLink = await formPartnerLinkOnClaim({
+        tx,
+        inviterMemberId: token.createdById,
+        claimerMemberId: member.id,
+        now,
+      });
+    }
+
+    return { outcome: "ok", alreadyMember, partnerLink };
   });
 
   if (result.outcome === "group_unavailable") {
@@ -241,7 +278,8 @@ export async function claimPartnerInviteToken(params: {
     };
   }
 
-  const { alreadyMember } = result;
+  const { alreadyMember, partnerLink } = result;
+  const partnerLinkFormed = partnerLink?.formed === true;
 
   logAudit({
     action: "FAMILY_GROUP_PARTNER_INVITE_CLAIMED",
@@ -258,14 +296,65 @@ export async function claimPartnerInviteToken(params: {
       invitedEmail: token.invitedEmail,
       createdById: token.createdById,
       alreadyMember,
+      createPartnerLink: token.createPartnerLink,
+      partnerLinkFormed,
+      partnerLinkSkippedReason:
+        partnerLink && !partnerLink.formed ? partnerLink.reason : null,
     }),
     metadata: {
       familyGroupId: token.familyGroupId,
       invitedEmail: token.invitedEmail,
       createdById: token.createdById,
       alreadyMember,
+      partnerLinkFormed,
     },
   });
+
+  if (partnerLink) {
+    if (partnerLink.formed) {
+      logAudit({
+        action: "MEMBER_PARTNER_LINK_CONFIRMED",
+        memberId: member.id,
+        targetId: token.createdById,
+        subjectMemberId: member.id,
+        entityType: "MemberPartnerLink",
+        entityId: partnerLink.linkId,
+        category: "family",
+        outcome: "success",
+        summary: "Partner link confirmed via partner-invite claim",
+        details: JSON.stringify({
+          linkId: partnerLink.linkId,
+          inviterMemberId: token.createdById,
+          claimerMemberId: member.id,
+          viaPartnerInviteTokenId: token.id,
+          promotedPendingRequest: partnerLink.promoted,
+        }),
+        metadata: { linkId: partnerLink.linkId, viaPartnerInviteTokenId: token.id },
+      });
+    } else {
+      logAudit({
+        action: "MEMBER_PARTNER_LINK_CLAIM_SKIPPED",
+        memberId: member.id,
+        targetId: token.createdById,
+        subjectMemberId: member.id,
+        entityType: "PartnerInviteToken",
+        entityId: token.id,
+        category: "family",
+        outcome: "failure",
+        summary: "Partner link requested at mint could not be formed on claim",
+        details: JSON.stringify({
+          reason: partnerLink.reason,
+          inviterMemberId: token.createdById,
+          claimerMemberId: member.id,
+        }),
+        metadata: { reason: partnerLink.reason },
+      });
+      logger.warn(
+        { tokenId: token.id, reason: partnerLink.reason },
+        "Partner link skipped on partner-invite claim"
+      );
+    }
+  }
 
   const inviteeName = `${member.firstName} ${member.lastName}`.trim() || "A member";
   const groupName = token.familyGroup.name ?? "your family group";
@@ -282,6 +371,18 @@ export async function claimPartnerInviteToken(params: {
         "Failed to send partner invite accepted email to inviter"
       );
     });
+
+    if (partnerLinkFormed) {
+      sendPartnerLinkConfirmedEmail(
+        token.createdBy.email.toLowerCase(),
+        inviteeName
+      ).catch((err) => {
+        logger.error(
+          { err, tokenId: token.id },
+          "Failed to send partner link confirmed email to inviter"
+        );
+      });
+    }
   }
 
   // Welcome the newly-registered partner into the group.
@@ -300,6 +401,7 @@ export async function claimPartnerInviteToken(params: {
       memberId: member.id,
       familyGroupId: token.familyGroupId,
       alreadyMember,
+      partnerLinkFormed,
     },
     "Partner invitation claimed"
   );
@@ -309,6 +411,7 @@ export async function claimPartnerInviteToken(params: {
     familyGroupId: token.familyGroupId,
     groupName: token.familyGroup.name,
     alreadyMember,
+    partnerLinkFormed,
   };
 }
 

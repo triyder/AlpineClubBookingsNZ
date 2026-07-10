@@ -1323,6 +1323,94 @@ Triggers and frequency:
 - Sent once to the newly-registered partner per successful claim. The inviter is
   notified separately via the existing `family-group-invite-accepted` template.
 
+### partner-link-request
+
+Subject:
+
+```text
+{{requesterName}} asked to record you as their partner — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Partner Confirmation Request
+
+{{requesterName}} has asked to record you as their partner (husband, wife, or partner).
+
+Confirming records the relationship with the club. You can confirm or decline from your profile page.
+
+Respond to Request: {{BASE_URL}}/profile
+
+If you weren't expecting this request, you can decline it or safely ignore this email.
+```
+
+Triggers and frequency:
+
+- A member declares another registered login adult as their partner (#1742) —
+  from the profile Partner card or by marking the named partner during family
+  group creation. A `PENDING` `MemberPartnerLink` is created and this consent
+  request is emailed to the target.
+- Sent once per partner-link request. No email is sent for the one-step
+  family-admin declaration (the target has no login) or admin assignment
+  (see `partner-link-confirmed`).
+
+### partner-link-confirmed
+
+Subject:
+
+```text
+Your partner relationship with {{partnerName}} has been recorded — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Partner Relationship Recorded
+
+Your partner relationship with {{partnerName}} has been recorded with the club.
+
+You can view or remove this relationship from your profile page.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- A partner-link reaches `CONFIRMED` (#1742): the requested member accepts (the
+  initiator is emailed), an unregistered partner claims a `createPartnerLink`
+  invite token (the inviter is emailed), or an admin assigns the link directly
+  (both members are emailed, once if they share an address).
+- Sent once per confirmation per distinct recipient address.
+
+### partner-link-removed
+
+Subject:
+
+```text
+Your partner relationship with {{partnerName}} has been removed — {{CLUB_BOOKINGS_NAME}}
+```
+
+Body:
+
+```text
+Partner Relationship Removed
+
+Your recorded partner relationship with {{partnerName}} has been removed.
+
+If you weren't expecting this change, please contact the club.
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- A `CONFIRMED` partner link is removed (#1742): one partner dissolves it (the
+  other partner is emailed) or an admin removes it (both members are emailed,
+  once if they share an address). Declining or withdrawing a still-pending
+  request sends no email.
+- Sent once per removal per distinct recipient address.
+
 ### membership-cancellation-submitted
 
 Subject:

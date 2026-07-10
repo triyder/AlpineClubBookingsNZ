@@ -681,6 +681,34 @@ admin revokes -> token hard-deleted, claim link stops working
 To verify: hash-at-rest, single-use `confirmedAt` guard, email-match ownership
 check, memberless-group refusal, expiry sweep idempotency, and admin revocation.
 
+A token minted with `createPartnerLink` (#1742) additionally forms the
+CONFIRMED `MemberPartnerLink` between inviter and claimer inside the claim
+transaction — see Partner Link Lifecycle below. A business conflict skips the
+link (audited) without failing the family-group join.
+
+## Partner Link Lifecycle (declared Partner/Husband/Wife, #1742)
+
+Known statuses: `PENDING`, `CONFIRMED`. Declined, withdrawn, and dissolved
+links are hard-deleted (audit log keeps history), so the pair can re-form.
+
+```text
+member requests partner by email (registered login adult) -> PENDING + email to target
+target confirms from profile -> CONFIRMED (one-confirmed-partner invariant re-checked under advisory lock; other PENDING requests involving either member pruned)
+target declines -> row hard-deleted (no email), initiator may re-request
+initiator withdraws own PENDING -> row hard-deleted
+family-group ADMIN declares a NO-LOGIN adult member of their group -> CONFIRMED in one step (no consent round-trip; "one login manages the family")
+admin assigns directly (admin member-detail card) -> CONFIRMED immediately, assignedByAdminId recorded; an existing PENDING for the pair is promoted
+unregistered partner claims a createPartnerLink invite token -> CONFIRMED inside the claim transaction (claim = consent)
+either CONFIRMED partner removes the link -> row hard-deleted, other partner emailed
+admin removes any link -> row hard-deleted, both partners emailed when it was CONFIRMED
+```
+
+To verify: canonical pair ordering (`memberAId < memberBId` CHECK), the
+one-CONFIRMED-partner-per-member invariant (advisory locks + partial unique
+indexes), ADULT-only + no-self-partner guards, pending pruning on confirm,
+one outstanding outgoing request per member, and the memberId-target
+shared-family-group guard on the member API.
+
 ## Lodge Induction Lifecycle
 
 Known induction statuses: `DRAFT`, `IN_PROGRESS`, `COMPLETED`, `VOIDED`.
@@ -727,6 +755,7 @@ family group created -> dependents/adults linked
 adult invitation/request -> pending -> accepted/rejected
 member creates group -> memberless FamilyGroup + PENDING GROUP_CREATE (+ bundled child requests) -> admin approve (ADMIN membership created, partner ADULT_INVITE auto-filed) | reject (bundle cascade-rejected, group stays inert)
 create-group names an unregistered partner email -> single-use PartnerInviteToken minted + emailed (see Partner Invite Token Lifecycle) instead of an invitedMemberId
+create-group marks the named partner as a declared partner (#1742) -> registered partner gets a PENDING MemberPartnerLink request; unregistered partner's token carries createPartnerLink (see Partner Link Lifecycle)
 dependent inherits email or has explicit email inheritance source
 family removal/cancellation/delete -> relationship cleanup while preserving history
 ```

@@ -10,6 +10,9 @@ import {
   groupCreateRejectedTemplate,
   partnerInviteTemplate,
   partnerInviteClaimedTemplate,
+  partnerLinkRequestTemplate,
+  partnerLinkConfirmedTemplate,
+  partnerLinkRemovedTemplate,
 } from "../email-templates";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatNZDateTime } from "../nzst-date";
@@ -196,5 +199,49 @@ export async function sendPartnerInviteClaimedEmail(
     html: partnerInviteClaimedTemplate(firstName, groupName),
     templateName: "partner-invite-claimed",
     templateData: { firstName, groupName },
+  });
+}
+
+// ---- Partner link (declared Partner/Husband/Wife relationship, #1742) ----
+
+export async function sendPartnerLinkRequestEmail(
+  email: string,
+  requesterName: string,
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const profileUrl = `${baseUrl}/profile`;
+
+  await sendEmail({
+    to: email,
+    subject: `${requesterName} asked to record you as their partner — ${CLUB_BOOKINGS_NAME}`,
+    html: partnerLinkRequestTemplate(requesterName, profileUrl),
+    templateName: "partner-link-request",
+    templateData: { requesterName, profileUrl },
+  });
+}
+
+export async function sendPartnerLinkConfirmedEmail(
+  email: string,
+  partnerName: string,
+) {
+  await sendEmail({
+    to: email,
+    subject: `Your partner relationship with ${partnerName} has been recorded — ${CLUB_BOOKINGS_NAME}`,
+    html: partnerLinkConfirmedTemplate(partnerName),
+    templateName: "partner-link-confirmed",
+    templateData: { partnerName },
+  });
+}
+
+export async function sendPartnerLinkRemovedEmail(
+  email: string,
+  partnerName: string,
+) {
+  await sendEmail({
+    to: email,
+    subject: `Your partner relationship with ${partnerName} has been removed — ${CLUB_BOOKINGS_NAME}`,
+    html: partnerLinkRemovedTemplate(partnerName),
+    templateName: "partner-link-removed",
+    templateData: { partnerName },
   });
 }

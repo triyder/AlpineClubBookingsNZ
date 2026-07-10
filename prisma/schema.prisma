@@ -512,6 +512,11 @@ model Member {
   familyGroupLinkedRequests                  FamilyGroupJoinRequest[]                   @relation("FamilyGroupLinkedMember")
   familyGroupSubjectRequests                 FamilyGroupJoinRequest[]                   @relation("FamilyGroupSubjectMember")
   partnerInviteTokensCreated                 PartnerInviteToken[]                       @relation("PartnerInviteTokenCreatedBy")
+  partnerLinksAsMemberA                      MemberPartnerLink[]                        @relation("PartnerLinkMemberA")
+  partnerLinksAsMemberB                      MemberPartnerLink[]                        @relation("PartnerLinkMemberB")
+  partnerLinksInitiated                      MemberPartnerLink[]                        @relation("PartnerLinkInitiatedBy")
+  partnerLinksConfirmed                      MemberPartnerLink[]                        @relation("PartnerLinkConfirmedBy")
+  partnerLinksAdminAssigned                  MemberPartnerLink[]                        @relation("PartnerLinkAssignedByAdmin")
   deletionRequests                           DeletionRequest[]
   credits                                    MemberCredit[]
   requestedCreditAdjustments                 MemberCredit[]                             @relation("RequestedAdminCredits")
@@ -764,6 +769,10 @@ model PartnerInviteToken {
   reminderCount Int       @default(0)
   lastSentAt    DateTime?
   createdAt     DateTime  @default(now())
+  // Opt-in (#1742): when true, claiming this token also forms a CONFIRMED
+  // MemberPartnerLink between createdBy and the claimer — the claim is the
+  // partner's consent. Never set retroactively; the inviter opts in at mint.
+  createPartnerLink Boolean @default(false)
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   createdBy   Member      @relation("PartnerInviteTokenCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
@@ -3294,6 +3303,49 @@ model FamilyGroupJoinRequest {
   @@index([requestedEmail])
   @@index([status])
   @@index([type])
+}
+
+// Declared Partner/Husband/Wife relationship between two ADULT members
+// (#1742). Symmetric and consent-based: stored as a canonical ordered pair
+// (memberAId < memberBId, DB CHECK constraint — which also blocks
+// self-partnering). Lifecycle is PENDING -> CONFIRMED; a declined, withdrawn,
+// or dissolved link is hard-deleted (history lives in the audit log) so the
+// pair can re-form later without tripping the pair-unique constraint.
+// At most one CONFIRMED partner per member: enforced in the service layer
+// under pg_advisory_xact_lock and backstopped by two raw partial unique
+// indexes (MemberPartnerLink_memberA/B_confirmed_unique — see
+// prisma/partial-unique-indexes.tsv; Prisma cannot express partial indexes).
+// This link is the eligibility signal for double-bed shared occupancy (#1741).
+model MemberPartnerLink {
+  id                  String    @id @default(cuid())
+  memberAId           String
+  memberBId           String
+  status              String    @default("PENDING") // PENDING | CONFIRMED
+  // Member who initiated the request; null when an admin assigned the link
+  // directly. For one-step family-admin creation this is the family admin.
+  initiatedByMemberId String?
+  // Member who consented (accepted the request or claimed the invite token);
+  // null while PENDING and for admin-assigned links.
+  confirmedByMemberId String?
+  // Admin who directly assigned the link (CONFIRMED immediately, no consent
+  // round-trip); null for member-initiated links.
+  assignedByAdminId   String?
+  confirmedAt         DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  memberA         Member  @relation("PartnerLinkMemberA", fields: [memberAId], references: [id], onDelete: Cascade)
+  memberB         Member  @relation("PartnerLinkMemberB", fields: [memberBId], references: [id], onDelete: Cascade)
+  initiatedBy     Member? @relation("PartnerLinkInitiatedBy", fields: [initiatedByMemberId], references: [id], onDelete: SetNull)
+  confirmedBy     Member? @relation("PartnerLinkConfirmedBy", fields: [confirmedByMemberId], references: [id], onDelete: SetNull)
+  assignedByAdmin Member? @relation("PartnerLinkAssignedByAdmin", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+
+  @@unique([memberAId, memberBId])
+  @@index([memberBId])
+  @@index([status])
+  @@index([initiatedByMemberId])
+  @@index([confirmedByMemberId])
+  @@index([assignedByAdminId])
 }
 
 // ---------------------------------------------------------------------------

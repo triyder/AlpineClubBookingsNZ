@@ -17,8 +17,10 @@ recommended reading paths.
 
 ## What It Does
 
-- Member registration, profile management, family/dependent relationships, and
-  membership nomination workflows with reminder and admin recovery paths
+- Member registration, profile management, family/dependent relationships,
+  declared partner relationships (request→confirm consent with admin
+  assignment), and membership nomination workflows with reminder and admin
+  recovery paths
 - Bed-capacity booking flow with date-only New Zealand lodge nights, per-guest
   stay ranges, waitlist, non-member holds, booking changes, cancellation rules,
   refunds, credits, promo codes, Stripe payments, and Xero-backed Internet

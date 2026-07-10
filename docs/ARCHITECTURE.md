@@ -165,10 +165,11 @@ approval, Xero, settings, and status-label flow.
 The source of truth is `prisma/schema.prisma`. Key domains are:
 
 - Members, family groups, hidden family-suggestion member sets, dependent
-  relationships, nominations, membership cancellation requests, setup invites,
-  password/email tokens, two-factor enrollment state, hashed email
-  OTP/recovery-code rows, notification preferences, deletion requests, and
-  audit logs.
+  relationships, declared partner links (consent-based member↔member
+  Partner/Husband/Wife pairs, #1742), nominations, membership cancellation
+  requests, setup invites, password/email tokens, two-factor enrollment state,
+  hashed email OTP/recovery-code rows, notification preferences, deletion
+  requests, and audit logs.
 - Seasons, season rates, booking periods, minimum-stay policies, group
   discounts, age-tier settings, promo codes, fixed-nightly promo adjustments,
   and promo redemptions.

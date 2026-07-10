@@ -1,0 +1,887 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    member: { findUnique: vi.fn(), findFirst: vi.fn() },
+    familyGroupMember: {
+      findFirst: vi.fn(),
+      count: vi.fn(),
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+    },
+    familyGroupJoinRequest: { create: vi.fn() },
+    memberPartnerLink: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    partnerInviteToken: { findUnique: vi.fn(), updateMany: vi.fn() },
+    $transaction: vi.fn(),
+    $executeRaw: vi.fn(),
+  },
+}));
+vi.mock("@/lib/logger", () => ({
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendPartnerLinkRequestEmail: vi.fn().mockResolvedValue(undefined),
+  sendPartnerLinkConfirmedEmail: vi.fn().mockResolvedValue(undefined),
+  sendPartnerLinkRemovedEmail: vi.fn().mockResolvedValue(undefined),
+  sendFamilyGroupInviteAcceptedEmail: vi.fn().mockResolvedValue(undefined),
+  sendPartnerInviteClaimedEmail: vi.fn().mockResolvedValue(undefined),
+}));
+
+import { prisma } from "@/lib/prisma";
+import { logAudit } from "@/lib/audit";
+import {
+  sendPartnerLinkRequestEmail,
+  sendPartnerLinkConfirmedEmail,
+  sendPartnerLinkRemovedEmail,
+} from "@/lib/email";
+import {
+  canonicalPartnerPair,
+  requestPartnerLink,
+  respondToPartnerLink,
+  removeOwnPartnerLink,
+  adminAssignPartnerLink,
+  adminRemovePartnerLink,
+  formPartnerLinkOnClaim,
+  getPartnerLinkState,
+} from "@/lib/member-partner-link";
+import { claimPartnerInviteToken } from "@/lib/partner-invite-token";
+import { issueActionToken } from "@/lib/action-tokens";
+
+const adultA = {
+  id: "member-a",
+  firstName: "Alice",
+  lastName: "Ash",
+  email: "alice@example.nz",
+  active: true,
+  canLogin: true,
+  ageTier: "ADULT",
+};
+const adultB = {
+  id: "member-b",
+  firstName: "Ben",
+  lastName: "Birch",
+  email: "ben@example.nz",
+  active: true,
+  canLogin: true,
+  ageTier: "ADULT",
+};
+const nonLoginAdultC = {
+  id: "member-c",
+  firstName: "Cora",
+  lastName: "Ash",
+  email: "alice@example.nz", // shares the family login holder's email
+  active: true,
+  canLogin: false,
+  ageTier: "ADULT",
+};
+
+function mockMemberLookup(members: Array<typeof adultA>) {
+  vi.mocked(prisma.member.findUnique).mockImplementation((async (args: {
+    where: { id?: string };
+  }) => members.find((member) => member.id === args.where.id) ?? null) as never);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) =>
+    (fn as (tx: typeof prisma) => Promise<unknown>)(prisma)) as never);
+  vi.mocked(prisma.$executeRaw).mockResolvedValue(0 as never);
+  vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValue(null as never);
+  vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue(null as never);
+  vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 0 } as never);
+});
+
+describe("canonicalPartnerPair", () => {
+  it("orders the pair by member id regardless of argument order", () => {
+    expect(canonicalPartnerPair("member-b", "member-a")).toEqual({
+      memberAId: "member-a",
+      memberBId: "member-b",
+    });
+    expect(canonicalPartnerPair("member-a", "member-b")).toEqual({
+      memberAId: "member-a",
+      memberBId: "member-b",
+    });
+  });
+});
+
+describe("requestPartnerLink", () => {
+  it("creates a PENDING link and emails the target (request→confirm path)", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({
+      id: "link-1",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: "Ben@Example.nz",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prisma.memberPartnerLink.create).toHaveBeenCalledWith({
+      data: {
+        memberAId: "member-a",
+        memberBId: "member-b",
+        status: "PENDING",
+        initiatedByMemberId: "member-a",
+        confirmedAt: null,
+      },
+    });
+    expect(sendPartnerLinkRequestEmail).toHaveBeenCalledWith(
+      "ben@example.nz",
+      "Alice Ash"
+    );
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_REQUESTED" })
+    );
+  });
+
+  it("rejects partnering yourself", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultA as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultA.email,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("rejects a non-adult target", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue({
+      ...adultB,
+      ageTier: "YOUTH",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 422 });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-adult initiator", async () => {
+    mockMemberLookup([{ ...adultA, ageTier: "YOUTH" }]);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("fails fast when either side already has a confirmed partner", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "existing-confirmed",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+
+  it("points at the counter-request when the target already asked", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue({
+      id: "their-request",
+      initiatedByMemberId: adultB.id,
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(result.ok === false && result.error).toMatch(/respond to their request/i);
+  });
+
+  it("one-steps to CONFIRMED when a family-group admin declares a no-login member", async () => {
+    mockMemberLookup([adultA, nonLoginAdultC]);
+    vi.mocked(prisma.familyGroupMember.findFirst).mockResolvedValue({
+      familyGroupId: "group-1",
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({
+      id: "link-2",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetMemberId: nonLoginAdultC.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.status).toBe("CONFIRMED");
+    expect(prisma.familyGroupMember.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ memberId: adultA.id, role: "ADMIN" }),
+      })
+    );
+    expect(prisma.memberPartnerLink.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "CONFIRMED",
+        initiatedByMemberId: adultA.id,
+      }),
+    });
+    // No consent request email — but the target's address is told the link
+    // was recorded (one-step forms it without their own consent).
+    expect(sendPartnerLinkRequestEmail).not.toHaveBeenCalled();
+    expect(sendPartnerLinkConfirmedEmail).toHaveBeenCalledWith(
+      "alice@example.nz",
+      "Alice Ash"
+    );
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_CONFIRMED" })
+    );
+  });
+
+  it("refuses the one-step for a no-login member when the initiator is not their family-group admin", async () => {
+    mockMemberLookup([adultA, nonLoginAdultC]);
+    vi.mocked(prisma.familyGroupMember.findFirst).mockResolvedValue(null as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetMemberId: nonLoginAdultC.id,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a PENDING link (not one-step) for a login-holding family member", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({
+      id: "link-3",
+    } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetMemberId: adultB.id,
+    });
+
+    expect(result.ok && result.status).toBe("PENDING");
+    // The family-admin check is never consulted for login holders.
+    expect(prisma.familyGroupMember.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("allows only one outstanding outgoing request", async () => {
+    mockMemberLookup([adultA]);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(adultB as never);
+    // invariant checks pass, then the outstanding-outgoing probe hits
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: "other-outgoing" } as never);
+
+    const result = await requestPartnerLink({
+      initiatorMemberId: adultA.id,
+      targetEmail: adultB.email,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 422 });
+  });
+});
+
+describe("respondToPartnerLink", () => {
+  const pendingLink = {
+    id: "link-1",
+    status: "PENDING",
+    memberAId: "member-a",
+    memberBId: "member-b",
+    initiatedByMemberId: "member-a",
+    assignedByAdminId: null,
+    confirmedAt: null,
+    createdAt: new Date(),
+    memberA: adultA,
+    memberB: adultB,
+  };
+
+  it("confirms a pending request, prunes other pendings, and emails the initiator", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(pendingLink as never) // link lookup
+      .mockResolvedValue(null as never); // invariant checks
+    vi.mocked(prisma.memberPartnerLink.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 2 } as never);
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: "link-1",
+      action: "accept",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prisma.memberPartnerLink.updateMany).toHaveBeenCalledWith({
+      where: { id: "link-1", status: "PENDING" },
+      data: expect.objectContaining({
+        status: "CONFIRMED",
+        confirmedByMemberId: adultB.id,
+      }),
+    });
+    expect(prisma.memberPartnerLink.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { not: "link-1" }, status: "PENDING" }),
+      })
+    );
+    expect(sendPartnerLinkConfirmedEmail).toHaveBeenCalledWith(
+      "alice@example.nz",
+      "Ben Birch"
+    );
+  });
+
+  it("declines by hard-deleting the row without email", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(
+      pendingLink as never
+    );
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: "link-1",
+      action: "decline",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prisma.memberPartnerLink.deleteMany).toHaveBeenCalledWith({
+      where: { id: "link-1", status: "PENDING" },
+    });
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_DECLINED" })
+    );
+  });
+
+  it("cannot be answered by the initiator (request not addressed to them)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(null as never);
+
+    const result = await respondToPartnerLink({
+      memberId: adultA.id,
+      linkId: "link-1",
+      action: "accept",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("refuses to confirm a stale request from a member who is no longer an active adult", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      ...pendingLink,
+      memberA: { ...adultA, active: false },
+    } as never);
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: "link-1",
+      action: "accept",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(prisma.memberPartnerLink.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("re-checks the one-confirmed-partner invariant at confirm time", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(pendingLink as never) // link lookup
+      .mockResolvedValueOnce({ id: "confirmed-elsewhere" } as never); // invariant
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: "link-1",
+      action: "accept",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(prisma.memberPartnerLink.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("loses the race gracefully when the row changed under the update guard", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst)
+      .mockResolvedValueOnce(pendingLink as never)
+      .mockResolvedValue(null as never);
+    vi.mocked(prisma.memberPartnerLink.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    const result = await respondToPartnerLink({
+      memberId: adultB.id,
+      linkId: "link-1",
+      action: "accept",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+  });
+});
+
+describe("removeOwnPartnerLink", () => {
+  it("withdraws own pending request without email", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "PENDING",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      initiatedByMemberId: "member-a",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await removeOwnPartnerLink({ memberId: adultA.id, linkId: "link-1" });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_WITHDRAWN" })
+    );
+  });
+
+  it("refuses to let the requested member delete a pending request (decline instead)", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "PENDING",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      initiatedByMemberId: "member-a",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+
+    const result = await removeOwnPartnerLink({ memberId: adultB.id, linkId: "link-1" });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it("dissolves a confirmed partnership and notifies the other partner", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      initiatedByMemberId: "member-a",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await removeOwnPartnerLink({ memberId: adultB.id, linkId: "link-1" });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).toHaveBeenCalledWith(
+      "alice@example.nz",
+      "Ben Birch"
+    );
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_DISSOLVED" })
+    );
+  });
+});
+
+describe("adminAssignPartnerLink", () => {
+  it("creates a CONFIRMED link recording the admin and emails both members", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({ id: "link-1" } as never);
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultB.id,
+      memberTwoId: adultA.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prisma.memberPartnerLink.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        memberAId: "member-a",
+        memberBId: "member-b",
+        status: "CONFIRMED",
+        assignedByAdminId: "admin-1",
+      }),
+    });
+    expect(sendPartnerLinkConfirmedEmail).toHaveBeenCalledTimes(2);
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_ADMIN_ASSIGNED" })
+    );
+  });
+
+  it("promotes an existing pending request instead of duplicating", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue({
+      id: "pending-1",
+      status: "PENDING",
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.update).mockResolvedValue({ id: "pending-1" } as never);
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultA.id,
+      memberTwoId: adultB.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(prisma.memberPartnerLink.update).toHaveBeenCalledWith({
+      where: { id: "pending-1" },
+      data: expect.objectContaining({
+        status: "CONFIRMED",
+        assignedByAdminId: "admin-1",
+      }),
+    });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the pair is already confirmed", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findUnique).mockResolvedValue({
+      id: "link-1",
+      status: "CONFIRMED",
+    } as never);
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultA.id,
+      memberTwoId: adultB.id,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 422 });
+  });
+
+  it("enforces the one-confirmed-partner invariant", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "other-confirmed",
+    } as never);
+
+    const result = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultA.id,
+      memberTwoId: adultB.id,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    // The error names the member whose existing partnership blocks the assign.
+    expect(result.ok === false && result.error).toMatch(/Alice Ash/);
+  });
+
+  it("rejects self-partnering and non-adult members", async () => {
+    const selfResult = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultA.id,
+      memberTwoId: adultA.id,
+    });
+    expect(selfResult).toMatchObject({ ok: false, status: 422 });
+
+    mockMemberLookup([adultA, { ...adultB, ageTier: "CHILD" }]);
+    const childResult = await adminAssignPartnerLink({
+      adminMemberId: "admin-1",
+      memberOneId: adultA.id,
+      memberTwoId: adultB.id,
+    });
+    expect(childResult).toMatchObject({ ok: false, status: 422 });
+  });
+});
+
+describe("adminRemovePartnerLink", () => {
+  it("removes a confirmed link and emails both members", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "CONFIRMED",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes a pending link silently", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "link-1",
+      status: "PENDING",
+      memberAId: "member-a",
+      memberBId: "member-b",
+      memberA: adultA,
+      memberB: adultB,
+    } as never);
+    vi.mocked(prisma.memberPartnerLink.deleteMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendPartnerLinkRemovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("scopes the lookup to the given member when memberScopeId is set", async () => {
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce(null as never);
+
+    const result = await adminRemovePartnerLink({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+      memberScopeId: "member-z",
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(prisma.memberPartnerLink.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "link-1",
+          OR: [{ memberAId: "member-z" }, { memberBId: "member-z" }],
+        }),
+      })
+    );
+    expect(prisma.memberPartnerLink.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("getPartnerLinkState", () => {
+  it("splits links into confirmed, incoming, and outgoing views", async () => {
+    vi.mocked(prisma.memberPartnerLink.findMany).mockResolvedValue([
+      {
+        id: "confirmed-1",
+        status: "CONFIRMED",
+        memberAId: "member-a",
+        memberBId: "member-b",
+        initiatedByMemberId: "member-b",
+        assignedByAdminId: null,
+        confirmedAt: new Date(),
+        createdAt: new Date(),
+        memberA: adultA,
+        memberB: adultB,
+      },
+      {
+        id: "incoming-1",
+        status: "PENDING",
+        memberAId: "member-a",
+        memberBId: "member-z",
+        initiatedByMemberId: "member-z",
+        assignedByAdminId: null,
+        confirmedAt: null,
+        createdAt: new Date(),
+        memberA: adultA,
+        memberB: { ...adultB, id: "member-z", firstName: "Zoe" },
+      },
+    ] as never);
+
+    const state = await getPartnerLinkState("member-a");
+
+    expect(state.confirmed?.partner.id).toBe("member-b");
+    expect(state.confirmed?.initiatedByMe).toBe(false);
+    expect(state.pendingIncoming).toHaveLength(1);
+    expect(state.pendingIncoming[0].partner.firstName).toBe("Zoe");
+    expect(state.pendingOutgoing).toHaveLength(0);
+  });
+});
+
+describe("formPartnerLinkOnClaim", () => {
+  it("forms a CONFIRMED link between inviter and claimer", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({ id: "link-9" } as never);
+
+    const outcome = await formPartnerLinkOnClaim({
+      tx: prisma as never,
+      inviterMemberId: adultA.id,
+      claimerMemberId: adultB.id,
+      now: new Date(),
+    });
+
+    expect(outcome).toMatchObject({ formed: true, linkId: "link-9" });
+    expect(prisma.memberPartnerLink.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        memberAId: "member-a",
+        memberBId: "member-b",
+        status: "CONFIRMED",
+        initiatedByMemberId: adultA.id,
+        confirmedByMemberId: adultB.id,
+      }),
+    });
+  });
+
+  it("skips without throwing when either side already has a confirmed partner", async () => {
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "other-confirmed",
+    } as never);
+
+    const outcome = await formPartnerLinkOnClaim({
+      tx: prisma as never,
+      inviterMemberId: adultA.id,
+      claimerMemberId: adultB.id,
+      now: new Date(),
+    });
+
+    expect(outcome).toEqual({ formed: false, reason: "existing_confirmed_partner" });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+
+  it("skips when the inviter is no longer an active login adult", async () => {
+    mockMemberLookup([{ ...adultA, active: false }, adultB]);
+    const inactive = await formPartnerLinkOnClaim({
+      tx: prisma as never,
+      inviterMemberId: adultA.id,
+      claimerMemberId: adultB.id,
+      now: new Date(),
+    });
+    expect(inactive).toEqual({ formed: false, reason: "inviter_ineligible" });
+
+    mockMemberLookup([{ ...adultA, canLogin: false }, adultB]);
+    const noLogin = await formPartnerLinkOnClaim({
+      tx: prisma as never,
+      inviterMemberId: adultA.id,
+      claimerMemberId: adultB.id,
+      now: new Date(),
+    });
+    expect(noLogin).toEqual({ formed: false, reason: "inviter_ineligible" });
+  });
+
+  it("skips when the claimer is not an eligible adult", async () => {
+    mockMemberLookup([adultA, { ...adultB, ageTier: "YOUTH" }]);
+
+    const outcome = await formPartnerLinkOnClaim({
+      tx: prisma as never,
+      inviterMemberId: adultA.id,
+      claimerMemberId: adultB.id,
+      now: new Date(),
+    });
+
+    expect(outcome).toEqual({ formed: false, reason: "claimer_ineligible" });
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("claimPartnerInviteToken with createPartnerLink (#1742)", () => {
+  function tokenRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "token-1",
+      tokenHash: "hash",
+      familyGroupId: "group-1",
+      invitedEmail: "ben@example.nz",
+      createdById: adultA.id,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      confirmedAt: null,
+      createPartnerLink: true,
+      familyGroup: { id: "group-1", name: "Ash Family" },
+      createdBy: {
+        id: adultA.id,
+        email: adultA.email,
+        firstName: adultA.firstName,
+        lastName: adultA.lastName,
+      },
+      ...overrides,
+    };
+  }
+
+  it("forms the partner link inside the claim and reports it", async () => {
+    const { token } = issueActionToken();
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      tokenRow() as never
+    );
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.familyGroupMember.count).mockResolvedValue(1 as never);
+    vi.mocked(prisma.partnerInviteToken.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.familyGroupMember.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.familyGroupMember.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.memberPartnerLink.create).mockResolvedValue({ id: "link-9" } as never);
+
+    const result = await claimPartnerInviteToken({
+      rawToken: token,
+      memberId: adultB.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.partnerLinkFormed).toBe(true);
+    expect(prisma.memberPartnerLink.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "CONFIRMED",
+        initiatedByMemberId: adultA.id,
+        confirmedByMemberId: adultB.id,
+      }),
+    });
+    expect(sendPartnerLinkConfirmedEmail).toHaveBeenCalledWith(
+      "alice@example.nz",
+      "Ben Birch"
+    );
+  });
+
+  it("still joins the family group when the link cannot form", async () => {
+    const { token } = issueActionToken();
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      tokenRow() as never
+    );
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.familyGroupMember.count).mockResolvedValue(1 as never);
+    vi.mocked(prisma.partnerInviteToken.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.familyGroupMember.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.familyGroupMember.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({} as never);
+    // Inviter already has a confirmed partner elsewhere.
+    vi.mocked(prisma.memberPartnerLink.findFirst).mockResolvedValueOnce({
+      id: "other-confirmed",
+    } as never);
+
+    const result = await claimPartnerInviteToken({
+      rawToken: token,
+      memberId: adultB.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.partnerLinkFormed).toBe(false);
+    expect(result.ok && result.alreadyMember).toBe(false);
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+    expect(sendPartnerLinkConfirmedEmail).not.toHaveBeenCalled();
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "MEMBER_PARTNER_LINK_CLAIM_SKIPPED" })
+    );
+  });
+
+  it("does not touch partner links for tokens minted without the flag", async () => {
+    const { token } = issueActionToken();
+    vi.mocked(prisma.partnerInviteToken.findUnique).mockResolvedValue(
+      tokenRow({ createPartnerLink: false }) as never
+    );
+    mockMemberLookup([adultA, adultB]);
+    vi.mocked(prisma.familyGroupMember.count).mockResolvedValue(1 as never);
+    vi.mocked(prisma.partnerInviteToken.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.familyGroupMember.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.familyGroupMember.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({} as never);
+
+    const result = await claimPartnerInviteToken({
+      rawToken: token,
+      memberId: adultB.id,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.partnerLinkFormed).toBe(false);
+    expect(prisma.memberPartnerLink.create).not.toHaveBeenCalled();
+    expect(prisma.memberPartnerLink.findFirst).not.toHaveBeenCalled();
+  });
+});

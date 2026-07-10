@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -134,6 +135,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createGroupName, setCreateGroupName] = useState("");
   const [createPartnerEmail, setCreatePartnerEmail] = useState("");
+  const [createDeclarePartner, setCreateDeclarePartner] = useState(false);
   const [createChildren, setCreateChildren] = useState<CreateChildRow[]>([]);
   const [myPendingCreateRequest, setMyPendingCreateRequest] =
     useState<MyPendingCreateRequest | null>(null);
@@ -238,6 +240,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
         body: JSON.stringify({
           groupName: createGroupName.trim() || undefined,
           partnerEmail: createPartnerEmail.trim() || undefined,
+          declarePartnerLink: Boolean(createPartnerEmail.trim()) && createDeclarePartner,
           children: createChildren.map((child) => ({
             firstName: child.firstName.trim(),
             lastName: child.lastName.trim(),
@@ -254,6 +257,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
       setShowCreateForm(false);
       setCreateGroupName("");
       setCreatePartnerEmail("");
+      setCreateDeclarePartner(false);
       setCreateChildren([]);
       await loadFamilyData();
     } finally {
@@ -463,6 +467,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
     setShowCreateForm(false);
     setCreateGroupName("");
     setCreatePartnerEmail("");
+    setCreateDeclarePartner(false);
     setCreateChildren([]);
     setDetailMemberId(null);
     setRemovalMemberId(null);
@@ -976,12 +981,39 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   id="create-partner-email"
                   type="email"
                   value={createPartnerEmail}
-                  onChange={(e) => setCreatePartnerEmail(e.target.value)}
+                  onChange={(e) => {
+                    setCreatePartnerEmail(e.target.value);
+                    // The declared-partner checkbox belongs to a specific
+                    // address; clearing the field discards the declaration so
+                    // it cannot silently carry over to a different person.
+                    if (!e.target.value.trim()) {
+                      setCreateDeclarePartner(false);
+                    }
+                  }}
                   placeholder="member@example.com"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
                   A registered member is invited once your group is approved. If they are not a member yet, we&apos;ll email them a link to join and be added to your group.
                 </p>
+                {createPartnerEmail.trim() && (
+                  <div className="mt-2 flex items-start gap-2">
+                    <Checkbox
+                      id="create-declare-partner"
+                      checked={createDeclarePartner}
+                      onCheckedChange={(checked) => setCreateDeclarePartner(checked === true)}
+                    />
+                    <div>
+                      <Label htmlFor="create-declare-partner" className="font-normal">
+                        This person is my partner (husband, wife, or partner)
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Also records your partner relationship with the club. A
+                        registered member confirms it from their profile; someone
+                        joining via the emailed link confirms it by accepting.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <p className="text-sm font-medium">Infants, children, and youth (optional)</p>

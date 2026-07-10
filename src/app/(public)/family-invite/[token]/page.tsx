@@ -161,6 +161,15 @@ export default async function PartnerInvitePage({
         Accepting adds you to the group so you can be included when the group
         makes bookings.
       </p>
+      {view.createPartnerLink && (
+        <p>
+          Accepting will <strong>also record you as{" "}
+          {view.inviterName ? `${view.inviterName}'s` : "your inviter's"}{" "}
+          partner</strong> (husband, wife, or partner) with the club. If that is
+          not right, don&apos;t accept — contact the club instead. You can remove
+          a recorded partner relationship from your profile at any time.
+        </p>
+      )}
       <PartnerInviteClaimCard token={token} groupName={groupName} />
     </Shell>
   );

@@ -32,6 +32,9 @@ export function buildPartnerInviteTokenData(params: {
   invitedEmail: string;
   createdById: string;
   now?: Date;
+  // #1742: when true, claiming the token also forms a CONFIRMED
+  // MemberPartnerLink between createdBy and the claimer.
+  createPartnerLink?: boolean;
 }) {
   const now = params.now ?? new Date();
   const { token, tokenHash } = issueActionToken();
@@ -45,6 +48,7 @@ export function buildPartnerInviteTokenData(params: {
       expiresAt: getPartnerInviteTokenExpiryDate(now),
       reminderCount: 0,
       lastSentAt: now,
+      createPartnerLink: params.createPartnerLink ?? false,
     },
   };
 }

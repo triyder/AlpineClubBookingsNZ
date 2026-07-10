@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
     excludeId: sp.get("excludeId") ?? undefined,
     dependentLinkEligibleFor: sp.get("dependentLinkEligibleFor") ?? undefined,
     parentLinkEligibleFor: sp.get("parentLinkEligibleFor") ?? undefined,
+    partnerLinkEligibleFor: sp.get("partnerLinkEligibleFor") ?? undefined,
     role: sp.get("role") ?? undefined,
     financeAccess: sp.get("financeAccess") ?? undefined,
     lifecycleStatus: sp.get("lifecycleStatus") ?? undefined,

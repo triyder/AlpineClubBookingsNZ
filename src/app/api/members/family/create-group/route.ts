@@ -18,6 +18,7 @@ import {
   buildPartnerInviteTokenData,
   getPartnerInviteTokenExpiryDate,
 } from "@/lib/partner-invite-token-policy";
+import { requestPartnerLink } from "@/lib/member-partner-link";
 import { nameField } from "@/lib/zod-helpers";
 
 const createGroupSchema = z.object({
@@ -27,6 +28,11 @@ const createGroupSchema = z.object({
     .max(100, "Group name must be 100 characters or fewer")
     .optional(),
   partnerEmail: z.string().email("Invalid email address").optional(),
+  // #1742: the named partner is the requester's Partner/Husband/Wife. For an
+  // unregistered partner this marks the minted invite token so claiming it
+  // also forms the CONFIRMED MemberPartnerLink; a registered partner instead
+  // receives a PENDING partner-link request to confirm from their profile.
+  declarePartnerLink: z.boolean().default(false),
   children: z
     .array(
       z.object({
@@ -287,8 +293,15 @@ export async function POST(req: NextRequest) {
           invitedMemberId: partner?.id ?? null,
           // Surface a named-but-ineligible partner to the reviewing admin
           // (no invite was sent) without repurposing the ADULT_REQUEST fields.
+          // When they were also declared as the requester's partner (#1742),
+          // say so — no partner link can be formed automatically for them, so
+          // the admin is the only one who can record it (member detail page).
           requestNotes: ineligiblePartnerEmail
-            ? `Partner ${ineligiblePartnerEmail} was named but is an existing member who cannot be invited by email (not an active adult login). Review and add manually if appropriate.`
+            ? `Partner ${ineligiblePartnerEmail} was named but is an existing member who cannot be invited by email (not an active adult login). Review and add manually if appropriate.${
+                parsed.data.declarePartnerLink
+                  ? " They were also declared as the requester's partner (husband/wife/partner); if appropriate, record the partner relationship from the member's admin page."
+                  : ""
+              }`
             : null,
           createdAt: submittedAt,
         },
@@ -320,6 +333,7 @@ export async function POST(req: NextRequest) {
           invitedEmail: unregisteredPartnerEmail,
           createdById: session.user.id,
           now: submittedAt,
+          createPartnerLink: parsed.data.declarePartnerLink,
         });
         await tx.partnerInviteToken.create({ data });
         partnerInviteRawToken = token;
@@ -329,6 +343,37 @@ export async function POST(req: NextRequest) {
     });
 
   const childRequestIds = childRequests.map((request) => request.id);
+
+  // #1742: a REGISTERED partner marked as the requester's declared partner
+  // gets a normal PENDING partner-link request to confirm from their profile
+  // (the family ADULT_INVITE still waits for admin approval of the group).
+  // Failures — a business conflict such as an existing confirmed partner, or
+  // an unexpected throw — must not fail the already-committed group request:
+  // the outcome is logged and the response stays uniform, so this cannot be
+  // used to probe another member's partner state. The target is passed by
+  // email so the service applies its own active-login-adult lookup; the raw
+  // memberId path is reserved for the family-co-member route guard.
+  let partnerLinkRequested = false;
+  if (parsed.data.declarePartnerLink && partner && normalizedPartnerEmail) {
+    try {
+      const partnerLinkResult = await requestPartnerLink({
+        initiatorMemberId: session.user.id,
+        targetEmail: normalizedPartnerEmail,
+      });
+      partnerLinkRequested = partnerLinkResult.ok;
+      if (!partnerLinkResult.ok) {
+        logger.warn(
+          { requesterId: session.user.id, partnerMemberId: partner.id, error: partnerLinkResult.error },
+          "Partner link request skipped during family group creation"
+        );
+      }
+    } catch (err) {
+      logger.error(
+        { err, requesterId: session.user.id, partnerMemberId: partner.id },
+        "Partner link request failed during family group creation"
+      );
+    }
+  }
 
   logAudit({
     action: "FAMILY_GROUP_CREATE_REQUESTED",
@@ -346,6 +391,8 @@ export async function POST(req: NextRequest) {
       partnerMemberId: partner?.id ?? null,
       partnerInviteEmail: unregisteredPartnerEmail,
       ineligiblePartnerEmail,
+      declarePartnerLink: parsed.data.declarePartnerLink,
+      partnerLinkRequested,
       childCount: parsedChildren.length,
       childRequestIds,
     }),
@@ -355,6 +402,8 @@ export async function POST(req: NextRequest) {
       partnerMemberId: partner?.id ?? null,
       partnerInviteEmail: unregisteredPartnerEmail,
       ineligiblePartnerEmail,
+      declarePartnerLink: parsed.data.declarePartnerLink,
+      partnerLinkRequested,
       childCount: parsedChildren.length,
       childRequestIds,
     },

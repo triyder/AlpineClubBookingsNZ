@@ -1209,6 +1209,42 @@ and an idempotent daily cron sweep hard-deletes expired tokens (TTL 30 days,
 longer than the 7-day nomination TTL because the invitee must complete the
 membership process first).
 
+The declared Partner/Husband/Wife relationship (#1742) is a `MemberPartnerLink`
+row: a symmetric, consent-based link between two ADULT members, stored as a
+canonical ordered pair (`memberAId < memberBId`, DB CHECK constraint — which
+also makes self-partnering unrepresentable) with a `PENDING -> CONFIRMED`
+lifecycle. It is independent of family groups and is the eligibility signal for
+double-bed shared occupancy (#1741). Invariants: **at most one CONFIRMED
+partner per member at a time**, enforced in `src/lib/member-partner-link.ts`
+under `pg_advisory_xact_lock` on both member ids (sorted order, so pair
+transactions cannot deadlock) and backstopped by two raw partial unique indexes
+(`MemberPartnerLink_memberA/B_confirmed_unique WHERE status = 'CONFIRMED'`,
+documented in `prisma/partial-unique-indexes.tsv`); both members must be ADULT
+and active; consent is required from the other member unless (a) an admin
+assigns the link directly (`assignedByAdminId` recorded, CONFIRMED
+immediately), (b) the target has **no login** and the initiator is a
+family-group ADMIN of a group containing the target ("one login manages the
+family" — a login-holding target always consents personally, and the no-login
+target's address is emailed that the link was recorded), or (c) the link
+forms on a `PartnerInviteToken` claim minted with `createPartnerLink` — the
+claim itself is the consent, so the claim page discloses the partnership
+before the claimer accepts, and both parties' eligibility (including the
+inviter's login standing) is re-validated inside the claim transaction.
+Confirming a stale request re-validates the initiator too — a link is never
+confirmed that a fresh request could not create. Declined, withdrawn, and
+dissolved links are
+hard-deleted — history lives in the audit log — so the same pair can re-form
+later without tripping the pair-unique constraint; either partner may dissolve
+a CONFIRMED link unilaterally (the other is emailed). When a link becomes
+CONFIRMED, all other PENDING requests involving either member are pruned in the
+same transaction. A member may have at most one outstanding outgoing PENDING
+request. The member-facing request API accepts an arbitrary target only by
+email (mirroring the family ADULT_INVITE flow); a memberId target must share a
+family group with the requester so the endpoint cannot probe foreign member
+ids. A link claim conflict on token claim (either side already has a confirmed
+partner, inviter no longer eligible) skips the link without failing the
+family-group join, and the skip is audited.
+
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do
 not remain permanently blocked by stale action links.

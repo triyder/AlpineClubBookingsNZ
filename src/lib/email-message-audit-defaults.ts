@@ -150,6 +150,18 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "You've joined {{groupName}} — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Family Group Joined\n\nHi {{firstName}},\n\nYou've joined the family group {{groupName}}.\n\nYou can now be included when your family makes bookings. Manage your family group from your profile page.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "partner-link-request": {
+    "defaultSubject": "{{requesterName}} asked to record you as their partner — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Partner Confirmation Request\n\n{{requesterName}} has asked to record you as their partner (husband, wife, or partner).\n\nConfirming records the relationship with the club. You can confirm or decline from your profile page.\n\nRespond to Request: {{BASE_URL}}/profile\n\nIf you weren't expecting this request, you can decline it or safely ignore this email."
+  },
+  "partner-link-confirmed": {
+    "defaultSubject": "Your partner relationship with {{partnerName}} has been recorded — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Partner Relationship Recorded\n\nYour partner relationship with {{partnerName}} has been recorded with the club.\n\nYou can view or remove this relationship from your profile page.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
+  "partner-link-removed": {
+    "defaultSubject": "Your partner relationship with {{partnerName}} has been removed — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Partner Relationship Removed\n\nYour recorded partner relationship with {{partnerName}} has been removed.\n\nIf you weren't expecting this change, please contact the club.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
   "membership-cancellation-submitted": {
     "defaultSubject": "Membership cancellation request submitted — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Membership Cancellation Request Submitted\n\nHi {{firstName}},\n\nYour membership cancellation request has been submitted for admin review.\n\nIncluded memberships: {{participantSummary}}\n\nReason: {{reason}} [only when reason exists]\n\nMemberships remain active until an administrator approves the request. Any included login-capable adult must confirm before an administrator can process their cancellation.\n\nView Request: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"

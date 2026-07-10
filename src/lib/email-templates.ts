@@ -1730,6 +1730,42 @@ export function partnerInviteClaimedTemplate(
   `);
 }
 
+// ---- Partner link (declared Partner/Husband/Wife relationship, #1742) ----
+
+/** Sent to the member being asked to confirm a partner relationship. */
+export function partnerLinkRequestTemplate(
+  requesterName: string,
+  profileUrl: string
+): string {
+  return layout(`
+    ${heading("Partner Confirmation Request")}
+    ${paragraph("<strong>" + escapeHtml(requesterName) + "</strong> has asked to record you as their partner (husband, wife, or partner).")}
+    ${paragraph("Confirming records the relationship with the club. You can confirm or decline from your profile page.")}
+    ${button("Respond to Request", profileUrl)}
+    ${muted("If you weren't expecting this request, you can decline it or safely ignore this email.")}
+  `);
+}
+
+/** Sent when a partner relationship is confirmed (accepted or admin-recorded). */
+export function partnerLinkConfirmedTemplate(partnerName: string): string {
+  return layout(`
+    ${heading("Partner Relationship Recorded")}
+    ${paragraph("Your partner relationship with <strong>" + escapeHtml(partnerName) + "</strong> has been recorded with the club.")}
+    ${alertBox("You can view or remove this relationship from your profile page.", "info")}
+    ${supportContactMuted()}
+  `);
+}
+
+/** Sent to the other partner when a confirmed relationship is removed. */
+export function partnerLinkRemovedTemplate(partnerName: string): string {
+  return layout(`
+    ${heading("Partner Relationship Removed")}
+    ${paragraph("Your recorded partner relationship with <strong>" + escapeHtml(partnerName) + "</strong> has been removed.")}
+    ${paragraph("If you weren't expecting this change, please contact the club.")}
+    ${supportContactMuted()}
+  `);
+}
+
 export function membershipCancellationSubmittedTemplate(params: {
   firstName: string;
   participantSummary: string;

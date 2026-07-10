@@ -176,6 +176,7 @@ export const adminMembersQuerySchema = z
     excludeId: optionalSearchParam,
     dependentLinkEligibleFor: optionalSearchParam,
     parentLinkEligibleFor: optionalSearchParam,
+    partnerLinkEligibleFor: optionalSearchParam,
     role: optionalSearchParam,
     financeAccess: optionalSearchParam,
     lifecycleStatus: optionalSearchParam,
@@ -243,6 +244,7 @@ export async function listAdminMembers(
     excludeId,
     dependentLinkEligibleFor,
     parentLinkEligibleFor,
+    partnerLinkEligibleFor,
     role: roleFilter,
     financeAccess: financeAccessFilter,
     lifecycleStatus: lifecycleStatusFilter,
@@ -374,6 +376,19 @@ export async function listAdminMembers(
       { id: { notIn: excludedParentIds } },
       { active: true },
       { ageTier: "ADULT" },
+    );
+  }
+
+  // Partner-link assignment candidates (#1742): active adults other than the
+  // member, excluding anyone who already has a CONFIRMED partner (one
+  // confirmed partner per member).
+  if (partnerLinkEligibleFor) {
+    andConditions.push(
+      { id: { not: partnerLinkEligibleFor } },
+      { active: true },
+      { ageTier: "ADULT" },
+      { partnerLinksAsMemberA: { none: { status: "CONFIRMED" } } },
+      { partnerLinksAsMemberB: { none: { status: "CONFIRMED" } } },
     );
   }
 

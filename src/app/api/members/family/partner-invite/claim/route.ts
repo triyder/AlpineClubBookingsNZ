@@ -53,8 +53,11 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({
-    message: `You have joined ${result.groupName ?? "the family group"}.`,
+    message: result.partnerLinkFormed
+      ? `You have joined ${result.groupName ?? "the family group"}, and your partner relationship has been recorded.`
+      : `You have joined ${result.groupName ?? "the family group"}.`,
     familyGroupId: result.familyGroupId,
     alreadyMember: result.alreadyMember,
+    partnerLinkFormed: result.partnerLinkFormed,
   });
 }

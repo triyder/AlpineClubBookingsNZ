@@ -90,6 +90,7 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "membership-application-approved": ["resetUrl"],
   "admin-membership-application-pending": ["reviewUrl"],
   "family-group-invitation": ["profileUrl"],
+  "partner-link-request": ["profileUrl"],
   "membership-cancellation-submitted": [
     "participantSummary",
     "reason",
@@ -146,6 +147,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "nomination-request": ["applicantName", "token"],
   "partner-invite": ["inviterName", "token"],
   "partner-invite-claimed": ["firstName", "groupName"],
+  "partner-link-request": ["requesterName"],
+  "partner-link-confirmed": ["partnerName"],
+  "partner-link-removed": ["partnerName"],
   "membership-application-approved": ["token"],
   "membership-cancellation-confirmation": [
     "participantName",
@@ -250,6 +254,18 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "partner-invite-claimed": {
     triggerSummary: "Invited partner registered and claimed their invitation",
     frequency: "Per partner invitation claimed",
+  },
+  "partner-link-request": {
+    triggerSummary: "Member asked another member to confirm a partner relationship",
+    frequency: "Per partner link request",
+  },
+  "partner-link-confirmed": {
+    triggerSummary: "Partner relationship confirmed (accepted, claimed, or admin-recorded)",
+    frequency: "Per partner link confirmation",
+  },
+  "partner-link-removed": {
+    triggerSummary: "Confirmed partner relationship removed",
+    frequency: "Per partner link removal",
   },
   "membership-cancellation-submitted": {
     triggerSummary: "Membership cancellation request submitted",
@@ -532,6 +548,7 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "pageUrl",
   "paidAmount",
   "parentName",
+  "partnerName",
   "payUrl",
   "paymentIntentId",
   "paymentReference",

@@ -1,0 +1,307 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest, NextResponse } from "next/server";
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    familyGroupMember: { findFirst: vi.fn() },
+  },
+}));
+const mockRequireActiveSession = vi.fn();
+const mockRequireAdmin = vi.fn();
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSession: (...args: unknown[]) => mockRequireActiveSession(...args),
+  requireAdmin: (...args: unknown[]) => mockRequireAdmin(...args),
+}));
+vi.mock("@/lib/rate-limit", () => ({
+  applyRateLimit: vi.fn().mockReturnValue(null),
+  rateLimiters: { familyGroupJoinRequest: {} },
+}));
+vi.mock("@/lib/member-partner-link", () => ({
+  getPartnerLinkState: vi.fn(),
+  getPendingPartnerInviteIntent: vi.fn(),
+  listOneStepPartnerCandidates: vi.fn(),
+  requestPartnerLink: vi.fn(),
+  respondToPartnerLink: vi.fn(),
+  removeOwnPartnerLink: vi.fn(),
+  adminAssignPartnerLink: vi.fn(),
+  adminRemovePartnerLink: vi.fn(),
+}));
+
+import { prisma } from "@/lib/prisma";
+import {
+  getPartnerLinkState,
+  getPendingPartnerInviteIntent,
+  listOneStepPartnerCandidates,
+  requestPartnerLink,
+  respondToPartnerLink,
+  removeOwnPartnerLink,
+  adminAssignPartnerLink,
+  adminRemovePartnerLink,
+} from "@/lib/member-partner-link";
+import {
+  GET as getPartnerLink,
+  POST as postPartnerLink,
+  PUT as putPartnerLink,
+  DELETE as deletePartnerLink,
+} from "@/app/api/members/partner-link/route";
+import {
+  POST as adminPostPartnerLink,
+  DELETE as adminDeletePartnerLink,
+} from "@/app/api/admin/members/[id]/partner-link/route";
+
+const activeSession = { ok: true, session: { user: { id: "member-a" } } };
+const guardDenied = {
+  ok: false,
+  response: NextResponse.json({ error: "Unauthorised" }, { status: 401 }),
+};
+
+const emptyState = {
+  confirmed: null,
+  pendingIncoming: [],
+  pendingOutgoing: [],
+};
+
+function makeRequest(method: string, body?: Record<string, unknown>, query = "") {
+  return new NextRequest(`http://localhost/api/members/partner-link${query}`, {
+    method,
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockRequireActiveSession.mockResolvedValue(activeSession);
+  mockRequireAdmin.mockResolvedValue({
+    ok: true,
+    session: { user: { id: "admin-1" } },
+  });
+});
+
+describe("GET /api/members/partner-link", () => {
+  it("returns the guard response for unauthenticated requests", async () => {
+    mockRequireActiveSession.mockResolvedValue(guardDenied);
+    const res = await getPartnerLink();
+    expect(res.status).toBe(401);
+  });
+
+  it("returns state, one-step candidates, and pending invite intent", async () => {
+    vi.mocked(getPartnerLinkState).mockResolvedValue(emptyState);
+    vi.mocked(listOneStepPartnerCandidates).mockResolvedValue([
+      { id: "member-c", firstName: "Cora", lastName: "Ash", canLogin: false },
+    ]);
+    vi.mocked(getPendingPartnerInviteIntent).mockResolvedValue(null);
+
+    const res = await getPartnerLink();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.oneStepCandidates).toHaveLength(1);
+    expect(body.pendingPartnerInvite).toBeNull();
+    expect(getPartnerLinkState).toHaveBeenCalledWith("member-a");
+    expect(listOneStepPartnerCandidates).toHaveBeenCalledWith("member-a");
+  });
+});
+
+describe("POST /api/members/partner-link", () => {
+  it("rejects a memberId target outside the caller's family groups (no probing)", async () => {
+    vi.mocked(prisma.familyGroupMember.findFirst).mockResolvedValue(null as never);
+
+    const res = await postPartnerLink(makeRequest("POST", { memberId: "stranger-1" }));
+    expect(res.status).toBe(404);
+    expect(requestPartnerLink).not.toHaveBeenCalled();
+  });
+
+  it("passes a family co-member id through to the service", async () => {
+    vi.mocked(prisma.familyGroupMember.findFirst).mockResolvedValue({
+      familyGroupId: "group-1",
+    } as never);
+    vi.mocked(requestPartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "CONFIRMED",
+      message: "done",
+    });
+
+    const res = await postPartnerLink(makeRequest("POST", { memberId: "member-c" }));
+    expect(res.status).toBe(201);
+    expect(requestPartnerLink).toHaveBeenCalledWith({
+      initiatorMemberId: "member-a",
+      targetEmail: undefined,
+      targetMemberId: "member-c",
+    });
+  });
+
+  it("requires exactly one of email or memberId", async () => {
+    const both = await postPartnerLink(
+      makeRequest("POST", { email: "a@b.nz", memberId: "member-c" })
+    );
+    expect(both.status).toBe(422);
+
+    const neither = await postPartnerLink(makeRequest("POST", {}));
+    expect(neither.status).toBe(422);
+  });
+
+  it("maps service errors to their status codes", async () => {
+    vi.mocked(requestPartnerLink).mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "already partnered",
+    });
+
+    const res = await postPartnerLink(makeRequest("POST", { email: "b@x.nz" }));
+    expect(res.status).toBe(409);
+  });
+});
+
+describe("PUT /api/members/partner-link", () => {
+  it("returns the guard response for unauthenticated requests", async () => {
+    mockRequireActiveSession.mockResolvedValue(guardDenied);
+    const res = await putPartnerLink(
+      makeRequest("PUT", { linkId: "link-1", action: "accept" })
+    );
+    expect(res.status).toBe(401);
+    expect(respondToPartnerLink).not.toHaveBeenCalled();
+  });
+
+  it("validates the action enum", async () => {
+    const res = await putPartnerLink(
+      makeRequest("PUT", { linkId: "link-1", action: "maybe" })
+    );
+    expect(res.status).toBe(422);
+  });
+
+  it("passes accept/decline through and maps the result", async () => {
+    vi.mocked(respondToPartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "CONFIRMED",
+      message: "confirmed",
+    });
+
+    const res = await putPartnerLink(
+      makeRequest("PUT", { linkId: "link-1", action: "accept" })
+    );
+    expect(res.status).toBe(200);
+    expect(respondToPartnerLink).toHaveBeenCalledWith({
+      memberId: "member-a",
+      linkId: "link-1",
+      action: "accept",
+    });
+  });
+
+  it("maps service conflicts to their status codes", async () => {
+    vi.mocked(respondToPartnerLink).mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: "already processed",
+    });
+
+    const res = await putPartnerLink(
+      makeRequest("PUT", { linkId: "link-1", action: "decline" })
+    );
+    expect(res.status).toBe(409);
+  });
+});
+
+describe("DELETE /api/members/partner-link", () => {
+  it("requires a link id", async () => {
+    const res = await deletePartnerLink(makeRequest("DELETE"));
+    expect(res.status).toBe(400);
+    expect(removeOwnPartnerLink).not.toHaveBeenCalled();
+  });
+
+  it("passes the caller's id and link id to the service", async () => {
+    vi.mocked(removeOwnPartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "REMOVED",
+      message: "removed",
+    });
+
+    const res = await deletePartnerLink(makeRequest("DELETE", undefined, "?id=link-1"));
+    expect(res.status).toBe(200);
+    expect(removeOwnPartnerLink).toHaveBeenCalledWith({
+      memberId: "member-a",
+      linkId: "link-1",
+    });
+  });
+});
+
+describe("POST /api/admin/members/[id]/partner-link", () => {
+  function makeAdminPost(body: Record<string, unknown>) {
+    return new NextRequest("http://localhost/api/admin/members/member-a/partner-link", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  it("requires partnerMemberId", async () => {
+    const res = await adminPostPartnerLink(makeAdminPost({}), {
+      params: Promise.resolve({ id: "member-a" }),
+    });
+    expect(res.status).toBe(422);
+    expect(adminAssignPartnerLink).not.toHaveBeenCalled();
+  });
+
+  it("assigns between the routed member and the chosen partner", async () => {
+    vi.mocked(adminAssignPartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "CONFIRMED",
+      message: "assigned",
+    });
+
+    const res = await adminPostPartnerLink(
+      makeAdminPost({ partnerMemberId: "member-b" }),
+      { params: Promise.resolve({ id: "member-a" }) }
+    );
+    expect(res.status).toBe(201);
+    expect(adminAssignPartnerLink).toHaveBeenCalledWith({
+      adminMemberId: "admin-1",
+      memberOneId: "member-a",
+      memberTwoId: "member-b",
+    });
+  });
+});
+
+describe("DELETE /api/admin/members/[id]/partner-link", () => {
+  function makeDeleteRequest(linkId: string) {
+    return new NextRequest(
+      `http://localhost/api/admin/members/member-a/partner-link?id=${linkId}`,
+      { method: "DELETE" }
+    );
+  }
+
+  it("scopes the removal to the routed member", async () => {
+    vi.mocked(adminRemovePartnerLink).mockResolvedValue({
+      ok: true,
+      linkId: "link-1",
+      status: "REMOVED",
+      message: "removed",
+    });
+
+    const res = await adminDeletePartnerLink(makeDeleteRequest("link-1"), {
+      params: Promise.resolve({ id: "member-a" }),
+    });
+    expect(res.status).toBe(200);
+    expect(adminRemovePartnerLink).toHaveBeenCalledWith({
+      adminMemberId: "admin-1",
+      linkId: "link-1",
+      memberScopeId: "member-a",
+    });
+  });
+
+  it("maps a scope miss (foreign link id) to 404", async () => {
+    vi.mocked(adminRemovePartnerLink).mockResolvedValue({
+      ok: false,
+      status: 404,
+      error: "Partner link not found.",
+    });
+
+    const res = await adminDeletePartnerLink(makeDeleteRequest("foreign-link"), {
+      params: Promise.resolve({ id: "member-a" }),
+    });
+    expect(res.status).toBe(404);
+  });
+});

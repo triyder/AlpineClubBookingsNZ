@@ -12,6 +12,7 @@ import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
 import { FamilyGroupSection } from "./family-group-section";
+import { PartnerLinkSection } from "./partner-link-section";
 import { AccountCreditSection } from "./account-credit-section";
 import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
@@ -445,6 +446,19 @@ export default async function ProfilePage({
                 .map((m) => m.member)
                 .filter((m) => m.id !== member.id),
             }))}
+            canManage={member.ageTier === "ADULT" && member.canLogin === true}
+          />
+        </ProfileSectionCard>
+
+        {/* Partner (#1742) */}
+        <ProfileSectionCard
+          collapsible
+          defaultOpen
+          description="Record your partner (husband, wife, or partner) with the club. Both of you confirm the relationship."
+          id="partner"
+          title="Partner"
+        >
+          <PartnerLinkSection
             canManage={member.ageTier === "ADULT" && member.canLogin === true}
           />
         </ProfileSectionCard>

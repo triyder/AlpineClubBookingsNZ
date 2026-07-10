@@ -29,6 +29,9 @@ vi.mock("@/lib/email", () => ({
   sendAdminFamilyGroupRequestAlert: vi.fn().mockResolvedValue(undefined),
   sendPartnerInviteEmail: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("@/lib/member-partner-link", () => ({
+  requestPartnerLink: vi.fn(),
+}));
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -39,6 +42,7 @@ import {
   sendAdminFamilyGroupRequestAlert,
   sendPartnerInviteEmail,
 } from "@/lib/email";
+import { requestPartnerLink } from "@/lib/member-partner-link";
 import { POST as createGroup } from "@/app/api/members/family/create-group/route";
 
 const mockedAuth = vi.mocked(auth);
@@ -505,5 +509,107 @@ describe("POST /api/members/family/create-group", () => {
     });
     // No partner lookup when no partnerEmail was supplied.
     expect(prisma.member.findFirst).not.toHaveBeenCalled();
+  });
+
+  describe("declarePartnerLink (#1742)", () => {
+    function mockRegisteredPartner() {
+      vi.mocked(prisma.member.findFirst).mockResolvedValue({
+        id: "partner1",
+        firstName: "Bob",
+        lastName: "Jones",
+        ageTier: "ADULT",
+      } as any);
+    }
+
+    beforeEach(() => {
+      mockedAuth.mockResolvedValue(adultSession);
+      vi.mocked(prisma.member.findUnique).mockResolvedValue(groupLessRequester() as any);
+      vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
+    });
+
+    it("files a PENDING partner-link request (by email) for a registered declared partner", async () => {
+      mockRegisteredPartner();
+      mockTransaction();
+      vi.mocked(requestPartnerLink).mockResolvedValue({
+        ok: true,
+        linkId: "link-1",
+        status: "PENDING",
+        message: "sent",
+      });
+
+      const res = await createGroup(
+        makeRequest({ partnerEmail: "Bob@Test.com", declarePartnerLink: true })
+      );
+
+      expect(res.status).toBe(201);
+      expect(requestPartnerLink).toHaveBeenCalledWith({
+        initiatorMemberId: "adult1",
+        targetEmail: "bob@test.com",
+      });
+    });
+
+    it("does not file a partner-link request when the flag is off", async () => {
+      mockRegisteredPartner();
+      mockTransaction();
+
+      const res = await createGroup(makeRequest({ partnerEmail: "bob@test.com" }));
+
+      expect(res.status).toBe(201);
+      expect(requestPartnerLink).not.toHaveBeenCalled();
+    });
+
+    it("keeps the committed group request alive when the partner-link call throws", async () => {
+      mockRegisteredPartner();
+      mockTransaction();
+      vi.mocked(requestPartnerLink).mockRejectedValue(new Error("db blip"));
+
+      const res = await createGroup(
+        makeRequest({ partnerEmail: "bob@test.com", declarePartnerLink: true })
+      );
+
+      expect(res.status).toBe(201);
+      expect(sendGroupCreateRequestConfirmationEmail).toHaveBeenCalled();
+      expect(sendAdminFamilyGroupRequestAlert).toHaveBeenCalled();
+    });
+
+    it("marks the minted invite token for an unregistered declared partner", async () => {
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+      const { txPartnerInviteCreate } = mockTransaction();
+
+      const res = await createGroup(
+        makeRequest({ partnerEmail: "new@test.com", declarePartnerLink: true })
+      );
+
+      expect(res.status).toBe(201);
+      expect(txPartnerInviteCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          invitedEmail: "new@test.com",
+          createPartnerLink: true,
+        }),
+      });
+      expect(requestPartnerLink).not.toHaveBeenCalled();
+    });
+
+    it("tells the reviewing admin when a declared partner is a member who cannot be invited", async () => {
+      // Email matches an existing member row that is not an active login adult.
+      vi.mocked(prisma.member.findFirst)
+        .mockResolvedValueOnce(null as any) // no active login member
+        .mockResolvedValueOnce({ id: "existing1" } as any); // but a row exists
+      const { txRequestCreate, txPartnerInviteCreate } = mockTransaction();
+
+      const res = await createGroup(
+        makeRequest({ partnerEmail: "spouse@test.com", declarePartnerLink: true })
+      );
+
+      expect(res.status).toBe(201);
+      expect(txPartnerInviteCreate).not.toHaveBeenCalled();
+      expect(requestPartnerLink).not.toHaveBeenCalled();
+      expect(txRequestCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: "GROUP_CREATE",
+          requestNotes: expect.stringContaining("declared as the requester's partner"),
+        }),
+      });
+    });
   });
 });

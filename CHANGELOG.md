@@ -4,6 +4,26 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- Added the declared **Partner/Husband/Wife relationship** (#1742, part of the
+  double-bed shared-occupancy epic #1741): a symmetric, consent-based
+  `MemberPartnerLink` between two adult members with a request→confirm flow
+  mirroring family invitations. Members declare a partner from the profile
+  Partner card (the partner confirms or declines from their own profile); a
+  family-group admin can declare a no-login adult member of their group in one
+  step; admins can assign or remove a partnership directly from the member
+  detail page (recorded as admin-assigned); and the family create-group form
+  can mark the named partner so an unregistered partner's invite token (#1682)
+  forms the link when claimed — the claim page discloses the partnership
+  before the invitee accepts. Invariants: at most one confirmed partner per
+  member (advisory-locked, with DB partial-unique backstops), adults only, no
+  self-partnering; removed/declined links are hard-deleted with full audit
+  history, and the affected partner is emailed on removal. New emails:
+  `partner-link-request`, `partner-link-confirmed`, `partner-link-removed`.
+  Expand-only migration (`MemberPartnerLink` table +
+  `PartnerInviteToken.createPartnerLink`). This link is the eligibility signal
+  the upcoming bed-share children build on; nothing in booking or capacity
+  consumes it yet.
+
 - **Behaviour change — lodge capacity now honours a max-sleeping-capacity
   ceiling (#1653).** A per-lodge `LodgeSettings.capacity` value now caps the bed
   count when Bed Allocation is on: effective capacity is the lower of the

@@ -1,0 +1,350 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { HeartHandshake } from "lucide-react";
+
+interface PartnerLinkView {
+  id: string;
+  status: string;
+  partner: { id: string; firstName: string; lastName: string; canLogin: boolean };
+  initiatedByMe: boolean;
+  assignedByAdmin: boolean;
+  confirmedAt: string | null;
+  createdAt: string;
+}
+
+interface PartnerLinkState {
+  confirmed: PartnerLinkView | null;
+  pendingIncoming: PartnerLinkView[];
+  pendingOutgoing: PartnerLinkView[];
+  // No-login adult family members the caller may declare in one step
+  // (present only when the caller is their family group's admin).
+  oneStepCandidates: Array<{ id: string; firstName: string; lastName: string }>;
+  // Outstanding partner-invite token minted with the declared-partner flag:
+  // the partnership forms when the invitee joins and claims it.
+  pendingPartnerInvite: { invitedEmail: string; expiresAt: string } | null;
+}
+
+interface PartnerLinkSectionProps {
+  canManage?: boolean;
+}
+
+function partnerName(partner: { firstName: string; lastName: string }) {
+  return `${partner.firstName} ${partner.lastName}`.trim();
+}
+
+/**
+ * Member self-service for the declared Partner/Husband/Wife relationship
+ * (#1742): request by email, respond to requests, withdraw, and remove.
+ * Family-group admins can also declare a no-login family member directly
+ * (the "one login manages the family" one-step flow).
+ */
+export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProps) {
+  const [state, setState] = useState<PartnerLinkState | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [email, setEmail] = useState("");
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadState() {
+    try {
+      const res = await fetch("/api/members/partner-link");
+      if (!res.ok) {
+        setLoadFailed(true);
+        return;
+      }
+      setState(await res.json());
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+    }
+  }
+
+  useEffect(() => {
+    loadState();
+  }, []);
+
+  async function callApi(input: RequestInfo, init: RequestInit) {
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch(input, init);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Request failed");
+        return false;
+      }
+      toast.success(data.message || "Done");
+      await loadState();
+      return true;
+    } catch {
+      setError("Request failed. Check your connection and try again.");
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRequest(e: React.FormEvent) {
+    e.preventDefault();
+    const body = selectedMemberId
+      ? { memberId: selectedMemberId }
+      : { email: email.trim() };
+    const ok = await callApi("/api/members/partner-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (ok) {
+      setEmail("");
+      setSelectedMemberId("");
+    }
+  }
+
+  async function handleRespond(linkId: string, action: "accept" | "decline") {
+    await callApi("/api/members/partner-link", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ linkId, action }),
+    });
+  }
+
+  async function handleRemove(linkId: string) {
+    const ok = await callApi(`/api/members/partner-link?id=${encodeURIComponent(linkId)}`, {
+      method: "DELETE",
+    });
+    if (ok) setShowRemoveConfirm(false);
+  }
+
+  if (!state) {
+    return loadFailed ? (
+      <p className="text-sm text-muted-foreground">
+        Could not load your partner details. Refresh the page to try again.
+      </p>
+    ) : (
+      <p className="text-sm text-muted-foreground">Loading…</p>
+    );
+  }
+
+  const familyCandidates = state.oneStepCandidates ?? [];
+  const canRequest =
+    canManage && !state.confirmed && state.pendingOutgoing.length === 0;
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+          {error}
+        </div>
+      )}
+
+      {state.pendingIncoming.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Partner Requests</p>
+          {state.pendingIncoming.map((link) => (
+            <div
+              key={link.id}
+              className="flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 p-3"
+            >
+              <p className="text-sm font-medium">
+                {partnerName(link.partner)} has asked to record you as their partner
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() => handleRespond(link.id, "accept")}
+                >
+                  Confirm
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() => handleRespond(link.id, "decline")}
+                >
+                  Decline
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {state.confirmed && (
+        <div className="rounded-lg border p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <HeartHandshake className="h-4 w-4 text-indigo-600" />
+              <span className="font-medium">{partnerName(state.confirmed.partner)}</span>
+              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                Confirmed partner
+              </Badge>
+            </div>
+            {canManage && !showRemoveConfirm && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={submitting}
+                onClick={() => setShowRemoveConfirm(true)}
+              >
+                Remove
+              </Button>
+            )}
+          </div>
+          {showRemoveConfirm && (
+            <div className="flex items-center justify-between rounded-md border border-rose-200 bg-rose-50 p-2">
+              <p className="text-sm text-rose-900">
+                Remove this partner relationship? {partnerName(state.confirmed.partner)} will
+                be notified.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() => handleRemove(state.confirmed!.id)}
+                >
+                  Confirm removal
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={submitting}
+                  onClick={() => setShowRemoveConfirm(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {state.pendingOutgoing.map((link) => (
+        <div
+          key={link.id}
+          className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 p-3"
+        >
+          <p className="text-sm text-amber-900">
+            Waiting for {partnerName(link.partner)} to confirm your partner request.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={submitting}
+            onClick={() => handleRemove(link.id)}
+          >
+            Withdraw
+          </Button>
+        </div>
+      ))}
+
+      {state.pendingPartnerInvite && !state.confirmed && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm text-amber-900">
+            Waiting for <strong>{state.pendingPartnerInvite.invitedEmail}</strong> to
+            join and accept your invitation — accepting will record them as your
+            partner. Contact an admin if you need to cancel the invitation.
+          </p>
+        </div>
+      )}
+
+      {!state.confirmed &&
+        state.pendingIncoming.length === 0 &&
+        state.pendingOutgoing.length === 0 &&
+        !state.pendingPartnerInvite && (
+          <p className="text-sm text-muted-foreground">
+            No partner recorded. {canManage ? "You can declare your partner below — they confirm the relationship from their profile." : ""}
+          </p>
+        )}
+
+      {canRequest && (
+        <form onSubmit={handleRequest} className="space-y-3 rounded-md border bg-slate-50 p-3">
+          <p className="text-sm font-medium">Declare your partner</p>
+          <div>
+            <Label htmlFor="partner-link-email">Partner&apos;s email address</Label>
+            <Input
+              id="partner-link-email"
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                if (e.target.value) setSelectedMemberId("");
+              }}
+              placeholder="member@example.com"
+              disabled={Boolean(selectedMemberId)}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              They must be a registered adult member with a login; they confirm the
+              relationship from their profile.
+            </p>
+          </div>
+          {familyCandidates.length > 0 && (
+            <div>
+              <Label htmlFor="partner-link-family-member">
+                Or select a family member without a login
+              </Label>
+              <Select
+                value={selectedMemberId || undefined}
+                onValueChange={(value) => {
+                  setSelectedMemberId(value);
+                  setEmail("");
+                }}
+              >
+                <SelectTrigger id="partner-link-family-member">
+                  <SelectValue placeholder="Select family member" />
+                </SelectTrigger>
+                <SelectContent>
+                  {familyCandidates.map((candidate) => (
+                    <SelectItem key={candidate.id} value={candidate.id}>
+                      {partnerName(candidate)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                As their family group&apos;s admin you can declare this directly — they
+                have no login of their own to confirm with, so they&apos;ll be notified
+                by email instead.
+              </p>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={submitting || (!email.trim() && !selectedMemberId)}
+            >
+              {submitting ? "Sending…" : "Send partner request"}
+            </Button>
+            {selectedMemberId && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedMemberId("")}
+              >
+                Clear selection
+              </Button>
+            )}
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
