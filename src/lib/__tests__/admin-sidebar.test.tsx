@@ -119,6 +119,7 @@ describe("AdminSidebar", () => {
       "Notifications & Email",
       "Chores",
       "Access Roles",
+      "Export & Import",
       "Committee",
     ]);
   });

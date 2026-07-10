@@ -20,6 +20,43 @@ All notable public reference-release changes should be recorded here.
   observed flake class root-caused and fixed test-side in #1650). Cross-lodge
   E2E regressions now block merges the same way the single-lodge Playwright
   suite does. CI-only; no application behaviour change.
+- Added **Configuration Export & Import** (config transfer): a full-admin tool
+  (Admin → Setup & Configuration → Export & Import) to export a club's
+  configuration, site content, and lodge setup as a portable, database-id-free
+  `.zip` bundle and import it into another (or the same) instance through a
+  mandatory dry-run → confirm flow. Import is upsert-only (never deletes), takes
+  a `pg_dump` backup before applying, runs under a single-flight advisory lock,
+  and is audited. Categories: site content (pages/site-content/theme, with
+  embedded-image bundling + reference remap), club settings singletons, lodge
+  configuration (each lodge a self-contained `lodge-config/lodges/<slug>/`
+  folder — `lodge.json` + rooms/beds/seasons/rates/instructions/chore-template
+  CSVs, lodge implied by folder), committee **role definitions** (the legacy
+  standalone member directory and member-linked assignments are excluded),
+  induction checklist templates, and Xero account/item-code mappings (source
+  org id in a sealed `xero-config/source.json`). Bundles are hand-editable:
+  manifest checksums/row counts are advisory (mismatches warn in the dry-run,
+  never block; import is files-first), with a "reseal" action to regenerate the
+  manifest; only structural/safety problems are hard-refused (resource caps are
+  enforced before inflation). Import has a per-run **write mode** (default
+  **merge**): merge writes only fields that carry a value in the bundle
+  (blank/omitted fields keep the record's existing value, so a partial or
+  skeleton bundle patches rather than wipes); overwrite makes the bundle fully
+  define each record (blanks clear). The **dry-run is mode-aware** and
+  **strictly validates every row** — malformed dates/enums/money are errors
+  (named by file, row, and field) that block apply until the bundle is fixed.
+  The dry-run also offers a **match picker** for renamed seasons, chore
+  templates, and induction templates, **per-category selection at import**, and
+  prominently names any lodge whose door code would change. The plan
+  fingerprint binds the bundle bytes, mode, selection, and resolutions, and is
+  re-verified inside the apply transaction under the advisory lock — what was
+  previewed is exactly what is applied. Success AND refused applies are
+  audited (with bundle sha256, a bounded per-item diff, and the lodges whose
+  door codes were actually written). Lodge folders carry the `isDefault`
+  default-lodge marker (adopted from fork #15), applied via a safe
+  clear-then-set. Never carries secrets, members, transactional data, or (by
+  default) door codes. Not a
+  database backup; the `pg_dump` subsystem remains the disaster-recovery tool.
+  No schema migration. See `docs/config-transfer/`.
 
 ## 0.10.1 - 2026-07-07
 

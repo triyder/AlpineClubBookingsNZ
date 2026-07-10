@@ -268,6 +268,7 @@ const ROUTE_AREA_PREFIXES: Array<{
     area: "support",
     prefixes: [
       "/admin/access-roles",
+      "/admin/config-transfer",
       "/admin/setup",
       "/admin/modules",
       "/admin/subscription-lockout",
@@ -283,6 +284,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/issue-reports",
       "/admin/audit-log",
       "/api/admin/access-roles",
+      "/api/admin/config-transfer",
       "/api/admin/setup",
       "/api/admin/modules",
       "/api/admin/notifications",
