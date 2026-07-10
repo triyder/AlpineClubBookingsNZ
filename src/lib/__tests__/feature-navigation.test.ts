@@ -147,7 +147,12 @@ describe("feature-aware navigation", () => {
     );
 
     for (const href of navHrefs) {
-      expect(routeSet.has(href), `${href} should have an admin page`).toBe(true);
+      // Deep links may carry query params (e.g. the Needs Attention
+      // unpaid-finished-stays link, #1731); the page route is the pathname.
+      const pathname = href.split(/[?#]/)[0];
+      expect(routeSet.has(pathname), `${href} should have an admin page`).toBe(
+        true,
+      );
     }
   });
 

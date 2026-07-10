@@ -20,6 +20,7 @@ import {
   AdminSidebar,
   getVisibleAdminNavSections,
 } from "@/components/admin-sidebar";
+import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 const ZERO_COUNTS: AdminPendingCounts = {
   familyRequests: 0,
@@ -29,6 +30,7 @@ const ZERO_COUNTS: AdminPendingCounts = {
   bookingReviews: 0,
   bookingChangeRequests: 0,
   publicBookingRequests: 0,
+  unpaidFinishedStays: 0,
   membershipCancellations: 0,
   archiveRequests: 0,
   deletionRequests: 0,
@@ -200,6 +202,37 @@ describe("AdminSidebar", () => {
       screen.getByRole("link", { name: /Booking Requests/ }),
     ).not.toBeNull();
     expect(screen.getByText("6")).not.toBeNull();
+  });
+
+  it("surfaces unpaid finished stays in Needs Attention with the dashboard deep link", async () => {
+    vi.stubGlobal("fetch", buildFetchMock({ unpaidFinishedStays: 5 }));
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    const link = screen.getByRole("link", { name: /Unpaid Finished Stays/ });
+    // Same deep link as the dashboard attention card (#1709/#1731): the
+    // bookings list pre-filtered by the shared unpaid-finished-stays helper.
+    expect(link.getAttribute("href")).toBe(
+      `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${formatDateOnly(
+        getTodayDateOnly(),
+      )}`,
+    );
+    expect(screen.getByText("5")).not.toBeNull();
+  });
+
+  it("hides the unpaid finished stays link while nothing is owing", async () => {
+    const fetchMock = buildFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("link", { name: /Unpaid Finished Stays/ }),
+    ).toBeNull();
   });
 
   it("shows unassigned hut leader dates in Needs Attention", async () => {
