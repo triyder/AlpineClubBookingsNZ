@@ -33,8 +33,9 @@ interface PartnerLinkState {
   // (present only when the caller is their family group's admin).
   oneStepCandidates: Array<{ id: string; firstName: string; lastName: string }>;
   // Outstanding partner-invite token minted with the declared-partner flag:
-  // the partnership forms when the invitee joins and claims it.
-  pendingPartnerInvite: { invitedEmail: string; expiresAt: string } | null;
+  // the partnership forms when the invitee joins and claims it. The inviter
+  // may cancel it while unclaimed (#1754).
+  pendingPartnerInvite: { id: string; invitedEmail: string; expiresAt: string } | null;
 }
 
 interface PartnerLinkSectionProps {
@@ -128,6 +129,13 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
       method: "DELETE",
     });
     if (ok) setShowRemoveConfirm(false);
+  }
+
+  async function handleCancelInvite(inviteTokenId: string) {
+    await callApi(
+      `/api/members/partner-link?inviteTokenId=${encodeURIComponent(inviteTokenId)}`,
+      { method: "DELETE" }
+    );
   }
 
   if (!state) {
@@ -255,12 +263,22 @@ export function PartnerLinkSection({ canManage = false }: PartnerLinkSectionProp
       ))}
 
       {state.pendingPartnerInvite && !state.confirmed && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="text-sm text-amber-900">
             Waiting for <strong>{state.pendingPartnerInvite.invitedEmail}</strong> to
             join and accept your invitation — accepting will record them as your
-            partner. Contact an admin if you need to cancel the invitation.
+            partner.
           </p>
+          {canManage && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={submitting}
+              onClick={() => handleCancelInvite(state.pendingPartnerInvite!.id)}
+            >
+              Cancel invitation
+            </Button>
+          )}
         </div>
       )}
 

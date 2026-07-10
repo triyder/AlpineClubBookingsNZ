@@ -22,7 +22,12 @@ All notable public reference-release changes should be recorded here.
   Expand-only migration (`MemberPartnerLink` table +
   `PartnerInviteToken.createPartnerLink`). This link is the eligibility signal
   the upcoming bed-share children build on; nothing in booking or capacity
-  consumes it yet.
+  consumes it yet. A by-email partner request always answers with the generic
+  "If they're eligible, we've sent them a partner request." so a member cannot
+  probe whether someone already has a confirmed partner (D9 owner decision);
+  and the inviter of an unregistered declared partner can cancel their own
+  outstanding invitation from the profile Partner card before it is claimed
+  (#1754).
 
 - **Behaviour change — lodge capacity now honours a max-sleeping-capacity
   ceiling (#1653).** A per-lodge `LodgeSettings.capacity` value now caps the bed

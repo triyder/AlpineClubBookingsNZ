@@ -515,3 +515,69 @@ export async function revokePartnerInviteToken(params: {
 
   return true;
 }
+
+/**
+ * Member-side cancellation of their own declared-partner invitation (#1754):
+ * the inviter revokes an OUTSTANDING token they minted with
+ * createPartnerLink, without needing an admin. Scope is deliberately narrow —
+ * own token only (createdById), partner-declaring tokens only, unclaimed only
+ * (a claimed token's membership history stands, exactly as in the admin
+ * revoke above). Returns false when nothing matched those conditions.
+ */
+export async function cancelOwnPartnerInviteToken(params: {
+  tokenId: string;
+  memberId: string;
+}): Promise<boolean> {
+  const token = await prisma.partnerInviteToken.findUnique({
+    where: { id: params.tokenId },
+    select: {
+      id: true,
+      familyGroupId: true,
+      invitedEmail: true,
+      confirmedAt: true,
+      createdById: true,
+      createPartnerLink: true,
+    },
+  });
+  if (
+    !token ||
+    token.confirmedAt ||
+    token.createdById !== params.memberId ||
+    !token.createPartnerLink
+  ) {
+    return false;
+  }
+
+  // Same guarded delete as the admin revoke: only remove the row while it is
+  // still outstanding, so a concurrent claim wins and its history is kept.
+  const deleted = await prisma.partnerInviteToken.deleteMany({
+    where: { id: token.id, confirmedAt: null },
+  });
+  if (deleted.count === 0) {
+    return false;
+  }
+
+  logAudit({
+    action: "FAMILY_GROUP_PARTNER_INVITE_CANCELLED",
+    memberId: params.memberId,
+    targetId: token.familyGroupId,
+    subjectMemberId: params.memberId,
+    entityType: "PartnerInviteToken",
+    entityId: token.id,
+    category: "family",
+    outcome: "success",
+    summary: "Partner invitation cancelled by the inviter",
+    details: JSON.stringify({
+      familyGroupId: token.familyGroupId,
+      invitedEmail: token.invitedEmail,
+      cancelledByInviter: true,
+    }),
+    metadata: {
+      familyGroupId: token.familyGroupId,
+      invitedEmail: token.invitedEmail,
+      cancelledByInviter: true,
+    },
+  });
+
+  return true;
+}

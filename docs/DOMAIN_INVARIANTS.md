@@ -1270,10 +1270,12 @@ still-memberless group is refused. The claim is only honoured for a signed-in
 member whose own email matches `invitedEmail`, so a forwarded link cannot join
 a stranger's group. The create-group route returns the same success response
 whether the partner email is a registered member or not, so it cannot be used
-to probe membership. Outstanding tokens are visible and revocable to admins,
-and an idempotent daily cron sweep hard-deletes expired tokens (TTL 30 days,
-longer than the 7-day nomination TTL because the invitee must complete the
-membership process first).
+to probe membership. Outstanding tokens are visible and revocable to admins;
+the inviter of a declared partner may also cancel their own outstanding
+invitation from the profile Partner card (#1754) — own `createPartnerLink`
+tokens only, unclaimed only, audited — and an idempotent daily cron sweep
+hard-deletes expired tokens (TTL 30 days, longer than the 7-day nomination
+TTL because the invitee must complete the membership process first).
 
 The declared Partner/Husband/Wife relationship (#1742) is a `MemberPartnerLink`
 row: a symmetric, consent-based link between two ADULT members, stored as a

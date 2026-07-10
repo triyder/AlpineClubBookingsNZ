@@ -289,6 +289,7 @@ export async function listOneStepPartnerCandidates(
 }
 
 export interface PendingPartnerInviteIntent {
+  id: string;
   invitedEmail: string;
   expiresAt: Date;
 }
@@ -296,8 +297,9 @@ export interface PendingPartnerInviteIntent {
 /**
  * An outstanding partner-invite token this member minted with
  * createPartnerLink (#1682/#1742): the partnership will form when the
- * invitee claims. Surfaced read-only on the profile so the token-borne
- * intent is visible to the inviter; an admin can revoke the token.
+ * invitee claims. Surfaced on the profile so the token-borne intent is
+ * visible to the inviter, who can cancel it before it is claimed (#1754);
+ * admins can also revoke the token.
  */
 export async function getPendingPartnerInviteIntent(
   memberId: string,
@@ -311,7 +313,7 @@ export async function getPendingPartnerInviteIntent(
       expiresAt: { gte: now },
     },
     orderBy: { createdAt: "desc" },
-    select: { invitedEmail: true, expiresAt: true },
+    select: { id: true, invitedEmail: true, expiresAt: true },
   });
   return token;
 }
