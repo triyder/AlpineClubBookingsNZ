@@ -616,6 +616,15 @@ function normalizeBunkGroup(value: string | null | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
+// Human list of quoted bed names, e.g. `"Old Top"` or `"Old Top" and "Old
+// Bottom"`, used when naming the deactivated bed(s) that hold a bunk slot.
+function quotedBedNames(names: string[]): string {
+  const quoted = names.map((name) => `"${name}"`);
+  if (quoted.length <= 1) return quoted.join("");
+  if (quoted.length === 2) return `${quoted[0]} and ${quoted[1]}`;
+  return `${quoted.slice(0, -1).join(", ")}, and ${quoted[quoted.length - 1]}`;
+}
+
 function assertBunkGroupTypeConsistency(
   bedType: BedType,
   bunkGroup: string | null,
@@ -653,10 +662,42 @@ async function assertBunkGroupCanAdmit(input: {
       bunkGroup: input.bunkGroup,
       ...(input.excludeBedId ? { id: { not: input.excludeBedId } } : {}),
     },
-    select: { id: true, bedType: true },
+    // name/active drive the deactivated-blocker steer: an inactive bed still
+    // counts toward the group (membership semantics unchanged), so when it is
+    // the reason a save is rejected the message names it and tells the admin to
+    // reactivate or delete it — otherwise the slot looks mysteriously taken.
+    select: { id: true, bedType: true, name: true, active: true },
   });
 
   if (others.length >= 2) {
+    const deactivated = others.filter((bed) => bed.active === false);
+    if (deactivated.length > 0) {
+      // Reactivating or deleting a deactivated member only makes room for the
+      // incoming bed when that member shares its type — it holds the very slot
+      // the new bed wants. A deactivated opposite-type member can't be acted on
+      // to admit a same-type bed, so name it but steer only to another group.
+      const sameType = deactivated.filter(
+        (bed) => bed.bedType === input.bedType,
+      );
+      if (sameType.length > 0) {
+        const plural = sameType.length > 1;
+        throw new BedAllocationAdminError(
+          `Bunk group "${input.bunkGroup}" already has two beds, including the deactivated bed${
+            plural ? "s" : ""
+          } ${quotedBedNames(sameType.map((bed) => bed.name))}. Reactivate or delete ${
+            plural ? "them" : "it"
+          }, or use another group.`,
+          409,
+        );
+      }
+      const plural = deactivated.length > 1;
+      throw new BedAllocationAdminError(
+        `Bunk group "${input.bunkGroup}" already has two beds, including the deactivated bed${
+          plural ? "s" : ""
+        } ${quotedBedNames(deactivated.map((bed) => bed.name))}. Use another group.`,
+        409,
+      );
+    }
     throw new BedAllocationAdminError(
       `Bunk group "${input.bunkGroup}" already has two beds. A bunk pairs one top and one bottom.`,
       409,
@@ -665,6 +706,14 @@ async function assertBunkGroupCanAdmit(input: {
 
   const partner = others[0];
   if (partner && partner.bedType === input.bedType) {
+    if (partner.active === false) {
+      throw new BedAllocationAdminError(
+        `Bunk group "${input.bunkGroup}" already has a ${bedTypeLabel(
+          input.bedType,
+        )} bed — the deactivated bed "${partner.name}". Reactivate or delete it, or use another group.`,
+        409,
+      );
+    }
     throw new BedAllocationAdminError(
       `Bunk group "${input.bunkGroup}" already has a ${bedTypeLabel(
         input.bedType,
