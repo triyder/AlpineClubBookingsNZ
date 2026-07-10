@@ -58,7 +58,11 @@ async function readTotalDigits(page: Page): Promise<string> {
 // Open the admin override editor, choose SHIFT, move the check-in (the check-out
 // derives to preserve the night count), and save. Returns after the editor has
 // closed on success.
-async function adminShiftTo(page: Page, newCheckIn: string): Promise<void> {
+async function adminShiftTo(
+  page: Page,
+  newCheckIn: string,
+  { emailMember = false }: { emailMember?: boolean } = {},
+): Promise<void> {
   await page.goto(`/bookings/${bookingId}`);
   await page.getByRole("button", { name: "Edit Booking" }).click();
 
@@ -75,11 +79,19 @@ async function adminShiftTo(page: Page, newCheckIn: string): Promise<void> {
 
   const save = page.getByRole("button", { name: "Save Changes" });
   await expect(save).toBeEnabled({ timeout: 30_000 });
-  // Wait for the PUT itself: the button renames to "Saving..." the instant it
-  // is clicked, so any button-based wait passes while the save is still in
-  // flight — the caller's next navigation would abort it mid-request (the
-  // first CI run failed exactly this way, booking unchanged). modify-quote
-  // also matches a "/modify" substring, hence endsWith + method.
+  // Every override save asks whether to email the member (owner decision,
+  // #1668 review); both choices apply the change.
+  await save.click();
+  const notifyChoice = page.getByRole("button", {
+    name: emailMember ? "Save and email member" : "Save without emailing",
+  });
+  await expect(notifyChoice).toBeVisible();
+  // Wait for the PUT itself: the Save button renames to "Saving..." the
+  // instant the dialog choice fires, so any button-based wait passes while
+  // the save is still in flight — the caller's next navigation would abort it
+  // mid-request (the first CI run failed exactly this way, booking
+  // unchanged). modify-quote also matches a "/modify" substring, hence
+  // endsWith + method.
   const [response] = await Promise.all([
     page.waitForResponse(
       (r) =>
@@ -87,7 +99,7 @@ async function adminShiftTo(page: Page, newCheckIn: string): Promise<void> {
         r.request().method() === "PUT",
       { timeout: 30_000 },
     ),
-    save.click(),
+    notifyChoice.click(),
   ]);
   expect(response.ok(), `shift save (${response.status()})`).toBeTruthy();
 
@@ -163,8 +175,10 @@ test("admin shifts a future booking into an in-progress stay with the price froz
   const totalBefore = await readTotalDigits(page);
 
   // Move check-in to yesterday: a 2-night stay then spans [yesterday, tomorrow),
-  // i.e. checkIn <= today < checkOut — a genuinely in-progress booking.
-  await adminShiftTo(page, isoDay(-1));
+  // i.e. checkIn <= today < checkOut — a genuinely in-progress booking. This
+  // one exercises the "Save and email member" dialog path; the later shifts
+  // take "Save without emailing".
+  await adminShiftTo(page, isoDay(-1), { emailMember: true });
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Edit Booking" })).toBeVisible();

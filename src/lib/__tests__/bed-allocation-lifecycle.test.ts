@@ -84,17 +84,26 @@ function existingAllocation(opts: {
   isRequestConverted?: boolean;
   ageTier?: string;
   approvedAt?: Date | null;
+  stayDate?: Date;
+  // #1677 whole-stay displacement inputs: the occupying booking's created-at
+  // (newest-first eviction) and stay window (extends-beyond-envelope pinning).
+  bookingCreatedAt?: Date;
+  bookingCheckIn?: Date;
+  bookingCheckOut?: Date;
 }) {
   return {
     bedId: opts.bedId,
     bookingId: opts.bookingId,
     bookingGuestId: opts.bookingGuestId,
     roomId: opts.roomId,
-    stayDate: NIGHT,
+    stayDate: opts.stayDate ?? NIGHT,
     approvedAt: opts.approvedAt ?? null,
     booking: {
       status: opts.status,
       originBookingRequest: opts.isRequestConverted ? { id: "req-1" } : null,
+      createdAt: opts.bookingCreatedAt,
+      checkIn: opts.bookingCheckIn,
+      checkOut: opts.bookingCheckOut,
     },
     bookingGuest: { ageTier: opts.ageTier ?? "ADULT" },
   };
@@ -1234,11 +1243,13 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
     expect(result.createdCount).toBe(0);
   });
 
-  it("never strands a displaced provisional booking's minor: unallocates the minor rather than its supervising adult", async () => {
+  it("displaces a provisional family as ONE unit: whole-stay unallocation, never a stranded minor (#1677)", async () => {
     // Rooms A(A1,A2) B(B1,B2), all occupied (no free bed). Room A holds a
     // Provisional family — adult A1, child A2. A new Held adult needs a bed.
-    // Displacing the provisional ADULT would strand its child, so displacement
-    // takes the provisional CHILD (UNALLOCATE) and leaves the adult in place.
+    // Whole-booking displacement (#1677) evicts the provisional FAMILY as one
+    // unit; with no other room able to host both, the whole family is
+    // UNALLOCATED (both rows deleted) — the child is never left in a room
+    // without its adult, and the family is never night- or guest-split.
     const db = makeDb({
       bedAllocationSettings: {
         findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
@@ -1330,35 +1341,40 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
       db: db as any,
     });
 
-    // The provisional CHILD is unallocated (its bed A2 goes to the held adult);
-    // the provisional ADULT is never touched, so no room is left with an
-    // unsupervised minor.
+    // BOTH provisional rows are unallocated — the family leaves as one unit
+    // and returns to the awaiting queue together. Nothing is MOVEd (no room
+    // can host both), so MOVE/UNALLOCATE are never mixed for one booking.
+    expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
+      where: { bookingGuestId: "prov-adult", stayDate: NIGHT_UTC },
+    });
     expect(db.bedAllocation.deleteMany).toHaveBeenCalledWith({
       where: { bookingGuestId: "prov-child", stayDate: NIGHT_UTC },
     });
-    const displacementTargets = [
-      ...db.bedAllocation.updateMany.mock.calls,
-      ...db.bedAllocation.deleteMany.mock.calls.filter(
-        (call: any[]) => "bookingGuestId" in call[0].where,
-      ),
-    ].map((call: any[]) => call[0].where.bookingGuestId);
-    expect(displacementTargets).not.toContain("prov-adult");
+    expect(db.bedAllocation.updateMany).not.toHaveBeenCalled();
 
+    // The held adult claims the first freed room-A bed.
     const created = db.bedAllocation.createMany.mock.calls[0][0].data;
     expect(created).toEqual([
       {
         bookingId: "held-new",
         bookingGuestId: "hn-adult",
         roomId: "room-a",
-        bedId: "bed-a2",
+        bedId: "bed-a1",
         stayDate: NIGHT_UTC,
         source: "AUTO",
       },
     ]);
-    const audit = db.auditLog.create.mock.calls[0][0].data;
-    expect(audit.entityId).toBe("prov-booking");
-    expect(audit.metadata.displacedBookingGuestId).toBe("prov-child");
-    expect(audit.metadata.displacementType).toBe("UNALLOCATE");
+    // One audit row per displaced guest-night, both on the provisional booking.
+    expect(db.auditLog.create).toHaveBeenCalledTimes(2);
+    for (const call of db.auditLog.create.mock.calls) {
+      expect(call[0].data.entityId).toBe("prov-booking");
+      expect(call[0].data.metadata.displacementType).toBe("UNALLOCATE");
+    }
+    expect(
+      db.auditLog.create.mock.calls.map(
+        (call: any[]) => call[0].data.metadata.displacedBookingGuestId,
+      ),
+    ).toEqual(["prov-adult", "prov-child"]);
     expect(result.createdCount).toBe(1);
   });
 
@@ -1425,5 +1441,466 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
     ]);
     expect(db.auditLog.create).toHaveBeenCalledTimes(1);
     expect(result.createdCount).toBe(1);
+  });
+
+  it("case 1 (multi-night) — moves a blocking multi-night provisional WHOLE to one room so a held family keeps one room for its stay (#1677)", async () => {
+    // Rooms A(A1,A2) B(B1,B2), two nights. Existing: A2 provisional BOTH
+    // nights, B1 held BOTH nights. A new HELD family (adult+child, two nights)
+    // claims room A whole: the provisional's ENTIRE stay is MOVEd to B2 (one
+    // updateMany per night, same destination), and the family never changes
+    // rooms mid-stay.
+    const night2 = parseDateOnly("2026-08-02");
+    const night2Utc = new Date("2026-08-02T00:00:00.000Z");
+    const stayEnd = parseDateOnly("2026-08-03");
+    const guests = [
+      {
+        id: "hn-adult",
+        bookingId: "held-new",
+        ageTier: "ADULT",
+        stayStart: NIGHT,
+        stayEnd,
+        nights: [] as { stayDate: Date }[],
+      },
+      {
+        id: "hn-child",
+        bookingId: "held-new",
+        ageTier: "CHILD",
+        stayStart: NIGHT,
+        stayEnd,
+        nights: [] as { stayDate: Date }[],
+      },
+    ];
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue(TWO_ROOMS_TWO_BEDS),
+      },
+      booking: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "held-new",
+          status: BookingStatus.PAID,
+          deletedAt: null,
+          checkIn: NIGHT,
+          checkOut: stayEnd,
+          guests,
+        }),
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "held-new",
+            createdAt: new Date("2026-07-01T00:00:00.000Z"),
+            requestedRoomId: null,
+            status: BookingStatus.PAID,
+            originBookingRequest: null,
+            checkIn: NIGHT,
+            checkOut: stayEnd,
+            guests,
+          },
+        ]),
+      },
+      bedAllocation: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        findMany: vi.fn().mockResolvedValue([
+          existingAllocation({
+            bedId: "bed-a2",
+            roomId: "room-a",
+            bookingId: "prov-booking",
+            bookingGuestId: "prov-g1",
+            status: BookingStatus.PENDING,
+            bookingCheckIn: NIGHT,
+            bookingCheckOut: stayEnd,
+          }),
+          existingAllocation({
+            bedId: "bed-a2",
+            roomId: "room-a",
+            bookingId: "prov-booking",
+            bookingGuestId: "prov-g1",
+            status: BookingStatus.PENDING,
+            stayDate: night2,
+            bookingCheckIn: NIGHT,
+            bookingCheckOut: stayEnd,
+          }),
+          existingAllocation({
+            bedId: "bed-b1",
+            roomId: "room-b",
+            bookingId: "held-existing",
+            bookingGuestId: "he-g1",
+            status: BookingStatus.PAID,
+          }),
+          existingAllocation({
+            bedId: "bed-b1",
+            roomId: "room-b",
+            bookingId: "held-existing",
+            bookingGuestId: "he-g1",
+            status: BookingStatus.PAID,
+            stayDate: night2,
+          }),
+        ]),
+        createMany: vi.fn().mockResolvedValue({ count: 4 }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn().mockResolvedValue({}),
+        delete: vi.fn().mockResolvedValue({}),
+      },
+    });
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "held-new",
+      db: db as any,
+    });
+
+    // The provisional's WHOLE stay moves to B2 — one updateMany per night,
+    // both to the same destination room and bed.
+    expect(db.bedAllocation.updateMany).toHaveBeenCalledTimes(2);
+    expect(db.bedAllocation.updateMany).toHaveBeenCalledWith({
+      where: { bookingGuestId: "prov-g1", stayDate: NIGHT_UTC },
+      data: { bedId: "bed-b2", roomId: "room-b" },
+    });
+    expect(db.bedAllocation.updateMany).toHaveBeenCalledWith({
+      where: { bookingGuestId: "prov-g1", stayDate: night2Utc },
+      data: { bedId: "bed-b2", roomId: "room-b" },
+    });
+    const unallocateCalls = db.bedAllocation.deleteMany.mock.calls.filter(
+      (call: any[]) => "bookingGuestId" in call[0].where,
+    );
+    expect(unallocateCalls).toHaveLength(0);
+
+    // The held family keeps room A (same beds) for BOTH nights.
+    const created = db.bedAllocation.createMany.mock.calls[0][0].data;
+    expect(created).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: NIGHT_UTC,
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-child",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: NIGHT_UTC,
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: night2Utc,
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-child",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: night2Utc,
+        source: "AUTO",
+      },
+    ]);
+    expect(db.auditLog.create).toHaveBeenCalledTimes(2);
+    expect(result.createdCount).toBe(4);
+  });
+});
+
+// Issue #1677: whole-stay planning needs to SEE whole stays. The lifecycle
+// widens its loads to the envelope of every booking overlapping the reconcile
+// range, while the planner bookings set stays restricted to the original
+// range (no cascade).
+describe("bed allocation envelope widening (issue #1677)", () => {
+  it("loads allocations across the overlapping bookings' full stay envelope while keeping the booking scan on the original range", async () => {
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue({
+      id: "booking-a",
+      status: BookingStatus.PAID,
+      deletedAt: null,
+      checkIn: parseDateOnly("2026-08-01"),
+      checkOut: parseDateOnly("2026-08-02"),
+      guests: [
+        {
+          id: "ga-1",
+          bookingId: "booking-a",
+          ageTier: "ADULT",
+          stayStart: parseDateOnly("2026-08-01"),
+          stayEnd: parseDateOnly("2026-08-02"),
+          nights: [],
+        },
+      ],
+    });
+    // A neighbouring booking straddles the range: 07-30 .. 08-03.
+    db.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-b",
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        requestedRoomId: null,
+        status: BookingStatus.PENDING,
+        originBookingRequest: null,
+        checkIn: parseDateOnly("2026-07-30"),
+        checkOut: parseDateOnly("2026-08-03"),
+        guests: [],
+      },
+    ]);
+
+    await reconcileBedAllocationsForBooking({
+      bookingId: "booking-a",
+      db: db as any,
+    });
+
+    // Booking scan: original reconcile range only (no cascade).
+    expect(db.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkIn: { lt: parseDateOnly("2026-08-02") },
+          checkOut: { gt: parseDateOnly("2026-08-01") },
+        }),
+      }),
+    );
+    // Allocation scan: widened to the overlapping booking's full envelope, so
+    // out-of-range allocations of straddling stays are visible to the planner.
+    expect(db.bedAllocation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          stayDate: {
+            gte: parseDateOnly("2026-07-30"),
+            lt: parseDateOnly("2026-08-03"),
+          },
+        }),
+      }),
+    );
+  });
+
+  it("never night-splits a neighbouring provisional stay straddling the reconcile range: the whole stay is displaced", async () => {
+    // Room A has ONE bed. Provisional booking B holds it for 07-31..08-03
+    // (three nights). Reconciling held booking A for its 08-01..08-02 night
+    // displaces B's ENTIRE stay — all three rows are unallocated, including
+    // the two nights OUTSIDE A's range — never just the contested night.
+    const bNights = [
+      parseDateOnly("2026-07-31"),
+      parseDateOnly("2026-08-01"),
+      parseDateOnly("2026-08-02"),
+    ];
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "room-a",
+            name: "Room A",
+            sortOrder: 1,
+            active: true,
+            beds: [
+              { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1, active: true },
+            ],
+          },
+        ]),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue({
+      id: "held-a",
+      status: BookingStatus.PAID,
+      deletedAt: null,
+      checkIn: parseDateOnly("2026-08-01"),
+      checkOut: parseDateOnly("2026-08-02"),
+      guests: [
+        {
+          id: "ha-g1",
+          bookingId: "held-a",
+          ageTier: "ADULT",
+          stayStart: parseDateOnly("2026-08-01"),
+          stayEnd: parseDateOnly("2026-08-02"),
+          nights: [],
+        },
+      ],
+    });
+    db.booking.findMany.mockResolvedValue([
+      {
+        id: "prov-b",
+        createdAt: new Date("2026-06-01T00:00:00.000Z"),
+        requestedRoomId: null,
+        status: BookingStatus.PENDING,
+        originBookingRequest: null,
+        checkIn: parseDateOnly("2026-07-31"),
+        checkOut: parseDateOnly("2026-08-03"),
+        guests: [
+          {
+            id: "pb-g1",
+            bookingId: "prov-b",
+            ageTier: "ADULT",
+            stayStart: parseDateOnly("2026-07-31"),
+            stayEnd: parseDateOnly("2026-08-03"),
+            nights: [],
+          },
+        ],
+      },
+      {
+        id: "held-a",
+        createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        requestedRoomId: null,
+        status: BookingStatus.PAID,
+        originBookingRequest: null,
+        checkIn: parseDateOnly("2026-08-01"),
+        checkOut: parseDateOnly("2026-08-02"),
+        guests: [
+          {
+            id: "ha-g1",
+            bookingId: "held-a",
+            ageTier: "ADULT",
+            stayStart: parseDateOnly("2026-08-01"),
+            stayEnd: parseDateOnly("2026-08-02"),
+            nights: [],
+          },
+        ],
+      },
+    ]);
+    db.bedAllocation.findMany.mockResolvedValue(
+      bNights.map((stayDate) =>
+        existingAllocation({
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "prov-b",
+          bookingGuestId: "pb-g1",
+          status: BookingStatus.PENDING,
+          stayDate,
+          bookingCheckIn: parseDateOnly("2026-07-31"),
+          bookingCheckOut: parseDateOnly("2026-08-03"),
+        }),
+      ),
+    );
+    db.bedAllocation.createMany.mockResolvedValue({ count: 1 });
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "held-a",
+      db: db as any,
+    });
+
+    // ALL of B's nights are unallocated — the stay leaves as one unit.
+    const unallocateCalls = db.bedAllocation.deleteMany.mock.calls.filter(
+      (call: any[]) => "bookingGuestId" in call[0].where,
+    );
+    expect(unallocateCalls.map((call: any[]) => call[0].where)).toEqual([
+      {
+        bookingGuestId: "pb-g1",
+        stayDate: new Date("2026-07-31T00:00:00.000Z"),
+      },
+      {
+        bookingGuestId: "pb-g1",
+        stayDate: new Date("2026-08-01T00:00:00.000Z"),
+      },
+      {
+        bookingGuestId: "pb-g1",
+        stayDate: new Date("2026-08-02T00:00:00.000Z"),
+      },
+    ]);
+    const created = db.bedAllocation.createMany.mock.calls[0][0].data;
+    expect(created).toEqual([
+      {
+        bookingId: "held-a",
+        bookingGuestId: "ha-g1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: new Date("2026-08-01T00:00:00.000Z"),
+        source: "AUTO",
+      },
+    ]);
+    expect(db.auditLog.create).toHaveBeenCalledTimes(3);
+    expect(result.createdCount).toBe(1);
+  });
+
+  it("treats a stay extending beyond the load envelope as non-displaceable (only partially visible)", async () => {
+    // The blocking occupant's booking runs past the envelope (checkOut
+    // 08-05 > envelope end 08-02) — e.g. a booking visible only through the
+    // widened envelope of ANOTHER overlapping stay. Moving it whole is
+    // impossible when part of its stay is invisible, so it is pinned and the
+    // held booking stays awaiting.
+    const db = makeDb({
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "room-a",
+            name: "Room A",
+            sortOrder: 1,
+            active: true,
+            beds: [
+              { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1, active: true },
+            ],
+          },
+        ]),
+      },
+    });
+    db.booking.findUnique.mockResolvedValue({
+      id: "held-a",
+      status: BookingStatus.PAID,
+      deletedAt: null,
+      checkIn: parseDateOnly("2026-08-01"),
+      checkOut: parseDateOnly("2026-08-02"),
+      guests: [
+        {
+          id: "ha-g1",
+          bookingId: "held-a",
+          ageTier: "ADULT",
+          stayStart: parseDateOnly("2026-08-01"),
+          stayEnd: parseDateOnly("2026-08-02"),
+          nights: [],
+        },
+      ],
+    });
+    db.booking.findMany.mockResolvedValue([
+      {
+        id: "held-a",
+        createdAt: new Date("2026-07-01T00:00:00.000Z"),
+        requestedRoomId: null,
+        status: BookingStatus.PAID,
+        originBookingRequest: null,
+        checkIn: parseDateOnly("2026-08-01"),
+        checkOut: parseDateOnly("2026-08-02"),
+        guests: [
+          {
+            id: "ha-g1",
+            bookingId: "held-a",
+            ageTier: "ADULT",
+            stayStart: parseDateOnly("2026-08-01"),
+            stayEnd: parseDateOnly("2026-08-02"),
+            nights: [],
+          },
+        ],
+      },
+    ]);
+    db.bedAllocation.findMany.mockResolvedValue([
+      existingAllocation({
+        bedId: "bed-a1",
+        roomId: "room-a",
+        bookingId: "prov-x",
+        bookingGuestId: "px-g1",
+        status: BookingStatus.PENDING,
+        bookingCheckIn: parseDateOnly("2026-08-01"),
+        bookingCheckOut: parseDateOnly("2026-08-05"),
+      }),
+    ]);
+
+    const result = await reconcileBedAllocationsForBooking({
+      bookingId: "held-a",
+      db: db as any,
+    });
+
+    expect(db.bedAllocation.updateMany).not.toHaveBeenCalled();
+    const unallocateCalls = db.bedAllocation.deleteMany.mock.calls.filter(
+      (call: any[]) => "bookingGuestId" in call[0].where,
+    );
+    expect(unallocateCalls).toHaveLength(0);
+    expect(db.bedAllocation.createMany).not.toHaveBeenCalled();
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+    expect(result.createdCount).toBe(0);
   });
 });

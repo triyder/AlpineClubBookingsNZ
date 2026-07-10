@@ -3,11 +3,13 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { getBookingAccent } from "@/app/(admin)/admin/bed-allocation/_components/booking-accent";
 import { BucketBoard } from "@/app/(admin)/admin/bed-allocation/_components/bucket-board";
 import type {
   BucketGuestGroup,
   DashboardBookingSummary,
 } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import { AGE_TIER_COLORS } from "@/lib/admin-family-group-ui-helpers";
 
 vi.mock("@dnd-kit/core", () => ({
   useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
@@ -100,5 +102,29 @@ describe("BucketBoard requested-room badge (#706)", () => {
       screen.getByRole("button", { name: /Drag Example Guest to a bed/i }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Allocate/ })).toBeDisabled();
+  });
+
+  it("uses the same booking accent on the booking card and guest chip", () => {
+    const { container } = renderBucket(buildBooking());
+    const accent = getBookingAccent("booking-1");
+    const titledCards = screen.getAllByTitle("Booking booking-1");
+    const accentStrips = Array.from(
+      container.querySelectorAll('span[aria-hidden="true"]'),
+    );
+
+    expect(titledCards[0].className).toContain(accent.ringClassName);
+    expect(titledCards[0].className).toContain(accent.tintClassName);
+    expect(titledCards[1].className).toContain(accent.ringClassName);
+    expect(accentStrips).toHaveLength(2);
+    expect(
+      accentStrips.every((strip) =>
+        strip.className.includes(accent.stripClassName),
+      ),
+    ).toBe(true);
+    const badge = screen.getByText("ADULT");
+    expect(badge).toBeInTheDocument();
+    for (const className of AGE_TIER_COLORS.ADULT.split(" ")) {
+      expect(badge.className).toContain(className);
+    }
   });
 });

@@ -299,6 +299,9 @@ describe("bed allocation planner", () => {
         source: "AUTO",
       },
     ]);
+    // No single room fits the party of four, so the per-night split fallback
+    // fired and the booking is reported for room-continuity visibility (#1677).
+    expect(plan.roomContinuityFallbackBookingIds).toEqual(["booking-family"]);
   });
 
   it("does not allocate minors when no booking adult is staying that night", () => {
@@ -413,7 +416,11 @@ describe("bed allocation planner", () => {
     ]);
   });
 
-  it("allocates each booking night independently", () => {
+  it("keeps a booking in one room for the whole stay (issue #1677)", () => {
+    // Room A can host the family on night 1 but not night 2 (A2 is taken).
+    // The old per-night planner dropped the family into room A on night 1 and
+    // forced a mid-stay move to room B on night 2. Whole-stay planning places
+    // the family in room B for BOTH nights — no one changes rooms.
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
       rooms: [
@@ -456,20 +463,21 @@ describe("bed allocation planner", () => {
     });
 
     expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.roomContinuityFallbackBookingIds).toBeUndefined();
     expect(plan.allocations).toEqual([
       {
         bookingId: "booking-family",
         bookingGuestId: "adult-1",
-        roomId: "room-a",
-        bedId: "bed-a1",
+        roomId: "room-b",
+        bedId: "bed-b1",
         stayDate: "2026-07-01",
         source: "AUTO",
       },
       {
         bookingId: "booking-family",
         bookingGuestId: "child-1",
-        roomId: "room-a",
-        bedId: "bed-a2",
+        roomId: "room-b",
+        bedId: "bed-b2",
         stayDate: "2026-07-01",
         source: "AUTO",
       },
@@ -648,6 +656,340 @@ describe("bed allocation planner", () => {
         },
       ],
     });
+  });
+});
+
+// Issue #1677: booking-first, whole-stay-first planning. A booking party gets
+// ONE room for the entire stay; per-night splitting is a reported last resort.
+describe("bed allocation whole-stay room continuity (issue #1677)", () => {
+  it("hosts staggered per-guest ranges in one room for the whole stay", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-staggered", "2026-06-01", [
+          {
+            id: "adult-1",
+            ageTier: "ADULT",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-04",
+          },
+          {
+            id: "adult-2",
+            ageTier: "ADULT",
+            stayStart: "2026-07-02",
+            stayEnd: "2026-07-04",
+          },
+        ]),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.roomContinuityFallbackBookingIds).toBeUndefined();
+    // Everyone in room A; each guest keeps ONE bed across its own range.
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-staggered",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-staggered",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-staggered",
+        bookingGuestId: "adult-2",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-staggered",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-03",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-staggered",
+        bookingGuestId: "adult-2",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-03",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("plans a non-contiguous stay (#713) on its included nights only, leaving the gap night free", () => {
+    // The same guest id arrives as two per-night pseudo-entries (nights 07-01
+    // and 07-03) — the callers' shape for a #713 night set with a gap.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [{ id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 }],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-gap", "2026-06-01", [
+          {
+            id: "guest-1",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-02",
+          },
+          {
+            id: "guest-1",
+            stayStart: "2026-07-03",
+            stayEnd: "2026-07-04",
+          },
+        ]),
+        // A later booking takes the gap night — the bed really is free then.
+        multiGuestBooking("booking-mid", "2026-06-02", [
+          {
+            id: "guest-2",
+            stayStart: "2026-07-02",
+            stayEnd: "2026-07-03",
+          },
+        ]),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-gap",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-gap",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-03",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-mid",
+        bookingGuestId: "guest-2",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("switches beds within the room only when no single bed spans the stay", () => {
+    // A1 is taken on night 2 and A2 on night 1: no bed is free for the whole
+    // stay, but room A still hosts every night — the guest stays in ONE room
+    // and switches beds, never rooms.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [{ id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 }],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-1", "2026-06-01", [
+          { id: "guest-1", stayStart: "2026-07-01", stayEnd: "2026-07-03" },
+        ]),
+      ],
+      occupiedBedNights: [
+        { bedId: "bed-a1", stayDate: "2026-07-02" },
+        { bedId: "bed-a2", stayDate: "2026-07-01" },
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.roomContinuityFallbackBookingIds).toBeUndefined();
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("pins a date-extension to the booking's existing room and keeps the guest's bed", () => {
+    // guest-1 already holds B2 on night 1 (existing allocation). The added
+    // night 2 must land in room B (not first-fit room A) and on the SAME bed
+    // B2 (not room B's lower-sorted free B1).
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [{ id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 }],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [
+            { id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 },
+            { id: "bed-b2", roomId: "room-b", name: "B2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-1", "2026-06-01", [
+          { id: "guest-1", stayStart: "2026-07-01", stayEnd: "2026-07-03" },
+        ]),
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-b2",
+          roomId: "room-b",
+          bookingId: "booking-1",
+          bookingGuestId: "guest-1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+        },
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-b",
+        bedId: "bed-b2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("pins a minors-only stay to the one room holding the booking's existing adult, for the whole stay", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [
+            { id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 },
+            { id: "bed-b2", roomId: "room-b", name: "B2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          {
+            id: "child-1",
+            ageTier: "CHILD",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-03",
+          },
+        ]),
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-b1",
+          roomId: "room-b",
+          bookingId: "booking-family",
+          bookingGuestId: "adult-1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+        },
+        {
+          bedId: "bed-b1",
+          roomId: "room-b",
+          bookingId: "booking-family",
+          bookingGuestId: "adult-1",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+        },
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    // Room A sorts first and has space, but only room B holds the booking's
+    // adult on every night — the child's whole stay pins there.
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        roomId: "room-b",
+        bedId: "bed-b2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        roomId: "room-b",
+        bedId: "bed-b2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
   });
 });
 
@@ -902,9 +1244,11 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
     };
   }
 
-  it("leaves the pre-existing (buggy) behaviour untouched when the flag is off", () => {
-    // A provisional-occupied bed still blocks a held booking, and no
-    // displacements are emitted, so every existing caller is unaffected.
+  it("emits no displacements when the flag is off: a provisional-occupied bed still blocks a held booking", () => {
+    // Planning is whole-stay-first for every caller (#1677), but displacement
+    // stays exclusive to the prioritizeCapacityHolding lifecycle path: with
+    // the flag off a held booking never evicts a provisional occupant and the
+    // plan carries no displacements, so the admin board stays a pure preview.
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
       rooms: [
@@ -1205,12 +1549,13 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
     ]);
   });
 
-  it("relocates a provisional minor only to a room that keeps its own booking's adult", () => {
+  it("consolidates a displaced provisional family into ONE room, keeping its minor with its adult (#1677)", () => {
     // Rooms A(A1,A2) B(B1) C(C1,C2). Provisional family: child at A2, adult at
-    // C1. A held family (adult+child) forces the held child into room A, whose
-    // A2 is the provisional child. A free bed exists in room B (no provisional
-    // adult) AND room C (the provisional adult's room). The provisional child
-    // must be MOVED to room C — never to room B, which would strand it.
+    // C1. A held family (adult+child) claims room A whole, evicting the
+    // provisional BOOKING as one unit. Its whole-stay re-plan lands in room C
+    // (the room already holding most of the family): the adult keeps C1
+    // (unchanged, so no record) and the child MOVEs to C2 — never to room B,
+    // which would strand it away from its adult.
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
       prioritizeCapacityHolding: true,
@@ -1292,7 +1637,9 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
         source: "AUTO",
       },
     ]);
-    // Provisional child MOVED to C2 (room C has its adult), NOT to B1.
+    // Provisional child MOVED to C2 (the family's one destination room), NOT
+    // to B1; the adult keeps C1, so it needs no record — the booking ends the
+    // plan wholly in room C.
     expect(plan.displacements).toEqual([
       {
         type: "MOVE",
@@ -1308,11 +1655,12 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
     ]);
   });
 
-  it("places a held family adults-first so a child ordered before its adult still fits when both need displacement", () => {
+  it("claims a whole room for a held family by evicting whole provisional stays, newest booking first (#1677 Phase 2)", () => {
     // Rooms A(A1,A2) B(B1,B2), all four beds held by distinct provisional
-    // adults, no free bed. The held family lists the CHILD before the ADULT.
-    // Adults-first ordering displaces-in the held adult (establishing its room)
-    // before the child, so both fit; visiting the child first would drop it.
+    // adults, no free bed. Whole-stay displacement (Phase 2) evicts BOTH
+    // room-A provisionals (newest booking id first on equal createdAt) and
+    // places the family together in room A, adults first, even though the
+    // family lists the child before the adult.
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
       prioritizeCapacityHolding: true,
@@ -1387,8 +1735,163 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
         source: "AUTO",
       },
     ]);
-    // Two UNALLOCATEs (no free bed to relocate to): the two room-A provisionals.
+    // Two UNALLOCATEs (no free bed to relocate to): the two room-A
+    // provisionals, evicted newest-first (prov-2 before prov-1 — equal
+    // createdAt ties break on booking id, descending).
     expect(plan.displacements).toHaveLength(2);
+    expect(
+      plan.displacements?.map((displacement) => ({
+        type: displacement.type,
+        bookingGuestId: displacement.bookingGuestId,
+      })),
+    ).toEqual([
+      { type: "UNALLOCATE", bookingGuestId: "prov-2-adult" },
+      { type: "UNALLOCATE", bookingGuestId: "prov-1-adult" },
+    ]);
+    // Whole-room claim, no per-night fallback.
+    expect(plan.roomContinuityFallbackBookingIds).toBeUndefined();
+  });
+
+  it("places a held family adults-first in the per-night fallback so a child ordered before its adult still fits (#1677 Phase 3)", () => {
+    // Two nights. Night 1: every bed is taken (room A by two displaceable
+    // single-night provisionals, room B by held bookings). Night 2: room A is
+    // blocked by a held booking and an APPROVED provisional (pinned), room B is
+    // free. No single room can host the whole stay even with displacement, so
+    // the plan falls back to per-night logic. On night 1, adults-first
+    // displacement seats the held ADULT first (establishing its room), then
+    // the child — even though the family lists the child first. Each displaced
+    // provisional is evicted as a whole booking (single-night stays here) and
+    // unallocated because no free bed remains that night.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: twoRooms,
+      bookings: [
+        {
+          id: "held-new",
+          createdAt: new Date("2026-07-01"),
+          requestedRoomId: null,
+          holdsCapacity: true,
+          guests: [
+            {
+              id: "hn-child",
+              bookingId: "held-new",
+              ageTier: "CHILD",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-03"),
+            },
+            {
+              id: "hn-adult",
+              bookingId: "held-new",
+              ageTier: "ADULT",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-03"),
+            },
+          ],
+        },
+      ],
+      occupiedBedNights: [
+        // Night 1: all four beds taken.
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "prov-1",
+          bookingGuestId: "prov-1-adult",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov-2",
+          bookingGuestId: "prov-2-adult",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+        {
+          bedId: "bed-b1",
+          roomId: "room-b",
+          bookingId: "held-ex-1",
+          bookingGuestId: "he-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+        {
+          bedId: "bed-b2",
+          roomId: "room-b",
+          bookingId: "held-ex-2",
+          bookingGuestId: "he-g2",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+        // Night 2: room A blocked (held + approved provisional), room B free.
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "held-ex-3",
+          bookingGuestId: "he-g3",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov-3",
+          bookingGuestId: "prov-3-adult",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          approvedAt: "2026-06-20",
+        },
+      ],
+    });
+
+    // Night 1 in room A (adult displaced-in first, then the child beside it);
+    // night 2 whole-night in room B (input order) — a mid-stay switch, but
+    // only as the last resort, and the booking is reported as a
+    // room-continuity fallback.
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-child",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-child",
+        roomId: "room-b",
+        bedId: "bed-b1",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-b",
+        bedId: "bed-b2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.roomContinuityFallbackBookingIds).toEqual(["held-new"]);
+    // The two night-1 provisionals are unallocated whole (their entire visible
+    // stay is that one night); the approved night-2 provisional is untouched.
     expect(
       plan.displacements?.map((displacement) => ({
         type: displacement.type,
@@ -1398,6 +1901,7 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
       { type: "UNALLOCATE", bookingGuestId: "prov-1-adult" },
       { type: "UNALLOCATE", bookingGuestId: "prov-2-adult" },
     ]);
+    expect(plan.unallocatedGuestNights).toEqual([]);
   });
 
   it("emits zero displacements when every guest-night is already allocated (idempotent)", () => {
@@ -1444,5 +1948,681 @@ describe("bed allocation first-claim displacement (issue #1387)", () => {
     expect(plan.allocations).toEqual([]);
     expect(plan.unallocatedGuestNights).toEqual([]);
     expect(plan).not.toHaveProperty("displacements");
+  });
+
+  it("moves a multi-night provisional stay WHOLE to one destination room (#1677)", () => {
+    // Prov holds A2 on both nights; a held family needs room A whole. The
+    // provisional's entire stay MOVEs to room B (same bed both nights) — one
+    // destination room, no night left behind, no mixing with UNALLOCATE.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: twoRooms,
+      bookings: [
+        {
+          id: "held-new",
+          createdAt: new Date("2026-07-01"),
+          requestedRoomId: null,
+          holdsCapacity: true,
+          guests: [
+            {
+              id: "hn-adult",
+              bookingId: "held-new",
+              ageTier: "ADULT",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-03"),
+            },
+            {
+              id: "hn-child",
+              bookingId: "held-new",
+              ageTier: "CHILD",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-03"),
+            },
+          ],
+        },
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+        {
+          bedId: "bed-b1",
+          roomId: "room-b",
+          bookingId: "held-ex",
+          bookingGuestId: "he-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+        {
+          bedId: "bed-b1",
+          roomId: "room-b",
+          bookingId: "held-ex",
+          bookingGuestId: "he-g1",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+      ],
+    });
+
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-child",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-child",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.displacements).toEqual([
+      {
+        type: "MOVE",
+        bookingId: "prov",
+        bookingGuestId: "prov-g1",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-a2",
+        fromRoomId: "room-a",
+        toBedId: "bed-b2",
+        toRoomId: "room-b",
+        displacedByBookingId: "held-new",
+      },
+      {
+        type: "MOVE",
+        bookingId: "prov",
+        bookingGuestId: "prov-g1",
+        stayDate: "2026-07-02",
+        fromBedId: "bed-a2",
+        fromRoomId: "room-a",
+        toBedId: "bed-b2",
+        toRoomId: "room-b",
+        displacedByBookingId: "held-new",
+      },
+    ]);
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.roomContinuityFallbackBookingIds).toBeUndefined();
+  });
+
+  it("unallocates a multi-night provisional stay WHOLE when no single room can host it (#1677)", () => {
+    // One room only. Prov holds A2 on both nights; a held adult books both
+    // nights. With nowhere to move the provisional whole, its ENTIRE stay is
+    // UNALLOCATED — all-MOVE or all-UNALLOCATE, never a mix, never a
+    // night-split.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        {
+          id: "held-new",
+          createdAt: new Date("2026-07-01"),
+          requestedRoomId: null,
+          holdsCapacity: true,
+          guests: [
+            {
+              id: "hn-adult",
+              bookingId: "held-new",
+              ageTier: "ADULT",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-03"),
+            },
+          ],
+        },
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "held-ex",
+          bookingGuestId: "he-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "held-ex",
+          bookingGuestId: "he-g1",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+      ],
+    });
+
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.displacements).toEqual([
+      {
+        type: "UNALLOCATE",
+        bookingId: "prov",
+        bookingGuestId: "prov-g1",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-a2",
+        fromRoomId: "room-a",
+        displacedByBookingId: "held-new",
+      },
+      {
+        type: "UNALLOCATE",
+        bookingId: "prov",
+        bookingGuestId: "prov-g1",
+        stayDate: "2026-07-02",
+        fromBedId: "bed-a2",
+        fromRoomId: "room-a",
+        displacedByBookingId: "held-new",
+      },
+    ]);
+    expect(plan.unallocatedGuestNights).toEqual([]);
+  });
+
+  it("one approved night ANYWHERE pins the provisional booking's whole stay against displacement (#1677)", () => {
+    // Prov holds the only bed on both nights; only night 2 is admin-approved.
+    // Displacement operates on whole stays, so the approval pins night 1 too —
+    // the held booking stays awaiting.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [{ id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 }],
+        },
+      ],
+      bookings: [heldBooking("held-new", "2026-07-01", [{ id: "hn-adult" }], true)],
+      occupiedBedNights: [
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-02",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          approvedAt: "2026-06-20",
+        },
+      ],
+    });
+
+    expect(plan.allocations).toEqual([]);
+    expect(plan).not.toHaveProperty("displacements");
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        stayDate: "2026-07-01",
+        reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("never displaces a provisional stay that extends beyond the loaded window (#1677)", () => {
+    // The occupant's booking continues past the planner's window, so only part
+    // of its stay is visible: a whole-stay move is impossible and the booking
+    // is pinned.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [{ id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 }],
+        },
+      ],
+      bookings: [heldBooking("held-new", "2026-07-01", [{ id: "hn-adult" }], true)],
+      occupiedBedNights: [
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          stayExtendsBeyondWindow: true,
+        },
+      ],
+    });
+
+    expect(plan.allocations).toEqual([]);
+    expect(plan).not.toHaveProperty("displacements");
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        stayDate: "2026-07-01",
+        reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("evicts the NEWEST provisional booking first (bookingCreatedAt) and leaves older ones in place (#1677)", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [{ id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 }],
+        },
+      ],
+      bookings: [heldBooking("held-new", "2026-07-01", [{ id: "hn-adult" }], true)],
+      occupiedBedNights: [
+        {
+          bedId: "bed-a1",
+          roomId: "room-a",
+          bookingId: "prov-old",
+          bookingGuestId: "prov-old-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-01T00:00:00.000Z",
+        },
+        {
+          bedId: "bed-a2",
+          roomId: "room-a",
+          bookingId: "prov-new",
+          bookingGuestId: "prov-new-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-05T00:00:00.000Z",
+        },
+        {
+          bedId: "bed-b1",
+          roomId: "room-b",
+          bookingId: "held-ex",
+          bookingGuestId: "he-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: true,
+        },
+      ],
+    });
+
+    // Only ONE bed is needed: the newest provisional (prov-new) is evicted;
+    // the older one keeps its bed. With every other bed full, the evicted
+    // booking is unallocated whole.
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-adult",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.displacements).toEqual([
+      {
+        type: "UNALLOCATE",
+        bookingId: "prov-new",
+        bookingGuestId: "prov-new-g1",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-a2",
+        fromRoomId: "room-a",
+        displacedByBookingId: "held-new",
+      },
+    ]);
+  });
+
+  it("never MOVEs a displaced booking onto a bed another displaced booking has not yet vacated (apply-order safety, #1677)", () => {
+    // Rooms R(r1,r2) and Q(q1,q2). Night N: r1 = P1, r2 = P2-guest-A,
+    // q1 = P2-guest-B, q2 free. A held pair claims room R whole, evicting P1
+    // and P2. P1's re-plan must NOT target q1 — P2's row still occupies it in
+    // the DATABASE, and the lifecycle applies displacements row by row against
+    // @@unique([bedId, stayDate]), so a chained MOVE would conflict mid-apply.
+    // P1 moves to the genuinely-free q2; P2 (needing two beds with only q1
+    // left) is wholly unallocated.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [
+        {
+          id: "room-r",
+          name: "Room R",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-r1", roomId: "room-r", name: "R1", sortOrder: 1 },
+            { id: "bed-r2", roomId: "room-r", name: "R2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-q",
+          name: "Room Q",
+          sortOrder: 2,
+          beds: [
+            { id: "bed-q1", roomId: "room-q", name: "Q1", sortOrder: 1 },
+            { id: "bed-q2", roomId: "room-q", name: "Q2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        heldBooking(
+          "held-new",
+          "2026-07-01",
+          [{ id: "hn-a1" }, { id: "hn-a2" }],
+          true,
+        ),
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-r1",
+          roomId: "room-r",
+          bookingId: "prov-1",
+          bookingGuestId: "p1-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-05T00:00:00.000Z",
+        },
+        {
+          bedId: "bed-r2",
+          roomId: "room-r",
+          bookingId: "prov-2",
+          bookingGuestId: "p2-ga",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-01T00:00:00.000Z",
+        },
+        {
+          bedId: "bed-q1",
+          roomId: "room-q",
+          bookingId: "prov-2",
+          bookingGuestId: "p2-gb",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+          bookingCreatedAt: "2026-06-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    // Held pair takes room R whole.
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-a1",
+        roomId: "room-r",
+        bedId: "bed-r1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-new",
+        bookingGuestId: "hn-a2",
+        roomId: "room-r",
+        bedId: "bed-r2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+    // P1 (evicted first, newest) MOVEs to q2 — never q1, which P2's row still
+    // holds in the database; P2 is unallocated whole.
+    expect(plan.displacements).toEqual([
+      {
+        type: "MOVE",
+        bookingId: "prov-1",
+        bookingGuestId: "p1-g1",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-r1",
+        fromRoomId: "room-r",
+        toBedId: "bed-q2",
+        toRoomId: "room-q",
+        displacedByBookingId: "held-new",
+      },
+      {
+        type: "UNALLOCATE",
+        bookingId: "prov-2",
+        bookingGuestId: "p2-gb",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-q1",
+        fromRoomId: "room-q",
+        displacedByBookingId: "held-new",
+      },
+      {
+        type: "UNALLOCATE",
+        bookingId: "prov-2",
+        bookingGuestId: "p2-ga",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-r2",
+        fromRoomId: "room-r",
+        displacedByBookingId: "held-new",
+      },
+    ]);
+    // Global apply-order safety: no MOVE destination may equal any other
+    // displaced row's original bed-night — otherwise the row-by-row apply
+    // would trip the unique constraint.
+    const vacated = new Set(
+      (plan.displacements ?? []).map(
+        (displacement) => `${displacement.fromBedId}:${displacement.stayDate}`,
+      ),
+    );
+    for (const displacement of plan.displacements ?? []) {
+      if (displacement.type !== "MOVE" || !displacement.toBedId) continue;
+      expect(
+        vacated.has(`${displacement.toBedId}:${displacement.stayDate}`),
+      ).toBe(false);
+    }
+  });
+
+  it("re-plans a displaced provisional only within its own lodge, even when another lodge's beds sort first (#1677)", () => {
+    // Lodge B's room sorts FIRST and has free beds, but the displaced lodge-A
+    // provisional must relocate within lodge A (room A2), never across lodges.
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      prioritizeCapacityHolding: true,
+      rooms: [
+        {
+          id: "room-b1",
+          name: "Lodge B Room 1",
+          sortOrder: 0,
+          lodgeId: "lodge-b",
+          beds: [
+            { id: "bed-b1", roomId: "room-b1", name: "B1", sortOrder: 1 },
+            { id: "bed-b2", roomId: "room-b1", name: "B2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-a1",
+          name: "Lodge A Room 1",
+          sortOrder: 1,
+          lodgeId: "lodge-a",
+          beds: [
+            { id: "bed-a1", roomId: "room-a1", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a1", name: "A2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-a2",
+          name: "Lodge A Room 2",
+          sortOrder: 2,
+          lodgeId: "lodge-a",
+          beds: [{ id: "bed-a3", roomId: "room-a2", name: "A3", sortOrder: 1 }],
+        },
+      ],
+      bookings: [
+        {
+          id: "held-a",
+          createdAt: new Date("2026-06-01"),
+          lodgeId: "lodge-a",
+          holdsCapacity: true,
+          requestedRoomId: null,
+          guests: [
+            {
+              id: "held-a-g1",
+              bookingId: "held-a",
+              ageTier: "ADULT",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-02"),
+            },
+            {
+              id: "held-a-g2",
+              bookingId: "held-a",
+              ageTier: "ADULT",
+              stayStart: parseDateOnly("2026-07-01"),
+              stayEnd: parseDateOnly("2026-07-02"),
+            },
+          ],
+        },
+      ],
+      occupiedBedNights: [
+        {
+          bedId: "bed-a2",
+          roomId: "room-a1",
+          bookingId: "prov",
+          bookingGuestId: "prov-g1",
+          stayDate: "2026-07-01",
+          ageTier: "ADULT",
+          holdsCapacity: false,
+        },
+      ],
+    });
+
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "held-a",
+        bookingGuestId: "held-a-g1",
+        roomId: "room-a1",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "held-a",
+        bookingGuestId: "held-a-g2",
+        roomId: "room-a1",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+    // The provisional MOVEs within lodge A — never onto lodge B's free beds.
+    expect(plan.displacements).toEqual([
+      {
+        type: "MOVE",
+        bookingId: "prov",
+        bookingGuestId: "prov-g1",
+        stayDate: "2026-07-01",
+        fromBedId: "bed-a2",
+        fromRoomId: "room-a1",
+        toBedId: "bed-a3",
+        toRoomId: "room-a2",
+        displacedByBookingId: "held-a",
+      },
+    ]);
+    expect(
+      plan.allocations.some((allocation) => allocation.roomId === "room-b1"),
+    ).toBe(false);
   });
 });

@@ -75,6 +75,7 @@ describe("PUT /api/bookings/[id]/modify-dates admin override gating (issue #1668
         pricingMode: "shift",
         checkIn: "2026-09-12",
         confirmOverCapacity: true,
+        notifyMember: false,
       }),
       { params },
     );
@@ -84,9 +85,11 @@ describe("PUT /api/bookings/[id]/modify-dates admin override gating (issue #1668
     expect(h.modifyBookingDates).not.toHaveBeenCalled();
     const arg = h.adminShiftBookingDates.mock.calls[0][0];
     expect(arg.actor).toEqual({ id: "u1", role: "ADMIN" });
+    // The admin's email choice is threaded to the service (owner decision).
     expect(arg.input).toMatchObject({
       checkIn: "2026-09-12",
       confirmOverCapacity: true,
+      notifyMember: false,
     });
   });
 
