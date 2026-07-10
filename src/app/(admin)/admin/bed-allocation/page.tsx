@@ -60,6 +60,8 @@ import {
   type DragData,
   type DropData,
 } from "./_components/types";
+import { deriveActiveDragDates } from "./_components/active-drag-dates";
+import { useSyncedScroll } from "./_components/use-synced-scroll";
 
 // Mirrors MAX_BED_ALLOCATION_RANGE_NIGHTS in src/lib/admin-bed-allocation.ts.
 const MAX_RANGE_NIGHTS = 31;
@@ -279,6 +281,8 @@ export default function AdminBedAllocationPage() {
   const [selectedBeds, setSelectedBeds] = useState<Record<string, string>>({});
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set());
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [activeDragData, setActiveDragData] = useState<DragData | null>(null);
+  const registerBoardScroller = useSyncedScroll();
   // Tracks the focused booking id we have already snapped the date window onto,
   // so we snap exactly once (#1302) and never fight an admin who later moves the
   // window off the focused booking.
@@ -381,6 +385,16 @@ export default function AdminBedAllocationPage() {
     }
     return null;
   }, [activeDragId, bucketGroupsByGuest, allocationsById]);
+
+  const activeDragDates = useMemo(() => {
+    return new Set(
+      deriveActiveDragDates({
+        activeDrag: activeDragData,
+        visibleAllocations: payload?.allocations ?? [],
+        bucketGroups,
+      }),
+    );
+  }, [activeDragData, payload?.allocations, bucketGroups]);
 
   async function loadDashboard() {
     setLoading(true);
@@ -825,14 +839,17 @@ export default function AdminBedAllocationPage() {
     if (!canEditBookings) return;
 
     setActiveDragId(String(event.active.id));
+    setActiveDragData((event.active.data.current as DragData | undefined) ?? null);
   }
 
   function handleDragCancel() {
     setActiveDragId(null);
+    setActiveDragData(null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveDragId(null);
+    setActiveDragData(null);
     if (!canEditBookings) return;
 
     const { active, over } = event;
@@ -1175,6 +1192,8 @@ export default function AdminBedAllocationPage() {
                   onRemove={(allocation) => void removeAllocation(allocation)}
                   pendingAllocationIds={pendingAllocationIds}
                   highlightedBookingId={highlightedBookingId}
+                  activeDragDates={activeDragDates}
+                  registerScroller={registerBoardScroller}
                   canEdit={canEditBookings}
                 />
               ))}

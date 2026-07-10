@@ -1,24 +1,19 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { RoomTable } from "@/app/(admin)/admin/bed-allocation/_components/room-table";
 import {
   BED_ALLOCATION_COLUMN_WIDTH_CLASS,
   BED_ALLOCATION_COLUMN_WIDTH_REM,
 } from "@/app/(admin)/admin/bed-allocation/_components/board-cell";
-import { RoomTable } from "@/app/(admin)/admin/bed-allocation/_components/room-table";
-import type {
-  DashboardRoom,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+import type { DashboardRoom } from "@/app/(admin)/admin/bed-allocation/_components/types";
 
 vi.mock("@dnd-kit/core", () => ({
-  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
-  useDraggable: () => ({
+  useDroppable: () => ({
     setNodeRef: vi.fn(),
-    attributes: {},
-    listeners: {},
-    transform: null,
-    isDragging: false,
+    isOver: false,
   }),
 }));
 
@@ -43,8 +38,8 @@ function buildRoom(): DashboardRoom {
   };
 }
 
-describe("RoomTable layout", () => {
-  it("uses the same fixed width for the bed column and every date cell", () => {
+describe("RoomTable active drag lane rendering", () => {
+  it("renders the active date lane tint while preserving fixed board widths", () => {
     const nights = ["2026-07-01", "2026-07-02"];
     const { container } = render(
       <RoomTable
@@ -56,27 +51,36 @@ describe("RoomTable layout", () => {
         onRemove={vi.fn()}
         pendingAllocationIds={new Set()}
         highlightedBookingId=""
+        activeDragDates={new Set(["2026-07-02"])}
       />,
     );
 
     const table = container.querySelector("table");
-    expect(table?.className).toContain("table-fixed");
-    expect(table?.getAttribute("style")).toContain(
-      `width: ${(nights.length + 1) * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
+    expect(table).toHaveStyle({
+      width: `${(nights.length + 1) * BED_ALLOCATION_COLUMN_WIDTH_REM}rem`,
+    });
+
+    const cols = container.querySelectorAll("col");
+    expect(cols).toHaveLength(nights.length + 1);
+    const columnWidthClasses = BED_ALLOCATION_COLUMN_WIDTH_CLASS.split(" ");
+    for (const col of cols) {
+      expect(col).toHaveClass(...columnWidthClasses);
+    }
+
+    const inactiveCell = container.querySelector(
+      'td[data-stay-date="2026-07-01"]',
+    );
+    const activeCell = container.querySelector(
+      'td[data-stay-date="2026-07-02"]',
     );
 
-    const columns = Array.from(container.querySelectorAll("col"));
-    expect(columns).toHaveLength(nights.length + 1);
-    expect(
-      columns.every((column) =>
-        column.className.includes(BED_ALLOCATION_COLUMN_WIDTH_CLASS),
-      ),
-    ).toBe(true);
+    expect(inactiveCell).not.toHaveAttribute("data-active-drag-lane");
+    expect(activeCell).toHaveAttribute("data-active-drag-lane", "true");
+    expect(activeCell).toHaveClass("bg-accent/40");
+    expect(activeCell).toHaveClass(...columnWidthClasses);
 
-    const fixedCells = Array.from(
-      container.querySelectorAll("th, td"),
-    ).filter((cell) =>
-      cell.className.includes(BED_ALLOCATION_COLUMN_WIDTH_CLASS),
+    const fixedCells = Array.from(container.querySelectorAll("th, td")).filter(
+      (cell) => columnWidthClasses.every((className) => cell.classList.contains(className)),
     );
     expect(fixedCells).toHaveLength(nights.length * 2 + 2);
   });

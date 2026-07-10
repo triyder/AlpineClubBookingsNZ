@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import {
   Table,
   TableBody,
@@ -44,6 +45,8 @@ interface RoomTableProps {
   onRemove: (allocation: DashboardAllocation) => void;
   pendingAllocationIds: Set<string>;
   highlightedBookingId: string;
+  activeDragDates?: Set<string>;
+  registerScroller?: (element: HTMLDivElement) => () => void;
   canEdit?: boolean;
 }
 
@@ -57,9 +60,18 @@ export function RoomTable({
   onRemove,
   pendingAllocationIds,
   highlightedBookingId,
+  activeDragDates = new Set(),
+  registerScroller,
   canEdit = true,
 }: RoomTableProps) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const activeBeds = room.beds.filter((bed) => bed.active);
+
+  useEffect(() => {
+    const element = scrollerRef.current;
+    if (!element || !registerScroller) return undefined;
+    return registerScroller(element);
+  }, [registerScroller]);
 
   if (activeBeds.length === 0) {
     return null;
@@ -84,7 +96,7 @@ export function RoomTable({
   );
 
   return (
-    <div className="overflow-x-auto rounded-md border">
+    <div ref={scrollerRef} className="overflow-x-auto rounded-md border">
       <Table
         className="table-fixed"
         style={{
@@ -145,6 +157,7 @@ export function RoomTable({
                       allocation ? pendingAllocationIds.has(allocation.id) : false
                     }
                     highlighted={allocation?.bookingId === highlightedBookingId}
+                    activeDragLane={activeDragDates.has(night)}
                     canEdit={canEdit}
                   />
                 );

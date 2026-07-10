@@ -3222,7 +3222,7 @@ model FamilyGroupJoinRequest {
   id            String    @id @default(cuid())
   familyGroupId String
   requesterId   String
-  type          String    @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST | ADULT_REQUEST | REMOVAL_REQUEST
+  type          String    @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST | ADULT_REQUEST | REMOVAL_REQUEST | GROUP_CREATE
   status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
   createdAt     DateTime  @default(now())
   reviewedAt    DateTime?

@@ -710,9 +710,14 @@ group/archive behavior, and email visibility.
 ```text
 family group created -> dependents/adults linked
 adult invitation/request -> pending -> accepted/rejected
+member creates group -> memberless FamilyGroup + PENDING GROUP_CREATE (+ bundled child requests) -> admin approve (ADMIN membership created, partner ADULT_INVITE auto-filed) | reject (bundle cascade-rejected, group stays inert)
 dependent inherits email or has explicit email inheritance source
 family removal/cancellation/delete -> relationship cleanup while preserving history
 ```
+
+A `CHILD_REQUEST` whose family group still has zero memberships (a bundled
+group-creation child) cannot be approved until the `GROUP_CREATE` request for
+that group is approved first (422 guard).
 
 To verify: non-login adult confirmation, dependent age-up behavior, inherited
 email changes, and Xero contact synchronization.

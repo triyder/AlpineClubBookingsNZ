@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AgeTier } from "@prisma/client";
+import { Prisma, type AgeTier } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
@@ -21,6 +21,9 @@ import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import {
   sendChildRequestApprovedEmail,
   sendChildRequestRejectedEmail,
+  sendFamilyGroupInvitationEmail,
+  sendGroupCreateApprovedEmail,
+  sendGroupCreateRejectedEmail,
 } from "@/lib/email";
 
 export const REVIEWED_REQUEST_TYPES = [
@@ -28,6 +31,7 @@ export const REVIEWED_REQUEST_TYPES = [
   "CHILD_REQUEST",
   "ADULT_REQUEST",
   "REMOVAL_REQUEST",
+  "GROUP_CREATE",
 ] as const;
 
 const CHILD_REQUEST_AGE_TIERS: AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
@@ -254,6 +258,9 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
       subjectMember: {
         select: { id: true, firstName: true, lastName: true, email: true, ageTier: true, active: true },
       },
+      invitedMember: {
+        select: { id: true, firstName: true, lastName: true, email: true, ageTier: true, active: true },
+      },
       familyGroup: {
         select: {
           id: true,
@@ -399,6 +406,22 @@ export async function reviewAdminFamilyGroupRequest(params: {
     );
   }
 
+  if (request.type === "GROUP_CREATE") {
+    return reviewGroupCreateRequest({
+      adminMemberId,
+      action,
+      rejectionReason,
+      request: {
+        id: request.id,
+        familyGroupId: request.familyGroupId,
+        requesterId: request.requesterId,
+        invitedMemberId: request.invitedMemberId,
+        requester: request.requester,
+        familyGroup: request.familyGroup,
+      },
+    });
+  }
+
   if (action === "approve") {
     let affectedMemberId = request.requesterId;
     let childMemberCreateData: {
@@ -454,6 +477,34 @@ export async function reviewAdminFamilyGroupRequest(params: {
     } | null = null;
 
     if (request.type === "CHILD_REQUEST") {
+      // A CHILD_REQUEST bundled with a GROUP_CREATE targets a group that has
+      // no memberships until the group creation request itself is approved.
+      // Approving the child first would attach a dependant to a group with no
+      // adult admin, so the group creation request must be approved first.
+      // A legacy group emptied by removals gets the same 422 but actionable
+      // copy (there is no group creation request to approve).
+      const groupMembershipCount = await prisma.familyGroupMember.count({
+        where: { familyGroupId: request.familyGroupId },
+      });
+      if (groupMembershipCount === 0) {
+        const pendingGroupCreate = await prisma.familyGroupJoinRequest.findFirst({
+          where: {
+            familyGroupId: request.familyGroupId,
+            type: "GROUP_CREATE",
+            status: "PENDING",
+          },
+          select: { id: true },
+        });
+        return jsonResult(
+          {
+            error: pendingGroupCreate
+              ? "Approve the group creation request for this family group first."
+              : "This family group has no members; reject this request or re-establish the group first.",
+          },
+          { status: 422 }
+        );
+      }
+
       if (linkedMemberId && data.createNewMember) {
         return jsonResult(
           { error: "Choose an existing child member or create a new dependant, not both." },
@@ -880,6 +931,348 @@ export async function reviewAdminFamilyGroupRequest(params: {
       });
     }
   }
+
+  return jsonResult({ success: true, action });
+}
+
+/**
+ * Review a member-initiated "create family group from scratch" request
+ * (#1681). The group row already exists but is memberless; approval creates
+ * the requester's ADMIN membership and auto-files the partner ADULT_INVITE,
+ * rejection cascade-rejects the bundled pending CHILD_REQUESTs and leaves the
+ * memberless group row inert (deleting it would cascade away the request
+ * history — see docs/DOMAIN_INVARIANTS.md).
+ */
+async function reviewGroupCreateRequest(params: {
+  adminMemberId: string;
+  action: "approve" | "reject";
+  rejectionReason?: string;
+  request: {
+    id: string;
+    familyGroupId: string;
+    requesterId: string;
+    invitedMemberId: string | null;
+    requester: {
+      id: string;
+      firstName: string;
+      lastName: string;
+      email: string;
+      ageTier: AgeTier | null;
+      active: boolean;
+      archivedAt: Date | null;
+    };
+    familyGroup: { id: string; name: string | null } | null;
+  };
+}): Promise<JsonRouteResult> {
+  const { adminMemberId, action, rejectionReason, request } = params;
+  const requestId = request.id;
+  const groupName = request.familyGroup?.name ?? "Unnamed Group";
+  const requesterName =
+    `${request.requester.firstName} ${request.requester.lastName}`.trim();
+
+  if (action === "approve") {
+    if (
+      !request.requester.active ||
+      request.requester.archivedAt ||
+      request.requester.ageTier !== "ADULT"
+    ) {
+      return jsonResult(
+        { error: "Group creation requests can only be approved for active adult requesters." },
+        { status: 422 }
+      );
+    }
+
+    // The requester must still be group-less: they may have accepted an
+    // unrelated invitation (or been added by an admin) since submitting.
+    const existingMembership = await prisma.familyGroupMember.findFirst({
+      where: { memberId: request.requesterId },
+      select: { familyGroupId: true },
+    });
+    if (existingMembership) {
+      return jsonResult(
+        {
+          error:
+            "The requester has joined a family group since submitting this request. Reject this group creation request instead.",
+        },
+        { status: 422 }
+      );
+    }
+
+    // Re-check partner eligibility at approval time; if the partner became
+    // ineligible, skip the invite (audited) without blocking group approval.
+    let partner: { id: string; firstName: string; lastName: string; email: string } | null = null;
+    let partnerInviteSkippedReason: string | null = null;
+    if (request.invitedMemberId) {
+      const candidate = await prisma.member.findUnique({
+        where: { id: request.invitedMemberId },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          active: true,
+          archivedAt: true,
+          canLogin: true,
+          ageTier: true,
+          familyGroupMemberships: {
+            where: { familyGroupId: request.familyGroupId },
+            select: { familyGroupId: true },
+          },
+        },
+      });
+      if (!candidate || !candidate.active || candidate.archivedAt) {
+        partnerInviteSkippedReason = "partner_not_active";
+      } else if (!candidate.canLogin) {
+        partnerInviteSkippedReason = "partner_cannot_login";
+      } else if (candidate.ageTier !== "ADULT") {
+        partnerInviteSkippedReason = "partner_not_adult";
+      } else if (candidate.familyGroupMemberships.length > 0) {
+        partnerInviteSkippedReason = "partner_already_in_group";
+      } else {
+        const pendingInvite = await prisma.familyGroupJoinRequest.findFirst({
+          where: {
+            familyGroupId: request.familyGroupId,
+            invitedMemberId: candidate.id,
+            type: "ADULT_INVITE",
+            status: "PENDING",
+          },
+          select: { id: true },
+        });
+        if (pendingInvite) {
+          partnerInviteSkippedReason = "invite_already_pending";
+        } else {
+          partner = candidate;
+        }
+      }
+    }
+
+    let invitationId: string | null = null;
+    try {
+      await prisma.$transaction(async (tx) => {
+        // GROUP_CREATE approval must create the requester's membership with
+        // role ADMIN — do NOT route this through the generic member upsert
+        // used by the other request types, which creates role MEMBER and
+        // would leave the new group without a group admin.
+        await tx.familyGroupMember.create({
+          data: {
+            familyGroupId: request.familyGroupId,
+            memberId: request.requesterId,
+            role: "ADMIN",
+          },
+        });
+
+        await tx.familyGroupJoinRequest.update({
+          where: { id: requestId },
+          data: {
+            status: "APPROVED",
+            reviewedAt: new Date(),
+            reviewedBy: adminMemberId,
+          },
+        });
+
+        if (partner) {
+          const invitation = await tx.familyGroupJoinRequest.create({
+            data: {
+              familyGroupId: request.familyGroupId,
+              requesterId: request.requesterId,
+              type: "ADULT_INVITE",
+              invitedMemberId: partner.id,
+            },
+            select: { id: true },
+          });
+          invitationId = invitation.id;
+        }
+      });
+    } catch (error) {
+      // Concurrent double-approve: a second admin's membership create hits
+      // the (familyGroupId, memberId) unique constraint after the first
+      // admin's transaction committed. State is already correct (first admin
+      // won), so surface a normal review error instead of a 500.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return jsonResult(
+          {
+            error:
+              "The requester already has a membership in this family group — this request has likely just been approved by another admin.",
+          },
+          { status: 422 }
+        );
+      }
+      throw error;
+    }
+
+    logAudit({
+      action: "FAMILY_GROUP_CREATE_APPROVED",
+      memberId: adminMemberId,
+      targetId: request.familyGroupId,
+      subjectMemberId: request.requesterId,
+      entityType: "FamilyGroupJoinRequest",
+      entityId: requestId,
+      category: "family",
+      outcome: "success",
+      summary: "Family group creation request approved",
+      details: JSON.stringify({
+        familyGroupId: request.familyGroupId,
+        requestId,
+        requestType: "GROUP_CREATE",
+        partnerMemberId: request.invitedMemberId,
+        partnerInviteSkipped: Boolean(request.invitedMemberId && !invitationId),
+        partnerInviteSkippedReason,
+        invitationId,
+      }),
+      metadata: {
+        familyGroupId: request.familyGroupId,
+        requestType: "GROUP_CREATE",
+        partnerMemberId: request.invitedMemberId,
+        partnerInviteSkipped: Boolean(request.invitedMemberId && !invitationId),
+        partnerInviteSkippedReason,
+        invitationId,
+      },
+    });
+
+    if (partner && invitationId) {
+      logAudit({
+        action: "FAMILY_GROUP_INVITE_SENT",
+        memberId: adminMemberId,
+        targetId: request.familyGroupId,
+        subjectMemberId: partner.id,
+        entityType: "FamilyGroupJoinRequest",
+        entityId: invitationId,
+        category: "family",
+        outcome: "success",
+        summary: "Family group invitation sent",
+        details: JSON.stringify({
+          invitedEmail: partner.email.toLowerCase(),
+          invitedMemberId: partner.id,
+          autoFiledByGroupCreateApproval: true,
+        }),
+        metadata: {
+          familyGroupId: request.familyGroupId,
+          invitedEmail: partner.email.toLowerCase(),
+          invitedMemberId: partner.id,
+          autoFiledByGroupCreateApproval: true,
+        },
+      });
+
+      sendFamilyGroupInvitationEmail(
+        partner.email.toLowerCase(),
+        requesterName,
+        groupName
+      ).catch((err) => {
+        logger.error(
+          { err, requestId, invitationId },
+          "Failed to send family group invitation email"
+        );
+      });
+    }
+
+    sendGroupCreateApprovedEmail(
+      request.requester.email,
+      request.requester.firstName,
+      groupName
+    ).catch((err) => {
+      logger.error({ err, requestId }, "Failed to send group create approved email");
+    });
+
+    logger.info(
+      {
+        requestId,
+        requesterId: request.requesterId,
+        familyGroupId: request.familyGroupId,
+        requestType: "GROUP_CREATE",
+        invitationId,
+        partnerInviteSkippedReason,
+      },
+      "Family group creation request approved"
+    );
+
+    return jsonResult({ success: true, action });
+  }
+
+  // Reject: cascade-reject the bundled pending child requests and keep the
+  // memberless FamilyGroup row (deleting it would cascade-delete the request
+  // history; a memberless group is inert, matching the request-join leftover
+  // precedent).
+  let cascadeRejectedChildRequestIds: string[] = [];
+  await prisma.$transaction(async (tx) => {
+    await tx.familyGroupJoinRequest.update({
+      where: { id: requestId },
+      data: {
+        status: "REJECTED",
+        reviewedAt: new Date(),
+        reviewedBy: adminMemberId,
+      },
+    });
+
+    const siblingChildRequests = await tx.familyGroupJoinRequest.findMany({
+      where: {
+        familyGroupId: request.familyGroupId,
+        requesterId: request.requesterId,
+        type: "CHILD_REQUEST",
+        status: "PENDING",
+      },
+      select: { id: true },
+    });
+    cascadeRejectedChildRequestIds = siblingChildRequests.map(
+      (sibling: { id: string }) => sibling.id
+    );
+    if (cascadeRejectedChildRequestIds.length > 0) {
+      await tx.familyGroupJoinRequest.updateMany({
+        where: { id: { in: cascadeRejectedChildRequestIds } },
+        data: {
+          status: "REJECTED",
+          reviewedAt: new Date(),
+          reviewedBy: adminMemberId,
+        },
+      });
+    }
+  });
+
+  logAudit({
+    action: "FAMILY_GROUP_CREATE_REJECTED",
+    memberId: adminMemberId,
+    targetId: request.familyGroupId,
+    subjectMemberId: request.requesterId,
+    entityType: "FamilyGroupJoinRequest",
+    entityId: requestId,
+    category: "family",
+    outcome: "success",
+    summary: "Family group creation request rejected",
+    details: JSON.stringify({
+      familyGroupId: request.familyGroupId,
+      requestId,
+      requestType: "GROUP_CREATE",
+      rejectionReason: rejectionReason || undefined,
+      cascadeRejectedChildRequestIds,
+    }),
+    metadata: {
+      familyGroupId: request.familyGroupId,
+      requestType: "GROUP_CREATE",
+      rejectionReason: rejectionReason || null,
+      cascadeRejectedChildRequestIds,
+    },
+  });
+
+  sendGroupCreateRejectedEmail(
+    request.requester.email,
+    request.requester.firstName,
+    groupName,
+    rejectionReason || undefined
+  ).catch((err) => {
+    logger.error({ err, requestId }, "Failed to send group create rejected email");
+  });
+
+  logger.info(
+    {
+      requestId,
+      requesterId: request.requesterId,
+      requestType: "GROUP_CREATE",
+      cascadeRejectedChildRequestIds,
+    },
+    "Family group creation request rejected"
+  );
 
   return jsonResult({ success: true, action });
 }

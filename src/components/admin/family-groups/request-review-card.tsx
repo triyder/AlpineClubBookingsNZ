@@ -100,7 +100,34 @@ export function FamilyGroupRequestReviewCard({
         </div>
       </div>
 
-      {requiresMemberChoice ? (
+      {request.type === "GROUP_CREATE" ? (
+        <div className="mt-4 space-y-1 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+          <p>
+            Proposed group name:{" "}
+            <span className="font-medium text-slate-800">
+              {request.familyGroup.name || "Unnamed Group"}
+            </span>
+          </p>
+          <p>
+            {getMemberName(request.requester)} will become the group admin.
+          </p>
+          {request.invitedMember ? (
+            <p>
+              Partner to invite on approval:{" "}
+              <span className="font-medium text-slate-800">
+                {getMemberName(request.invitedMember)}
+              </span>{" "}
+              ({request.invitedMember.email})
+            </p>
+          ) : (
+            <p>No partner invitation requested.</p>
+          )}
+          <p className="text-xs text-slate-500">
+            Bundled infant/child/youth requests appear as separate cards for this
+            group — approve this group creation first.
+          </p>
+        </div>
+      ) : requiresMemberChoice ? (
         <div className="mt-4 space-y-3">
           <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
             <p>

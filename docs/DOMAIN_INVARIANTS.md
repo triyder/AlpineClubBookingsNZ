@@ -1101,6 +1101,22 @@ that claim; login form code must not be the only 2FA gate. TOTP secrets, email
 OTP codes, recovery codes, and session challenge tokens must never be stored
 in plaintext.
 
+A `FamilyGroup` with zero `FamilyGroupMember` rows is inert: it never affects
+booking eligibility, pricing, or any member-visible UI, because family
+visibility and eligibility everywhere derive from `familyGroupMemberships`
+(`getMemberFamily`, `resolveMemberFamily`), never from bare `FamilyGroup` rows.
+Memberless groups are created intentionally ahead of approval — the member
+"create group from scratch" flow (#1681) files a memberless group with a
+`PENDING` `GROUP_CREATE` request, and the legacy request-join flow leaves a
+target-anchored group behind on rejection — and they may accumulate; they must
+not be deleted casually because `FamilyGroupJoinRequest.familyGroup` is
+`onDelete: Cascade`, so deleting the group destroys the request history. The
+only paths from memberless to membered are admin approval of the `GROUP_CREATE`
+request (which creates the requester's membership with role `ADMIN` and
+auto-files any partner `ADULT_INVITE`) or the legacy target-anchored join flow.
+A `CHILD_REQUEST` targeting a group with zero memberships must not be
+approvable (422) until that group's creation request is approved.
+
 Pending nomination states must have an expiry, reminder, admin refresh,
 replacement, rejection, or other documented recovery path so applications do
 not remain permanently blocked by stale action links.
