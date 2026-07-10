@@ -14,6 +14,24 @@ export type EditablePageRecord = {
 };
 
 /**
+ * Field limits for admin-editable PageContent rows. Single source of truth for
+ * the admin page-content route's zod schemas
+ * (src/app/api/admin/page-content/route.ts) and the config-transfer importer
+ * (src/lib/config-transfer/categories/site-content.ts) so the two write paths
+ * can never drift apart.
+ */
+export const PAGE_CONTENT_LIMITS = {
+  captionMax: 120,
+  menuTitleMax: 120,
+  titleMax: 120,
+  headerTextMax: 20000,
+  slugMax: 80,
+  sortOrderMin: 0,
+  sortOrderMax: 9999,
+  contentHtmlMax: 200000,
+} as const;
+
+/**
  * Slugs for built-in system pages that must always exist.
  * Their slugs and sort orders are fixed and cannot be changed by admins.
  */

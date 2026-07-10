@@ -12,6 +12,7 @@ import {
   isSystemPageSlug,
   isValidPageSlug,
   normalizePageSlug,
+  PAGE_CONTENT_LIMITS,
   SYSTEM_PAGE_SLUGS,
   toPagePath,
 } from "@/lib/page-content";
@@ -22,25 +23,33 @@ import {
 
 const createSchema = z
   .object({
-    caption: z.string().trim().max(120),
-    menuTitle: z.string().trim().max(120),
-    title: z.string().trim().min(1).max(120),
-    headerText: z.string().max(20000),
-    slug: z.string().trim().min(1).max(80),
-    sortOrder: z.number().int().min(0).max(9999),
+    caption: z.string().trim().max(PAGE_CONTENT_LIMITS.captionMax),
+    menuTitle: z.string().trim().max(PAGE_CONTENT_LIMITS.menuTitleMax),
+    title: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.titleMax),
+    headerText: z.string().max(PAGE_CONTENT_LIMITS.headerTextMax),
+    slug: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.slugMax),
+    sortOrder: z
+      .number()
+      .int()
+      .min(PAGE_CONTENT_LIMITS.sortOrderMin)
+      .max(PAGE_CONTENT_LIMITS.sortOrderMax),
   })
   .strict();
 
 const updateSchema = z
   .object({
     id: z.string().trim().min(1),
-    caption: z.string().trim().max(120),
-    menuTitle: z.string().trim().max(120),
-    title: z.string().trim().min(1).max(120),
-    headerText: z.string().max(20000),
-    slug: z.string().trim().min(1).max(80),
-    sortOrder: z.number().int().min(0).max(9999),
-    contentHtml: z.string().max(200000),
+    caption: z.string().trim().max(PAGE_CONTENT_LIMITS.captionMax),
+    menuTitle: z.string().trim().max(PAGE_CONTENT_LIMITS.menuTitleMax),
+    title: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.titleMax),
+    headerText: z.string().max(PAGE_CONTENT_LIMITS.headerTextMax),
+    slug: z.string().trim().min(1).max(PAGE_CONTENT_LIMITS.slugMax),
+    sortOrder: z
+      .number()
+      .int()
+      .min(PAGE_CONTENT_LIMITS.sortOrderMin)
+      .max(PAGE_CONTENT_LIMITS.sortOrderMax),
+    contentHtml: z.string().max(PAGE_CONTENT_LIMITS.contentHtmlMax),
   })
   .strict();
 

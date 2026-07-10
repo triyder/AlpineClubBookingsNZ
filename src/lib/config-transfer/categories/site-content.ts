@@ -3,8 +3,11 @@ import type { Prisma } from "@prisma/client";
 
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import {
+  canUnpublishPage,
   isReservedPageSlug,
   isValidPageSlug,
+  PAGE_CONTENT_LIMITS,
+  SYSTEM_PAGE_SLUGS,
   toPagePath,
 } from "@/lib/page-content";
 import { remapImageRefs } from "../media";
@@ -29,7 +32,15 @@ import {
   type PlanItem,
   type ReadDb,
 } from "../import-types";
-import { RowValidator, asStr, nz, readCsvRows, type Valid } from "../values";
+import {
+  RowValidator,
+  asStr,
+  nz,
+  readCsvRows,
+  strictBool,
+  strictInt,
+  type Valid,
+} from "../values";
 
 // site-content category: CMS pages, keyed site content, and the club theme.
 // See docs/config-transfer/decisions/ADR-001.
@@ -236,6 +247,12 @@ interface ParsedPageRow {
 function strictPageSlug(value: unknown): Valid<string> {
   const s = asStr(value).trim();
   if (s === "") return { ok: false, message: "must not be blank" };
+  if (s.length > PAGE_CONTENT_LIMITS.slugMax) {
+    return {
+      ok: false,
+      message: `must be at most ${PAGE_CONTENT_LIMITS.slugMax} characters`,
+    };
+  }
   if (!isValidPageSlug(s)) {
     return {
       ok: false,
@@ -248,27 +265,142 @@ function strictPageSlug(value: unknown): Valid<string> {
   return { ok: true, value: s };
 }
 
+/**
+ * Field-cap parity with the admin route's zod schemas: the same
+ * PAGE_CONTENT_LIMITS values, measured the same way (`trimmed` mirrors the
+ * schema's .trim(); headerText/contentHtml are capped untrimmed, exactly like
+ * the route, and BEFORE sanitisation, exactly like the route).
+ */
+function withinCap(
+  value: unknown,
+  max: number,
+  trimmed: boolean,
+): Valid<string> {
+  const s = trimmed ? asStr(value).trim() : asStr(value);
+  if (s.length > max) {
+    return { ok: false, message: `must be at most ${max} characters` };
+  }
+  return { ok: true, value: asStr(value) };
+}
+
+/** Title parity: required (unless merge keeps the existing one) and capped. */
+function strictPageTitle(value: unknown, blankOk: boolean): Valid<string> {
+  if (nz(value) === null && !blankOk) {
+    return { ok: false, message: "must not be blank" };
+  }
+  return withinCap(value, PAGE_CONTENT_LIMITS.titleMax, true);
+}
+
+/**
+ * sortOrder parity: the admin route's 0–9999 range, plus its system-page rule
+ * — the menu order of home/404 is fixed, so a bundle must not move an existing
+ * system page to any other value. Re-importing the page's CURRENT order stays
+ * legal: seeded databases hold home at the starter order until an admin edit
+ * normalises it to the fixed one, and a healthy export must round-trip clean.
+ */
+function strictPageSortOrder(
+  value: unknown,
+  slug: string,
+  currentSortOrder: number | null,
+): Valid<number> {
+  const parsed = strictInt(value);
+  if (!parsed.ok) return parsed;
+  const n = parsed.value;
+  if (
+    n < PAGE_CONTENT_LIMITS.sortOrderMin ||
+    n > PAGE_CONTENT_LIMITS.sortOrderMax
+  ) {
+    return {
+      ok: false,
+      message: `must be between ${PAGE_CONTENT_LIMITS.sortOrderMin} and ${PAGE_CONTENT_LIMITS.sortOrderMax}`,
+    };
+  }
+  const fixedOrder = SYSTEM_PAGE_SLUGS.get(slug);
+  if (
+    fixedOrder !== undefined &&
+    currentSortOrder !== null &&
+    n !== fixedOrder &&
+    n !== currentSortOrder
+  ) {
+    return {
+      ok: false,
+      message: `menu order for system page "${slug}" is fixed at ${fixedOrder} and cannot be changed`,
+    };
+  }
+  return parsed;
+}
+
+/**
+ * published parity: pages the admin route refuses to unpublish — system pages
+ * (home, 404) and built-in design pages (canUnpublishPage) — must not be
+ * hidden by a bundle either.
+ */
+function strictPagePublished(value: unknown, slug: string): Valid<boolean> {
+  const parsed = strictBool(value);
+  if (!parsed.ok) return parsed;
+  if (!parsed.value && !canUnpublishPage(slug)) {
+    return {
+      ok: false,
+      message: `page "${slug}" cannot be hidden from the public site`,
+    };
+  }
+  return parsed;
+}
+
 /** Validate + build a page row; blanks legal only where merge keeps existing. */
 function parsePageRow(
   index: number,
   raw: Record<string, string>,
   blankOk: boolean,
   errors: string[],
+  /** The existing DB row for this slug (allowlisted projection), if any. */
+  current: Record<string, unknown> | null,
 ): ParsedPageRow | null {
   const v = new RowValidator(PAGE_FILE, index, errors);
   const slug = v.custom("slug", strictPageSlug(raw.slug), "");
+  // Field caps + system-page protections: parity with the admin route's zod
+  // schemas and PUT/PATCH guards (src/app/api/admin/page-content/route.ts),
+  // through the shared PAGE_CONTENT_LIMITS / SYSTEM_PAGE_SLUGS /
+  // canUnpublishPage. Violations are row errors that block apply.
+  v.custom(
+    "caption",
+    withinCap(raw.caption, PAGE_CONTENT_LIMITS.captionMax, true),
+    "",
+  );
+  v.custom(
+    "menuTitle",
+    withinCap(raw.menuTitle, PAGE_CONTENT_LIMITS.menuTitleMax, true),
+    "",
+  );
+  v.custom("title", strictPageTitle(raw.title, blankOk), "");
+  v.custom(
+    "headerText",
+    withinCap(raw.headerText, PAGE_CONTENT_LIMITS.headerTextMax, false),
+    "",
+  );
+  v.custom(
+    "contentHtml",
+    withinCap(raw.contentHtml, PAGE_CONTENT_LIMITS.contentHtmlMax, false),
+    "",
+  );
+  const currentSortOrder =
+    typeof current?.sortOrder === "number" ? current.sortOrder : null;
   const sortOrder =
-    nz(raw.sortOrder) === null
-      ? blankOk
-        ? 100
-        : v.int("sortOrder", raw.sortOrder ?? "")
-      : v.int("sortOrder", raw.sortOrder);
+    nz(raw.sortOrder) === null && blankOk
+      ? 100
+      : v.custom(
+          "sortOrder",
+          strictPageSortOrder(raw.sortOrder ?? "", slug, currentSortOrder),
+          0,
+        );
   const published =
-    nz(raw.published) === null
-      ? blankOk
-        ? false
-        : v.bool("published", raw.published ?? "")
-      : v.bool("published", raw.published);
+    nz(raw.published) === null && blankOk
+      ? false
+      : v.custom(
+          "published",
+          strictPagePublished(raw.published ?? "", slug),
+          false,
+        );
   if (!v.ok) return null;
   return {
     raw,
@@ -390,7 +522,13 @@ async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
   let anyEmbeddedImages = false;
   rawPages.forEach((raw, i) => {
     const current = batch.pages.get(raw.slug?.trim() ?? "") ?? null;
-    const parsed = parsePageRow(i, raw, ctx.mode === "merge" && !!current, errors);
+    const parsed = parsePageRow(
+      i,
+      raw,
+      ctx.mode === "merge" && !!current,
+      errors,
+      current,
+    );
     if (!parsed) return;
     if (/\/api\/images\//.test(parsed.data.contentHtml)) anyEmbeddedImages = true;
     fingerprintParts.push(
@@ -476,7 +614,13 @@ async function applySiteContent(ctx: ApplyContext): Promise<CategoryApplyResult>
   // Pages.
   for (const [i, raw] of rawPages.entries()) {
     const current = batch.pages.get(raw.slug?.trim() ?? "") ?? null;
-    const parsed = parsePageRow(i, raw, ctx.mode === "merge" && !!current, errors);
+    const parsed = parsePageRow(
+      i,
+      raw,
+      ctx.mode === "merge" && !!current,
+      errors,
+      current,
+    );
     if (!parsed) { result.skipped += 1; continue; }
     const html = sanitizePageContentHtml(
       remapImageRefs(parsed.data.contentHtml, oldToNew),

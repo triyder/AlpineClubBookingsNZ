@@ -300,6 +300,148 @@ describe("site-content page hardening (slug/path/headerText)", () => {
   });
 });
 
+// ---- site-content page caps + system-page protections ------------------------
+// Field caps and system-page protections in parity with the admin route's zod
+// schemas and PUT/PATCH guards, via the shared PAGE_CONTENT_LIMITS /
+// SYSTEM_PAGE_SLUGS / canUnpublishPage (issue #1716).
+
+const HOME_PAGE = {
+  slug: "home",
+  path: "/home",
+  caption: "Welcome to the Club Lodge",
+  menuTitle: "",
+  title: "Club Lodge",
+  headerText: "",
+  // Seeded databases hold the starter order (5), not the fixed order (1),
+  // until an admin edit normalises it — a healthy export carries 5.
+  sortOrder: 5,
+  contentHtml: "<h2>Welcome</h2>",
+  published: true,
+};
+
+describe("site-content page caps + system-page protections (admin route parity)", () => {
+  it("flags an out-of-range sortOrder", async () => {
+    const negative = await buildImportPlan(
+      pagesDb([]),
+      pagesBundle([{ ...BASE_PAGE, sortOrder: -5 }]),
+      { mode: "merge" },
+    );
+    expect(negative.errors.join(" ")).toMatch(
+      /pages\.csv row 2: sortOrder — must be between 0 and 9999/,
+    );
+    expect(negative.categories.flatMap((c) => c.items)).toEqual([]);
+
+    const tooBig = await buildImportPlan(
+      pagesDb([]),
+      pagesBundle([{ ...BASE_PAGE, sortOrder: 10000 }]),
+      { mode: "merge" },
+    );
+    expect(tooBig.errors.join(" ")).toMatch(/sortOrder — must be between 0 and 9999/);
+  });
+
+  it("flags over-length title/caption and a blank title on create", async () => {
+    const plan = await buildImportPlan(
+      pagesDb([]),
+      pagesBundle([
+        { ...BASE_PAGE, title: "T".repeat(121), caption: "C".repeat(121) },
+      ]),
+      { mode: "merge" },
+    );
+    expect(plan.errors.join(" ")).toMatch(/title — must be at most 120 characters/);
+    expect(plan.errors.join(" ")).toMatch(/caption — must be at most 120 characters/);
+
+    // A blank title is legal only where merge keeps the existing one.
+    const blank = await buildImportPlan(
+      pagesDb([]),
+      pagesBundle([{ ...BASE_PAGE, title: "" }]),
+      { mode: "merge" },
+    );
+    expect(blank.errors.join(" ")).toMatch(/title — must not be blank/);
+    const kept = await buildImportPlan(
+      pagesDb([{ id: "p1", ...BASE_PAGE }]),
+      pagesBundle([{ ...BASE_PAGE, title: "" }]),
+      { mode: "merge" },
+    );
+    expect(kept.errors).toEqual([]);
+  });
+
+  it("flags an over-length slug", async () => {
+    // 81 lowercase letters pass the slug pattern; only the cap rejects them.
+    const plan = await buildImportPlan(
+      pagesDb([]),
+      pagesBundle([{ ...BASE_PAGE, slug: "a".repeat(81), path: `/${"a".repeat(81)}` }]),
+      { mode: "merge" },
+    );
+    expect(plan.errors.join(" ")).toMatch(/slug — must be at most 80 characters/);
+  });
+
+  it("flags over-length headerText and contentHtml", async () => {
+    const plan = await buildImportPlan(
+      pagesDb([]),
+      pagesBundle([
+        {
+          ...BASE_PAGE,
+          headerText: "x".repeat(20001),
+          contentHtml: "y".repeat(200001),
+        },
+      ]),
+      { mode: "merge" },
+    );
+    expect(plan.errors.join(" ")).toMatch(/headerText — must be at most 20000 characters/);
+    expect(plan.errors.join(" ")).toMatch(/contentHtml — must be at most 200000 characters/);
+  });
+
+  it("rejects unpublishing a page the admin route cannot unpublish", async () => {
+    // System page (home) …
+    const home = await buildImportPlan(
+      pagesDb([{ id: "home-1", ...HOME_PAGE }]),
+      pagesBundle([{ ...HOME_PAGE, published: false }]),
+      { mode: "merge" },
+    );
+    expect(home.errors.join(" ")).toMatch(
+      /published — page "home" cannot be hidden from the public site/,
+    );
+    // … and built-in design pages ("about") get the same canUnpublishPage guard.
+    const about = await buildImportPlan(
+      pagesDb([{ id: "p1", ...BASE_PAGE }]),
+      pagesBundle([{ ...BASE_PAGE, published: false }]),
+      { mode: "merge" },
+    );
+    expect(about.errors.join(" ")).toMatch(/page "about" cannot be hidden/);
+  });
+
+  it("blocks moving a system page's menu order but keeps a healthy export clean", async () => {
+    // Moving home to an arbitrary order is a row error (route parity).
+    const moved = await buildImportPlan(
+      pagesDb([{ id: "home-1", ...HOME_PAGE }]),
+      pagesBundle([{ ...HOME_PAGE, sortOrder: 50 }]),
+      { mode: "merge" },
+    );
+    expect(moved.errors.join(" ")).toMatch(
+      /sortOrder — menu order for system page "home" is fixed at 1/,
+    );
+
+    // Round-trip safety: re-importing the instance's OWN export (home still at
+    // the seeded order 5) is clean and a no-op, even in overwrite mode …
+    const roundTrip = await buildImportPlan(
+      pagesDb([{ id: "home-1", ...HOME_PAGE }]),
+      pagesBundle([HOME_PAGE]),
+      { mode: "overwrite" },
+    );
+    expect(roundTrip.errors).toEqual([]);
+    expect(roundTrip.categories[0].items[0].action).toBe("unchanged");
+
+    // … and normalising home to its fixed order (1) stays legal.
+    const normalised = await buildImportPlan(
+      pagesDb([{ id: "home-1", ...HOME_PAGE }]),
+      pagesBundle([{ ...HOME_PAGE, sortOrder: 1 }]),
+      { mode: "merge" },
+    );
+    expect(normalised.errors).toEqual([]);
+    expect(normalised.categories[0].items[0].action).toBe("update");
+  });
+});
+
 describe("fingerprint binding", () => {
   it("differs by mode, bundle bytes, and selection", async () => {
     const zip = lodgeBundle({});
