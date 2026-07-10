@@ -723,6 +723,35 @@ async function assertBunkGroupCanAdmit(input: {
   }
 }
 
+// The bed CREATE path never looks the room up (the route validates roomId only
+// as a non-empty string), so any bogus or stale roomId — most commonly a room
+// deleted in another tab — trips the
+// LodgeBed.roomId -> LodgeRoom Restrict FK as P2003. That FK is the only one a
+// bed insert can violate (roomId is LodgeBed's only outgoing relation; its
+// BedAllocation children don't exist yet at create time, and the bunk lock +
+// membership steps are read-only), so any P2003 raised inside
+// createBedAllocationBed is unambiguously the missing room — no
+// constraint-metadata classifier is needed here, unlike deleteBedAllocationRoom
+// which must disambiguate two FKs. Steer the admin to refresh instead of the
+// shared delete-history message, which is nonsense on the create path (#1700).
+const ROOM_FOR_BED_MISSING_MESSAGE =
+  "The room for this bed no longer exists. Refresh and try again.";
+
+// 404 (not 409): the referenced room is genuinely gone, mirroring this file's
+// other resource-not-found mappings ("Room not found" / "Bed not found") and the
+// shared mapper's P2025 -> 404. This is distinct from the 409
+// ROOM_CHANGED_WHILE_DELETING race, where the room still exists but a new child
+// blocks the delete (a true conflict).
+function mapMissingRoomOnBedCreate(error: unknown): unknown {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2003"
+  ) {
+    return new BedAllocationAdminError(ROOM_FOR_BED_MISSING_MESSAGE, 404);
+  }
+  return error;
+}
+
 export async function createBedAllocationBed(input: {
   roomId: string;
   name: string;
@@ -739,44 +768,50 @@ export async function createBedAllocationBed(input: {
   const bunkGroup = normalizeBunkGroup(input.bunkGroup);
   assertBunkGroupTypeConsistency(bedType, bunkGroup);
 
-  // Only a grouped bed needs the serialised room lock + membership check; an
-  // ungrouped bed skips the transaction entirely.
-  if (bunkGroup) {
-    if (!input.db) {
-      return prisma.$transaction((tx) =>
-        createBedAllocationBed({ ...input, db: tx }),
-      );
+  try {
+    // Only a grouped bed needs the serialised room lock + membership check; an
+    // ungrouped bed skips the transaction entirely. `await` before returning so
+    // a create-time P2003 is caught here (the recursive $transaction branch
+    // rejects with the already-mapped error, which passes through unchanged).
+    if (bunkGroup) {
+      if (!input.db) {
+        return await prisma.$transaction((tx) =>
+          createBedAllocationBed({ ...input, db: tx }),
+        );
+      }
+      const db = input.db;
+      await lockRoomForBunkGroup(input.roomId, db);
+      await assertBunkGroupCanAdmit({
+        roomId: input.roomId,
+        bunkGroup,
+        bedType,
+        db,
+      });
+      return await db.lodgeBed.create({
+        data: {
+          roomId: input.roomId,
+          name: input.name.trim(),
+          sortOrder: input.sortOrder ?? 0,
+          active: input.active ?? true,
+          bedType,
+          bunkGroup,
+        },
+      });
     }
-    const db = input.db;
-    await lockRoomForBunkGroup(input.roomId, db);
-    await assertBunkGroupCanAdmit({
-      roomId: input.roomId,
-      bunkGroup,
-      bedType,
-      db,
-    });
-    return db.lodgeBed.create({
+
+    return await (input.db ?? prisma).lodgeBed.create({
       data: {
         roomId: input.roomId,
         name: input.name.trim(),
         sortOrder: input.sortOrder ?? 0,
         active: input.active ?? true,
         bedType,
-        bunkGroup,
+        bunkGroup: null,
       },
     });
+  } catch (error) {
+    throw mapMissingRoomOnBedCreate(error);
   }
-
-  return (input.db ?? prisma).lodgeBed.create({
-    data: {
-      roomId: input.roomId,
-      name: input.name.trim(),
-      sortOrder: input.sortOrder ?? 0,
-      active: input.active ?? true,
-      bedType,
-      bunkGroup: null,
-    },
-  });
 }
 
 export async function updateBedAllocationBed(input: {
