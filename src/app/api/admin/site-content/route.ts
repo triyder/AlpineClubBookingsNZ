@@ -7,12 +7,13 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
+import { SITE_CONTENT_LIMITS } from "@/lib/page-content";
 import { SITE_CONTENT_KEYS, getSiteContentForAdmin } from "@/lib/site-content";
 
 const updateSchema = z
   .object({
     key: z.enum(SITE_CONTENT_KEYS),
-    contentHtml: z.string().max(200000),
+    contentHtml: z.string().max(SITE_CONTENT_LIMITS.contentHtmlMax),
   })
   .strict();
 

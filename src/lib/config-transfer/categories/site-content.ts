@@ -7,6 +7,7 @@ import {
   isReservedPageSlug,
   isValidPageSlug,
   PAGE_CONTENT_LIMITS,
+  SITE_CONTENT_LIMITS,
   SYSTEM_PAGE_SLUGS,
   toPagePath,
 } from "@/lib/page-content";
@@ -553,6 +554,14 @@ async function planSiteContent(ctx: PlanContext): Promise<CategoryPlanResult> {
   rawSite.forEach((raw, i) => {
     const v = new RowValidator(SITE_CONTENT_FILE, i, errors);
     const key = v.required("key", raw.key);
+    // Field-cap parity with the keyed site-content route's zod schema
+    // (src/app/api/admin/site-content/route.ts): the shared SITE_CONTENT_LIMITS,
+    // measured untrimmed and BEFORE sanitisation, exactly like the route.
+    v.custom(
+      "contentHtml",
+      withinCap(raw.contentHtml, SITE_CONTENT_LIMITS.contentHtmlMax, false),
+      "",
+    );
     if (!v.ok) return;
     const current = batch.siteContent.get(key) ?? null;
     fingerprintParts.push(
@@ -645,6 +654,13 @@ async function applySiteContent(ctx: ApplyContext): Promise<CategoryApplyResult>
   for (const [i, raw] of rawSite.entries()) {
     const v = new RowValidator(SITE_CONTENT_FILE, i, errors);
     const key = v.required("key", raw.key);
+    // Cap parity with the keyed site-content route (plan already blocked this;
+    // defensive, mirroring the page path).
+    v.custom(
+      "contentHtml",
+      withinCap(raw.contentHtml, SITE_CONTENT_LIMITS.contentHtmlMax, false),
+      "",
+    );
     if (!v.ok) { result.skipped += 1; continue; }
     const current = batch.siteContent.get(key) ?? null;
     const html = sanitizePageContentHtml(
