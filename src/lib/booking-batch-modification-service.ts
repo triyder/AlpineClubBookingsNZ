@@ -159,10 +159,12 @@ export async function modifyBookingBatch({
     throw new ApiError("Admin override is not available for this account", 403);
   }
   const adminOverride = Boolean(input.adminOverride) && actor.role === "ADMIN";
-  // Owner decision (#1668 review): under an override the admin chooses whether
-  // the member is emailed; absent means notify. Non-override edits always
-  // notify (unchanged).
-  const notifyMember = !adminOverride || input.notifyMember !== false;
+  // Owner decision (#1668/#1696): an admin chooses per edit whether the member is
+  // emailed — on override AND plain edits — with absent meaning notify. A
+  // non-admin actor can never suppress (the route 403s any notify flag), so they
+  // always notify (unchanged).
+  const notifyMember =
+    actor.role !== "ADMIN" ? true : input.notifyMember !== false;
   if (adminOverride) {
     // Date-only contract: an override edit may change ONLY the dates. Any guest
     // or promo input is rejected so preview/apply mirroring stays tractable.
@@ -642,6 +644,9 @@ async function dispatchBatchPostTransactionSideEffects({
     policyRetainedAmountCents: result.policyRetainedAmountCents,
     // Admin override recalculate (#1668): before/after dates, capacity decision
     // and the linked change request, so the override edit is fully auditable.
+    // Issue #1696: a non-override admin edit that suppressed the member email
+    // records notifyMember: false too (notifyMember is false only when an admin
+    // opted out — members always notify), so every suppressed edit is auditable.
     ...(result.adminOverride
       ? {
           adminOverride: true,
@@ -655,7 +660,9 @@ async function dispatchBatchPostTransactionSideEffects({
           newCheckOut: result.booking.checkOut.toISOString().split("T")[0],
           linkedChangeRequestId,
         }
-      : {}),
+      : result.notifyMember
+        ? {}
+        : { notifyMember: false }),
   };
 
   logAudit({

@@ -802,10 +802,15 @@ export function EditBookingPanel({
     setNewPromoInput("");
   }
 
-  // An override save goes through the notify dialog first; the dialog's two
-  // actions call handleSave with the admin's explicit email choice.
+  // Issue #1696: an admin/booking-officer save goes through the notify dialog
+  // first (on EVERY edit, not just overrides); the dialog's two actions call
+  // handleSave with the admin's explicit email choice. viewerRole is the same
+  // booking-management role the /modify route resolves as actorRole, so the
+  // dialog shows exactly when the server will honour the choice. Member
+  // self-edits keep the immediate always-notify save.
+  const actingAsAdmin = booking.viewerRole === "ADMIN";
   function handleSaveClick() {
-    if (overrideEnabled) {
+    if (actingAsAdmin) {
       setNotifyDialogOpen(true);
       return;
     }
@@ -825,7 +830,10 @@ export function EditBookingPanel({
       if (settlementMethod) {
         body.settlementMethod = settlementMethod;
       }
-      if (overrideEnabled && notifyMemberChoice !== undefined) {
+      // Issue #1696: send the admin's email choice on every admin edit, not just
+      // overrides. notifyMemberChoice is only defined on the admin (dialog) path;
+      // a member self-edit calls handleSave() with no argument and never sets it.
+      if (notifyMemberChoice !== undefined) {
         body.notifyMember = notifyMemberChoice;
       }
 
@@ -1815,9 +1823,9 @@ export function EditBookingPanel({
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
       )}
 
-      {/* Owner decision (#1668 review): the admin explicitly chooses, per
-          override edit, whether the member is emailed. Both choices save the
-          booking; the choice itself is recorded in the audit log. */}
+      {/* Owner decision (#1668/#1696): the admin explicitly chooses, per edit,
+          whether the member is emailed. Both choices save the booking; the
+          choice itself is recorded in the audit log. */}
       <Dialog
         open={notifyDialogOpen}
         onOpenChange={(open) => !saving && setNotifyDialogOpen(open)}
@@ -1826,9 +1834,9 @@ export function EditBookingPanel({
           <DialogHeader>
             <DialogTitle>Email the member about this change?</DialogTitle>
             <DialogDescription>
-              The booking&apos;s dates will be updated either way. Choose
-              whether the member receives the standard change-notification
-              email — your choice is recorded in the audit log.
+              The booking will be updated either way. Choose whether the member
+              receives the standard change-notification email — your choice is
+              recorded in the audit log.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-2">
