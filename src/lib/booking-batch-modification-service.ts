@@ -577,11 +577,12 @@ export async function modifyBookingBatch({
   // Issue #1668: under an admin override, link this modification to the
   // booking's most recent approved-unlinked change request. Best-effort.
   const linkedChangeRequestId = result.adminOverride
-    ? await linkModificationToOutstandingChangeRequest(
-        prisma,
+    ? await linkModificationToOutstandingChangeRequest(prisma, {
         bookingId,
-        result.bookingModificationId,
-      )
+        modificationId: result.bookingModificationId,
+        appliedCheckIn: result.booking.checkIn,
+        appliedCheckOut: result.booking.checkOut,
+      })
     : null;
 
   await dispatchBatchPostTransactionSideEffects({

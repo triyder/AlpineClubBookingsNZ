@@ -374,11 +374,12 @@ export function BookingChangeRequestsPanel({
                         booking from the link above and apply the change there
                         if it is still feasible. Locked or fully-past date
                         changes are applied from the booking page using the
-                        admin override control, and an override edit
-                        automatically links its modification back to this
-                        approved request. If you applied the change another way,
-                        paste the booking modification id below to link the
-                        audit trail.
+                        admin override control; when the dates you apply match
+                        a date-only request, the override links its modification
+                        back to this approved request automatically. If you
+                        applied the change another way (or the request also
+                        asked for guest changes), paste the booking modification
+                        id below to link the audit trail.
                       </p>
                       <div className="space-y-1">
                         <Label htmlFor={`admin-notes-${request.id}`}>Admin notes</Label>
@@ -459,8 +460,8 @@ export function BookingChangeRequestsPanel({
                           No booking modification linked. The booking edit may
                           still be outstanding — apply it from the booking page
                           (using the admin override control for locked or
-                          fully-past dates) and it will link back here
-                          automatically.
+                          fully-past dates); a date-only request links back here
+                          automatically when the applied dates match.
                         </p>
                       ) : null}
                     </div>
