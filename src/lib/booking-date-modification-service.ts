@@ -804,11 +804,12 @@ export async function modifyBookingDates({
   // linking this modification to the booking's most recent approved-unlinked
   // change request. Best-effort; never fails the completed edit.
   const linkedChangeRequestId = result.adminOverride
-    ? await linkModificationToOutstandingChangeRequest(
-        prisma,
+    ? await linkModificationToOutstandingChangeRequest(prisma, {
         bookingId,
-        result.bookingModificationId,
-      )
+        modificationId: result.bookingModificationId,
+        appliedCheckIn: result.booking.checkIn,
+        appliedCheckOut: result.booking.checkOut,
+      })
     : null;
 
   await dispatchDatePostTransactionSideEffects({
@@ -1319,8 +1320,12 @@ export async function adminShiftBookingDates({
   // Post-transaction (no Stripe/Xero/payment mutations at all).
   const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(
     prisma,
-    bookingId,
-    result.bookingModificationId,
+    {
+      bookingId,
+      modificationId: result.bookingModificationId,
+      appliedCheckIn: result.newCheckIn,
+      appliedCheckOut: result.newCheckOut,
+    },
   );
 
   const overrideAuditPayload = {

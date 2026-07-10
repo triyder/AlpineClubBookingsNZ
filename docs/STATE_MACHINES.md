@@ -262,7 +262,8 @@ raises `OverCapacityConfirmationRequiredError` (409,
 `confirmOverCapacity: true`, recording `capacityOverridden`. Every override move
 is audited as `booking.modify.admin_override` (including the admin's explicit
 member-notification choice, `notifyMember`) and linked, best-effort, to the
-booking's most recent APPROVED-but-unlinked change request.
+booking's most recent APPROVED-but-unlinked change request that the move
+fulfils (date-only request whose named dates equal the applied values).
 
 To verify: failed post-transaction refund recovery, Xero credit-note creation,
 additional-payment cleanup, and bed-allocation reconciliation.
