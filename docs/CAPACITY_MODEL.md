@@ -20,6 +20,13 @@ crammed into a room, but a lower whole-lodge cap for fire / consent / licence
 reasons (#1653). Booking availability must respect the **ceiling**, while
 bed allocation still places people across the **larger** physical bed set.
 
+Double-bed shared occupancy (#1701) does **not** change any of this. A shared
+`DOUBLE` counts as **one** bed of `activeBedCount`, and its two declared-partner
+occupants are two guests / two person-nights against the ceiling — exactly as if
+they slept in two beds. Availability (`checkCapacityForGuestRanges`) counts
+guests against `getLodgeCapacity`, never `BedAllocation` rows, so a second
+occupant is purely a *placement* detail and cannot inflate or deflate capacity.
+
 ## Resolution
 
 Effective capacity is decided in this order:

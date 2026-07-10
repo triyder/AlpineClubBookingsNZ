@@ -18,13 +18,14 @@ interface BoardCellProps {
   bedId: string;
   roomId: string;
   stayDate: string;
-  allocation: DashboardAllocation | undefined;
+  // #1701: a shared DOUBLE bed-night holds up to two occupants (primary first).
+  allocations: DashboardAllocation[];
   bedOptions: BedOption[];
   bedOptionGroups?: BedOptionGroup[];
   onReassignBed: (allocation: DashboardAllocation, bedId: string) => void;
   onRemove: (allocation: DashboardAllocation) => void;
-  pending: boolean;
-  highlighted?: boolean;
+  pendingAllocationIds: Set<string>;
+  highlightedBookingId: string;
   activeDragLane?: boolean;
   canEdit?: boolean;
 }
@@ -33,13 +34,13 @@ export function BoardCell({
   bedId,
   roomId,
   stayDate,
-  allocation,
+  allocations,
   bedOptions,
   bedOptionGroups = [],
   onReassignBed,
   onRemove,
-  pending,
-  highlighted,
+  pendingAllocationIds,
+  highlightedBookingId,
   activeDragLane,
   canEdit = true,
 }: BoardCellProps) {
@@ -48,6 +49,10 @@ export function BoardCell({
     data: { type: "cell", bedId, roomId, stayDate },
     disabled: !canEdit,
   });
+
+  const highlighted = allocations.some(
+    (allocation) => allocation.bookingId === highlightedBookingId,
+  );
 
   return (
     <td
@@ -62,16 +67,27 @@ export function BoardCell({
         isOver && "bg-blue-50 ring-2 ring-blue-300",
       )}
     >
-      {allocation ? (
-        <AllocationChip
-          allocation={allocation}
-          bedOptions={bedOptions}
-          bedOptionGroups={bedOptionGroups}
-          onReassignBed={(targetBedId) => onReassignBed(allocation, targetBedId)}
-          onRemove={() => onRemove(allocation)}
-          pending={pending}
-          canEdit={canEdit}
-        />
+      {allocations.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          {allocations.map((allocation) => (
+            <div key={allocation.id}>
+              {allocation.isSecondOccupant ? (
+                <span className="mb-0.5 block text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Shares bed · partner
+                </span>
+              ) : null}
+              <AllocationChip
+                allocation={allocation}
+                bedOptions={bedOptions}
+                bedOptionGroups={bedOptionGroups}
+                onReassignBed={(targetBedId) => onReassignBed(allocation, targetBedId)}
+                onRemove={() => onRemove(allocation)}
+                pending={pendingAllocationIds.has(allocation.id)}
+                canEdit={canEdit}
+              />
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="flex h-12 items-center justify-center rounded-md border border-dashed border-transparent text-[10px] text-muted-foreground/50">
           {isOver ? "Drop here" : ""}

@@ -85,6 +85,25 @@ Future reviews and issues should cite this file when proposing changes.
   envelope. Existing allocation rows are never rewritten by planning — only
   provisional displacement moves rows — and re-planning a fully-allocated
   state is a no-op.
+- **Double-bed shared occupancy (#1701):** a `DOUBLE` bed may hold two occupants
+  on a night — one primary and one second occupant — when they are declared
+  partners (v1: two `ADULT` members of the same `FamilyGroup`, the single-source
+  `mayShareDoubleBed()` rule in `double-bed-sharing.ts`; the real member↔member
+  partner model is #1682). Only an admin adds the second occupant on the board,
+  and only onto a bed whose primary already **holds capacity** — so displacement
+  can never move the primary out from under the partner. Auto-allocation never
+  creates a second occupant; every other bed type stays exactly one occupant per
+  night. DB-enforced without CHECK constraints:
+  `@@unique([bedId, stayDate, isSecondOccupant])` caps a bed-night at ≤2 rows and
+  a raw-SQL partial unique index (`WHERE "bedType" <> 'DOUBLE'`, recorded in
+  `prisma/partial-unique-indexes.tsv`) caps every non-DOUBLE bed at exactly one;
+  `BedAllocation.bedType` is a denormalized copy the partial index reads (a
+  partial index cannot join to `LodgeBed`). Capacity is unchanged — a shared
+  double is still ONE bed of nightly capacity and each occupant is a full
+  person-night (pricing/settlement untouched). A DOUBLE holding a second occupant
+  cannot be retyped to a non-double until that occupant is removed; a lone second
+  occupant left after the primary is cancelled is harmless (no DB violation) and
+  surfaced on the board to re-pair or remove.
 - Waitlisted and offered bookings do not consume capacity until confirmed.
 - A waitlist offer reprices the booking at current season rates,
   membership-type policy, group discount, and promo validity at the moment the

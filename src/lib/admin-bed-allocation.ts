@@ -25,7 +25,11 @@ import {
 } from "@/lib/bed-allocation";
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
-import { bookingHoldsCapacity } from "@/lib/booking-status";
+import {
+  bookingHoldsCapacity,
+  isCapacityHoldingBookingStatus,
+} from "@/lib/booking-status";
+import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
 import { prisma } from "@/lib/prisma";
 
 const BED_ALLOCATION_SETTINGS_ID = "default";
@@ -878,6 +882,33 @@ export async function updateBedAllocationBed(input: {
       });
     }
 
+    if (input.bedType !== undefined && input.bedType !== existing.bedType) {
+      // #1701: a non-DOUBLE bed can never hold a second occupant (the partial
+      // unique index forbids it). So a DOUBLE that currently has a shared
+      // (two-occupant) allocation cannot be retyped until the second occupant is
+      // removed — otherwise the denormalized-bedType rewrite below would drive
+      // both occupant rows into the non-double partial index and collide.
+      if (existing.bedType === "DOUBLE") {
+        const sharedCount = await db.bedAllocation.count({
+          where: { bedId: input.id, isSecondOccupant: true },
+        });
+        if (sharedCount > 0) {
+          throw new BedAllocationAdminError(
+            "This double bed has shared (two-occupant) allocations. Remove the second occupant before changing the bed type.",
+            409,
+          );
+        }
+      }
+      // Keep the denormalized BedAllocation.bedType (used only by the non-double
+      // partial index) in sync with the bed's new type. With no second-occupant
+      // rows present, each bed-night has at most one row, so this rewrite can
+      // never create a partial-index conflict.
+      await db.bedAllocation.updateMany({
+        where: { bedId: input.id },
+        data: { bedType: input.bedType },
+      });
+    }
+
     if (input.bedType !== undefined) data.bedType = input.bedType;
     if (input.bunkGroup !== undefined) data.bunkGroup = nextBunkGroup;
   }
@@ -1280,6 +1311,7 @@ function serializeAllocations(
       status: allocation.booking.status,
       isRequestConverted: Boolean(allocation.booking.originBookingRequest),
     }),
+    isSecondOccupant: allocation.isSecondOccupant,
   }));
 }
 
@@ -1687,6 +1719,97 @@ async function assertManualAllocationInput(input: {
   return { guest, bed };
 }
 
+/**
+ * Decide whether allocating `guest` to `bed` on `stayDate` creates a SECOND
+ * occupant on a shared DOUBLE bed (#1701), enforcing every sharing rule, or a
+ * normal (primary) allocation. Returns the `isSecondOccupant` flag to persist,
+ * or throws a BedAllocationAdminError when the bed-night is already taken and
+ * sharing is not permitted.
+ *
+ * Sharing is allowed only when the bed is a DOUBLE that currently holds exactly
+ * one PRIMARY occupant (a different guest), AND:
+ *   - that occupant's booking holds capacity (a capacity-holding booking is
+ *     never wholly-displaceable, so auto-allocation can never move the primary
+ *     out from under the partner and pair the second occupant with an unrelated
+ *     booking — the #1701 displacement-safety pin);
+ *   - both guests are linked to a member; and
+ *   - mayShareDoubleBed() says the two members may share (v1: adults in the same
+ *     family group — the single source of truth for the who-may-share rule).
+ *
+ * The composite @@unique([bedId, stayDate, isSecondOccupant]) and the non-double
+ * partial index are the DB backstop against races and non-double beds.
+ */
+async function resolveSecondOccupant(input: {
+  bed: { id: string; bedType: BedType };
+  guest: { id: string; memberId: string | null };
+  stayDate: Date;
+  db: BedAllocationDb;
+}): Promise<{ isSecondOccupant: boolean }> {
+  const { bed, guest, stayDate, db } = input;
+
+  const occupants = await db.bedAllocation.findMany({
+    where: {
+      bedId: bed.id,
+      stayDate,
+      bookingGuestId: { not: guest.id },
+    },
+    select: {
+      isSecondOccupant: true,
+      bookingGuest: {
+        select: {
+          memberId: true,
+          booking: { select: { status: true } },
+        },
+      },
+    },
+  });
+
+  // Free bed-night → normal primary allocation.
+  if (occupants.length === 0) {
+    return { isSecondOccupant: false };
+  }
+
+  if (bed.bedType !== "DOUBLE") {
+    throw new BedAllocationAdminError(
+      "That bed is already allocated for the selected date.",
+      409,
+    );
+  }
+  if (occupants.length >= 2 || occupants.some((row) => row.isSecondOccupant)) {
+    throw new BedAllocationAdminError(
+      "This double bed already has two occupants for the selected date.",
+      409,
+    );
+  }
+
+  const [primary] = occupants;
+  if (!isCapacityHoldingBookingStatus(primary.bookingGuest.booking.status)) {
+    throw new BedAllocationAdminError(
+      "A partner can only be added to a confirmed booking's double bed.",
+      409,
+    );
+  }
+  if (!guest.memberId || !primary.bookingGuest.memberId) {
+    throw new BedAllocationAdminError(
+      "Both guests must be linked to a member to share a double bed.",
+      409,
+    );
+  }
+  const eligible = await mayShareDoubleBed(
+    primary.bookingGuest.memberId,
+    guest.memberId,
+    db,
+  );
+  if (!eligible) {
+    throw new BedAllocationAdminError(
+      "Only two adults in the same family group may share a double bed.",
+      409,
+    );
+  }
+
+  return { isSecondOccupant: true };
+}
+
 export async function manuallyAllocateBed(input: {
   bookingGuestId: string;
   bedId: string;
@@ -1706,6 +1829,13 @@ export async function manuallyAllocateBed(input: {
     db,
   });
 
+  const { isSecondOccupant } = await resolveSecondOccupant({
+    bed,
+    guest,
+    stayDate,
+    db,
+  });
+
   try {
     return await db.bedAllocation.upsert({
       where: {
@@ -1721,6 +1851,8 @@ export async function manuallyAllocateBed(input: {
         bedId: bed.id,
         stayDate,
         source: "MANUAL",
+        isSecondOccupant,
+        bedType: bed.bedType,
       },
       update: {
         roomId: bed.roomId,
@@ -1728,6 +1860,8 @@ export async function manuallyAllocateBed(input: {
         source: "MANUAL",
         approvedAt: null,
         approvedByMemberId: null,
+        isSecondOccupant,
+        bedType: bed.bedType,
       },
     });
   } catch (error) {
@@ -1805,6 +1939,12 @@ export async function manuallyAllocateBedForNights(input: {
     }
 
     try {
+      const { isSecondOccupant } = await resolveSecondOccupant({
+        bed,
+        guest,
+        stayDate,
+        db,
+      });
       const allocation = await db.bedAllocation.upsert({
         where: {
           bookingGuestId_stayDate: {
@@ -1819,6 +1959,8 @@ export async function manuallyAllocateBedForNights(input: {
           bedId: bed.id,
           stayDate,
           source: "MANUAL",
+          isSecondOccupant,
+          bedType: bed.bedType,
         },
         update: {
           roomId: bed.roomId,
@@ -1826,6 +1968,8 @@ export async function manuallyAllocateBedForNights(input: {
           source: "MANUAL",
           approvedAt: null,
           approvedByMemberId: null,
+          isSecondOccupant,
+          bedType: bed.bedType,
         },
       });
       allocations.push(allocation);
@@ -1833,6 +1977,16 @@ export async function manuallyAllocateBedForNights(input: {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002"
+      ) {
+        conflicts.push({ stayDate: stayDateStr, reason: "BED_TAKEN" });
+        continue;
+      }
+      // A bed-night the guest cannot take as a second occupant (bed full, not a
+      // double, not an eligible partner) is a per-night conflict in a bulk drop,
+      // not a hard failure — mirrors the P2002 bed-taken path above.
+      if (
+        error instanceof BedAllocationAdminError &&
+        error.status === 409
       ) {
         conflicts.push({ stayDate: stayDateStr, reason: "BED_TAKEN" });
         continue;

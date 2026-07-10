@@ -8,7 +8,10 @@ import {
   BED_ALLOCATION_COLUMN_WIDTH_CLASS,
   BED_ALLOCATION_COLUMN_WIDTH_REM,
 } from "@/app/(admin)/admin/bed-allocation/_components/board-cell";
-import type { DashboardRoom } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import type {
+  DashboardAllocation,
+  DashboardRoom,
+} from "@/app/(admin)/admin/bed-allocation/_components/types";
 
 vi.mock("@dnd-kit/core", () => ({
   useDroppable: () => ({
@@ -16,6 +19,18 @@ vi.mock("@dnd-kit/core", () => ({
     isOver: false,
   }),
 }));
+
+// Stub the draggable AllocationChip so the RoomTable/BoardCell test focuses on
+// cell layout (how many occupants render, the #1701 partner marker) without
+// dnd-kit draggable / dropdown-menu internals.
+vi.mock(
+  "@/app/(admin)/admin/bed-allocation/_components/allocation-chip",
+  () => ({
+    AllocationChip: ({ allocation }: { allocation: DashboardAllocation }) => (
+      <div data-testid="allocation-chip">{allocation.guestName}</div>
+    ),
+  }),
+);
 
 function buildRoom(): DashboardRoom {
   return {
@@ -158,5 +173,79 @@ describe("RoomTable bed-type icon (#1675)", () => {
     renderRoom(room);
     expect(screen.queryByText("Bunk A · top")).toBeNull();
     expect(screen.getByText("Bunk (top)")).toBeTruthy();
+  });
+});
+
+describe("RoomTable double-bed sharing (#1701)", () => {
+  function allocation(
+    overrides: Partial<DashboardAllocation> & Pick<DashboardAllocation, "id" | "guestName">,
+  ): DashboardAllocation {
+    return {
+      bookingId: "booking-1",
+      bookingGuestId: "guest-1",
+      guestAgeTier: "ADULT",
+      roomId: "room-1",
+      roomName: "Example Room",
+      bedId: "bed-dbl",
+      bedName: "Double One",
+      stayDate: "2026-07-01",
+      source: "MANUAL",
+      approvedAt: null,
+      approvedByName: null,
+      bookingStatus: "CONFIRMED",
+      holdsCapacity: true,
+      isSecondOccupant: false,
+      ...overrides,
+    };
+  }
+
+  it("renders both occupants of a shared double and marks the partner", () => {
+    const room: DashboardRoom = {
+      ...buildRoom(),
+      beds: [
+        {
+          id: "bed-dbl",
+          roomId: "room-1",
+          name: "Double One",
+          sortOrder: 1,
+          active: true,
+          bedType: "DOUBLE",
+          bunkGroup: null,
+        },
+      ],
+    };
+    const map = new Map<string, DashboardAllocation[]>([
+      [
+        "bed-dbl:2026-07-01",
+        [
+          allocation({ id: "a-primary", guestName: "Primary Guest" }),
+          allocation({
+            id: "a-second",
+            bookingGuestId: "guest-2",
+            guestName: "Second Guest",
+            isSecondOccupant: true,
+          }),
+        ],
+      ],
+    ]);
+
+    render(
+      <RoomTable
+        room={room}
+        nights={["2026-07-01"]}
+        allocationByBedAndDate={map}
+        bedOptions={[]}
+        onReassignBed={vi.fn()}
+        onRemove={vi.fn()}
+        pendingAllocationIds={new Set()}
+        highlightedBookingId=""
+      />,
+    );
+
+    // Both occupants are visible (the old single-value map hid the partner).
+    expect(screen.getByText("Primary Guest")).toBeTruthy();
+    expect(screen.getByText("Second Guest")).toBeTruthy();
+    // The second occupant is marked as a shared-bed partner.
+    expect(screen.getByText("Shares bed · partner")).toBeTruthy();
   });
 });

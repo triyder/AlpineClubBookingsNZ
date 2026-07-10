@@ -30,6 +30,7 @@ function buildAllocation(
     approvedByName: "Allocator",
     bookingStatus: "CONFIRMED",
     holdsCapacity: true,
+    isSecondOccupant: false,
     ...overrides,
   };
 }

@@ -187,6 +187,9 @@ function addOptimisticAllocations(
       approvedByName: null,
       bookingStatus,
       holdsCapacity,
+      // Optimistic drops render as a primary occupant; the server decides
+      // second-occupant sharing and the next loadDashboard() corrects it (#1701).
+      isSecondOccupant: false,
     }));
 
   return {
@@ -338,9 +341,22 @@ export default function AdminBedAllocationPage() {
   );
 
   const allocationByBedAndDate = useMemo(() => {
-    const map = new Map<string, DashboardAllocation>();
+    // #1701: a DOUBLE bed-night may hold two occupants (declared partners), so
+    // each cell key maps to an array. Keep the primary occupant first so a
+    // shared double renders predictably.
+    const map = new Map<string, DashboardAllocation[]>();
     for (const allocation of payload?.allocations ?? []) {
-      map.set(`${allocation.bedId}:${allocation.stayDate}`, allocation);
+      const key = `${allocation.bedId}:${allocation.stayDate}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.push(allocation);
+        existing.sort(
+          (left, right) =>
+            Number(left.isSecondOccupant) - Number(right.isSecondOccupant),
+        );
+      } else {
+        map.set(key, [allocation]);
+      }
     }
     return map;
   }, [payload]);

@@ -251,12 +251,14 @@ describe("manuallyAllocateBedForNights", () => {
     stayEnd: Date;
     bookingStatus: string;
     bookingDeletedAt: Date | null;
+    memberId: string | null;
   }> = {}) {
     return {
       id: overrides.id ?? "guest-1",
       bookingId: overrides.bookingId ?? "booking-1",
       stayStart: overrides.stayStart ?? parseDateOnly("2026-07-01"),
       stayEnd: overrides.stayEnd ?? parseDateOnly("2026-07-04"),
+      memberId: overrides.memberId ?? null,
       booking: {
         id: overrides.bookingId ?? "booking-1",
         status: overrides.bookingStatus ?? "CONFIRMED",
@@ -270,11 +272,13 @@ describe("manuallyAllocateBedForNights", () => {
     roomId: string;
     active: boolean;
     roomActive: boolean;
+    bedType: string;
   }> = {}) {
     return {
       id: overrides.id ?? "bed-1",
       roomId: overrides.roomId ?? "room-1",
       active: overrides.active ?? true,
+      bedType: overrides.bedType ?? "SINGLE",
       room: { id: overrides.roomId ?? "room-1", active: overrides.roomActive ?? true },
     };
   }
@@ -283,6 +287,12 @@ describe("manuallyAllocateBedForNights", () => {
     guest: ReturnType<typeof buildGuest> | null;
     bed: ReturnType<typeof buildBed> | null;
     upsert: ReturnType<typeof vi.fn>;
+    existingOccupants?: ReturnType<typeof vi.fn>;
+    members?: Array<{
+      id: string;
+      ageTier: string;
+      familyGroupMemberships: Array<{ familyGroupId: string }>;
+    }>;
   }) {
     return {
       bookingGuest: {
@@ -291,7 +301,19 @@ describe("manuallyAllocateBedForNights", () => {
       lodgeBed: {
         findUnique: vi.fn().mockResolvedValue(input.bed),
       },
+      // #1701: mayShareDoubleBed() resolves both members' age tier + family
+      // groups; findMany filters the seeded members by the queried ids.
+      member: {
+        findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+          (input.members ?? []).filter((member) =>
+            args.where.id.in.includes(member.id),
+          ),
+        ),
+      },
       bedAllocation: {
+        // #1701: resolveSecondOccupant checks the target bed-night's existing
+        // occupants; default to empty (a free bed-night → primary allocation).
+        findMany: input.existingOccupants ?? vi.fn().mockResolvedValue([]),
         upsert: input.upsert,
       },
     };
@@ -442,6 +464,136 @@ describe("manuallyAllocateBedForNights", () => {
       }),
     ).rejects.toThrow("Booking status is not allocatable");
   });
+
+  // #1701 double-bed shared occupancy.
+  const adultMember = (id: string, groups: string[]) => ({
+    id,
+    ageTier: "ADULT",
+    familyGroupMemberships: groups.map((familyGroupId) => ({ familyGroupId })),
+  });
+
+  function primaryOccupant(overrides: Partial<{
+    isSecondOccupant: boolean;
+    memberId: string | null;
+    bookingStatus: string;
+  }> = {}) {
+    return {
+      isSecondOccupant: overrides.isSecondOccupant ?? false,
+      bookingGuest: {
+        memberId: overrides.memberId ?? "m-primary",
+        booking: { status: overrides.bookingStatus ?? "CONFIRMED" },
+      },
+    };
+  }
+
+  it("places an eligible same-family adult as a second occupant on a double", async () => {
+    const upsert = vi.fn().mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const db = buildDb({
+      guest: buildGuest({ id: "guest-2", memberId: "m-new" }),
+      bed: buildBed({ bedType: "DOUBLE" }),
+      upsert,
+      existingOccupants: vi.fn().mockResolvedValue([primaryOccupant()]),
+      members: [adultMember("m-primary", ["fg-1"]), adultMember("m-new", ["fg-1"])],
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-2",
+      bedId: "bed-1",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.conflicts).toEqual([]);
+    expect(result.allocations).toHaveLength(1);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ isSecondOccupant: true, bedType: "DOUBLE" }),
+      }),
+    );
+  });
+
+  it("rejects a second occupant on a non-double bed (conflict, not sharing)", async () => {
+    const upsert = vi.fn();
+    const db = buildDb({
+      guest: buildGuest({ id: "guest-2", memberId: "m-new" }),
+      bed: buildBed({ bedType: "SINGLE" }),
+      upsert,
+      existingOccupants: vi.fn().mockResolvedValue([primaryOccupant()]),
+      members: [adultMember("m-primary", ["fg-1"]), adultMember("m-new", ["fg-1"])],
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-2",
+      bedId: "bed-1",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.allocations).toEqual([]);
+    expect(result.conflicts).toEqual([{ stayDate: "2026-07-02", reason: "BED_TAKEN" }]);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a second occupant who is not an eligible partner (different family)", async () => {
+    const db = buildDb({
+      guest: buildGuest({ id: "guest-2", memberId: "m-new" }),
+      bed: buildBed({ bedType: "DOUBLE" }),
+      upsert: vi.fn(),
+      existingOccupants: vi.fn().mockResolvedValue([primaryOccupant()]),
+      members: [adultMember("m-primary", ["fg-1"]), adultMember("m-new", ["fg-2"])],
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-2",
+      bedId: "bed-1",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.conflicts).toEqual([{ stayDate: "2026-07-02", reason: "BED_TAKEN" }]);
+  });
+
+  it("rejects a second occupant when the primary booking is not capacity-holding (displacement pin)", async () => {
+    const db = buildDb({
+      guest: buildGuest({ id: "guest-2", memberId: "m-new" }),
+      bed: buildBed({ bedType: "DOUBLE" }),
+      upsert: vi.fn(),
+      // PENDING is bed-allocatable but not capacity-holding, so the primary is
+      // not pinned from displacement — pairing must be refused.
+      existingOccupants: vi.fn().mockResolvedValue([primaryOccupant({ bookingStatus: "PENDING" })]),
+      members: [adultMember("m-primary", ["fg-1"]), adultMember("m-new", ["fg-1"])],
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-2",
+      bedId: "bed-1",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.conflicts).toEqual([{ stayDate: "2026-07-02", reason: "BED_TAKEN" }]);
+  });
+
+  it("rejects a third occupant when the double already has two", async () => {
+    const db = buildDb({
+      guest: buildGuest({ id: "guest-3", memberId: "m-third" }),
+      bed: buildBed({ bedType: "DOUBLE" }),
+      upsert: vi.fn(),
+      existingOccupants: vi
+        .fn()
+        .mockResolvedValue([primaryOccupant(), primaryOccupant({ isSecondOccupant: true, memberId: "m-new" })]),
+      members: [adultMember("m-primary", ["fg-1"]), adultMember("m-third", ["fg-1"])],
+    });
+
+    const result = await manuallyAllocateBedForNights({
+      bookingGuestId: "guest-3",
+      bedId: "bed-1",
+      stayDates: ["2026-07-02"],
+      db: db as never,
+    });
+
+    expect(result.conflicts).toEqual([{ stayDate: "2026-07-02", reason: "BED_TAKEN" }]);
+  });
 });
 
 describe("bed type + bunk pairing (#1675)", () => {
@@ -460,6 +612,9 @@ describe("bed type + bunk pairing (#1675)", () => {
         bedType: string;
         bunkGroup: string | null;
       } | null;
+      // #1701: mock for bedAllocation.count (shared second-occupant rows on the
+      // bed) so the DOUBLE→non-DOUBLE retype guard can be exercised.
+      sharedOccupantCount?: ReturnType<typeof vi.fn>;
     } = {},
   ) {
     const create = vi
@@ -480,7 +635,13 @@ describe("bed type + bunk pairing (#1675)", () => {
       db: {
         $queryRaw: queryRaw,
         lodgeBed: { create, update, findMany, findUnique },
-        bedAllocation: { findMany: vi.fn().mockResolvedValue([]) },
+        bedAllocation: {
+          findMany: vi.fn().mockResolvedValue([]),
+          // #1701: a bedType change syncs the denormalized copy and (from a
+          // DOUBLE) checks for shared second-occupant rows first.
+          count: overrides.sharedOccupantCount ?? vi.fn().mockResolvedValue(0),
+          updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
       },
       create,
       update,
@@ -882,6 +1043,41 @@ describe("bed type + bunk pairing (#1675)", () => {
     });
     expect(update.mock.calls[0][0].data.bunkGroup).toBeUndefined();
   });
+
+  // #1701: retyping a bed keeps the denormalized BedAllocation.bedType in sync,
+  // and a DOUBLE that currently shares (has a second occupant) cannot be retyped
+  // to a non-double until the second occupant is removed.
+  it("blocks changing a shared double to a non-double bed type", async () => {
+    const { db, update } = buildBunkDb({
+      existingBed: { roomId: "room-1", bedType: "DOUBLE", bunkGroup: null },
+      sharedOccupantCount: vi.fn().mockResolvedValue(1),
+    });
+
+    await expect(
+      updateBedAllocationBed({ id: "bed-1", bedType: "SINGLE", db: db as never }),
+    ).rejects.toThrow("shared (two-occupant)");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("retypes a double with no shared occupant and syncs the denormalized bedType", async () => {
+    const { db, update } = buildBunkDb({
+      existingBed: { roomId: "room-1", bedType: "DOUBLE", bunkGroup: null },
+    });
+
+    await updateBedAllocationBed({ id: "bed-1", bedType: "SINGLE", db: db as never });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "bed-1" },
+      data: expect.objectContaining({ bedType: "SINGLE" }),
+    });
+    const bedAllocation = (db as unknown as {
+      bedAllocation: { updateMany: ReturnType<typeof vi.fn> };
+    }).bedAllocation;
+    expect(bedAllocation.updateMany).toHaveBeenCalledWith({
+      where: { bedId: "bed-1" },
+      data: { bedType: "SINGLE" },
+    });
+  });
 });
 
 describe("bunk write transaction self-wrap (#1675)", () => {
@@ -949,6 +1145,11 @@ describe("bunk write transaction self-wrap (#1675)", () => {
         update: vi
           .fn()
           .mockImplementation(({ data }) => ({ id: "bed-1", ...data })),
+      },
+      // #1701: the bedType change syncs the denormalized BedAllocation.bedType.
+      bedAllocation: {
+        count: vi.fn().mockResolvedValue(0),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
     };
     const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));

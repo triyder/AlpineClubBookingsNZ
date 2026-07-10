@@ -1547,6 +1547,19 @@ model BedAllocation {
   source             BedAllocationSource @default(AUTO)
   approvedByMemberId String?
   approvedAt         DateTime?
+  // Double-bed sharing (#1701): a DOUBLE bed may hold two occupants for a night
+  // — one primary (isSecondOccupant=false) and one second occupant. All other
+  // bed types stay 1/night. isSecondOccupant is part of the relaxed
+  // @@unique([bedId, stayDate, isSecondOccupant]); the second-occupant row is
+  // only ever created by an admin on the allocation board (auto never sets it).
+  isSecondOccupant   Boolean             @default(false)
+  // Denormalized copy of LodgeBed.bedType, set at allocation-create. A partial
+  // unique index predicate cannot join to LodgeBed, so the "non-double beds are
+  // capped at 1/night" guard needs the type on this row. Default SINGLE is a
+  // safe failsafe: an unset/wrong value makes the partial index treat the row as
+  // non-double and REJECT a second occupant — erring toward under-, never
+  // over-occupancy. updateBedAllocationBed keeps it in sync on bed-type changes.
+  bedType            BedType             @default(SINGLE)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -1556,7 +1569,13 @@ model BedAllocation {
   bed          LodgeBed     @relation(fields: [bedId, roomId], references: [id, roomId], onDelete: Restrict)
   approvedBy   Member?      @relation("BedAllocationApprover", fields: [approvedByMemberId], references: [id], onDelete: SetNull)
 
-  @@unique([bedId, stayDate])
+  // Relaxed from @@unique([bedId, stayDate]) for #1701: two rows may share a
+  // bed-night only when they differ on isSecondOccupant (≤1 primary + ≤1 second
+  // ⇒ ≤2 rows/bed-night). Non-DOUBLE beds are additionally capped at exactly 1
+  // by the raw-SQL partial index in the same migration (see
+  // prisma/partial-unique-indexes.tsv). Old code inserts isSecondOccupant=false,
+  // so it still cannot double-book a bed.
+  @@unique([bedId, stayDate, isSecondOccupant])
   @@unique([bookingGuestId, stayDate])
   @@index([bookingId])
   @@index([bookingGuestId])

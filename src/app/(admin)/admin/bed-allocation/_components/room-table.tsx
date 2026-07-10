@@ -38,7 +38,9 @@ function bedTypeAccessibleLabel(
 interface RoomTableProps {
   room: DashboardRoom;
   nights: string[];
-  allocationByBedAndDate: Map<string, DashboardAllocation>;
+  // #1701: a DOUBLE bed-night may hold two occupants (declared partners), so a
+  // cell maps to an array (primary first) rather than a single allocation.
+  allocationByBedAndDate: Map<string, DashboardAllocation[]>;
   bedOptions: BedOption[];
   bedOptionGroups?: BedOptionGroup[];
   onReassignBed: (allocation: DashboardAllocation, bedId: string) => void;
@@ -141,22 +143,21 @@ export function RoomTable({
                 </span>
               </TableCell>
               {nights.map((night) => {
-                const allocation = allocationByBedAndDate.get(`${bed.id}:${night}`);
+                const allocations =
+                  allocationByBedAndDate.get(`${bed.id}:${night}`) ?? [];
                 return (
                   <BoardCell
                     key={night}
                     bedId={bed.id}
                     roomId={room.id}
                     stayDate={night}
-                    allocation={allocation}
+                    allocations={allocations}
                     bedOptions={bedOptions}
                     bedOptionGroups={bedOptionGroups}
                     onReassignBed={onReassignBed}
                     onRemove={onRemove}
-                    pending={
-                      allocation ? pendingAllocationIds.has(allocation.id) : false
-                    }
-                    highlighted={allocation?.bookingId === highlightedBookingId}
+                    pendingAllocationIds={pendingAllocationIds}
+                    highlightedBookingId={highlightedBookingId}
                     activeDragLane={activeDragDates.has(night)}
                     canEdit={canEdit}
                   />

@@ -111,6 +111,7 @@ function buildAllocation(
     approvedByName: null,
     bookingStatus: "CONFIRMED",
     holdsCapacity: true,
+    isSecondOccupant: false,
     ...overrides,
   };
 }

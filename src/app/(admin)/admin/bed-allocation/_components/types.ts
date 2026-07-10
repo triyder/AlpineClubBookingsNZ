@@ -44,6 +44,9 @@ export interface DashboardAllocation {
   // is PENDING but holds), the board reads this precomputed flag —
   // bookingHoldsCapacity() — for the "Held" vs "Provisional" badge.
   holdsCapacity: boolean;
+  // #1701: the second occupant of a shared DOUBLE bed (declared partners). The
+  // board renders both occupants of a double in one cell and marks this one.
+  isSecondOccupant: boolean;
 }
 
 export interface DashboardGuestNight {

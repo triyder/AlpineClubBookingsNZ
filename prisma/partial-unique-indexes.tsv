@@ -10,6 +10,7 @@
 # indexdef is pg_get_indexdef() output on PostgreSQL 16 (the CI service image).
 # To regenerate after an intentional change:
 #   psql "$DATABASE_URL" -tA -F"$(printf '\t')" -c "SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname='public' AND indexdef LIKE '% WHERE %' ORDER BY tablename, indexname"
+BedAllocation	BedAllocation_nonDouble_bedId_stayDate_unique	CREATE UNIQUE INDEX "BedAllocation_nonDouble_bedId_stayDate_unique" ON public."BedAllocation" USING btree ("bedId", "stayDate") WHERE ("bedType" <> 'DOUBLE'::"BedType")
 CancellationPolicy	CancellationPolicy_clubwide_daysBeforeStay_unique	CREATE UNIQUE INDEX "CancellationPolicy_clubwide_daysBeforeStay_unique" ON public."CancellationPolicy" USING btree ("daysBeforeStay") WHERE ("lodgeId" IS NULL)
 InductionChecklistTemplate	InductionChecklistTemplate_kind_active_unique	CREATE UNIQUE INDEX "InductionChecklistTemplate_kind_active_unique" ON public."InductionChecklistTemplate" USING btree (kind) WHERE ("isActive" = true)
 Lodge	Lodge_isDefault_key	CREATE UNIQUE INDEX "Lodge_isDefault_key" ON public."Lodge" USING btree ("isDefault") WHERE "isDefault"
